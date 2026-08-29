@@ -1,7 +1,7 @@
 # Session 65 — Seam blending, and real vanilla textures on cached terrain
 
 **Date:** `2026-08-28`
-**Branch/commit:** `master` at `21da6be` (0.3.127 baseline); this session's work is committed to a new branch at close
+**Branch/commit:** `codex/seam-blending-and-block-textures` at `04ea3e6`, branched from `master` at `21da6be` (0.3.127 baseline). Not pushed.
 **Mod version:** `0.3.128` through `0.3.139`
 **Assist protocol / blob / schema:** `1 / 4 / 6`
 

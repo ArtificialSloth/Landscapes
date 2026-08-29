@@ -7,8 +7,8 @@
 line remains 0.3.x
 (`0.2.1` is the public released version; 0.4.0 remains a preserved local rollback artifact from the
 GPU-renderer milestone).
-**Active branch:** `codex/seam-blending-and-block-textures`, branched from `master` at `21da6be`
-(the accepted 0.3.127 baseline) and committed at Session 65 close.
+**Active branch:** `codex/seam-blending-and-block-textures` at `04ea3e6`, branched from `master`
+at `21da6be` (the accepted 0.3.127 baseline). Not pushed.
 **Target:** Vintage Story 1.22.5+, .NET 10
 **Source files:** `77` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
