@@ -56,6 +56,32 @@ internal sealed class VanillaReadinessMask
     public long ReadyTexels { get; private set; }
 
     /// <summary>
+    /// Bumped by every change to any texel. The seam distance field is derived from this
+    /// mask and is far more expensive to rebuild than to upload, so it needs to know that
+    /// ownership moved rather than that the atlas happens to be dirty - <see cref="Dirty"/>
+    /// is cleared by upload and would hide a change the field had not yet consumed.
+    /// </summary>
+    public long Revision { get; private set; }
+
+    /// <summary>
+    /// True when any cell in this column is owned by vanilla.
+    ///
+    /// "Any" rather than "all" on purpose: the band needs vanilla's horizontal footprint,
+    /// and a column's ground cell is owned while the air chunks stacked above it are
+    /// deliberately excluded from the mask (G40). Asking for all of them would report solid
+    /// ground as being outside vanilla entirely.
+    /// </summary>
+    public bool ColumnHasReady(int chunkX, int chunkZ)
+    {
+        for (int y = 0; y < verticalChunks; y++)
+        {
+            if (texels[TexelIndex(chunkX, y, chunkZ, capacity, verticalChunks)] == ReadyTexel)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Wrapped atlas address for one ownership cell. The row is the ring's Z slot offset by
     /// whole capacity-sized blocks per Y level, so one 2D texture holds the full column
     /// stack without a 3D sampler.
@@ -79,6 +105,7 @@ internal sealed class VanillaReadinessMask
         else ReadyTexels--;
         texels[index] = value;
         Dirty = true;
+        Revision++;
         return true;
     }
 
@@ -96,6 +123,7 @@ internal sealed class VanillaReadinessMask
         Array.Clear(texels);
         ReadyTexels = 0;
         Dirty = true;
+        Revision++;
     }
 
     /// <summary>
@@ -112,6 +140,7 @@ internal sealed class VanillaReadinessMask
             texels[index] = CacheTexel;
             ReadyTexels--;
             Dirty = true;
+            Revision++;
         }
     }
 

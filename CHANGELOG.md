@@ -8,6 +8,38 @@ first.
 
 ## [Unreleased]
 
+## [0.3.139] - 2026-08-28
+
+**Distant terrain now blends into the game's own terrain at the seam, and near the seam it is drawn
+with the game's real block textures rather than one flat colour per block.**
+
+The blend band is derived from which chunks the game is actually drawing, so it follows the real
+loaded footprint and its edges step with the world's own blocks. Nothing in it varies at a scale
+finer than one block, which is what keeps it reading as terrain rather than as an effect painted
+over the world. Its reach, step size, strength and inner edge are all adjustable with `.vhband`.
+
+Inside that band, ground is drawn with the actual textures the game uses for each block, sampled
+from the game's own atlas - including the grass layer composited over soil. The texture is applied
+as variation around each block's established colour, so it adds detail without changing the colour
+distant terrain has always had. `.vhtexture` reports and adjusts it, including how sharply the
+texture is drawn at distance.
+
+Three fixes to long-standing problems:
+
+- **Rivers and lakes no longer go dry at the transition.** The game draws water in a separate pass
+  with a shorter reach than its ground, so there was a ring where it drew the riverbed and had
+  already stopped drawing the river, while the mod suppressed its own water there because the
+  ground reported itself drawn. Cached water is no longer suppressed by that signal.
+- **Lake and river floors no longer flicker** where the two terrains overlap. Solid cached geometry
+  is lowered by a fraction of a block, a constant with no edge anywhere; water surfaces are exempt
+  so no lip appears across a flat river.
+- **Ground no longer goes missing when the game unloads chunks.** Cached terrain now takes ground
+  back slightly earlier than the game gives it up. `.vhband overlap` adjusts the margin.
+
+`.vhnear` removes the small radius that suppressed cached terrain immediately around the player,
+which mattered once the game's own view distance is turned low enough to see distant terrain up
+close. It defaults to off; `.vhnear 48` restores the old behaviour.
+
 ## [0.3.127] - 2026-08-27
 
 **The horizon correction now removes only vanilla terrain's pale render-threshold wall and leaves

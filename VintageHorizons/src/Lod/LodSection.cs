@@ -23,6 +23,14 @@ public struct LodPaletteEntry
     /// </summary>
     public byte TintSlot;
 
+    /// <summary>
+    /// Which entry of <see cref="LodBlockTextureRegistry"/> holds this block's texture, or 0
+    /// for none. Derived from the live Block on load and never persisted, exactly like
+    /// <see cref="TintSlot"/>: an existing cache gains textures with no re-exploration, and
+    /// the mapping stays right if a game update moves a block's texture in the atlas.
+    /// </summary>
+    public ushort TextureSlot;
+
     public const byte FlagWater = 1;
     // Bits 2 and 4 are free: they held tint classes, now superseded by TintSlot.
 
@@ -110,7 +118,8 @@ public class LodSection
     public Span<ulong> ColumnRuns(int col) =>
         Runs.AsSpan(ColumnStart[col], ColumnStart[col + 1] - ColumnStart[col]);
 
-    public int FindOrAddPaletteEntry(int blockId, int color, byte flags, byte tintSlot = 0)
+    public int FindOrAddPaletteEntry(
+        int blockId, int color, byte flags, byte tintSlot = 0, ushort textureSlot = 0)
     {
         for (int i = 0; i < Palette.Count; i++)
         {
@@ -122,6 +131,7 @@ public class LodSection
             Color = color,
             Flags = flags,
             TintSlot = tintSlot,
+            TextureSlot = textureSlot,
         });
         return Palette.Count - 1;
     }

@@ -148,7 +148,8 @@ public static class LodMip
                 if (ppid < 0)
                 {
                     LodPaletteEntry e = result.ChildPalette[cpid];
-                    ppid = parent.FindOrAddPaletteEntry(e.BlockId, e.Color, e.Flags, e.TintSlot);
+                    ppid = parent.FindOrAddPaletteEntry(
+                        e.BlockId, e.Color, e.Flags, e.TintSlot, e.TextureSlot);
                     paletteMap[cpid] = ppid;
                 }
                 merged[i] = LodSection.PackRun(ppid, LodSection.RunYTop(merged[i]), LodSection.RunYBottom(merged[i]));

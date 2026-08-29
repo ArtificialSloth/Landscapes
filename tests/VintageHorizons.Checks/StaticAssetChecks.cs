@@ -292,8 +292,14 @@ public static class StaticAssetChecks
             "the fragment body branches on the variant exactly once");
         c.Eq(1, Occurrences(vertex, "#ifndef VH_PACKED"),
             "only the vertex inputs change for packed pulling");
-        c.Eq(1, Occurrences(vertex, "#ifdef VH_PACKED"),
-            "and one main block decodes the pulled quad");
+        // Two now: one decodes the pulled quad, one declares the block texture table the
+        // pulled path alone can address - only a packed quad carries a block slot. The count
+        // is pinned rather than left open so the file cannot drift back into being two
+        // shaders written in one place.
+        c.Eq(2, Occurrences(vertex, "#ifdef VH_PACKED"),
+            "the vertex body has one block to decode the pulled quad and one to declare its table");
+        c.Eq(2, Occurrences(fragment, "#ifdef VH_PACKED"),
+            "the fragment body has one block to declare the atlas and one to sample it");
         c.True(vertex.Contains("uint vhQuad = uint(gl_VertexID) / 4u;", StringComparison.Ordinal)
             && vertex.Contains("uint vhLogicalCorner = uint(gl_VertexID) % 4u;", StringComparison.Ordinal)
             && vertex.Contains("uint vhBase = vhQuad * 3u;", StringComparison.Ordinal)
@@ -527,8 +533,21 @@ public static class StaticAssetChecks
             "cached terrain hands the conservative close field back to vanilla terrain");
         c.True(renderer.Contains("prog.Uniform(\"cacheHandoffDistance\"", StringComparison.Ordinal),
             "the renderer uploads the conservative near handoff radius");
-        c.False(vertex.Contains("worldPos.y -=", StringComparison.Ordinal),
-            "the near transition does not push cached terrain downward");
+        // The rule this guards is not "nothing lowers geometry". The transition sink that
+        // was removed was eight blocks deep and RAMPED, so it slid visibly as the player
+        // walked toward it; what replaced it is a single constant sub-block offset with no
+        // ramp and no edge anywhere, which exists to stop two opaque surfaces fighting for
+        // depth in the vanilla overlap. So: exactly one place may lower geometry, it must be
+        // that uniform on its own, and the renderer must actually upload it - an unuploaded
+        // float uniform reads as zero with nothing in the log, the same silent shape as G42.
+        c.Eq(1, vertex.Split("worldPos.y -=").Length - 1,
+            "exactly one place lowers cached geometry");
+        c.True(vertex.Contains("worldPos.y -= bandSinkBlocks;", StringComparison.Ordinal),
+            "the only downward offset is the constant sink uniform, with no ramp applied to it");
+        c.True(vertex.Contains("uniform float bandSinkBlocks", StringComparison.Ordinal),
+            "the sink depth is a uniform rather than a baked shader constant");
+        c.True(renderer.Contains("prog.Uniform(\"bandSinkBlocks\"", StringComparison.Ordinal),
+            "the renderer uploads the sink depth");
 
         c.True(vertex.Contains("uniform vec4 noiseOrigin", StringComparison.Ordinal),
             "the vertex shader declares a stable section noise origin");
@@ -538,6 +557,131 @@ public static class StaticAssetChecks
             "terrain colour noise uses the stable terrain coordinate");
         c.False(fragment.Contains("valuenoise(worldPos", StringComparison.Ordinal),
             "terrain colour noise never follows the camera-relative render position");
+
+        BlendBandWiring(c, vertex, fragment, renderer);
+    }
+
+    /// <summary>
+    /// The blend band's uniforms have the same silent failure shape as every other uniform
+    /// in this shader pair: GLSL leaves an unwritten one at zero, so a missing upload turns
+    /// the band permanently off - or, worse for the float ones, applies a zero-width band
+    /// and a black gain - with no compile error and nothing in the log.
+    ///
+    /// Two facts are pinned beyond the wiring. The cell size the fragment shader divides by
+    /// must equal the field's own, or every fragment reads a neighbouring cell's distance;
+    /// and the band must not be expressible as a distance from the camera, which is the
+    /// property that separates this design from the radial ring that was rejected.
+    /// </summary>
+    static void BlendBandWiring(Check c, string vertex, string fragment, string renderer)
+    {
+        string[] uploaded =
+        {
+            "bandEnabled", "bandDebug", "bandMinCellX", "bandMinCellZ", "bandWidthCells",
+            "bandDepthCells", "bandCapacity", "bandWidthBlocks", "bandStepBlocks",
+            "bandStrength", "bandInnerBlocks", "bandDarken", "bandSaturate", "bandSpeckle",
+        };
+        foreach (string name in uploaded)
+        {
+            c.True(fragment.Contains(name, StringComparison.Ordinal),
+                $"the fragment shader reads {name}");
+            c.True(renderer.Contains($"prog.Uniform(\"{name}\"", StringComparison.Ordinal),
+                $"the renderer uploads {name}");
+        }
+
+        c.True(renderer.Contains("prog.BindTexture2D(\"seamField\"", StringComparison.Ordinal),
+            "the renderer binds the seam distance field texture");
+        c.True(fragment.Contains("texelFetch(seamField", StringComparison.Ordinal),
+            "the fragment shader point-samples the seam distance field");
+
+        // The shader reconstructs the field address from an integer section origin in whole
+        // vanilla chunks, so it needs both the cells-per-chunk multiplier and the cell size.
+        c.Eq(4, VanillaSeamDistanceField.CellsPerChunk,
+            "the field stores four cells per vanilla chunk on each axis");
+        c.Eq(8, VanillaSeamDistanceField.CellBlocks, "field cells are eight blocks");
+        c.True(fragment.Contains("maskSectionOriginX * 4 +", StringComparison.Ordinal),
+            "the fragment shader scales the section origin by cells per chunk");
+        c.True(fragment.Contains("sectionLocal.x / 8.0", StringComparison.Ordinal),
+            "the fragment shader divides by the field's own cell size");
+
+        // Never finer than one world block. A ramp below the world's own grid reads as a GPU
+        // effect painted over the terrain rather than as terrain, which is what sank the
+        // earlier smooth radial transition.
+        c.True(fragment.Contains("max(8.0, bandStepBlocks)", StringComparison.Ordinal),
+            "the band's step size can never fall below one stored cell");
+
+        // No radius anywhere in it. The band's shape is vanilla's own footprint.
+        c.False(fragment.Contains("radialDistance", StringComparison.Ordinal)
+            && fragment.Contains("bandWeight = clamp(1.0 - stepped", StringComparison.Ordinal)
+            && fragment.Contains("bandWeight = clamp(radial", StringComparison.Ordinal),
+            "the band weight is not a function of distance from the camera");
+
+        // Water keeps its own surface height. A lake surface is a flat reference plane, so an
+        // offset applied to it and not to vanilla's reads as a lip running across the water.
+        c.True(vertex.Contains("if (slotRaw / TINT_SLOTS != 1) worldPos.y -= bandSinkBlocks;",
+                StringComparison.Ordinal),
+            "the sink exempts water surfaces");
+
+        BlockTextureWiring(c, vertex, fragment, renderer);
+    }
+
+    /// <summary>
+    /// Real vanilla block textures. Two failures here are silent and expensive.
+    ///
+    /// A textured quad carries a block slot in the field its colour would occupy, so the
+    /// vertex stage MUST be able to read the table to get that colour back - and it must be
+    /// bound whether or not textures are switched on, or turning them off would leave every
+    /// textured quad reading its colour out of whatever texture sits on unit zero.
+    ///
+    /// And meshes must not carry slots before a shader that understands the flag exists, or
+    /// the slot number draws as a colour: near-black ground.
+    /// </summary>
+    static void BlockTextureWiring(Check c, string vertex, string fragment, string renderer)
+    {
+        c.True(vertex.Contains("uniform sampler2D blockTable", StringComparison.Ordinal),
+            "the vertex stage declares the block table it reads a textured quad's colour from");
+        c.True(vertex.Contains("(vhGeometry & 0x80000000u) != 0u", StringComparison.Ordinal),
+            "the vertex stage tests the flag that says word two is a slot");
+        c.True(vertex.Contains("flat out vec4 vhBlockRect", StringComparison.Ordinal),
+            "the atlas rectangle is carried flat rather than interpolated across the quad");
+
+        // An explicit level, computed from gradients the shader works out itself. Two reasons,
+        // and both matter: fract() tears once per block, so a GPU left to infer the level picks
+        // the coarsest mip on every block boundary and draws a grid of grey lines; and the
+        // level has to be chosen sharper than the footprint asks for, because correct
+        // minification averages a distant tile down to its own mean and leaves the texture
+        // doing nothing at all.
+        c.True(fragment.Contains("textureLod(blockAtlas", StringComparison.Ordinal),
+            "the fragment stage samples the atlas at a level it chooses");
+        c.True(fragment.Contains("max(mipWanted - blockTextureDetail, 0.0)", StringComparison.Ordinal),
+            "that level can reach sharper than the distance warrants");
+        c.False(fragment.Contains("texture(blockAtlas", StringComparison.Ordinal),
+            "the atlas is never sampled with inferred derivatives");
+
+        foreach (string name in new[]
+        {
+            "blockTextureEnabled", "blockTextureStrength", "blockTextureMipLimit",
+            "blockTextureDetail", "blockAtlasSize",
+        })
+        {
+            c.True(fragment.Contains(name, StringComparison.Ordinal),
+                $"the fragment shader reads {name}");
+            c.True(renderer.Contains($"prog.Uniform(\"{name}\"", StringComparison.Ordinal),
+                $"the renderer uploads {name}");
+        }
+
+        c.True(renderer.Contains("prog.BindTexture2D(\"blockTable\"", StringComparison.Ordinal),
+            "the renderer binds the block table");
+        c.True(renderer.Contains("prog.BindTexture2D(\"blockAtlas\"", StringComparison.Ordinal),
+            "the renderer binds the game's own block atlas");
+        c.True(renderer.Contains("if (blockTexturesLive && blockTableTexture != 0)", StringComparison.Ordinal),
+            "the table is bound independently of whether textures are switched on");
+
+        // Emission is gated on the table actually reaching the GPU, which is what keeps every
+        // intermediate state of this work shippable.
+        c.True(renderer.Contains("LodMesher.EmitTextureSlots = true", StringComparison.Ordinal),
+            "slots are emitted only after a successful table upload");
+        c.True(renderer.Contains("LodMesher.EmitTextureSlots = false", StringComparison.Ordinal),
+            "a failed table upload stops emission");
     }
 
     /// <summary>
@@ -667,8 +811,20 @@ public static class StaticAssetChecks
             : string.Empty;
         c.True(skipBody.Contains("if (!readinessMaskActive", StringComparison.Ordinal),
             "a section is never skipped unless the GPU mask is live");
-        c.Eq(3, CountOccurrences(renderer, "if (SkipVanillaOwnedSection(key)) continue;"),
-            "both opaque comparison paths and water submission share the same skip decision");
+        // Opaque only. Water used to share this decision and must not: ownership is decided
+        // by whether the engine is drawing a chunk, which its ground answers for, while the
+        // engine's water is a separate pass with a shorter reach. Suppressing our water
+        // wherever vanilla "owned" the ground produced a measured stretch of dry riverbed
+        // in a ring where vanilla drew the bed and had already stopped drawing the river.
+        c.Eq(2, CountOccurrences(renderer, "if (SkipVanillaOwnedSection(key)) continue;"),
+            "both opaque comparison paths share the same skip decision");
+        int waterMethod = renderer.IndexOf("void DrawLegacyWater()", StringComparison.Ordinal);
+        c.True(waterMethod > 0, "the water pass has its own submission loop");
+        string waterBody = waterMethod > 0
+            ? renderer.Substring(waterMethod, Math.Min(1600, renderer.Length - waterMethod))
+            : string.Empty;
+        c.False(waterBody.Contains("SkipVanillaOwnedSection", StringComparison.Ordinal),
+            "water submission is never skipped for vanilla ownership");
         c.False(skipBody.Contains("Evict", StringComparison.Ordinal)
             || skipBody.Contains("RenderDirty", StringComparison.Ordinal)
             || skipBody.Contains("Remove", StringComparison.Ordinal),
@@ -727,8 +883,8 @@ public static class StaticAssetChecks
             "ownership is decided before normals, lighting, noise, fog and output work");
         c.Eq(1, CountOccurrences(fragment, "texelFetch(readinessMask"),
             "opaque and water pass through exactly one shared ownership lookup");
-        c.True(fragment.Contains("if (maskEnabled == 1)", StringComparison.Ordinal),
-            "a disabled mask executes no readiness sample at all");
+        c.True(fragment.Contains("if (maskEnabled == 1 && ownershipBand != 1)", StringComparison.Ordinal),
+            "a disabled mask executes no readiness sample, and water is never suppressed by one");
 
         c.True(renderer.Contains("prog.Uniform(\"maskEnabled\"", StringComparison.Ordinal)
             && renderer.Contains("prog.Uniform(\"maskCapacity\"", StringComparison.Ordinal)
@@ -752,10 +908,25 @@ public static class StaticAssetChecks
         string floorBody = floorMethod > 0
             ? renderer.Substring(floorMethod, Math.Min(520, renderer.Length - floorMethod))
             : string.Empty;
+        // The radius is a knob now, defaulting to nothing, because it also hid cached terrain
+        // from a player who turned the vanilla view distance down far enough to want to look
+        // at it. Whatever it is set to, it must still only ever apply where vanilla has proven
+        // it draws - an unproven cell keeps its cached terrain.
         c.True(floorBody.Contains("VanillaReadinessState.VanillaReady", StringComparison.Ordinal)
-            && floorBody.Contains("MaskNearFloorBlocks", StringComparison.Ordinal)
+            && floorBody.Contains("NearSuppressionBlocks", StringComparison.Ordinal)
             && floorBody.Contains("0f", StringComparison.Ordinal),
-            "the floor applies only while the camera's own cell is committed ready");
+            "the near radius applies only while the camera's own cell is committed ready");
+        c.Eq(0f, LodTerrainRenderer.MaskNearFloorDefaultBlocks,
+            "and defaults to suppressing nothing at all");
+
+        // Removing the radius must not touch the per-cell mask. The radius is one distance
+        // around the camera; the mask is what hides cached terrain wherever vanilla is
+        // actually drawing, which is the whole handoff and a different mechanism entirely.
+        c.True(fragment.Contains("if (maskEnabled == 1 && ownershipBand != 1)", StringComparison.Ordinal),
+            "per-cell ownership still decides every land fragment, independently of the radius");
+        c.True(renderer.Contains("readiness.Classify(key) != VanillaSectionOwnership.VanillaOnly",
+                StringComparison.Ordinal),
+            "wholly owned sections are still skipped before drawing");
         // The mask became the default in 0.3.17, so the old opt-in gate is gone. What has to
         // survive is the override that lets the benchmark harness pin either path: without a
         // way to force the mask off, the radial path it is measured against is unreachable

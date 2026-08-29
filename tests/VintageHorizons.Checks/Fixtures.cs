@@ -82,6 +82,7 @@ public static class Fixtures
             PaletteColors = colors,
             PaletteFlags = flags,
             PaletteTintSlots = slots,
+            PaletteTextureSlots = new ushort[slots.Length],
         };
     }
 

@@ -23,6 +23,7 @@ public static class Program
         ("pure", "radial cache demand", RadialDemandChecks.Run),
         ("pure", "terrain tint readiness", TintReadinessChecks.Run),
         ("pure", "vanilla render readiness", VanillaReadinessChecks.Run),
+        ("pure", "seam distance field", SeamFieldChecks.Run),
         ("pure", "phase timing", PhaseCostChecks.Run),
         ("pure", "vanilla horizon effects", HorizonEffectsChecks.Run),
         ("pure", "GPU renderer policy", GpuRendererChecks.Run),

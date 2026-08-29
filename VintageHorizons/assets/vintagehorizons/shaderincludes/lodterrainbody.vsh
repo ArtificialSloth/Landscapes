@@ -26,6 +26,45 @@ uniform float fogDensityIn;
 
 uniform float farViewDistance;
 
+// How far to lower solid cached terrain, in blocks. A constant global offset, NOT a ramp
+// and NOT a function of distance: an earlier transition sink was eight blocks deep and
+// ramped, so it slid visibly as the player walked toward it, and it was removed. A constant
+// has no edge anywhere - every cached surface moves together, cached meets cached exactly as
+// before, and the only place the offset can be observed is where cached terrain overlaps
+// live vanilla terrain, which is the one place it is wanted.
+//
+// It exists for depth fighting, which is a precision problem between opaque surfaces, and it
+// is worth far more underwater than on open land: a lake floor drawn twice fights between a
+// pale bed and a dark water-tinted one, so every pixel that flips is a maximum-contrast flip.
+// The same fight between two similarly lit land surfaces is nearly invisible.
+//
+// A fraction of a block by default. Whether that is enough separation at the distance the
+// overlap actually sits is a depth-precision question no desk can answer, so `.vhband sink`
+// moves it.
+uniform float bandSinkBlocks;
+
+#ifdef VH_PACKED
+// Where each block's texture lives in the game's own block atlas, and the averaged colour to
+// fall back to. Two rows: row 0 is the atlas rectangle, row 1 the colour.
+//
+// A textured quad carries a block SLOT in the field its colour would occupy - they share one
+// 24-bit field and word 0's last spare bit says which - so the colour is fetched here rather
+// than read out of the vertex. That sharing is what lets real vanilla textures cost no extra
+// memory at all. Fetched per vertex, not per fragment: both values are constant across a
+// quad, so a flat varying carries the rectangle onward for free.
+uniform sampler2D blockTable;
+flat out vec4 vhBlockRect;
+// The sampled texture's own mean. The fragment stage divides by it so the texture becomes
+// variation AROUND the block's colour rather than the colour itself - grass-covered ground
+// has a brown soil texture under a green overlay, so taking the texture at face value drew a
+// brown band across the world.
+flat out vec3 vhBlockMean;
+// The grass-style overlay's own rectangle, zero when the block has none. Grass-covered ground
+// is soil under a grass texture composited by the grass's per-pixel alpha; sampling only the
+// base drew correctly coloured ground wearing dirt's pattern.
+flat out vec4 vhBlockOverlay;
+#endif
+
 // ---- Per-section facts ------------------------------------------------------
 //
 // Everything in this block describes the SECTION being drawn rather than the vertex.
@@ -171,11 +210,31 @@ void main()
             : vec3(vhX0, vhY1, vhZ1);
     }
 
-    vec4 vertexColorIn = vec4(
-        float(vhColor & 255u),
-        float((vhColor >> 8u) & 255u),
-        float((vhColor >> 16u) & 255u),
-        float(vhColor >> 24u)) / 255.0;
+    // Word 0's top bit: set means word 2 is a block texture slot, not a colour.
+    vec4 vertexColorIn;
+    if ((vhGeometry & 0x80000000u) != 0u)
+    {
+        int vhSlot = int(vhColor & 0x00FFFFFFu);
+        vhBlockRect = texelFetch(blockTable, ivec2(vhSlot, 0), 0);
+        vec4 vhAverage = texelFetch(blockTable, ivec2(vhSlot, 1), 0);
+        vec4 vhMeanRow = texelFetch(blockTable, ivec2(vhSlot, 2), 0);
+        vhBlockMean = vhMeanRow.rgb;
+        vhBlockOverlay = vhMeanRow.a > 0.5
+            ? texelFetch(blockTable, ivec2(vhSlot, 3), 0)
+            : vec4(0.0);
+        vertexColorIn = vec4(vhAverage.rgb, float(vhColor >> 24u) / 255.0);
+    }
+    else
+    {
+        vhBlockRect = vec4(0.0);
+        vhBlockMean = vec3(1.0);
+        vhBlockOverlay = vec4(0.0);
+        vertexColorIn = vec4(
+            float(vhColor & 255u),
+            float((vhColor >> 8u) & 255u),
+            float((vhColor >> 16u) & 255u),
+            float(vhColor >> 24u)) / 255.0;
+    }
 #endif
     yLevel = vertexPositionIn.y;
     vertexColor = vertexColorIn;
@@ -188,6 +247,16 @@ void main()
     sectionLocal = vertexPositionIn;
 
     worldPos = modelMatrix * vec4(vertexPositionIn, 1.0);
+
+    // Water surfaces are exempt. A lake surface is a perfectly flat reference plane, so an
+    // offset applied to it and not to vanilla's would read as a lip running across the water
+    // far more readily than the same offset reads on bumpy ground. Submerged ground is
+    // exactly where the sink is needed, and it is solid, so this exemption costs nothing.
+    //
+    // Applied to worldPos alone: sectionLocal, terrainPos and yLevel keep the true surface
+    // so ownership addressing, colour variation and the snow line cannot shift with it.
+    if (slotRaw / TINT_SLOTS != 1) worldPos.y -= bandSinkBlocks;
+
     worldPos = applyGlobalWarping(worldPos);
 
     terrainPos = vec3(

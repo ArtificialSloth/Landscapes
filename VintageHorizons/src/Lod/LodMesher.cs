@@ -353,6 +353,7 @@ public static class LodMesher
             Buffers buf = first.Water ? water : opaque;
             int color = self.PaletteColors[first.Pid];
             byte alpha = AlphaFor(self.PaletteFlags[first.Pid], self.PaletteTintSlots[first.Pid]);
+            int textureSlot = TextureSlotFor(self, first.Pid, step);
 
             for (int i = start; i < end; i++)
             {
@@ -405,12 +406,12 @@ public static class LodMesher
                 if (first.Bottom)
                 {
                     AddQuad(buf, LodPackedFace.Bottom, step, color, alpha,
-                        x0, y, z0, x1, y, z0, x1, y, z1, x0, y, z1);
+                        x0, y, z0, x1, y, z0, x1, y, z1, x0, y, z1, textureSlot);
                 }
                 else
                 {
                     AddQuad(buf, LodPackedFace.Top, step, color, alpha,
-                        x0, y, z0, x0, y, z1, x1, y, z1, x1, y, z0);
+                        x0, y, z0, x0, y, z1, x1, y, z1, x1, y, z0, textureSlot);
                 }
             }
 
@@ -459,6 +460,7 @@ public static class LodMesher
             Buffers buf = seg.Water ? water : opaque;
             int color = self.PaletteColors[seg.Pid];
             byte alpha = AlphaFor(self.PaletteFlags[seg.Pid], self.PaletteTintSlots[seg.Pid]);
+            int textureSlot = TextureSlotFor(self, seg.Pid, step);
 
             // W/E walls run along Z at fixed X; N/S walls run along X at fixed Z.
             bool xWall = seg.Dir is W or E;
@@ -476,25 +478,25 @@ public static class LodMesher
             {
                 AddQuad(buf, LodPackedFace.West, step, color, alpha,
                     fixedCoord, seg.YBottom, a0, fixedCoord, seg.YBottom, a1,
-                    fixedCoord, seg.YTop, a1, fixedCoord, seg.YTop, a0);
+                    fixedCoord, seg.YTop, a1, fixedCoord, seg.YTop, a0, textureSlot);
             }
             else if (seg.Dir == E)
             {
                 AddQuad(buf, LodPackedFace.East, step, color, alpha,
                     fixedCoord, seg.YBottom, a0, fixedCoord, seg.YTop, a0,
-                    fixedCoord, seg.YTop, a1, fixedCoord, seg.YBottom, a1);
+                    fixedCoord, seg.YTop, a1, fixedCoord, seg.YBottom, a1, textureSlot);
             }
             else if (seg.Dir == N)
             {
                 AddQuad(buf, LodPackedFace.North, step, color, alpha,
                     a0, seg.YBottom, fixedCoord, a0, seg.YTop, fixedCoord,
-                    a1, seg.YTop, fixedCoord, a1, seg.YBottom, fixedCoord);
+                    a1, seg.YTop, fixedCoord, a1, seg.YBottom, fixedCoord, textureSlot);
             }
             else
             {
                 AddQuad(buf, LodPackedFace.South, step, color, alpha,
                     a0, seg.YBottom, fixedCoord, a1, seg.YBottom, fixedCoord,
-                    a1, seg.YTop, fixedCoord, a0, seg.YTop, fixedCoord);
+                    a1, seg.YTop, fixedCoord, a0, seg.YTop, fixedCoord, textureSlot);
             }
 
             i = j;
@@ -672,7 +674,8 @@ public static class LodMesher
 
     static void AddQuad(Buffers buf, LodPackedFace face, int columnBlocks, int color, byte alpha,
         float x0, float y0, float z0, float x1, float y1, float z1,
-        float x2, float y2, float z2, float x3, float y3, float z3)
+        float x2, float y2, float z2, float x3, float y3, float z3,
+        int textureSlot = 0)
     {
         int baseVert = buf.Xyz.Count / 3;
         AddVert(buf, color, alpha, x0, y0, z0);
@@ -701,7 +704,7 @@ public static class LodMesher
                 minY, maxY,
                 (int)MathF.Round(minZ / columnBlocks),
                 (int)MathF.Round(maxZ / columnBlocks),
-                color, alpha);
+                color, alpha, textureSlot);
             buf.ClusteredPacked!.Append(
                 face,
                 (int)MathF.Round(minX / columnBlocks),
@@ -710,9 +713,34 @@ public static class LodMesher
                 (int)MathF.Round(minZ / columnBlocks),
                 (int)MathF.Round(maxZ / columnBlocks),
                 columnBlocks,
-                color, alpha);
+                color, alpha, textureSlot);
         }
     }
+
+    /// <summary>
+    /// The block texture slot this quad may carry, or 0 for none.
+    ///
+    /// Level 0 only - `step` is one block there. A coarse section merges a whole
+    /// neighbourhood into a single colour, so no one block stands behind the quad for a
+    /// texture to belong to, and the colour form stays exactly as it is today.
+    ///
+    /// Solid land only. Water and thin cover draw translucent and were never the complaint.
+    /// </summary>
+    static int TextureSlotFor(SectionSnapshot self, int pid, int step) =>
+        EmitTextureSlots && step == 1 && !IsTranslucent(self.PaletteFlags[pid])
+            ? self.PaletteTextureSlots[pid]
+            : 0;
+
+    /// <summary>
+    /// Whether meshes may carry block texture slots instead of colours.
+    ///
+    /// A textured quad puts its slot in the field the colour would occupy, so a mesh built
+    /// with this on and drawn by a shader that does not understand the flag renders the slot
+    /// number as a colour - near-black ground. The renderer turns it on only once it has both
+    /// the block table and a shader that reads the flag, which keeps every intermediate state
+    /// of this work shippable. Set on the main thread before any mesh job is queued.
+    /// </summary>
+    public static bool EmitTextureSlots;
 
     static void AddVert(Buffers buf, int color, byte alpha, float x, float y, float z)
     {

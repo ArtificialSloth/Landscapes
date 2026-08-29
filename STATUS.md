@@ -2,15 +2,15 @@
 
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
-**Status date:** 2026-08-27
-**Mod version:** `0.3.127`, built, verified, copy-installed, and human-accepted; the development
+**Status date:** 2026-08-28
+**Mod version:** `0.3.139`, built, verified, copy-installed, and human-tested; the development
 line remains 0.3.x
 (`0.2.1` is the public released version; 0.4.0 remains a preserved local rollback artifact from the
 GPU-renderer milestone).
-**Active branch:** `codex/fog-removal` at Session 62 commit `9dd64be`; the Session 63-64 corrective
-work follows it and is uncommitted at documentation close.
+**Active branch:** `codex/seam-blending-and-block-textures`, branched from `master` at `21da6be`
+(the accepted 0.3.127 baseline) and committed at Session 65 close.
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `75` C# files under `VintageHorizons/src`
+**Source files:** `77` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
@@ -380,6 +380,51 @@ Server follow-up manifest scans now run every 30 seconds. Integrated-singleplaye
 cache blob SQLite reads moved from the game tick to a bounded worker-owned connection.
 These changes are source- and harness-tested only; no game process has measured their
 effect on the reported tiny or three-to-six-second spikes.
+
+> **The seam between vanilla and cached terrain now blends, and near the seam cached ground is
+> drawn with the game's own block textures.** Both are new in Session 65 and both are human-tested
+> but unbenchmarked.
+>
+> The band is a chamfer distance field over 8-block cells, rebuilt from the ownership mask, giving
+> each fragment its distance from the nearest chunk vanilla owns. Its shape is therefore vanilla's
+> real loaded footprint; **no radius appears anywhere in it**, which is the property the earlier
+> rejected smooth ring lacked. Its governing invariant is that **nothing may vary at a scale finer
+> than one world block** - a gradient below the world's own grid reads as an effect painted over the
+> terrain rather than as terrain. The step-size control therefore offers 8, 16 or 32 blocks and
+> deliberately no continuous option. `.vhband` carries every knob; with no argument it writes its
+> state to the client log.
+>
+> Three average-matching colour corrections were built and rejected in play - a per-channel gain,
+> a darken/saturate pair, and per-block speckle. Speckle remains on because the owner likes it;
+> he was explicit that it does not solve the problem. The settled conclusion, his: vanilla terrain
+> is never a single flat colour, so nothing that only adjusts an average can meet it.
+>
+> Real textures follow from that. Cached ground inside the band samples **the game's own block
+> atlas** - not a recreation - including the grass layer composited over soil, and the texture is
+> applied as *variation around* each block's established colour rather than as the colour, so it
+> cannot shift a block's tone. This costs **no extra memory**: at level 0 a quad's colour already is
+> its block's colour, so a quad carries a block slot instead, sharing the same 24-bit field, with
+> word 0's one spare bit saying which. Blocks whose colour is genuinely per-position - chiselled
+> blocks carrying an entity - keep the colour form. `.vhtexture` reports and adjusts it.
+>
+> **Only the packed render path draws block textures.** The legacy and non-packed indirect paths are
+> unchanged. `.vhtexture` reports how many blocks resolved a texture, how many grass overlays landed,
+> and why the rest were refused.
+
+> **Water at the transition.** Cached water is never suppressed by per-cell ownership. Ownership
+> asks whether the engine is drawing a chunk and the chunk's ground answers, while the engine's
+> water is a separate pass with a shorter reach - so there was a ring where vanilla drew the bed and
+> no longer drew the river, and the mod suppressed its own water there, leaving dry riverbeds. The
+> exemption can only ever add water. Separately, lake and river floors were z-fighting in the
+> overlap; solid cached geometry is now lowered by a constant sub-block sink with no ramp and no
+> edge, and water surfaces are exempt so no lip can appear across a flat surface.
+
+> **Overlap and the near field.** Cached terrain takes ground back from vanilla 16 blocks earlier
+> than the geometric slack alone would allow, because vanilla unloads on its own schedule and
+> ownership is only withdrawn once loss is detected; that window left ground nothing was drawing.
+> The 48-block radius that suppressed cached terrain around the camera now defaults to zero, so
+> cached terrain is visible up close when the vanilla view distance is turned down. `.vhband
+> overlap` and `.vhnear` carry both.
 
 Current rendering edits world-anchor cached-terrain noise, remove the near-transition
 geometry sink, and replace the old outer cutoff with ownership the mod can actually prove.

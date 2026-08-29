@@ -236,7 +236,7 @@ public class LodStore : SQLiteDBConnection
     /// by the coordinator; runs on the main thread only. A zero colour means "keep what
     /// is stored" - see LodStableColorResolver.
     /// </summary>
-    public System.Func<int, (byte Flags, byte TintSlot, int Color)>? ClassifyBlock;
+    public System.Func<int, (byte Flags, byte TintSlot, int Color, ushort TextureSlot)>? ClassifyBlock;
 
     /// <summary>
     /// A block code to a live block id, or 0 when the registry does not know it.
@@ -281,10 +281,11 @@ public class LodStore : SQLiteDBConnection
     {
         if (ClassifyBlock == null || blockId <= 0) return;
 
-        (byte flags, byte slot, int color) = ClassifyBlock(blockId);
+        (byte flags, byte slot, int color, ushort textureSlot) = ClassifyBlock(blockId);
         LodPaletteEntry e = section.Palette[index];
         e.Flags = flags;
         e.TintSlot = slot;
+        e.TextureSlot = textureSlot;
 
         // Colours captured before they were section-independent were a random pixel of
         // the block's texture, redrawn for every section, which put a hard green/brown

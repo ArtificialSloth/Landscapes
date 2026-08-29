@@ -8,6 +8,8 @@ public static class PackedQuadChecks
         LayoutAndLimits(c);
         AllFacesMatchExpandedMesh(c);
         LevelsAndCoordinateLimits(c);
+        TextureSlotSharesTheColourWord(c);
+        TableColourMatchesTheVertexByteOrder(c);
         MaterialPayloadsAndDegenerates(c);
         Rejections(c);
     }
@@ -62,6 +64,93 @@ public static class PackedQuadChecks
         c.Eq(1f, y, "Y never scales with LOD");
         c.Eq(4096f, z, "L6 reaches the exact far Z edge");
         c.Eq(0x3F332211u, color, "the full colour/tint word survives");
+    }
+
+    /// <summary>
+    /// Word 2 carries either an RGB colour or a block texture slot, and word 0's last spare
+    /// bit says which. The two can share one field because at level 0 a quad's colour already
+    /// is its block's colour, so the slot recovers the same colour from the block table and
+    /// brings the texture rectangle with it - which is what makes real vanilla textures cost
+    /// no extra memory. Everything below is the seam where that could silently go wrong:
+    /// geometry must survive the extra bit, the face must not read it, and an untextured quad
+    /// must be bit-identical to what it was before the flag existed.
+    /// </summary>
+    static void TextureSlotSharesTheColourWord(Check c)
+    {
+        var plain = new uint[LodPackedQuadFormat.WordsPerQuad];
+        var textured = new uint[LodPackedQuadFormat.WordsPerQuad];
+        LodPackedQuadFormat.Encode(plain, LodPackedFace.Top,
+            0, LodSection.GridSize, 1, 1, 0, LodSection.GridSize, 0x00332211, 63);
+        LodPackedQuadFormat.Encode(textured, LodPackedFace.Top,
+            0, LodSection.GridSize, 1, 1, 0, LodSection.GridSize, 0x00332211, 63,
+            textureSlot: 517);
+
+        c.False(LodPackedQuadFormat.IsTextured(plain[0]),
+            "a quad with no slot is not marked textured");
+        c.True(LodPackedQuadFormat.IsTextured(textured[0]),
+            "a quad with a slot is marked textured");
+        c.Eq(plain[0] | 0x8000_0000u, textured[0],
+            "the flag is the only geometry difference, so nothing else can be disturbed");
+        c.Eq(plain[1], textured[1], "heights are untouched by the flag");
+        c.Eq(517, LodPackedQuadFormat.TextureSlot(textured[2]),
+            "the slot survives the colour word exactly");
+        c.Eq(0x3F000000u | 517u, textured[2],
+            "the alpha byte keeps its tint slot and band beside the texture slot");
+
+        // The face lives in bits 28-30 and the flag in 31. A face that read four bits would
+        // decode South as something else the moment a quad became textured.
+        foreach (LodPackedFace face in Enum.GetValues<LodPackedFace>())
+        {
+            var words = new uint[LodPackedQuadFormat.WordsPerQuad];
+            LodPackedQuadFormat.Encode(words, face, 1, 2, 3, 4, 5, 6, 0, 0, textureSlot: 1);
+            LodPackedQuadFormat.DecodeVertex(words, 0, 0, 1,
+                out float x, out float y, out float z, out _);
+            var reference = new uint[LodPackedQuadFormat.WordsPerQuad];
+            LodPackedQuadFormat.Encode(reference, face, 1, 2, 3, 4, 5, 6, 0, 0);
+            LodPackedQuadFormat.DecodeVertex(reference, 0, 0, 1,
+                out float rx, out float ry, out float rz, out _);
+            c.Eq(rx, x, $"{face} X is unchanged by the textured flag");
+            c.Eq(ry, y, $"{face} Y is unchanged by the textured flag");
+            c.Eq(rz, z, $"{face} Z is unchanged by the textured flag");
+        }
+
+        bool refused = false;
+        try
+        {
+            LodPackedQuadFormat.Encode(new uint[LodPackedQuadFormat.WordsPerQuad],
+                LodPackedFace.Top, 0, 1, 0, 1, 0, 1, 0, 0,
+                textureSlot: LodPackedQuadFormat.MaximumTextureSlot + 1);
+        }
+        catch (ArgumentOutOfRangeException) { refused = true; }
+        c.True(refused, "a slot too large for the field is refused rather than truncated");
+    }
+
+    /// <summary>
+    /// A textured quad's colour comes out of the block table rather than out of its vertex,
+    /// so the table must split a stored colour exactly the way the vertex path reads one.
+    ///
+    /// The low byte is RED, which is not the usual convention. Getting it backwards swapped
+    /// red and blue on every textured surface and turned tan sand and brown soil blue across
+    /// the whole of level 0 in 0.3.131. This ties the two decoders to one another rather than
+    /// to a remembered convention.
+    /// </summary>
+    static void TableColourMatchesTheVertexByteOrder(Check c)
+    {
+        const int stored = 0x00405060;
+        (float red, float green, float blue) = LodBlockTextureRegistry.Channels(stored);
+        c.Eq(0x60 / 255f, red, "the table reads the low byte as red");
+        c.Eq(0x50 / 255f, green, "the table reads the middle byte as green");
+        c.Eq(0x40 / 255f, blue, "the table reads the high byte as blue");
+
+        // And the same value, through the encoder the shader actually decodes.
+        var words = new uint[LodPackedQuadFormat.WordsPerQuad];
+        LodPackedQuadFormat.Encode(words, LodPackedFace.Top, 0, 1, 0, 1, 0, 1, stored, 0);
+        c.Eq((uint)(red * 255f), words[2] & 0xFFu,
+            "the packed word's low byte is the same channel the table calls red");
+        c.Eq((uint)(green * 255f), (words[2] >> 8) & 0xFFu,
+            "the packed word's middle byte is the same channel the table calls green");
+        c.Eq((uint)(blue * 255f), (words[2] >> 16) & 0xFFu,
+            "the packed word's high byte is the same channel the table calls blue");
     }
 
     static void MaterialPayloadsAndDegenerates(Check c)

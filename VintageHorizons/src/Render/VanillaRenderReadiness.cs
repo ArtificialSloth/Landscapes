@@ -765,10 +765,19 @@ internal sealed class VanillaRenderReadiness
     /// is exactly what made an earlier diagnostic slow the world join down.
     /// </para>
     /// </summary>
+    /// <param name="extraMarginBlocks">
+    /// Additional overlap beyond the geometric slack. The slack alone answers "can the
+    /// engine still submit this column", which is not the same question as "will the engine
+    /// still be holding this column a moment from now". Vanilla unloads chunks on its own
+    /// schedule, and a column that loses ownership only after it stops drawing leaves ground
+    /// that nothing draws until loss is detected. Widening the denial hands those columns
+    /// back to cached terrain before vanilla drops them, so the handover happens early
+    /// rather than late.
+    /// </param>
     public static bool BeyondVanillaDrawRange(int chunkX, int chunkZ,
-        double cameraX, double cameraZ, float viewDistance) =>
+        double cameraX, double cameraZ, float viewDistance, float extraMarginBlocks = 0f) =>
         ColumnDistanceBlocks(chunkX, chunkZ, cameraX, cameraZ)
-        > Math.Max(0f, viewDistance - SphereCentreSlackBlocks);
+        > Math.Max(0f, viewDistance - SphereCentreSlackBlocks - Math.Max(0f, extraMarginBlocks));
 
     /// <summary>
     /// How far the engine's range measurement can sit beyond this column's nearest face:

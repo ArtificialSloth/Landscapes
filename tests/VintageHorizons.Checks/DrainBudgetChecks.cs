@@ -57,7 +57,9 @@ public static class DrainBudgetChecks
         long expectedSnapshot = section.Runs.LongLength * sizeof(ulong)
             + section.ColumnStart.LongLength * sizeof(int)
             + section.Captured.LongLength
-            + section.Palette.Count * (sizeof(int) + 2L);
+            // Colour, flags, tint slot, and the two-byte texture slot the block texture
+            // table indexes with.
+            + section.Palette.Count * (sizeof(int) + 2L + sizeof(ushort));
         c.Eq(expectedSnapshot, SectionSnapshot.EstimateRetainedBytes(section),
             "mesh snapshot estimates include shared and copied array payloads");
         c.Eq(expectedSnapshot, SectionSnapshot.Of(section).EstimatedRetainedBytes,

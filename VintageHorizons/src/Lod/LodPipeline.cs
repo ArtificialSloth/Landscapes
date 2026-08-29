@@ -28,6 +28,13 @@ public delegate byte LodTintSlotResolver(Block block);
 /// </summary>
 public delegate int LodStableColorResolver(Block block);
 
+/// <summary>
+/// The block's slot in the texture table, or 0 for none. Client-side only: it reads the block
+/// texture atlas, which a server does not have. Resolved on load like the tint slot and never
+/// persisted, so an existing cache gains textures with no re-exploration.
+/// </summary>
+public delegate ushort LodTextureSlotResolver(Block block);
+
 public enum LodForeignQueueOutcome
 {
     Queued,
@@ -79,6 +86,7 @@ public class LodPipeline
 
     /// <summary>Section-independent colour for a block; the server has no atlas and leaves it 0.</summary>
     readonly LodStableColorResolver stableColorFor;
+    readonly LodTextureSlotResolver textureSlotFor;
 
     public LodWorld World { get; }
     public LodWorker Worker { get; }
@@ -172,13 +180,15 @@ public class LodPipeline
     public long WorldEpoch => worldEpoch;
 
     public LodPipeline(ICoreAPI api, ILogger logger, LodPaletteDescriber describePalette,
-        LodTintSlotResolver? tintSlotFor = null, LodStableColorResolver? stableColorFor = null)
+        LodTintSlotResolver? tintSlotFor = null, LodStableColorResolver? stableColorFor = null,
+        LodTextureSlotResolver? textureSlotFor = null)
     {
         this.api = api;
         this.logger = logger;
         this.describePalette = describePalette;
         this.tintSlotFor = tintSlotFor ?? (_ => 0);
         this.stableColorFor = stableColorFor ?? (_ => 0);
+        this.textureSlotFor = textureSlotFor ?? (_ => 0);
         World = new LodWorld();
         Worker = new LodWorker();
         Remote = new LodRemoteKeySet(World);
@@ -289,8 +299,9 @@ public class LodPipeline
         {
             Block? block = blockId > 0 ? api.World.GetBlock(blockId) : null;
             return block == null
-                ? ((byte)0, (byte)0, 0)
-                : (LodBlockPolicy.FlagsFor(block), tintSlotFor(block), stableColorFor(block));
+                ? ((byte)0, (byte)0, 0, (ushort)0)
+                : (LodBlockPolicy.FlagsFor(block), tintSlotFor(block), stableColorFor(block),
+                    textureSlotFor(block));
         };
         // In integrated singleplayer both pipelines share one process and therefore one
         // environment. The guarded crash hook belongs to the client cache only; a server

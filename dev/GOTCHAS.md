@@ -2308,3 +2308,93 @@ Draw-time culling reduced submitted draw calls, but it does not prevent whole-tr
 ### R4 — Silently dropping server requests is never backpressure
 
 The server previously dropped requests when its cache was unavailable or a queue was full. Because clients retained the in-flight markers, enough silent drops stopped all later terrain transfer. Explicit refusal is the settled behavior.
+
+### G119 - A stored palette colour packs red in the LOW byte
+
+**Trigger:** feeding `LodPaletteEntry.Color`, `StableColorOf`, or any stored LOD colour into a new
+consumer.
+
+**Trap:** it is not `0xRRGGBB`. The mesher writes `color & 0xFF` as the RED vertex byte and the
+vertex shader reads it the same way, so the packing is effectively `0xBBGGRR`. A new block-texture
+table decoded it the conventional way, swapping red and blue on every textured surface: tan sand
+(210,180,140) drew as (140,180,210), a light blue, and brown soil as blue-grey. It hit the whole of
+level 0 rather than the band, because a textured quad takes its colour from that table too.
+
+**Do:** decode through `LodBlockTextureRegistry.Channels`, and keep the check that ties it to
+`LodPackedQuadFormat.Encode` rather than to a remembered convention.
+
+### G120 - `TextureSubIdForBlockColor` is not the up face
+
+**Trigger:** asking the engine for "the block's texture" to sample it.
+
+**Trap:** that property answers "what colour represents this block" - for the map, for particles -
+not "what does its top look like". For grass-covered soil it is the SIDE, whose texture is grass
+across its top half and bare dirt across its bottom half. Tiled onto a top face it draws every
+block split between grass and dirt, and its average is far browner than a top face, so
+normalisation against it shifts the colour as well.
+
+It is still worth having as a fallback: switching to it cut blocks with no resolvable texture from
+976 to 46.
+
+**Do:** resolve by face name first (`up`, `all`, `top`), and use the block-colour texture only when
+a block names none of them.
+
+### G121 - `specialSecondTexture` is the side fringe, not the top grass
+
+**Trigger:** compositing the grass overlay that makes soil look grassy.
+
+**Trap:** measured off the game's own `block/plant/grasscoverage/normal.png`, its mean alpha per row
+is 255 for eight rows and then 128 for the remaining twenty-four. It is a grass edge designed to
+hang over dirt down a vertical face. Composited flat onto a top face it draws solid grass across one
+part of every block and half-transparent dirt across the rest. The owner reported "half dirt" twice
+before this was found.
+
+The same file keeps `normal-top.png` at alpha 255 throughout, and a soil block names it under the
+`particletop` texture key.
+
+**Do:** use `particletop` for top faces and treat `specialSecondTexture` as a last resort.
+
+**Do:** read the actual PNG before reasoning about what an overlay contains. Two minutes of
+measuring the alpha profile settled what two builds of inference had not.
+
+### G122 - Correct minification erases the texture you added
+
+**Trigger:** sampling a real block texture on distant terrain and wondering why nothing changed.
+
+**Trap:** a 32-pixel tile shrunk into a few screen pixels is averaged by the hardware down to that
+tile's own mean - which is the entire point of mipmapping. If the texture is applied as variation
+around a block's colour, "texel equals its own mean" is "variation equals one", so the whole feature
+multiplies by one and switching it off is indistinguishable from leaving it on. This happens far
+closer than intuition suggests, because ground is seen at a grazing angle.
+
+**Do:** choose the sample level explicitly rather than letting the hardware infer it, and expose how
+far above the correct level to reach. Physically correct is invisible here.
+
+**Do not** describe this averaging as a safety property. It was presented that way one build before
+it became the central obstacle.
+
+### G123 - Normalise by what is actually sampled, not by what was intended
+
+**Trigger:** dividing a texture sample by an average to preserve a surface's colour.
+
+**Trap:** the average has to describe the exact thing sampled. A grass overlay refused for any
+reason - a different atlas page, a missing texture - while the normalisation had already switched to
+the grass composite means dividing a *soil* texture by a *grass* average. Soil carries more blue
+than grass, so blue inflated roughly threefold and grassy ground went pale.
+
+**Do:** carry both means and let the code that decides whether the overlay is used pick the matching
+one, rather than computing the mean where the decision is not yet known.
+
+### G124 - Vanilla's ground answers for its water, and it is not telling the truth
+
+**Trigger:** using per-chunk ownership to decide whether cached water should draw.
+
+**Trap:** ownership asks whether the engine is drawing a chunk, and the chunk's *ground* answers.
+The engine's water is a separate pass with a shorter reach, so there is a ring where it draws the
+bed and no longer draws the river. Inside that ring the mod suppressed its own water because vanilla
+"owned" the cell, and vanilla drew none - a measured stretch of dry riverbed with sharp
+chunk-aligned edges, in both rivers and lakes.
+
+**Do:** never let ownership suppress cached water, in the fragment shader or in the whole-section
+skip. Cached water underneath vanilla's own water is hidden and costs a little overdraw; cached
+water missing is a hole in a river.

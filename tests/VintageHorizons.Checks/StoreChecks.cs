@@ -226,8 +226,8 @@ public static class StoreChecks
 
         var store = new LodStore(null!);
         store.ClassifyBlock = blockId => blockId == 7
-            ? ((byte)LodPaletteEntry.FlagWater, (byte)3, 0x00AABBCC)   // ordinary block
-            : ((byte)0, (byte)5, 0);                                   // colour is positional
+            ? ((byte)LodPaletteEntry.FlagWater, (byte)3, 0x00AABBCC, (ushort)11)  // ordinary block
+            : ((byte)0, (byte)5, 0, (ushort)0);                                   // colour is positional
 
         store.ResolvePendingPalette(section, code => code.EndsWith("soil-low-normal") ? 7 : 8);
 

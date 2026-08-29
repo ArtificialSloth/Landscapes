@@ -148,6 +148,7 @@ public static class CaveSpanChecks
                 PaletteColors = new[] { 0, unchecked((int)0xFF808080), unchecked((int)0xFFC05030) },
                 PaletteFlags = new byte[] { 0, 0, LodPaletteEntry.FlagWater },
                 PaletteTintSlots = new byte[] { 0, 0, 0 },
+                PaletteTextureSlots = new ushort[] { 0, 0, 0 },
             };
         }
     }

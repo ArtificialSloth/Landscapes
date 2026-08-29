@@ -2,6 +2,41 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
+## Terrain Slabs: the next piece of work
+
+The owner's world was generated with **Terrain Slabs**, a mod that adds half-block slabs of every
+terrain block to smooth the landscape, and reports that Vintage Horizons handles them poorly. Not
+investigated at all - no symptom detail, no capture, no source trace. Opened as the next session's
+subject at the owner's direction.
+
+Worth knowing before starting: LOD runs are packed as `paletteId | yTop | yBottom` with Y in
+QUARTER-block units in the packed quad format, so half-block geometry is representable; the question
+is what capture and meshing actually do with a slab block, not whether the format can hold it.
+
+## Seam blending and block textures: what is unproven
+
+Shipped and human-tested through 0.3.139, but several things were never measured or exercised.
+
+- **No benchmark was run.** The band costs one texture fetch inside it plus a bounded field rebuild;
+  block textures add a fetch on textured fragments and a mip-level computation. Both are expected to
+  be small and neither is measured. A paired route would settle it.
+- **Only the packed render path draws block textures.** The legacy path and the non-packed indirect
+  path carry no block slots and are unchanged; they have not been exercised against this work.
+- **Near-field suppression now defaults to zero.** The artefact it guarded against - coarse cached
+  geometry at arm's length in cells vanilla never proves, typically underground - has not been
+  re-tested. `.vhnear 48` restores it.
+- **The unload-hole fix is a mitigation.** Taking ground back 16 blocks earlier closed the reported
+  symptom; whether loss detection itself is too slow was never established. `.vhholes` is the
+  diagnostic if it recurs.
+- **46 blocks resolve no texture and 241 keep per-position colour.** Neither figure has been checked
+  against what ground it actually covers.
+- **Grass keeps the established olive tone.** The distant colour pipeline blends soil and grass by
+  the SIDE texture's coverage, which is long-standing tuned behaviour and was deliberately not
+  touched while the texture work was in flight. If grass now reads correct in pattern but brown in
+  tone, this is where to look.
+- Water, thin cover and cliff sides: water and plants are untextured by design, and side faces use
+  the up-face texture rather than a side one.
+
 ## Renderer optimisation sweep is closed; one optional subtree A/B remains
 
 Session 61 measured every unfunded candidate before building it. Sixteen-MiB pages saved only two

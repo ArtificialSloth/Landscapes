@@ -40,6 +40,108 @@ uniform int maskVerticalChunks;
 // 1 paints hidden pixels red instead of hiding them. Diagnostic only.
 uniform int maskDebug;
 
+// ---- Blend band --------------------------------------------------------------
+//
+// Cached terrain immediately outside the vanilla seam is made to resemble vanilla, relaxing
+// back to its own appearance over a band, so the eye has no single line to find.
+//
+// The difference is a TEXTURE difference, not a colour one, and two attempts to treat it as a
+// colour failed in play before that stuck. Vanilla terrain is never a single flat colour:
+// every block shows a texture tile. Cached terrain is one averaged colour per block. Matching
+// the average cannot close a difference that is not in the average, which is why a per-channel
+// gain and then a darken/saturate pair each looked right on the terrain they were tuned on and
+// worse than nothing on the next one. bandSpeckle below is the term that addresses the actual
+// defect; darken and saturate remain, defaulting to neutral, because the average may still be
+// slightly off once the variation is there.
+//
+// The band spreads what remains over many small steps; it does not delete it.
+//
+// One texel per 8x8 block cell, holding distance from the nearest vanilla-owned ground in
+// cells. 8 blocks is a quarter of a vanilla chunk: fine enough to read as a smaller
+// continuation of the game's blocky idiom, and never finer than one world block, which is
+// the rule an earlier smooth radial transition broke - a gradient below the world's own grid
+// reads as a GPU effect painted over the terrain rather than as terrain. Nothing here is a
+// function of distance from the camera. Addressing must match
+// VanillaSeamDistanceField.TexelIndex.
+uniform sampler2D seamField;
+uniform int bandEnabled;
+uniform int bandMinCellX;
+uniform int bandMinCellZ;
+uniform int bandWidthCells;
+uniform int bandDepthCells;
+uniform int bandCapacity;
+
+// Band reach in blocks, the ramp's step size in blocks, and how much of the correction to
+// apply at the seam. Step is quantised no finer than the stored cell.
+uniform float bandWidthBlocks;
+uniform float bandStepBlocks;
+uniform float bandStrength;
+
+// How far the measured seam sits inside the seam a player can actually see, in blocks.
+// Ownership is deliberately denied for the outermost chunk and a half of live vanilla
+// terrain - the engine range-culls whole meshes and can stop drawing a chunk it still
+// reports - so the field's zero is that much short of where vanilla's ground really ends.
+// Without this the full correction would land underneath live vanilla, where nothing can
+// see it, and the visible seam would get only part of it.
+uniform float bandInnerBlocks;
+
+// Two operators applied at full weight, both functions of the pixel rather than assertions
+// about it. Darken is the measured luminance ratio at the seam; saturate is how much further
+// from grey vanilla sits once both sides are normalised by their own luminance. A per-channel
+// red/green/blue gain was tried first and failed in play: three multipliers tuned on grass
+// encode grassland's own colour, so carrying them to sand applied grassland's correction to a
+// colour that was never grassland.
+uniform float bandDarken;
+uniform float bandSaturate;
+
+// The one that matters. Vanilla terrain is never a single flat colour: every block shows a
+// texture tile, and at seam distances that reads as fine per-block speckle. Cached terrain is
+// one averaged colour per block with nothing on top of it, so the transition is speckled to
+// perfectly flat, and no adjustment to the average can close a difference that is not in the
+// average. This puts the variation back - not by sampling vanilla's textures, which cached
+// meshes carry no identity to look up, but by reproducing their statistics: one random value
+// per world block, faded out across the band so it hands over to flat cached terrain
+// gradually instead of at a line.
+//
+// Per BLOCK, never finer. Vanilla's own texture detail is below a pixel at this range anyway,
+// and anything varying below the world's grid reads as an effect painted over the terrain.
+uniform float bandSpeckle;
+
+// 1 paints the band's weight instead of correcting it, so its shape can be judged from above
+// before any colour decision is made. Diagnostic only.
+uniform int bandDebug;
+
+#ifdef VH_PACKED
+// The game's own block atlas, sampled directly. Not a recreation of vanilla's textures and
+// not another approximation of their average - the real texels, on cached ground, faded in
+// across the seam band by the same weight above.
+//
+// The rectangle arrives flat from the vertex stage; it is constant across a quad, and a quad
+// can span forty blocks, so texture coordinates are derived from world position here rather
+// than stored. That is also why the wrap needs explicit gradients: fract() tears once per
+// block, and a GPU left to infer the derivative from it picks the coarsest mip on every
+// block boundary and draws a grid of grey lines.
+uniform sampler2D blockAtlas;
+uniform float blockAtlasSize;
+uniform int blockTextureEnabled;
+uniform float blockTextureStrength;
+uniform float blockTextureMipLimit;
+
+// How many mip levels SHARPER than the distance warrants to sample.
+//
+// Correct minification is why a faithful texture does nothing here: shrink a 32-pixel tile
+// into three screen pixels and the hardware hands back that tile's average, which - since the
+// texture is applied as variation around the block's colour - multiplies by one and changes
+// nothing at all. The detail is thrown away before it can be seen, and this reaches back up
+// the mip chain for it. Zero is physically correct and invisible; higher is deliberately
+// wrong, trading aliasing for detail the eye can actually resolve.
+uniform float blockTextureDetail;
+flat in vec4 vhBlockRect;
+flat in vec3 vhBlockMean;
+flat in vec4 vhBlockOverlay;
+#endif
+// ------------------------------------------------------------------------------
+
 // 1 applies vanilla's own rule that an up-facing surface never darkens with the sun.
 uniform int flatTopLight;
 
@@ -160,7 +262,14 @@ void main()
     // address outside the tracked window, above or below the world, or reading a
     // cache-owned texel falls through to normal cached drawing: the mask can only take
     // ground away from the cache where vanilla has proven it draws there.
-    if (maskEnabled == 1)
+    // Water is exempt. Ownership is decided by whether the engine is drawing a chunk, which
+    // its ground answers for, but the engine's water is a separate pass with a shorter reach:
+    // there is a ring where vanilla draws the bed and no longer draws the river, and
+    // suppressing ours there left a stretch of dry riverbed. Our water always draws now -
+    // hidden underneath vanilla's where vanilla has any, and the only water there is where it
+    // does not. It can only ever add water back.
+    int ownershipBand = int(vertexColor.a * 255.0 + 0.5) / TINT_SLOTS;
+    if (maskEnabled == 1 && ownershipBand != 1)
     {
         int cellX = maskSectionOriginX + int(floor(sectionLocal.x / 32.0));
         int cellY = int(floor(sectionLocal.y / 32.0));
@@ -187,6 +296,53 @@ void main()
                 discard;
             }
         }
+    }
+
+    // How far this fragment is from vanilla's own ground, as a 0..1 ramp: 1 at the seam,
+    // 0 at the far edge of the band. Derived from the same integer section origin plus
+    // section-local offset the ownership test above uses, for the same reason - a summed
+    // world coordinate rounds a fragment near a cell edge onto its neighbour at large world
+    // coordinates. Cells outside the field's window are ordinary cached terrain.
+    float bandWeight = 0.0;
+    if (bandEnabled == 1)
+    {
+        int fieldX = maskSectionOriginX * 4 + int(floor(sectionLocal.x / 8.0));
+        int fieldZ = maskSectionOriginZ * 4 + int(floor(sectionLocal.z / 8.0));
+        if (fieldX >= bandMinCellX && fieldX < bandMinCellX + bandWidthCells
+            && fieldZ >= bandMinCellZ && fieldZ < bandMinCellZ + bandDepthCells)
+        {
+            int fieldWrap = bandCapacity - 1;
+            ivec2 fieldTexel = ivec2(fieldX & fieldWrap, fieldZ & fieldWrap);
+            float seamCells = floor(texelFetch(seamField, fieldTexel, 0).r * 255.0 + 0.5);
+            // Measured from the ownership edge, then moved out to the edge a player sees.
+            float seamBlocks = max(0.0, seamCells * 8.0 - bandInnerBlocks);
+
+            // Quantise to whole steps so the ramp reads as terrain rather than as a smooth
+            // gradient. Never finer than the stored cell: below one world block is the
+            // failure mode this whole design exists to avoid. The subtraction above cannot
+            // break that - the distance itself is constant across each 8-block cell, so this
+            // only decides which step a whole cell falls into.
+            float bandStep = max(8.0, bandStepBlocks);
+            float stepped = floor(seamBlocks / bandStep) * bandStep;
+            bandWeight = clamp(1.0 - stepped / max(1.0, bandWidthBlocks), 0.0, 1.0);
+        }
+    }
+
+    // Shape before colour. Painting the weight answers "is the ring the right shape and does
+    // the stepping read as blocky" without any correction being involved, so a bad shape and
+    // a bad correction cannot be mistaken for one another.
+    if (bandDebug == 1 && bandWeight > 0.0)
+    {
+        vec3 ramp = bandWeight > 0.5
+            ? mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), (bandWeight - 0.5) * 2.0)
+            : mix(vec3(0.0, 0.6, 1.0), vec3(1.0, 1.0, 0.0), bandWeight * 2.0);
+        outColor = vec4(ramp, 1.0);
+        outGlow = vec4(0.0);
+#if SSAOLEVEL > 0
+        outGNormal = vec4(0.0);
+        outGPosition = vec4(0.0);
+#endif
+        return;
     }
 
     // Flat-shaded facet normal from position derivatives - no normals in the mesh.
@@ -229,6 +385,69 @@ void main()
     vec3 albedo = vertexColor.rgb * tint;
     float outAlpha = band == 2 ? THIN_ALPHA : (band == 1 ? WATER_ALPHA : 1.0);
 
+#ifdef VH_PACKED
+    // Real vanilla texels, where the band asks for them.
+    if (!translucent && blockTextureEnabled == 1 && bandWeight > 0.0
+        && vhBlockRect.z > vhBlockRect.x)
+    {
+        // Tile the block's own texture once per world block, on whichever plane this face
+        // lies in. terrainPos is the stable world position, so the pattern is anchored to
+        // the ground rather than to the camera.
+        vec2 tile = abs(normal.y) > 0.5
+            ? terrainPos.xz
+            : (abs(normal.x) > 0.5 ? vec2(terrainPos.z, -terrainPos.y)
+                                   : vec2(terrainPos.x, -terrainPos.y));
+        vec2 rectSize = vhBlockRect.zw - vhBlockRect.xy;
+        vec2 blockUv = vhBlockRect.xy + fract(tile) * rectSize;
+        vec2 duvdx = dFdx(tile) * rectSize;
+        vec2 duvdy = dFdy(tile) * rectSize;
+
+        // How far into the mip chain this fragment is asking to go. Deep mips blend a
+        // block's tile into its neighbours' in the shared atlas, which would put another
+        // block's colour on this ground, so past a limit the texture bows out and the
+        // averaged colour - what a fully minified texture converges to anyway - takes over.
+        // That is also free performance: the far field never pays for a texture fetch.
+        //
+        // The limit cannot be cautious. The seam sits hundreds of blocks out, where one block
+        // covers a few pixels and a 32-pixel tile is already asking for mip three or four, so
+        // a low limit would remove the texture at exactly the distance it exists for.
+        vec2 footprint = max(abs(duvdx), abs(duvdy)) * blockAtlasSize;
+        float mipWanted = log2(max(max(footprint.x, footprint.y), 1.0));
+        float mipFade = clamp(blockTextureMipLimit - mipWanted, 0.0, 1.0);
+
+        float textureAmount = bandWeight * clamp(blockTextureStrength, 0.0, 1.0) * mipFade;
+        if (textureAmount > 0.0)
+        {
+            // Variation around the block's colour, never the colour itself. Dividing the
+            // texel by its own texture's mean leaves a number that is 1 where the texture is
+            // average and swings either side of it where the texture has detail, so the
+            // ground keeps exactly the colour it had and gains the pattern. Taking the texel
+            // directly instead drew grass as bare soil: the green is an overlay composited
+            // over a brown base, and the base is what the atlas holds.
+            // Explicit level, not the inferred one. fract() tears once per block, so a GPU
+            // left to derive the level itself picks the coarsest mip on every block boundary
+            // and draws a grid of grey lines; and the whole point here is to choose a level
+            // sharper than the footprint asks for anyway.
+            float sampleLod = max(mipWanted - blockTextureDetail, 0.0);
+            vec3 texel = textureLod(blockAtlas, blockUv, sampleLod).rgb;
+
+            // Grass over soil, composited exactly the way the engine's own top-soil shader
+            // does it: soil * (1 - grass.a) + grass * grass.a, per pixel. The overlay tiles
+            // on the same block grid, so it reuses the same fractional coordinate.
+            if (vhBlockOverlay.z > vhBlockOverlay.x)
+            {
+                vec2 overlaySize = vhBlockOverlay.zw - vhBlockOverlay.xy;
+                vec4 overlayTexel = textureLod(
+                    blockAtlas, vhBlockOverlay.xy + fract(tile) * overlaySize, sampleLod);
+                texel = mix(texel, overlayTexel.rgb, overlayTexel.a);
+            }
+            vec3 detail = texel / max(vhBlockMean, vec3(0.02));
+            albedo *= mix(vec3(1.0), detail, textureAmount);
+        }
+    }
+#endif
+
+
     if (!translucent) {
         float upness = clamp(normal.y, 0.0, 1.0);
         float snowMix = smoothstep(snowLineY, snowLineY + 24.0, yLevel) * upness;
@@ -240,6 +459,30 @@ void main()
         float period = max(4.0, columnBlocks * 6.0);
         float n = valuenoise(terrainPos / period);
         albedo *= 1.0 + 0.10 * (n - 0.5);
+    }
+
+    // Wear vanilla's colouring at the seam and relax outward. Land only: the owner reports
+    // cached water surrounded by cached water already looks right, and the water defect at
+    // the transition is depth fighting on the bed rather than the surface's colour.
+    // Applied to albedo rather than to the finished pixel so it passes through lighting and
+    // fog exactly as the surface's own colour does.
+    if (!translucent && bandWeight > 0.0) {
+        float bandAmount = bandWeight * clamp(bandStrength, 0.0, 1.0);
+
+        // One value per world block. The coordinate is wrapped to a 256-block period first:
+        // terrainPos runs to hundreds of thousands of blocks, where a float hash loses its
+        // low bits and collapses into visible banding, and a 256-block repeat of random
+        // per-block speckle is not something an eye can find.
+        vec3 speckleCell = mod(floor(terrainPos), 256.0);
+        float speckle = fract(
+            sin(dot(speckleCell, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+        albedo *= 1.0 + bandSpeckle * (speckle - 0.5) * 2.0 * bandAmount;
+
+        // Rec. 709 luminance, so the split into "how bright" and "how far from grey" matches
+        // what the eye weights rather than a flat channel average.
+        float bandLuma = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+        vec3 saturated = vec3(bandLuma) + (albedo - vec3(bandLuma)) * bandSaturate;
+        albedo = mix(albedo, saturated, bandAmount) * mix(1.0, bandDarken, bandAmount);
     }
 
     // Vanilla's light term, derived by reading applyLight in fogandlight.vsh for the

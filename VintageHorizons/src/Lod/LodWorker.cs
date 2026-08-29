@@ -13,6 +13,7 @@ public class SectionSnapshot
     public required int[] PaletteColors;
     public required byte[] PaletteFlags;
     public required byte[] PaletteTintSlots;
+    public required ushort[] PaletteTextureSlots;
 
     /// <summary>
     /// Array payload retained by a mesh job. Runs and column offsets are immutable shared
@@ -21,7 +22,8 @@ public class SectionSnapshot
     /// </summary>
     public long EstimatedRetainedBytes => EstimateRetainedBytes(
         Runs.LongLength, ColumnStart.LongLength, Captured.LongLength,
-        PaletteColors.LongLength, PaletteFlags.LongLength, PaletteTintSlots.LongLength);
+        PaletteColors.LongLength, PaletteFlags.LongLength, PaletteTintSlots.LongLength,
+        PaletteTextureSlots.LongLength);
 
     public Span<ulong> ColumnRuns(int col) =>
         Runs.AsSpan(ColumnStart[col], ColumnStart[col + 1] - ColumnStart[col]);
@@ -31,11 +33,13 @@ public class SectionSnapshot
         var colors = new int[s.Palette.Count];
         var flags = new byte[s.Palette.Count];
         var slots = new byte[s.Palette.Count];
+        var textureSlots = new ushort[s.Palette.Count];
         for (int i = 0; i < s.Palette.Count; i++)
         {
             colors[i] = s.Palette[i].Color;
             flags[i] = s.Palette[i].Flags;
             slots[i] = s.Palette[i].TintSlot;
+            textureSlots[i] = s.Palette[i].TextureSlot;
         }
         return new SectionSnapshot
         {
@@ -45,22 +49,24 @@ public class SectionSnapshot
             PaletteColors = colors,
             PaletteFlags = flags,
             PaletteTintSlots = slots,
+            PaletteTextureSlots = textureSlots,
         };
     }
 
     public static long EstimateRetainedBytes(LodSection s) => EstimateRetainedBytes(
         s.Runs.LongLength, s.ColumnStart.LongLength, s.Captured.LongLength,
-        s.Palette.Count, s.Palette.Count, s.Palette.Count);
+        s.Palette.Count, s.Palette.Count, s.Palette.Count, s.Palette.Count);
 
     static long EstimateRetainedBytes(long runs, long columnStarts, long captured,
-        long paletteColors, long paletteFlags, long paletteTintSlots)
+        long paletteColors, long paletteFlags, long paletteTintSlots, long paletteTextureSlots)
     {
         long bytes = SaturatingMultiply(runs, sizeof(ulong));
         bytes = SaturatingAdd(bytes, SaturatingMultiply(columnStarts, sizeof(int)));
         bytes = SaturatingAdd(bytes, captured);
         bytes = SaturatingAdd(bytes, SaturatingMultiply(paletteColors, sizeof(int)));
         bytes = SaturatingAdd(bytes, paletteFlags);
-        return SaturatingAdd(bytes, paletteTintSlots);
+        bytes = SaturatingAdd(bytes, paletteTintSlots);
+        return SaturatingAdd(bytes, SaturatingMultiply(paletteTextureSlots, sizeof(ushort)));
     }
 
     static long SaturatingMultiply(long value, int factor) =>

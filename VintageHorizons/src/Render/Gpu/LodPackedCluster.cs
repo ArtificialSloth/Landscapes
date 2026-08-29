@@ -83,7 +83,8 @@ internal sealed class LodPackedClusterBuilder
         int z1,
         int columnBlocks,
         int color,
-        byte alpha)
+        byte alpha,
+        int textureSlot = 0)
     {
         if (columnBlocks <= 0) throw new ArgumentOutOfRangeException(nameof(columnBlocks));
         if (x0 < 0 || x1 < x0 || x1 > LodSection.GridSize
@@ -113,7 +114,7 @@ internal sealed class LodPackedClusterBuilder
                 LodPackedQuadFormat.Append(
                     cells[cell], face,
                     splitX0, splitX1, y0, y1, splitZ0, splitZ1,
-                    color, alpha);
+                    color, alpha, textureSlot);
                 bounds[cell].Include(
                     splitX0 * columnBlocks, y0, splitZ0 * columnBlocks,
                     splitX1 * columnBlocks, y1, splitZ1 * columnBlocks);

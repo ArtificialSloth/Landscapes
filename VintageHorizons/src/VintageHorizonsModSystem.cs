@@ -83,6 +83,12 @@ public class VintageHorizonsModSystem : ModSystem
 
     /// <summary>Block -> live tint slot; shared by capture, cache loads and the renderer.</summary>
     readonly LodTintRegistry tints = new();
+
+    /// <summary>
+    /// Block -> where that block's texture lives in the game's own atlas. Built as sections
+    /// resolve, read by the renderer to fill the GPU table.
+    /// </summary>
+    LodBlockTextureRegistry blockTextures = null!;
     long tickListenerId;
 
     readonly BlockPos paletteSamplePos = new(0, 0, 0);
@@ -161,9 +167,15 @@ public class VintageHorizonsModSystem : ModSystem
         LodWorld.SetLevelThresholds(LodWorld.NormalizeLevelThresholds(
             config.LodThresholds, config.DetailDistance));
 
+        blockTextures = new LodBlockTextureRegistry(ResolveBlockTexture);
         pipeline = new LodPipeline(capi, Mod.Logger, DescribePalette,
             block => (byte)TintSlotOf(block),
-            block => block.EntityClass != null ? 0 : StableColorOf(block));
+            block => block.EntityClass != null ? 0 : StableColorOf(block),
+            // The stable colour travels with the slot: a textured quad carries the slot
+            // INSTEAD of its colour, in the same field, so the table has to hand the colour
+            // back wherever the texture is not shown.
+            block => (ushort)blockTextures.SlotFor(
+                block, block.EntityClass != null ? 0 : StableColorOf(block)));
         pipeline.TrackPhaseAllocations = allocationTelemetryEnabled;
 
         // Repairs a cache written while a block lookup was poisoned, which saved sections
@@ -172,7 +184,8 @@ public class VintageHorizonsModSystem : ModSystem
         pipeline.RepairUncoloredPalette = section => LodPaletteRepair.Fill(section, AtlasColorOf);
         pipeline.RecolorForeignSection = RecolorForeignSection;
         renderer = new LodTerrainRenderer(
-            capi, pipeline.World, pipeline.Worker, tints, () => pipeline.WorldEpoch)
+            capi, pipeline.World, pipeline.Worker, tints, () => pipeline.WorldEpoch,
+            blockTextures)
         {
             AutoUnpause = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOUNPAUSE") == "1",
             TrackPhaseAllocations = allocationTelemetryEnabled,
@@ -776,6 +789,121 @@ public class VintageHorizonsModSystem : ModSystem
     /// with red and blue exchanged. Both texture reads here go through `GetAverageColor`,
     /// so both are in the same order as everything else the mod stores.
     /// </summary>
+    /// <summary>
+    /// Where a block's colour texture sits in the atlas, and what that texture averages to.
+    ///
+    /// `TextureSubIdForBlockColor` is the engine's own answer for which of a block's textures
+    /// represents it, so this asks rather than guessing at names like "up" or "side" - guessing
+    /// left 976 blocks with no texture at all.
+    ///
+    /// The mean travels with it because the texture is applied as variation around the block's
+    /// colour rather than as the colour. Grass-covered ground is the case that forces it: its
+    /// base texture is brown soil and the green is an overlay composited on top, so a shader
+    /// that took the texture at face value drew a brown band across the world.
+    /// </summary>
+    LodBlockTextureRegistry.BlockTexture ResolveBlockTexture(Block block)
+    {
+        // The UP face, explicitly. `TextureSubIdForBlockColor` is the engine's generic "what
+        // colour is this block" texture and for grass-covered soil that is the SIDE - which is
+        // grass across its top half and bare dirt across its bottom half. Tiled onto a top
+        // face that draws every block split diagonally between grass and dirt, which is
+        // exactly what the owner reported. Asking by face name is right; falling back to the
+        // generic texture is what keeps coverage high for blocks that name their faces
+        // differently.
+        CompositeTexture? face = null;
+        int subId = -1;
+        if (block.Textures != null)
+        {
+            foreach (string name in UpFaceTextureNames)
+            {
+                if (!block.Textures.TryGetValue(name, out CompositeTexture? candidate)) continue;
+                int candidateId = candidate?.Baked?.TextureSubId ?? -1;
+                if (!IsUsableAtlasTexture(candidateId)) continue;
+                face = candidate;
+                subId = candidateId;
+                break;
+            }
+        }
+        if (subId < 0)
+        {
+            subId = block.TextureSubIdForBlockColor;
+            if (!IsUsableAtlasTexture(subId)) return default;
+            face = TextureFor(block, subId);
+        }
+
+        TextureAtlasPosition position = capi.BlockTextureAtlas.Positions[subId];
+        TextureMean mean = MeanOf(face, subId);
+
+        // Grass-covered ground is soil under a grass texture composited by the grass's own
+        // per-pixel alpha - the same arithmetic the colour already uses. Without the overlay
+        // the shader draws correctly coloured ground wearing dirt's pattern, which close up
+        // reads as dirt.
+        // The TOP grass, not the side fringe. `specialSecondTexture` is the overlay the engine
+        // uses down a block's sides: measured off the game's own normal.png, it is fully opaque
+        // for eight rows and then half-transparent for the remaining twenty-four, which is a
+        // grass edge hanging over dirt. Painted flat onto a top face it draws every block half
+        // grass and half dirt - exactly what the owner reported twice. The game keeps a
+        // separate fully-opaque texture for the top, and the block names it under this key.
+        TextureAtlasPosition? overlayPosition = null;
+        TextureMean composite = mean;
+        if (block.RenderPass == EnumChunkRenderPass.TopSoil
+            && block.Textures != null
+            && TryTopGrassTexture(block, out CompositeTexture? overlay))
+        {
+            int overlayId = overlay?.Baked?.TextureSubId ?? -1;
+            if (IsUsableAtlasTexture(overlayId))
+            {
+                TextureMean grass = MeanOf(overlay, overlayId);
+                if (grass.Coverage > 0f)
+                {
+                    overlayPosition = capi.BlockTextureAtlas.Positions[overlayId];
+                    // Offered, not imposed: the registry refuses an overlay on another atlas
+                    // page, and normalising by a composite the shader never samples is what
+                    // turned grassy ground pale.
+                    composite = new TextureMean(
+                        LodTopSoil.Composite(mean.R, grass.R, grass.Coverage),
+                        LodTopSoil.Composite(mean.G, grass.G, grass.Coverage),
+                        LodTopSoil.Composite(mean.B, grass.B, grass.Coverage),
+                        1f);
+                }
+            }
+        }
+
+        return new LodBlockTextureRegistry.BlockTexture(
+            position, overlayPosition, PackMean(mean), PackMean(composite));
+    }
+
+    /// <summary>
+    /// The grass texture that belongs on a block's TOP face.
+    ///
+    /// `particletop` is where the game names it - the same fully-opaque texture it throws as
+    /// particles when you walk on grass. `specialSecondTexture` is the fallback and is the
+    /// SIDE fringe, so it is only worth taking when a block names nothing better; on a top
+    /// face it draws grass over one half and bare soil under the other.
+    /// </summary>
+    static bool TryTopGrassTexture(Block block, out CompositeTexture? texture)
+    {
+        foreach (string name in TopGrassTextureNames)
+        {
+            if (block.Textures!.TryGetValue(name, out texture) && texture?.Baked != null) return true;
+        }
+        texture = null;
+        return false;
+    }
+
+    static readonly string[] TopGrassTextureNames = { "particletop", "specialSecondTexture" };
+
+    /// <summary>
+    /// Face names to try for the up face, in order. Ground seen from above is nearly all top
+    /// faces, and a block that names none of these falls back to the generic block colour.
+    /// </summary>
+    static readonly string[] UpFaceTextureNames = { "up", "all", "top" };
+
+    static int PackMean(TextureMean mean) => unchecked((int)0xFF000000)
+        | Math.Clamp((int)(mean.B + 0.5f), 0, 255) << 16
+        | Math.Clamp((int)(mean.G + 0.5f), 0, 255) << 8
+        | Math.Clamp((int)(mean.R + 0.5f), 0, 255);
+
     bool TryTopSoilColor(Block block, out int composite, out LodUntintedShare share)
     {
         composite = 0;
@@ -1867,6 +1995,242 @@ public class VintageHorizonsModSystem : ModSystem
                 return TextCommandResult.Success(
                     $"[VintageHorizons] paint mode {(renderer.MaskDebugPaint ? "on" : "off")}. " +
                     "Red is terrain the mask is hiding. A gap that stays empty is not the mask.");
+            });
+
+        // Session-only, like the other comparison switches. The point of shipping these is
+        // that the owner stands at the seam and turns them until it disappears; the values
+        // that survive that become defaults in source, so persisting them would only make
+        // the next build disagree with what it says it does.
+        capi.ChatCommands.Create("vhband")
+            .WithDescription("Blend the seam between game terrain and distant terrain. "
+                + "No argument reports the settings. on | off | shape | speckle | width | step | inner | strength | darken | saturate | sink | overlap.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
+                      capi.ChatCommands.Parsers.OptionalWord("value"),
+                      capi.ChatCommands.Parsers.OptionalWord("green"),
+                      capi.ChatCommands.Parsers.OptionalWord("blue"))
+            .HandleWith(args =>
+            {
+                if (renderer == null)
+                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+
+                string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
+                string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
+
+                switch (part)
+                {
+                    case "":
+                        return TextCommandResult.Success(renderer.DescribeBlendBand());
+
+                    case "on":
+                    case "off":
+                        renderer.BandEnabled = part == "on";
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] blending {part}. " + renderer.DescribeBlendBand());
+
+                    case "shape":
+                        // Judging the ring's outline is a different question from judging its
+                        // colour, and answering them separately is what stops a bad shape and
+                        // a bad correction being mistaken for one another.
+                        if (value is not ("on" or "off"))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] shape view {(renderer.BandDebugPaint ? "on" : "off")}. "
+                                + "On paints the blending band by strength - red at the seam, "
+                                + "through yellow, to blue at its outer edge - so you can look down "
+                                + "at its shape without any colour change being involved.");
+                        renderer.BandDebugPaint = value == "on";
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] shape view {(renderer.BandDebugPaint ? "on" : "off")}.");
+
+                    case "width":
+                        if (!float.TryParse(value, out float width))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] band width {renderer.BandWidthBlocks:0} blocks. "
+                                + "Give a number of blocks. Wider hides a bigger colour step but "
+                                + "covers more ground.");
+                        renderer.BandWidthBlocks = GameMath.Clamp(width, 8f, 2048f);
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] band width {renderer.BandWidthBlocks:0} blocks.");
+
+                    case "step":
+                        if (!float.TryParse(value, out float step))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] step {renderer.BandStepBlocks:0} blocks. "
+                                + "8, 16 or 32. Bigger steps read as chunkier terrain; there is "
+                                + "deliberately no smooth setting, because a ramp finer than one "
+                                + "block stops looking like ground.");
+                        renderer.BandStepBlocks = GameMath.Clamp(step, 8f, 32f);
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] step {renderer.BandStepBlocks:0} blocks.");
+
+                    case "inner":
+                        if (!float.TryParse(value, out float inner))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] inner edge {renderer.BandInnerBlocks:0} blocks. "
+                                + "Distant terrain deliberately overlaps the last chunk and a half "
+                                + "of the game's own terrain, so the blending starts that far inside "
+                                + "the seam you can see. Raise it if the blending looks like it "
+                                + "starts too far out, lower it if it starts too far in.");
+                        renderer.BandInnerBlocks = GameMath.Clamp(inner, 0f, 256f);
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] inner edge {renderer.BandInnerBlocks:0} blocks.");
+
+                    case "strength":
+                        if (!float.TryParse(value, out float strength))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] strength {renderer.BandStrength:0.00}. "
+                                + "0 to 1. How much of the correction lands right at the seam.");
+                        renderer.BandStrength = GameMath.Clamp(strength, 0f, 1f);
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] strength {renderer.BandStrength:0.00}.");
+
+                    case "speckle":
+                        if (!float.TryParse(value, out float speckle))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] speckle {renderer.BandSpeckle:0.00}. "
+                                + "How much block-to-block variation distant terrain gets at the "
+                                + "seam, fading out across the band. The game's ground is never one "
+                                + "flat colour; this is what stops ours meeting it as a flat sheet. "
+                                + "0 turns it off.");
+                        renderer.BandSpeckle = GameMath.Clamp(speckle, 0f, 1f);
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] speckle {renderer.BandSpeckle:0.00}.");
+
+                    case "darken":
+                        if (!float.TryParse(value, out float darken))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] darken {renderer.BandDarken:0.00}. "
+                                + "How much dimmer distant terrain is made at the seam. Below 1 "
+                                + "darkens it. This works on whatever colour is already there, so "
+                                + "it does not carry one area's colour into another.");
+                        renderer.BandDarken = GameMath.Clamp(darken, 0.5f, 1.5f);
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] darken {renderer.BandDarken:0.00}.");
+
+                    case "saturate":
+                        if (!float.TryParse(value, out float saturate))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] saturate {renderer.BandSaturate:0.00}. "
+                                + "How much more colourful, less washed out, distant terrain is "
+                                + "made at the seam. Above 1 pushes it further from grey without "
+                                + "deciding which colour it should be.");
+                        renderer.BandSaturate = GameMath.Clamp(saturate, 0.5f, 2.5f);
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] saturate {renderer.BandSaturate:0.00}.");
+
+                    case "overlap":
+                        if (!float.TryParse(value, out float overlap))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] overlap +{renderer.OverlapMarginBlocks:0} blocks. "
+                                + "How early distant terrain takes back ground from the game's own, "
+                                + "on top of the margin that already exists. This is the hole guard: "
+                                + "raise it if ground goes missing when the game unloads chunks, "
+                                + "lower it if the two terrains overlap more than they need to.");
+                        renderer.OverlapMarginBlocks = GameMath.Clamp(overlap, 0f, 256f);
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] overlap +{renderer.OverlapMarginBlocks:0} blocks. "
+                            + "Applies as the game re-checks chunks, within a second or so.");
+
+                    case "sink":
+                        if (!int.TryParse(value, out int sink))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] sink {renderer.BandSinkVoxels} of 16ths of a block. "
+                                + "Lowers distant terrain slightly so it stops fighting the game's own "
+                                + "terrain where the two overlap. Most visible underwater, on lake and "
+                                + "river floors. Raise it if the flickering is still there.");
+                        renderer.BandSinkVoxels = GameMath.Clamp(sink, 0, 16);
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] sink {renderer.BandSinkVoxels} of 16ths of a block.");
+
+                    default:
+                        return TextCommandResult.Success(
+                            "[VintageHorizons] on | off | shape | speckle | width | step | inner | strength | darken | saturate | sink | overlap.");
+                }
+            });
+
+        capi.ChatCommands.Create("vhnear")
+            .WithDescription("How close to you distant terrain stops being drawn, in blocks. "
+                + "0 draws it right up to the camera, which is what you want when the game's own "
+                + "view distance is turned down far enough to see it.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("blocks"))
+            .HandleWith(args =>
+            {
+                if (renderer == null)
+                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                if (args.Parsers[0].IsMissing
+                    || !float.TryParse((string)args[0], out float blocks))
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] near suppression {renderer.NearSuppressionBlocks:0} blocks. "
+                        + "0 is off. It used to be 48, to stop rough distant terrain appearing at "
+                        + "arm's length where the game has not confirmed it is drawing - most "
+                        + "likely underground. Raise it again if that comes back.");
+
+                renderer.NearSuppressionBlocks = GameMath.Clamp(blocks, 0f, 512f);
+                return TextCommandResult.Success(
+                    $"[VintageHorizons] near suppression {renderer.NearSuppressionBlocks:0} blocks.");
+            });
+
+        capi.ChatCommands.Create("vhtexture")
+            .WithDescription("Draw distant ground with the game's own block textures inside the "
+                + "blending band, instead of one flat colour per block. "
+                + "on | off | strength | detail | mips.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
+                      capi.ChatCommands.Parsers.OptionalWord("value"))
+            .HandleWith(args =>
+            {
+                if (renderer == null)
+                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+
+                string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
+                switch (part)
+                {
+                    case "on":
+                    case "off":
+                        renderer.BlockTexturesEnabled = part == "on";
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] block textures {part}. "
+                            + renderer.DescribeBlockTextures());
+
+                    case "detail":
+                        if (!float.TryParse(
+                                args.Parsers[1].IsMissing ? "" : (string)args[1], out float detail))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] texture detail {renderer.BlockTextureDetail:0.0}. "
+                                + "How much sharper than the distance warrants to draw the texture. "
+                                + "0 is technically correct and invisible - at that range the game "
+                                + "shrinks a texture down to a single flat colour, which is the "
+                                + "problem. Raise it until you can see the texture; too high and "
+                                + "distant ground will sparkle as you move.");
+                        renderer.BlockTextureDetail = GameMath.Clamp(detail, 0f, 8f);
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] texture detail {renderer.BlockTextureDetail:0.0}.");
+
+                    case "mips":
+                        if (!float.TryParse(
+                                args.Parsers[1].IsMissing ? "" : (string)args[1], out float mips))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] texture detail limit {renderer.BlockTextureMipLimit:0.0}. "
+                                + "How far away the real texture keeps being drawn before it hands "
+                                + "back to flat colour. Raise it if the texture stops before the "
+                                + "seam; lower it if distant ground picks up colours from the "
+                                + "wrong blocks.");
+                        renderer.BlockTextureMipLimit = GameMath.Clamp(mips, 0f, 8f);
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] texture detail limit {renderer.BlockTextureMipLimit:0.0}.");
+
+                    case "strength":
+                        if (!float.TryParse(
+                                args.Parsers[1].IsMissing ? "" : (string)args[1], out float strength))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] texture strength {renderer.BlockTextureStrength:0.00}. "
+                                + "0 to 1. How much real texture shows where the band is strongest.");
+                        renderer.BlockTextureStrength = GameMath.Clamp(strength, 0f, 1f);
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] texture strength {renderer.BlockTextureStrength:0.00}.");
+
+                    default:
+                        return TextCommandResult.Success(
+                            "[VintageHorizons] " + renderer.DescribeBlockTextures());
+                }
             });
 
         capi.ChatCommands.Create("vhtoplight")

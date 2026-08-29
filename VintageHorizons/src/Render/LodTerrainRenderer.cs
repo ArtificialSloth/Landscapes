@@ -108,6 +108,42 @@ public class LodTerrainRenderer : IRenderer
     /// nothing is suppressed at all.
     /// </summary>
     internal const float MaskNearFloorBlocks = 48;
+
+    /// <summary>
+    /// What the floor above defaults to now: nothing.
+    ///
+    /// The owner asked for it removed. It exists to stop coarse cached geometry appearing at
+    /// arm's length in cells vanilla has never proven - typically underground, where a chunk
+    /// never reports itself rendered - but it also hides cached terrain from anyone who turns
+    /// the vanilla view distance down far enough to want to look at it, which is the whole
+    /// direction this mod exists to enable. Kept as a knob rather than deleted so the older
+    /// behaviour is one command away if the near-field artefact it guarded against returns.
+    /// </summary>
+    internal const float MaskNearFloorDefaultBlocks = 0;
+
+    /// <summary>
+    /// About twenty 8-block steps. Sized from the measured seam step of roughly 21 colour
+    /// levels against a flat-field detection threshold of one to two levels per step.
+    /// </summary>
+    internal const float BandDefaultWidthBlocks = 128;
+
+    /// <summary>
+    /// How often the seam field may be recomputed while ownership churns. A moved window
+    /// rebuilds immediately regardless - the wrapped ring hands a reused slot to different
+    /// world coordinates, so a stale window would address another place's distance - but
+    /// ordinary ownership traffic can wait. A tenth of a second of lag on a colour ramp is
+    /// well under a walking pace, and it cannot open a hole because the band decides no
+    /// pixel's visibility.
+    /// </summary>
+    internal const long BandRebuildIntervalMilliseconds = 100;
+
+    /// <summary>
+    /// The widest seam field allowed, in 8-block cells per axis. 512 is a 1 MiB texture and
+    /// a quarter-million-cell sweep; beyond that the band turns itself off rather than
+    /// quietly spending a frame budget nobody approved. Reached only at vanilla view
+    /// distances far past where the band's imitation still works at all.
+    /// </summary>
+    internal const int BandMaxCapacityCells = 512;
     /// <summary>
     /// Queue depth allowed at the mesh workers. Per thread, not absolute: a fixed 12 was
     /// sized for one builder and would leave a four-thread pool idling three quarters of
@@ -254,6 +290,160 @@ public class LodTerrainRenderer : IRenderer
     /// ownership is needed to tell them apart.
     /// </summary>
     public bool MaskDebugPaint { get; set; }
+
+    /// <summary>
+    /// Wear vanilla's colouring at the seam and relax outward, so the eye has no single line
+    /// to find. Measured offline at the seam, cached ground is about 8% brighter than vanilla
+    /// and loses the green cast, with red and blue moving nearly twice as far as green - a
+    /// surface missing vanilla's dark pixels rather than one with a wrong average. The band
+    /// spreads that step over many small steps; it does not close it.
+    /// </summary>
+    public bool BandEnabled { get; set; } = true;
+
+    /// <summary>
+    /// How far past the seam the correction reaches, in blocks. Absolute rather than scaled
+    /// by view distance: the step being hidden is a fixed number of colour levels wherever
+    /// the seam happens to sit, so the number of steps needed does not change when it moves.
+    /// About twenty 8-block steps for a measured step of ~21 levels, which puts each step
+    /// near the eye's threshold on a flat field.
+    /// </summary>
+    public float BandWidthBlocks { get; set; } = BandDefaultWidthBlocks;
+
+    /// <summary>
+    /// Blocks per visible step in the ramp. Never finer than the stored 8-block cell, and
+    /// deliberately never continuous: a ramp varying below one world block reads as a GPU
+    /// effect painted over the terrain, which is what sank an earlier smooth radial version.
+    /// </summary>
+    public float BandStepBlocks { get; set; } = VanillaSeamDistanceField.CellBlocks;
+
+    /// <summary>How much of the correction lands at the seam. 1 is the full measured ratio.</summary>
+    public float BandStrength { get; set; } = 1f;
+
+    /// <summary>
+    /// How far the measured seam sits inside the one a player sees, in blocks. Ownership is
+    /// denied for the outermost chunk and a half of live vanilla terrain, so the field's zero
+    /// is that much short of where vanilla's ground really ends; without the shift the full
+    /// correction lands under live vanilla where nothing can see it. Defaults to the same
+    /// slack the denial itself uses, and is a knob because only looking at the seam can
+    /// settle whether the two agree in practice.
+    /// </summary>
+    public float BandInnerBlocks { get; set; } = VanillaRenderReadiness.SphereCentreSlackBlocks;
+
+    /// <summary>
+    /// Brightness multiply at full weight. The measured seam is 144.5 luminance on vanilla
+    /// against 159.1 on cached ground, so vanilla is about 9% darker.
+    ///
+    /// This replaced a per-channel red/green/blue gain, which failed in play for a reason
+    /// worth keeping written down: three channel multipliers tuned on grass encode
+    /// grassland's own colour, so carrying them to sand or rock applies grassland's
+    /// correction to a colour that was never grassland. The owner saw exactly that. The two
+    /// operators here are functions of the pixel instead of assertions about it, so sand
+    /// stays sand.
+    /// </summary>
+    /// <summary>
+    /// Per-block brightness variation restored at the seam, fading out across the band.
+    ///
+    /// This is the term that addresses the actual defect. Vanilla terrain is never one flat
+    /// colour - every block shows a texture tile, which at seam distances reads as fine
+    /// per-block speckle - and cached terrain is a single averaged colour per block. Two
+    /// attempts to close that with an average-matching correction each looked right on the
+    /// terrain they were tuned on and worse than nothing on the next one, because the
+    /// difference was never in the average.
+    ///
+    /// Not a texture lookup: cached meshes carry a colour per corner and no block identity to
+    /// look one up with. This reproduces the statistics instead, one random value per world
+    /// block, which is also all the eye can resolve at this range.
+    /// </summary>
+    public float BandSpeckle { get; set; } = 0.15f;
+
+    /// <summary>
+    /// How close to the camera cached terrain stops being drawn, in blocks, while the mask is
+    /// live. Zero draws it right up to the camera. See <see cref="MaskNearFloorBlocks"/> for
+    /// what the old 48-block floor was guarding against.
+    /// </summary>
+    public float NearSuppressionBlocks { get; set; } = MaskNearFloorDefaultBlocks;
+
+    /// <summary>
+    /// Draw near ground with the game's own block textures instead of one averaged colour,
+    /// with the seam band deciding how much of it shows. The owner's judgement after three
+    /// average-matching attempts: vanilla terrain is never a flat colour, so nothing that
+    /// only adjusts the average can meet it.
+    /// </summary>
+    public bool BlockTexturesEnabled { get; set; } = true;
+
+    /// <summary>How much real texture shows at full band weight. 1 is all of it.</summary>
+    public float BlockTextureStrength { get; set; } = 1f;
+
+    /// <summary>
+    /// How far into the atlas mip chain a fragment may ask before the texture hands back to
+    /// the averaged colour, in mip levels.
+    ///
+    /// Deep mips blend a block's tile into its neighbours' in the shared atlas, which would
+    /// paint another block's colour onto this ground. But the seam sits hundreds of blocks
+    /// out, where one block covers only a few pixels and a 32-pixel tile is already asking
+    /// for mip three or four - so a cautious limit would fade the texture out at exactly the
+    /// distance it exists for.
+    ///
+    /// Raised to six once the texture became variation around the block's colour rather than
+    /// the colour itself, because that made overreaching self-limiting: a heavily minified
+    /// texel approaches its own texture's mean, the variation approaches one, and the texture
+    /// fades to doing nothing on its own. Bleeding between neighbouring atlas tiles is the
+    /// only remaining reason to stop, and it is bounded now rather than catastrophic.
+    /// </summary>
+    public float BlockTextureMipLimit { get; set; } = 6f;
+
+    /// <summary>
+    /// How many mip levels sharper than the distance warrants to sample the atlas.
+    ///
+    /// Correct minification is exactly why a faithful texture is invisible at seam distance:
+    /// the hardware averages the tile down to its own mean, and a texture applied as variation
+    /// around the block's colour then multiplies by one. Zero is physically right and does
+    /// nothing; this reaches back up the mip chain for detail the eye can resolve, at the cost
+    /// of aliasing. Two is a starting guess and this is the knob most likely to decide whether
+    /// real textures are worth having here at all.
+    /// </summary>
+    public float BlockTextureDetail { get; set; } = 2f;
+
+    public float BandDarken { get; set; } = 1f;
+
+    /// <summary>
+    /// Saturation multiply at full weight. Normalising both sides of the measured seam by
+    /// their own luminance leaves vanilla about 25% further from grey than cached ground -
+    /// which is what losing texture detail, crevice occlusion and drop shadows does to a
+    /// surface. Pushing away from grey needs no opinion about which hue is there.
+    /// </summary>
+    public float BandSaturate { get; set; } = 1f;
+
+    /// <summary>
+    /// Extra overlap between cached and live vanilla terrain, in blocks, beyond the
+    /// geometric slack the ownership denial already applies. Vanilla unloads chunks on its
+    /// own schedule and ownership is only withdrawn once loss is detected, so a column can
+    /// stop drawing before cached terrain is allowed back over it - the owner found ground
+    /// that stayed missing until he moved. Handing columns back early costs a wider band
+    /// where both draw, which is what the sink is for.
+    ///
+    /// 16 blocks, half a chunk, is the owner's measured value: it closed the hole in play and
+    /// 32 overlapped more than the hole needed. Not a derived number - the distance at which
+    /// vanilla lets a chunk go is the engine's business, not ours - so it stays a knob.
+    /// </summary>
+    public float OverlapMarginBlocks { get; set; } = 16f;
+
+    /// <summary>
+    /// Paint the band's weight instead of correcting with it, so its shape can be judged from
+    /// above before any colour decision is made.
+    /// </summary>
+    public bool BandDebugPaint { get; set; }
+
+    /// <summary>
+    /// How far solid cached terrain is lowered, in sixteenths of a block. A constant global
+    /// offset with no ramp and no edge: every cached surface moves together, so the only
+    /// place it can be seen is where cached terrain overlaps live vanilla terrain. It exists
+    /// for depth fighting, and it is worth most underwater, where a lake floor drawn twice
+    /// fights between a pale bed and a dark water-tinted one and every flipped pixel is a
+    /// maximum-contrast flip. Whether one voxel is enough separation at the distance the
+    /// overlap sits is a depth-precision question only a run can answer.
+    /// </summary>
+    public int BandSinkVoxels { get; set; } = 1;
 
     /// <summary>
     /// Apply vanilla's own rule that an up-facing surface never darkens as the sun drops:
@@ -707,6 +897,32 @@ public class LodTerrainRenderer : IRenderer
     bool readinessMaskFailed;
     bool readinessMaskActive;
     long readinessMaskUploadUs;
+    VanillaSeamDistanceField? seamField;
+    LoadedTexture? seamFieldTexture;
+    bool seamFieldFailed;
+    bool seamFieldActive;
+    long seamFieldBuiltRevision = -1;
+    long seamFieldLastBuildMs;
+    long seamFieldBuildUs;
+    long seamFieldUploadUs;
+    int seamFieldWindowMinChunkX = int.MinValue;
+    int seamFieldWindowMinChunkZ = int.MinValue;
+    int seamFieldWindowWidth;
+    int seamFieldWindowDepth;
+    bool seamFieldCapacityWarned;
+
+    // ---- Real vanilla block textures -------------------------------------------------
+    //
+    // Cached ground is one averaged colour per block; vanilla ground never is. Rather than
+    // approximate the difference a fourth time, near ground samples the game's OWN block
+    // atlas, and the seam band decides how much of it shows. blockTable holds where each
+    // block's texture sits inside that atlas plus the averaged colour to fall back to, so a
+    // quad can carry a block slot instead of a colour and lose nothing.
+    readonly LodBlockTextureRegistry? blockTextures;
+    int blockTableTexture;
+    int blockTableVersion = -1;
+    bool blockTableFailed;
+    bool blockTexturesLive;
     float readinessHandoffDistance;
     bool readinessOwnsHandoff;
     float readinessOwnedRadius;
@@ -999,12 +1215,14 @@ public class LodTerrainRenderer : IRenderer
         LodWorld world,
         LodWorker worker,
         LodTintRegistry tints,
-        Func<long>? currentWorldEpoch = null)
+        Func<long>? currentWorldEpoch = null,
+        LodBlockTextureRegistry? blockTextures = null)
     {
         this.capi = capi;
         this.world = world;
         this.worker = worker;
         this.tints = tints;
+        this.blockTextures = blockTextures;
         this.currentWorldEpoch = currentWorldEpoch ?? (() => 0);
         bool gpuTimingRequested =
             Environment.GetEnvironmentVariable("VINTAGEHORIZONS_GPU_STATS") == "1";
@@ -1985,6 +2203,10 @@ public class LodTerrainRenderer : IRenderer
             // terrain with another world's readiness.
             readinessMask?.Clear();
             readinessMaskActive = false;
+            // The band is derived from ownership, so another dimension's ownership must not
+            // keep correcting terrain here. Clearing costs the correction, never a pixel.
+            seamField?.Clear();
+            seamFieldActive = false;
             return;
         }
 
@@ -2008,6 +2230,10 @@ public class LodTerrainRenderer : IRenderer
                 {
                     readinessMask = new VanillaReadinessMask(window.RequiredCapacity, verticalChunks);
                     DisposeReadinessMaskTexture();
+                    // The field mirrors the mask's window, so a new mask means the stored
+                    // distances describe a window that no longer exists.
+                    seamField = null;
+                    DisposeSeamFieldTexture();
                 }
             }
 
@@ -2159,7 +2385,7 @@ public class LodTerrainRenderer : IRenderer
                 // would pull its single global radius in for every column.
                 if (rendered && ChunkMaskEnabled
                     && VanillaRenderReadiness.BeyondVanillaDrawRange(
-                        cell.X, cell.Z, camPos.X, camPos.Z, viewDistance))
+                        cell.X, cell.Z, camPos.X, camPos.Z, viewDistance, OverlapMarginBlocks))
                 {
                     rendered = false;
                     ReadinessOwnershipDeniedBeyondViewDistance++;
@@ -2228,6 +2454,7 @@ public class LodTerrainRenderer : IRenderer
                 Math.Min(readinessOwnedRadius, viewDistance), capi.ElapsedMilliseconds);
             readinessOwnsHandoff = true;
             PublishReadinessMask();
+            PublishSeamField();
         }
         catch (Exception e)
         {
@@ -2261,6 +2488,10 @@ public class LodTerrainRenderer : IRenderer
             if (value) return;
             readinessMask = null;
             DisposeReadinessMaskTexture();
+            // The band is derived from per-cell ownership. Without the mask there is no
+            // seam to measure from, so it goes with it rather than holding stale distances.
+            seamField = null;
+            DisposeSeamFieldTexture();
         }
     }
 
@@ -2349,7 +2580,7 @@ public class LodTerrainRenderer : IRenderer
             // nothing was drawing: every terrain pool location is range-culled per frame
             // against the view distance, and none of the flags above follow.
             bool beyondDrawRange = VanillaRenderReadiness.BeyondVanillaDrawRange(
-                cell.X, cell.Z, startX, startZ, viewDistance);
+                cell.X, cell.Z, startX, startZ, viewDistance, OverlapMarginBlocks);
 
             // Ground can be drawn by any level, so report all of them. A single verdict has
             // twice now been read as evidence when it was describing a different level than
@@ -2535,6 +2766,232 @@ public class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
+    /// Uploads the block texture table when it has grown, and turns block textures on once
+    /// the table is actually on the GPU.
+    ///
+    /// Ordering is the whole point of doing this at the top of the frame: a textured quad
+    /// carries a block slot INSTEAD of its colour, so a slot the table does not yet describe
+    /// would draw as black ground. Slots are handed out on the game tick as sections resolve;
+    /// uploading before any draw means every slot a mesh can be carrying is already here.
+    ///
+    /// It also gates <see cref="LodMesher.EmitTextureSlots"/>. Until the first successful
+    /// upload no mesh carries a slot at all, so every failure path here is simply the terrain
+    /// that was drawn before this feature existed.
+    /// </summary>
+    void PublishBlockTextureTable()
+    {
+        if (blockTextures == null || blockTableFailed) return;
+        if (blockTableVersion == blockTextures.Version && blockTexturesLive) return;
+
+        try
+        {
+            if (blockTableTexture == 0)
+            {
+                blockTableTexture = GL.GenTexture();
+                if (blockTableTexture == 0)
+                    throw new InvalidOperationException("block texture table was not created.");
+            }
+
+            // Four rows per slot: the atlas rectangle, the averaged colour the quad no longer
+            // carries, the mean to normalise by, and the grass-style overlay's rectangle.
+            // Float, because an atlas rectangle in eight bits would land a fragment on the
+            // wrong block's texture.
+            var pixels = new float[LodBlockTextureRegistry.MaxSlots * 16];
+            IReadOnlyList<float> table = blockTextures.Table;
+            for (int slot = 0; slot < LodBlockTextureRegistry.MaxSlots; slot++)
+            {
+                int from = slot * LodBlockTextureRegistry.FloatsPerSlot;
+                for (int row = 0; row < 4; row++)
+                {
+                    int at = (row * LodBlockTextureRegistry.MaxSlots + slot) * 4;
+                    pixels[at + 0] = table[from + row * 4 + 0];
+                    pixels[at + 1] = table[from + row * 4 + 1];
+                    pixels[at + 2] = table[from + row * 4 + 2];
+                    pixels[at + 3] = table[from + row * 4 + 3];
+                }
+            }
+
+            GL.BindTexture(TextureTarget.Texture2D, blockTableTexture);
+            GL.TexParameter(TextureTarget.Texture2D,
+                TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D,
+                TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D,
+                TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            GL.TexParameter(TextureTarget.Texture2D,
+                TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba32f,
+                LodBlockTextureRegistry.MaxSlots, 4, 0,
+                PixelFormat.Rgba, PixelType.Float, pixels);
+            GL.BindTexture(TextureTarget.Texture2D, 0);
+
+            blockTableVersion = blockTextures.Version;
+            blockTexturesLive = true;
+            LodMesher.EmitTextureSlots = true;
+        }
+        catch (Exception e)
+        {
+            blockTableFailed = true;
+            blockTexturesLive = false;
+            LodMesher.EmitTextureSlots = false;
+            capi.Logger.Warning(
+                "[VintageHorizons] block textures disabled for this session; distant ground "
+                + "keeps its averaged colours: {0}", e.Message);
+        }
+    }
+
+    void DisposeBlockTableTexture()
+    {
+        if (blockTableTexture == 0) return;
+        try { GL.DeleteTexture(blockTableTexture); }
+        catch { /* teardown must not throw over a texture the driver already released */ }
+        blockTableTexture = 0;
+        blockTexturesLive = false;
+    }
+
+    /// <summary>
+    /// Rebuilds and uploads the seam distance field the blend band reads.
+    ///
+    /// The band is derived entirely from committed ownership, so it needs no signal of its
+    /// own and cannot disagree with the mask about where vanilla is. It also decides no
+    /// pixel's visibility: every failure here costs the correction and leaves cached terrain
+    /// drawing exactly as it does today, which is why none of this can open a hole.
+    /// </summary>
+    void PublishSeamField()
+    {
+        if (seamFieldFailed) return;
+        if (!BandEnabled || !readinessMaskActive || readinessMask == null || readiness == null)
+        {
+            seamFieldActive = false;
+            return;
+        }
+
+        int marginCells = SeamFieldMarginCells();
+        int required = NextPowerOfTwo(Math.Max(
+            readiness.ActiveWidth * VanillaSeamDistanceField.CellsPerChunk + marginCells * 2,
+            readiness.ActiveDepth * VanillaSeamDistanceField.CellsPerChunk + marginCells * 2));
+        if (required > BandMaxCapacityCells)
+        {
+            // Not permanent: lowering the vanilla view distance brings this back under the
+            // limit, and lowering it is the whole point of the mod.
+            seamFieldActive = false;
+            if (!seamFieldCapacityWarned)
+            {
+                seamFieldCapacityWarned = true;
+                capi.Logger.Notification(
+                    "[VintageHorizons] blend band off: a {0}-cell seam field is past the {1}-cell limit "
+                    + "at this vanilla view distance.", required, BandMaxCapacityCells);
+            }
+            return;
+        }
+        seamFieldCapacityWarned = false;
+
+        try
+        {
+            if (seamField == null || seamField.Capacity != required)
+            {
+                seamField = new VanillaSeamDistanceField(required);
+                DisposeSeamFieldTexture();
+                seamFieldBuiltRevision = -1;
+            }
+
+            // A moved window rebuilds on the spot. The ring hands a reused slot to different
+            // world coordinates, so anything else would address another place's distance.
+            bool windowMoved = seamFieldWindowMinChunkX != readiness.ActiveMinChunkX
+                || seamFieldWindowMinChunkZ != readiness.ActiveMinChunkZ
+                || seamFieldWindowWidth != readiness.ActiveWidth
+                || seamFieldWindowDepth != readiness.ActiveDepth;
+            long now = capi.ElapsedMilliseconds;
+            bool ownershipMoved = seamFieldBuiltRevision != readinessMask.Revision;
+
+            if (windowMoved
+                || (ownershipMoved && now - seamFieldLastBuildMs >= BandRebuildIntervalMilliseconds))
+            {
+                long buildStarted = Stopwatch.GetTimestamp();
+                seamField.Build(readinessMask,
+                    readiness.ActiveMinChunkX, readiness.ActiveMinChunkZ,
+                    readiness.ActiveWidth, readiness.ActiveDepth, marginCells);
+                seamFieldBuildUs =
+                    (Stopwatch.GetTimestamp() - buildStarted) * 1_000_000 / Stopwatch.Frequency;
+                seamFieldBuiltRevision = readinessMask.Revision;
+                seamFieldLastBuildMs = now;
+                seamFieldWindowMinChunkX = readiness.ActiveMinChunkX;
+                seamFieldWindowMinChunkZ = readiness.ActiveMinChunkZ;
+                seamFieldWindowWidth = readiness.ActiveWidth;
+                seamFieldWindowDepth = readiness.ActiveDepth;
+            }
+
+            if (!seamField.Dirty && seamFieldActive) return;
+
+            long uploadStarted = Stopwatch.GetTimestamp();
+            try
+            {
+                LoadedTexture texture = seamFieldTexture
+                    ?? new LoadedTexture(capi, 0, seamField.Width, seamField.Height);
+                capi.Render.LoadOrUpdateTextureFromBgra(seamField.Texels,
+                    linearMag: false, clampMode: 0, ref texture);
+                if (texture.TextureId <= 0)
+                    throw new InvalidOperationException("Seam distance field texture was not created.");
+                seamFieldTexture = texture;
+                seamField.MarkUploaded();
+                seamFieldActive = true;
+            }
+            finally
+            {
+                seamFieldUploadUs =
+                    (Stopwatch.GetTimestamp() - uploadStarted) * 1_000_000 / Stopwatch.Frequency;
+            }
+        }
+        catch (Exception e)
+        {
+            DisableSeamField();
+            capi.Logger.Warning(
+                "[VintageHorizons] blend band disabled for this session; cached terrain keeps its "
+                + "current colouring: {0}", e.Message);
+        }
+    }
+
+    /// <summary>
+    /// How far past the mask's own window the field must reach, in 8-block cells. The mask
+    /// tracks only a couple of chunks past vanilla, and the band lives entirely outside
+    /// vanilla, so the field needs the band's full reach plus one cell of slack.
+    /// </summary>
+    int SeamFieldMarginCells()
+    {
+        float width = Math.Max(0f, BandWidthBlocks);
+        int cells = (int)Math.Ceiling(width / VanillaSeamDistanceField.CellBlocks) + 1;
+        return Math.Clamp(cells, 1, BandMaxCapacityCells / 4);
+    }
+
+    static int NextPowerOfTwo(int value)
+    {
+        int result = 1;
+        while (result < value)
+        {
+            if (result > 1 << 29) return int.MaxValue;
+            result <<= 1;
+        }
+        return result;
+    }
+
+    void DisableSeamField()
+    {
+        seamFieldFailed = true;
+        seamFieldActive = false;
+        seamField = null;
+        DisposeSeamFieldTexture();
+    }
+
+    void DisposeSeamFieldTexture()
+    {
+        if (seamFieldTexture == null) return;
+        try { capi.Render.GLDeleteTexture(seamFieldTexture.TextureId); }
+        catch { /* teardown must not throw over a texture the driver already released */ }
+        seamFieldTexture = null;
+        seamFieldActive = false;
+    }
+
+    /// <summary>
     /// The near-field floor described on <see cref="MaskNearFloorBlocks"/>. Zero unless the
     /// camera's own ownership cell is committed ready, so uncertainty still fails toward
     /// cached coverage.
@@ -2548,7 +3005,7 @@ public class LodTerrainRenderer : IRenderer
             VanillaRenderReadiness.ChunkCoordinate(camPos.Y),
             VanillaRenderReadiness.ChunkCoordinate(camPos.Z));
         return readiness.State(cell) == VanillaReadinessState.VanillaReady
-            ? MaskNearFloorBlocks
+            ? Math.Max(0f, NearSuppressionBlocks)
             : 0f;
     }
 
@@ -2558,6 +3015,8 @@ public class LodTerrainRenderer : IRenderer
         readinessMaskActive = false;
         readinessMask = null;
         DisposeReadinessMaskTexture();
+        seamField = null;
+        DisposeSeamFieldTexture();
     }
 
     void DisposeReadinessMaskTexture()
@@ -2868,7 +3327,68 @@ public class LodTerrainRenderer : IRenderer
             + $"ready per Y {readinessColumnText}, "
             + $"nearest incomplete {nearestIncomplete:0} blocks/unready {nearestUnready:0} blocks, "
             + $"handoff {appliedHandoff:0} blocks ({handoffSource}, radial {radialHandoff:0}), "
-            + $"mask {maskState}, {VanillaOwnedDrawsSkipped} owned draws skipped";
+            + $"mask {maskState}, {VanillaOwnedDrawsSkipped} owned draws skipped, "
+            + $"band {BandState()}, textures {BlockTextureState()}, "
+            + $"near suppression {NearSuppressionBlocks:0} blocks";
+    }
+
+    /// <summary>
+    /// The blend band in one clause of the periodic line, and the body of `.vhband`.
+    /// Build and upload cost are included because "nearly free" is this design's claim and
+    /// an unmeasured claim is not one.
+    /// </summary>
+    string BandState()
+    {
+        if (!BandEnabled) return "off";
+        if (seamFieldFailed) return "failed";
+        if (seamField == null || !seamFieldActive) return "pending";
+
+        return $"{BandWidthBlocks:0}-block reach/{BandStepBlocks:0}-block steps/"
+            + $"inner {BandInnerBlocks:0}/strength {BandStrength:0.00}/"
+            + $"speckle {BandSpeckle:0.00}/darken {BandDarken:0.00}/saturate {BandSaturate:0.00}/"
+            + $"sink {BandSinkVoxels}-16ths/overlap +{OverlapMarginBlocks:0}/"
+            + $"{seamField.WidthCells}x{seamField.DepthCells} cells in {seamField.Capacity}/"
+            + $"{seamField.Bytes / 1024} KiB/{seamField.Builds} builds/{seamField.Uploads} uploads/"
+            + $"last build {seamFieldBuildUs}us/upload {seamFieldUploadUs}us"
+            + (BandDebugPaint ? "/SHAPE VIEW ON" : "");
+    }
+
+    /// <summary>
+    /// The block texture system in one clause. The refusal counts matter: a block with no
+    /// texture, or one the game put on a second atlas page, keeps its averaged colour, and
+    /// the only way to know how much ground that covers is to count it.
+    /// </summary>
+    string BlockTextureState()
+    {
+        if (!BlockTexturesEnabled) return "off";
+        if (blockTextures == null) return "unavailable";
+        if (blockTableFailed) return "failed";
+        if (!blockTexturesLive) return "pending";
+        return $"strength {BlockTextureStrength:0.00}/mips {BlockTextureMipLimit:0.0}/"
+            + $"detail {BlockTextureDetail:0.0}/" + blockTextures.Describe();
+    }
+
+    /// <summary>
+    /// Answers `.vhtexture`. Logged as well as returned, because game chat cannot be copied
+    /// out and the refusal counts are the part worth keeping.
+    /// </summary>
+    public string DescribeBlockTextures()
+    {
+        string state = BlockTextureState();
+        capi.Logger.Notification("[VintageHorizons] block textures {0}", state);
+        return "block textures " + state + ".";
+    }
+
+    /// <summary>
+    /// Answers `.vhband` with no argument. Written to the log as well as returned, because
+    /// game chat cannot be copied out and this line is the one worth keeping after a
+    /// tuning pass.
+    /// </summary>
+    public string DescribeBlendBand()
+    {
+        string state = BandState();
+        capi.Logger.Notification("[VintageHorizons] band {0}", state);
+        return "blending band " + state + ".";
     }
 
     /// <summary>
@@ -2954,6 +3474,9 @@ public class LodTerrainRenderer : IRenderer
 
         LodPhaseStart phaseStart = LodPhaseCost.Start(TrackPhaseAllocations);
         UpdateReadinessShadow(viewDistance);
+        // Before any draw: a quad can carry a block slot instead of a colour, and a slot the
+        // table does not describe yet would draw as black ground.
+        PublishBlockTextureTable();
         ReadinessCost.Add(phaseStart);
 
         if (prog == null || !shaderOk || prog.LoadError) return;
@@ -3169,6 +3692,54 @@ public class LodTerrainRenderer : IRenderer
             // Unit 6 keeps clear of the sampler slots the shared includes already use for
             // glow, sky, liquid depth, and the two shadow maps.
             prog.BindTexture2D("readinessMask", readinessMaskTexture.TextureId, 6);
+        }
+
+        // The sink is not part of the band and does not wait for it: it is a constant
+        // geometric offset that exists to stop two opaque surfaces fighting for depth in the
+        // overlap, and it applies whenever cached terrain draws.
+        prog.Uniform("bandSinkBlocks", Math.Max(0, BandSinkVoxels) / 16f);
+
+        bool bandOwnsPixels = maskOwnsPixels && seamFieldActive
+            && seamField != null && seamFieldTexture != null;
+        prog.Uniform("bandEnabled", bandOwnsPixels ? 1 : 0);
+        prog.Uniform("bandDebug", BandDebugPaint ? 1 : 0);
+        if (bandOwnsPixels)
+        {
+            // Scalars, never a packed integer vector: the client's only pair setter reaches
+            // glUniform2f, which an integer uniform rejects outright and silently. See G42.
+            prog.Uniform("bandMinCellX", seamField!.MinCellX);
+            prog.Uniform("bandMinCellZ", seamField.MinCellZ);
+            prog.Uniform("bandWidthCells", seamField.WidthCells);
+            prog.Uniform("bandDepthCells", seamField.DepthCells);
+            prog.Uniform("bandCapacity", seamField.Capacity);
+            prog.Uniform("bandWidthBlocks", Math.Max(1f, BandWidthBlocks));
+            prog.Uniform("bandStepBlocks", BandStepBlocks);
+            prog.Uniform("bandStrength", BandStrength);
+            prog.Uniform("bandInnerBlocks", Math.Max(0f, BandInnerBlocks));
+            prog.Uniform("bandDarken", BandDarken);
+            prog.Uniform("bandSaturate", BandSaturate);
+            prog.Uniform("bandSpeckle", Math.Max(0f, BandSpeckle));
+            // Unit 7, one past the mask's own.
+            prog.BindTexture2D("seamField", seamFieldTexture!.TextureId, 7);
+        }
+
+        // The table is bound whenever any mesh can be carrying a block slot, and NOT only
+        // when textures are switched on: a textured quad's colour lives in the table too, so
+        // an unbound sampler here would leave `.vhtexture off` reading colours out of
+        // whatever texture happened to be on unit 0.
+        if (blockTexturesLive && blockTableTexture != 0)
+            prog.BindTexture2D("blockTable", blockTableTexture, 8);
+
+        bool blockTexturesOn = blockTexturesLive && blockTextures != null
+            && blockTextures.AtlasTextureId > 0 && BlockTexturesEnabled;
+        prog.Uniform("blockTextureEnabled", blockTexturesOn ? 1 : 0);
+        if (blockTexturesOn)
+        {
+            prog.Uniform("blockTextureStrength", Math.Clamp(BlockTextureStrength, 0f, 1f));
+            prog.Uniform("blockTextureMipLimit", Math.Max(0f, BlockTextureMipLimit));
+            prog.Uniform("blockTextureDetail", Math.Max(0f, BlockTextureDetail));
+            prog.Uniform("blockAtlasSize", (float)capi.BlockTextureAtlas.Size.Width);
+            prog.BindTexture2D("blockAtlas", blockTextures!.AtlasTextureId, 9);
         }
 
         // Uniforms persist in the program between Use() calls, so re-upload only when
@@ -3773,7 +4344,14 @@ public class LodTerrainRenderer : IRenderer
             foreach (long key in drawList)
             {
                 if (!waterMeshes.TryGetValue(key, out MeshRef? mesh)) continue;
-                if (SkipVanillaOwnedSection(key)) continue;
+                // Deliberately NOT skipped when vanilla owns the section. Ownership is
+                // decided by whether the engine is drawing a chunk, which its ground answers
+                // for; the engine's water is a separate pass with a shorter reach, so there
+                // is a ring where vanilla draws the bed and no longer draws the river, and
+                // both sides believed the other one had it covered. The measured result was
+                // a stretch of dry riverbed. Our water now always draws: where vanilla draws
+                // its own it sits underneath, hidden, and where vanilla has given up it is
+                // the only water there is. This can only ever add water, never remove it.
                 if (!SetupSectionTransform(key, renderCullDistanceSquared, waterPass: true)) continue;
                 SubmitWaterMesh(key, mesh);
             }
@@ -5405,6 +5983,8 @@ public class LodTerrainRenderer : IRenderer
         // Same reason as the meshes: the mask texture is ours, and a shutdown that never
         // reaches the engine call must still not leak it.
         DisposeReadinessMaskTexture();
+        DisposeSeamFieldTexture();
+        DisposeBlockTableTexture();
         world.SectionBecameResident -= OnSectionBecameResident;
         capi.Event.ChunkDirty -= OnReadinessChunkDirty;
         capi.Event.ReloadShader -= LoadShader;

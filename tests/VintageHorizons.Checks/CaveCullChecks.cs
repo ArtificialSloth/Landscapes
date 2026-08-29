@@ -78,6 +78,7 @@ public static class CaveCullChecks
             PaletteColors = new[] { 0, unchecked((int)0xFF808080) },
             PaletteFlags = new byte[] { 0, 0 },
             PaletteTintSlots = new byte[] { 0, 0 },
+            PaletteTextureSlots = new ushort[] { 0, 0 },
         };
     }
 

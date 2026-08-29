@@ -41,6 +41,28 @@ internal static class LodPackedQuadFormat
     const int Z1Shift = 21;
     const int FaceShift = 28;
 
+    /// <summary>
+    /// Word 0's last free bit. Set, it means word 2 carries a BLOCK TEXTURE SLOT rather than
+    /// an RGB colour; the alpha byte keeps its tint slot and band either way.
+    ///
+    /// The two can share one field because at level 0 a quad's colour already IS its block's
+    /// colour - greedy merging groups by palette entry, not by shade - so the slot recovers
+    /// the same colour from the block table and adds the texture rectangle beside it. That is
+    /// what lets real vanilla textures arrive at no memory cost. Coarse levels merge whole
+    /// neighbourhoods into one colour with no single block behind it, so they never set this.
+    /// </summary>
+    const int TexturedShift = 31;
+    const uint TexturedFlag = 1u << TexturedShift;
+
+    /// <summary>Slot values live in the 24 bits the colour would otherwise occupy.</summary>
+    public const int MaximumTextureSlot = 0x00FF_FFFF;
+
+    /// <summary>True when this quad's word 2 is a block texture slot rather than a colour.</summary>
+    public static bool IsTextured(uint geometry) => (geometry & TexturedFlag) != 0;
+
+    /// <summary>The block texture slot in a textured quad's colour word.</summary>
+    public static int TextureSlot(uint colorWord) => (int)(colorWord & 0x00FF_FFFFu);
+
     public static long Bytes(int quadCount) => Math.Max(0, (long)quadCount) * StrideBytes;
 
     public static long ExpandedBytes(int quadCount) => Math.Max(0, (long)quadCount) * 88L;
@@ -55,10 +77,11 @@ internal static class LodPackedQuadFormat
         int z0,
         int z1,
         int color,
-        byte alpha)
+        byte alpha,
+        int textureSlot = 0)
     {
         Span<uint> words = stackalloc uint[WordsPerQuad];
-        Encode(words, face, x0, x1, y0, y1, z0, z1, color, alpha);
+        Encode(words, face, x0, x1, y0, y1, z0, z1, color, alpha, textureSlot);
         destination.Add(words[0]);
         destination.Add(words[1]);
         destination.Add(words[2]);
@@ -74,8 +97,11 @@ internal static class LodPackedQuadFormat
         int z0,
         int z1,
         int color,
-        byte alpha)
+        byte alpha,
+        int textureSlot = 0)
     {
+        if (textureSlot < 0 || textureSlot > MaximumTextureSlot)
+            throw new ArgumentOutOfRangeException(nameof(textureSlot));
         if (destination.Length < WordsPerQuad)
             throw new ArgumentException("short packed-quad destination", nameof(destination));
         ValidateRange(x0, x1, nameof(x0));
@@ -91,9 +117,11 @@ internal static class LodPackedQuadFormat
             | (uint)x1 << X1Shift
             | (uint)z0 << Z0Shift
             | (uint)z1 << Z1Shift
-            | (uint)face << FaceShift;
+            | (uint)face << FaceShift
+            | (textureSlot > 0 ? TexturedFlag : 0u);
         destination[1] = qy0 | (uint)qy1 << 16;
-        destination[2] = (uint)(color & 0x00FF_FFFF) | (uint)alpha << 24;
+        destination[2] = (uint)((textureSlot > 0 ? textureSlot : color) & 0x00FF_FFFF)
+            | (uint)alpha << 24;
     }
 
     /// <summary>Writes packed words in the byte order GL and the deterministic checks share.</summary>

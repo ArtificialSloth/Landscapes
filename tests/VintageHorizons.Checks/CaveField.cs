@@ -1739,6 +1739,7 @@ public static class CaveField
             PaletteColors = original.PaletteColors,
             PaletteFlags = original.PaletteFlags,
             PaletteTintSlots = original.PaletteTintSlots,
+            PaletteTextureSlots = original.PaletteTextureSlots,
         };
     }
 
