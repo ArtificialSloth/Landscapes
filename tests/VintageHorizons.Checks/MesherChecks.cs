@@ -27,6 +27,7 @@ public static class MesherChecks
         HeightSpanAlgebra(c);
         HeightDistribution(c);
         FrontierWallsSetTheFloor(c);
+        HalfBlocks(c);
     }
 
     /// <summary>
@@ -593,6 +594,123 @@ public static class MesherChecks
         var n = new SectionSnapshot?[4];
         for (int i = 0; i < 4; i++) n[i] = Fixtures.Snap(s);
         return n;
+    }
+
+    /// <summary>
+    /// Terrain slabs. A block flagged FlagHalf fills only the lower half of its cell, and
+    /// the stored run cannot say so - runs are whole blocks - so the mesher is the only
+    /// place the difference exists. On the owner's slab-generated world roughly a third of
+    /// all ground-surface columns end in one, so getting this wrong is not a corner case.
+    ///
+    /// The half height has to reach the surface, the walls and the coverage tests together.
+    /// Shortening only the surface would leave a sliver of wall standing above it;
+    /// shortening only the wall would leave the neighbouring full block's face culled by
+    /// cover that is no longer there, which is a see-through notch into solid ground.
+    /// </summary>
+    static void HalfBlocks(Check c)
+    {
+        // A slab standing alone: its top is half a block below the cell it occupies, and
+        // its floor is unmoved.
+        MeshResult slab = LodMesher.BuildMesh(
+            Fixtures.Job(Column(LodPaletteEntry.FlagHalf, yTop: 10, yBottom: 9)));
+        c.Eq(9.5f, slab.Heights.Opaque.MaxY, "a slab's surface sits half a block low");
+        c.Eq(9f, slab.Heights.Opaque.MinY, "a slab still stands on its own cell floor");
+        c.Eq(1, QuadsOnPlaneY(slab.Xyz, 9.5f), "the slab has one top face, at the half plane");
+        c.Eq(0, QuadsOnPlaneY(slab.Xyz, 10f), "and nothing at all on the full-block plane");
+
+        // Unflagged, the same run is a full cube. Stated here so the check would fail if
+        // the flag stopped being read rather than only if the arithmetic were wrong.
+        MeshResult full = LodMesher.BuildMesh(Fixtures.Job(Column(yTop: 10, yBottom: 9)));
+        c.Eq(10f, full.Heights.Opaque.MaxY, "the same run without the flag is a full block");
+
+        // A plain of slabs greedy-merges exactly as a plain of full blocks does: the flag
+        // moves a plane, it does not fragment one.
+        var neighbours = new SectionSnapshot?[4];
+        LodSection slabPlain = Solid(yTop: 10, yBottom: 0, flags: LodPaletteEntry.FlagHalf);
+        for (int i = 0; i < 4; i++) neighbours[i] = Fixtures.Snap(slabPlain);
+        MeshResult merged = LodMesher.BuildMesh(Fixtures.Job(slabPlain, 0, neighbours));
+        c.Eq(1, Quads(merged.VertexCount), "a plain of slabs is still one merged quad");
+        c.Eq(9.5f, merged.Heights.Opaque.MaxY, "and that quad sits on the half plane");
+
+        // The notch. A full block beside a slab is covered only up to the slab's real top,
+        // so the top half of its wall is exposed. Culling it would let the player see
+        // through the side of solid ground wherever a slab mod smoothed a step.
+        var mixed = new LodSection();
+        int solid = mixed.FindOrAddPaletteEntry(blockId: 1, color: 0x00808080, flags: 0);
+        int half = mixed.FindOrAddPaletteEntry(
+            blockId: 2, color: 0x00304050, flags: LodPaletteEntry.FlagHalf);
+        mixed.SetColumn(LodSection.ColumnIndex(5, 5), new[] { LodSection.PackRun(solid, 10, 9) });
+        mixed.SetColumn(LodSection.ColumnIndex(6, 5), new[] { LodSection.PackRun(half, 10, 9) });
+        MeshResult step = LodMesher.BuildMesh(Fixtures.Job(mixed));
+
+        // x = 6 is the shared plane: the solid column's east face and the slab's west face.
+        c.Eq(1, QuadsOnPlane(step.Xyz, 0, 6f), "exactly one wall stands on the shared plane");
+        c.Eq(9.5f, LowestOnPlane(step.Xyz, 0, 6f), "that wall starts at the slab's real top");
+        c.Eq(10f, HighestOnPlane(step.Xyz, 0, 6f), "and reaches the solid block's own top");
+
+        // Stacking. Nothing rests flush on a slab, so a block directly above one does not
+        // cover it: the slab keeps its surface and the block above keeps its floor.
+        var stacked = new LodSection();
+        int lid = stacked.FindOrAddPaletteEntry(blockId: 1, color: 0x00808080, flags: 0);
+        int seat = stacked.FindOrAddPaletteEntry(
+            blockId: 2, color: 0x00304050, flags: LodPaletteEntry.FlagHalf);
+        stacked.SetColumn(LodSection.ColumnIndex(5, 5), new[]
+        {
+            LodSection.PackRun(lid, 11, 10),
+            LodSection.PackRun(seat, 10, 9),
+        });
+        MeshResult gap = LodMesher.BuildMesh(Fixtures.Job(stacked));
+        c.Eq(1, QuadsOnPlaneY(gap.Xyz, 9.5f), "the buried slab still shows its own surface");
+        c.Eq(1, QuadsOnPlaneY(gap.Xyz, 10f), "and the block above it shows a floor");
+
+        // The level gate. Half a block of vertical detail is not resolvable once a column
+        // is two or more blocks wide, and the extra walls it needs are not free, so coarse
+        // levels round the slab back up to a full block. The gate has to reach the coverage
+        // tests as well as the surface: a level where only one of the two applied would
+        // build a section that disagrees with itself.
+        LodSection coarse = Column(LodPaletteEntry.FlagHalf, yTop: 10, yBottom: 9);
+        MeshResult atLevel1 = LodMesher.BuildMesh(
+            Fixtures.Job(coarse, LodWorld.SectionKey(1, 0, 0)));
+        c.Eq(10f, atLevel1.Heights.Opaque.MaxY, "a level-1 section rounds the slab back up");
+
+        MeshResult everywhere = LodMesher.BuildMesh(
+            Fixtures.Job(coarse, LodWorld.SectionKey(1, 0, 0), halfBlockLevels: 8));
+        c.Eq(9.5f, everywhere.Heights.Opaque.MaxY, "raising the gate lets it through");
+
+        MeshResult never = LodMesher.BuildMesh(
+            Fixtures.Job(Column(LodPaletteEntry.FlagHalf, yTop: 10, yBottom: 9),
+                halfBlockLevels: 0));
+        c.Eq(10f, never.Heights.Opaque.MaxY, "and zero levels turns it off everywhere");
+    }
+
+    static int QuadsOnPlaneY(float[]? xyz, float value) => QuadsOnPlane(xyz, 1, value);
+
+    static float LowestOnPlane(float[]? xyz, int axis, float value) =>
+        ExtremeOnPlane(xyz, axis, value, lowest: true);
+
+    static float HighestOnPlane(float[]? xyz, int axis, float value) =>
+        ExtremeOnPlane(xyz, axis, value, lowest: false);
+
+    /// <summary>The lowest or highest vertex Y among quads lying wholly on one plane.</summary>
+    static float ExtremeOnPlane(float[]? xyz, int axis, float value, bool lowest)
+    {
+        float found = lowest ? float.PositiveInfinity : float.NegativeInfinity;
+        if (xyz == null) return found;
+        for (int v = 0; v + 12 <= xyz.Length; v += 12)
+        {
+            bool onPlane = true;
+            for (int k = 0; k < 4; k++)
+            {
+                if (Math.Abs(xyz[v + k * 3 + axis] - value) > 0.0001f) { onPlane = false; break; }
+            }
+            if (!onPlane) continue;
+            for (int k = 0; k < 4; k++)
+            {
+                float y = xyz[v + k * 3 + 1];
+                found = lowest ? Math.Min(found, y) : Math.Max(found, y);
+            }
+        }
+        return found;
     }
 
     // ---- helpers ----

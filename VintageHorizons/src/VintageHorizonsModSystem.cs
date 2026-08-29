@@ -757,6 +757,22 @@ public class VintageHorizonsModSystem : ModSystem
     /// </summary>
     const int StableColorSamples = 64;
 
+    /// <summary>Where cached water stops and the game's own takes over, in words.</summary>
+    static string DescribeWater(LodTerrainRenderer renderer) =>
+        renderer.WaterNearFraction <= 0f
+            ? "cached water is drawn everywhere, including in front of the game's own"
+            : $"cached water is hidden within {renderer.WaterNearFraction:0.00} of the view "
+                + "distance, so the water near you is the game's own";
+
+    /// <summary>How many detail levels draw half-block terrain, in words.</summary>
+    static string Describe(int halfBlockLevels) => halfBlockLevels switch
+    {
+        0 => "off",
+        1 => "near only (level 0)",
+        >= 8 => "every level",
+        _ => $"the nearest {halfBlockLevels} levels",
+    };
+
     readonly Dictionary<int, int> stableColorByBlockId = new();
 
     /// <summary>Sky above the world origin: guaranteed to carry no decor. See StableColorOf.</summary>
@@ -2518,6 +2534,83 @@ public class VintageHorizonsModSystem : ModSystem
                     + "tunnels remain open without preserving hidden networks around bends. What to watch for is "
                     + "terrain that is missing or a cave mouth that has closed up - if you "
                     + "see either, run .vhcavecull off and say where you were looking.");
+            });
+
+        capi.ChatCommands.Create("vhwater")
+            .WithDescription("Keep cached water out of the near field so the game draws its own. Takes effect immediately. off | on | a fraction of the view distance.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("on"))
+            .HandleWith(args =>
+            {
+                if (renderer == null)
+                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+
+                if (args.Parsers[0].IsMissing)
+                {
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] {DescribeWater(renderer)}. Use: .vhwater off | on |"
+                        + " a fraction such as 0.5 or 0.8. The cache draws its water in the"
+                        + " opaque pass and the game draws its own later, so cached water"
+                        + " nearby sits in front of the real thing and hides it - that is what"
+                        + " the cutoff removes. Raise it if flat cache water still shows on a"
+                        + " lake you are looking at; LOWER it if a river or lake in the"
+                        + " distance loses its water, and say roughly how far away it was.");
+                }
+
+                string word = ((string)args[0]).ToLowerInvariant();
+                float wanted;
+                if (word == "off") wanted = 0f;
+                else if (word == "on") wanted = LodNearHandoff.WaterNearFraction;
+                else if (!float.TryParse(word, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out wanted))
+                {
+                    return TextCommandResult.Error(
+                        "[VintageHorizons] use: .vhwater off | on | a fraction such as 0.7");
+                }
+
+                renderer.WaterNearFraction = wanted;
+                return TextCommandResult.Success(
+                    $"[VintageHorizons] {DescribeWater(renderer)}. No rebuild needed - look now.");
+            });
+
+        capi.ChatCommands.Create("vhslabs")
+            .WithDescription("Draw terrain slabs at their real half-block height in the distance. Off by default because it costs geometry; try .vhband sink first. Changing it rebuilds distant terrain.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("levels"))
+            .HandleWith(args =>
+            {
+                if (renderer == null)
+                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+
+                if (args.Parsers[0].IsMissing)
+                {
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] half-block terrain: {Describe(renderer.HalfBlockLevels)} "
+                        + $"| live geometry {renderer.LiveOpaqueVertices:n0} opaque vertices over "
+                        + $"{renderer.MeshCount} meshes. Use: .vhslabs off | near | all. "
+                        + "Read the vertex total on each setting after the rebuild settles - "
+                        + "that number is the cost, and the picture is the benefit.");
+                }
+
+                string word = ((string)args[0]).ToLowerInvariant();
+                int wanted = word switch
+                {
+                    "off" => 0,
+                    "near" => LodTerrainRenderer.NearHalfBlockLevels,
+                    "all" => 8,
+                    _ => int.TryParse(word, out int levels) ? levels : -1,
+                };
+                if (wanted < 0)
+                    return TextCommandResult.Error("[VintageHorizons] use: .vhslabs off | near | all");
+
+                renderer.HalfBlockLevels = wanted;
+                int queued = renderer.RemeshAll();
+
+                return TextCommandResult.Success(
+                    $"[VintageHorizons] half-block terrain: {Describe(renderer.HalfBlockLevels)}. "
+                    + $"Rebuilding {queued} distant sections - give it a few seconds. Mods that "
+                    + "smooth the landscape with half blocks are otherwise rebuilt as full cubes "
+                    + "out here, which puts the steps they removed back. What to watch for is the "
+                    + "far ground looking chunkier than the ground at your feet, and whether the "
+                    + "vertex total above is worth the difference.");
             });
 
         // The live toggle the aggregate bound was funded with. Unlike the retired staging

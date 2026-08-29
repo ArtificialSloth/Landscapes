@@ -283,6 +283,36 @@ public class LodTerrainRenderer : IRenderer
     /// </summary>
     public bool WholeMeshSkip { get; set; } = true;
 
+    float waterNearFraction = LodNearHandoff.WaterNearFraction;
+
+    /// <summary>
+    /// How much of the engine's view distance cached water gets out of the way for, as a
+    /// fraction. Zero draws cached water everywhere, which is what it used to do.
+    ///
+    /// Water needs a rule of its own because it fails at both ends. NEAR: cached terrain
+    /// draws in the OPAQUE stage and writes depth, while the engine draws its water later,
+    /// in OIT - so unsuppressed cached water lands in the depth buffer in FRONT of vanilla's
+    /// own surface and hides it, and the cache's flat sheet stands in for the real animated
+    /// water on every lake the player is looking at. FAR: the engine's water fades to
+    /// nothing at 80% of its view distance while its ground keeps drawing past 100%
+    /// (chunkliquid.vsh clamps the liquid alpha on that ratio), so past that point vanilla
+    /// draws a bed and no river and cached water is the only water there is - G124.
+    ///
+    /// A radius, NOT the ownership mask. Ownership was tried first and did not work: it
+    /// proves a 32-block cell only where the engine reports the chunk both drawn and holding
+    /// geometry, and the owner's client log showed 104 owned cells against 2,953 pending, so
+    /// almost no water near the player was ever covered.
+    ///
+    /// `.vhwater off` draws cached water everywhere again. What to look for if the radius is
+    /// too large is the G124 failure returning: a river or lake bed with no water in it, at
+    /// distance.
+    /// </summary>
+    public float WaterNearFraction
+    {
+        get => waterNearFraction;
+        set => waterNearFraction = Math.Clamp(value, 0f, 1f);
+    }
+
     /// <summary>
     /// Paint fragments the mask would hide bright red instead of hiding them, and stop
     /// dropping whole owned sections so nothing escapes the paint. A gap that turns red is
@@ -561,6 +591,32 @@ public class LodTerrainRenderer : IRenderer
     /// </summary>
     public bool CaveCulling { get; set; } =
         Environment.GetEnvironmentVariable("VINTAGEHORIZONS_CAVE_CULLING") != "0";
+
+    int halfBlockLevels;
+
+    /// <summary>What `.vhslabs near` selects: level 0 alone, the near band.</summary>
+    internal const int NearHalfBlockLevels = 1;
+
+    /// <summary>
+    /// How many detail levels draw terrain slabs at half height, counting from the finest.
+    /// Mods that smooth the landscape with half blocks are otherwise rebuilt as full cubes,
+    /// which puts back exactly the stair-steps they removed and stands the ground half a
+    /// block high.
+    ///
+    /// OFF by default, because it is not free and there is a cheaper answer to the symptom
+    /// it was built for. Measured on the owner's slab-generated world at +32% opaque
+    /// vertices at level 0, three quarters of it walls: a slab beside a full block exposes
+    /// the top half of that block's side, which is the half-step itself and cannot be had
+    /// for less. The complaint it came from is that cached full cubes stand through vanilla's
+    /// slabs where the two terrains overlap, and `.vhband sink` answers exactly that for no
+    /// geometry at all by lowering cached ground under vanilla's. This stays as the honest
+    /// version for anyone who wants distant terrain to actually have half blocks in it.
+    /// </summary>
+    public int HalfBlockLevels
+    {
+        get => halfBlockLevels;
+        set => halfBlockLevels = Math.Clamp(value, 0, 8);
+    }
 
     int caveCullReach = LodCaveCull.DefaultReach;
 
@@ -1938,6 +1994,7 @@ public class LodTerrainRenderer : IRenderer
                 ReadyAtMilliseconds = Environment.TickCount64,
                 AssumedCoveredSides = assumedCovered,
                 CaveCullReach = CaveCulling ? caveCullReach : 0,
+                HalfBlockLevels = halfBlockLevels,
             });
         }
 
@@ -3669,6 +3726,8 @@ public class LodTerrainRenderer : IRenderer
                 ? readinessHandoffDistance
                 : LodNearHandoff.InnerDiscardRadius(viewDistance));
         prog.Uniform("maskEnabled", maskOwnsPixels ? 1 : 0);
+        prog.Uniform("waterNearRadius",
+            LodNearHandoff.WaterNearRadius(viewDistance, waterNearFraction));
         prog.Uniform("maskDebug", MaskDebugPaint ? 1 : 0);
         prog.Uniform("flatTopLight", FlatTopLight ? 1 : 0);
         prog.Uniform("lightMoonDir", LightMoonDirection ? 1 : 0);
@@ -4344,14 +4403,11 @@ public class LodTerrainRenderer : IRenderer
             foreach (long key in drawList)
             {
                 if (!waterMeshes.TryGetValue(key, out MeshRef? mesh)) continue;
-                // Deliberately NOT skipped when vanilla owns the section. Ownership is
-                // decided by whether the engine is drawing a chunk, which its ground answers
-                // for; the engine's water is a separate pass with a shorter reach, so there
-                // is a ring where vanilla draws the bed and no longer draws the river, and
-                // both sides believed the other one had it covered. The measured result was
-                // a stretch of dry riverbed. Our water now always draws: where vanilla draws
-                // its own it sits underneath, hidden, and where vanilla has given up it is
-                // the only water there is. This can only ever add water, never remove it.
+                // Never skipped whole for ownership. Cached water gets out of vanilla's way
+                // by a radius rather than by ownership (see WaterNearFraction), and a section
+                // is far wider than that radius, so a whole-section decision could not
+                // express it without taking water out of the outer ring G124's dry riverbeds
+                // came from. The per-fragment cutoff does it exactly.
                 if (!SetupSectionTransform(key, renderCullDistanceSquared, waterPass: true)) continue;
                 SubmitWaterMesh(key, mesh);
             }

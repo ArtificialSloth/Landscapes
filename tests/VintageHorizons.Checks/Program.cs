@@ -87,6 +87,12 @@ public static class Program
             return CaveField.Run(args);
         }
 
+        // And again: it reports what half-block terrain costs, over a real cache.
+        if (string.Equals(only, "slabfield", StringComparison.OrdinalIgnoreCase))
+        {
+            return SlabField.Run(args);
+        }
+
         Console.WriteLine();
         Console.WriteLine("  VintageHorizons fast checks");
         Console.WriteLine("  game: " + GameAssemblies.GamePath);

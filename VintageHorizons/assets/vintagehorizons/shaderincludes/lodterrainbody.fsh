@@ -40,6 +40,26 @@ uniform int maskVerticalChunks;
 // 1 paints hidden pixels red instead of hiding them. Diagnostic only.
 uniform int maskDebug;
 
+// A near-field cutoff for cached WATER alone, in blocks. Zero draws cached water everywhere,
+// which is what it used to do.
+//
+// This is a RADIUS and not the ownership mask, and that distinction is the whole fix. Cached
+// terrain draws in the OPAQUE stage and writes depth, while the engine draws its water later,
+// in OIT - so unsuppressed cached water sits in the depth buffer in FRONT of the real thing
+// and hides it, and the cache's flat sheet stands in for vanilla's own animated surface on
+// every lake the player is looking at. The obvious answer was to let ownership hide water the
+// way it hides ground, and it did nothing: ownership is proven per 32-block cell only where
+// the engine reports a chunk both drawn and holding geometry, and a real client log showed
+// 104 owned cells against 2,953 still pending. Ownership is far too sparse to stand in front
+// of the player's own lake.
+//
+// It cannot simply be unbounded either. The engine's water fades to nothing at 80% of its
+// view distance while its ground keeps drawing past 100% - chunkliquid.vsh clamps the liquid
+// alpha on that ratio - so past that point vanilla draws a riverbed and no river, and cached
+// water is the only water there is (G124). This radius has to stop well short of it, which
+// is what the default fraction of the view distance is for. See .vhwater.
+uniform float waterNearRadius;
+
 // ---- Blend band --------------------------------------------------------------
 //
 // Cached terrain immediately outside the vanilla seam is made to resemble vanilla, relaxing
@@ -252,23 +272,30 @@ layout(location = 3) out vec4 outGPosition;
 
 void main()
 {
+    // Which blend band this fragment is in: 0 opaque, 1 water, 2 thin cover. Needed before
+    // the near cutoff because water has its own.
+    int ownershipBand = int(vertexColor.a * 255.0 + 0.5) / TINT_SLOTS;
+
     // Retain a broad fallback overlap for chunks that are still streaming, then give
     // the close field entirely to ready vanilla terrain so the approximate surfaces do
     // not mix. This boundary is deliberately much nearer than the old 78.5% cutoff.
-    if (radialDistance < cacheHandoffDistance || dist > 1.0) discard;
+    //
+    // Water takes the larger of the two cutoffs: see waterNearRadius for why it needs one
+    // of its own and why ownership could not supply it.
+    float nearCutoff = ownershipBand == 1
+        ? max(cacheHandoffDistance, waterNearRadius)
+        : cacheHandoffDistance;
+    if (radialDistance < nearCutoff || dist > 1.0) discard;
 
     // Ownership is decided before normals, noise, tint, lighting, fog, sky and water work,
     // so an owned fragment costs one point fetch rather than a whole shaded pixel. Every
     // address outside the tracked window, above or below the world, or reading a
     // cache-owned texel falls through to normal cached drawing: the mask can only take
     // ground away from the cache where vanilla has proven it draws there.
-    // Water is exempt. Ownership is decided by whether the engine is drawing a chunk, which
-    // its ground answers for, but the engine's water is a separate pass with a shorter reach:
-    // there is a ring where vanilla draws the bed and no longer draws the river, and
-    // suppressing ours there left a stretch of dry riverbed. Our water always draws now -
-    // hidden underneath vanilla's where vanilla has any, and the only water there is where it
-    // does not. It can only ever add water back.
-    int ownershipBand = int(vertexColor.a * 255.0 + 0.5) / TINT_SLOTS;
+    // Water is exempt here, and stays exempt. Ownership is decided by whether the engine is
+    // drawing a chunk, which its ground answers for, and the engine's water stops before its
+    // ground does - suppressing ours by ownership left a measured stretch of dry riverbed
+    // (G124). The near cutoff above is what handles water, by distance.
     if (maskEnabled == 1 && ownershipBand != 1)
     {
         int cellX = maskSectionOriginX + int(floor(sectionLocal.x / 32.0));

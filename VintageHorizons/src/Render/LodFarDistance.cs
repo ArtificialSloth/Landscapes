@@ -119,6 +119,39 @@ internal static class LodNearHandoff
             distance * MaximumInnerFraction,
             distance - MinimumFallbackOverlap));
     }
+
+    /// <summary>
+    /// Where the engine's own water is still at full opacity, as a fraction of its view
+    /// distance. chunkliquid.vsh clamps the liquid alpha on <c>length(worldPos.xz) /
+    /// viewDistance</c>: it holds the ceiling to 0.725 and reaches zero at 0.8, while the
+    /// ground keeps drawing past 1.0. Everything past this is a ring where the engine draws
+    /// a riverbed and no river.
+    /// </summary>
+    public const float VanillaWaterFadeStart = 0.725f;
+
+    /// <summary>
+    /// How near cached water is suppressed outright, as a fraction of the engine's view
+    /// distance. Inside this the engine is drawing its own water and ours must get out of
+    /// the way; outside it ours is the only water there is.
+    ///
+    /// A plain fraction of the view distance, deliberately. The obvious mechanism - the
+    /// ownership mask that handles solid ground - was tried and does not work here: it
+    /// proves a 32-block cell only where the engine reports the chunk both drawn and holding
+    /// geometry, and a real client log showed 104 owned cells against 2,953 pending, so
+    /// almost no water near the player was ever covered by it.
+    ///
+    /// Set below <see cref="VanillaWaterFadeStart"/> with room to spare. The gap between the
+    /// two is the ring where the engine has begun to drop its own water and cached water has
+    /// to take over, which is what G124's dry riverbeds were.
+    /// </summary>
+    public const float WaterNearFraction = 0.70f;
+
+    /// <summary>
+    /// How near cached water is suppressed, in blocks. Beyond this cached water always
+    /// draws; see LodTerrainRenderer.WaterNearFraction and G124.
+    /// </summary>
+    public static float WaterNearRadius(float vanillaViewDistance, float fraction) =>
+        Math.Max(0, vanillaViewDistance) * Math.Clamp(fraction, 0f, 1f);
 }
 
 /// <summary>

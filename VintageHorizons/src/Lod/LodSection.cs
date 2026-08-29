@@ -32,7 +32,21 @@ public struct LodPaletteEntry
     public ushort TextureSlot;
 
     public const byte FlagWater = 1;
-    // Bits 2 and 4 are free: they held tint classes, now superseded by TintSlot.
+
+    /// <summary>
+    /// The block fills only the LOWER HALF of its cell - a terrain slab, or a shallow
+    /// snow layer. Capture stores whole-block runs, so without this a slab is rebuilt as
+    /// a full cube and the smoothing a slab mod exists to provide is thrown away: on the
+    /// owner's world roughly a third of all ground-surface columns end in one. The mesher
+    /// lowers the run's top surface by half a block instead.
+    ///
+    /// Derived from the live Block, never trusted from storage - see LodStore.Reclassify,
+    /// which is why an existing cache gains half-block terrain with no re-exploration.
+    /// </summary>
+    public const byte FlagHalf = 2;
+
+    // Bit 4 is free: it held a tint class, now superseded by TintSlot. Quarter-block
+    // resolution, if it is ever wanted, belongs there beside FlagHalf.
 
     /// <summary>
     /// Not terrain at all (fire, meta markers): dropped at capture so it never becomes

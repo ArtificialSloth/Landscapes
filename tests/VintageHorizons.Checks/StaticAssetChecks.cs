@@ -529,7 +529,12 @@ public static class StaticAssetChecks
 
         c.False(fragment.Contains("dist < 0.0", StringComparison.Ordinal),
             "cached terrain is not discarded at the old outer handoff boundary");
-        c.True(fragment.Contains("radialDistance < cacheHandoffDistance", StringComparison.Ordinal),
+        // Solid ground still hands the conservative close field back by the shared handoff
+        // distance; water takes the larger of that and its own cutoff, which is why the
+        // comparison reads a derived name rather than the uniform directly.
+        c.True(fragment.Contains("? max(cacheHandoffDistance, waterNearRadius)", StringComparison.Ordinal)
+            && fragment.Contains(": cacheHandoffDistance;", StringComparison.Ordinal)
+            && fragment.Contains("radialDistance < nearCutoff", StringComparison.Ordinal),
             "cached terrain hands the conservative close field back to vanilla terrain");
         c.True(renderer.Contains("prog.Uniform(\"cacheHandoffDistance\"", StringComparison.Ordinal),
             "the renderer uploads the conservative near handoff radius");
@@ -811,20 +816,20 @@ public static class StaticAssetChecks
             : string.Empty;
         c.True(skipBody.Contains("if (!readinessMaskActive", StringComparison.Ordinal),
             "a section is never skipped unless the GPU mask is live");
-        // Opaque only. Water used to share this decision and must not: ownership is decided
-        // by whether the engine is drawing a chunk, which its ground answers for, while the
-        // engine's water is a separate pass with a shorter reach. Suppressing our water
-        // wherever vanilla "owned" the ground produced a measured stretch of dry riverbed
-        // in a ring where vanilla drew the bed and had already stopped drawing the river.
         c.Eq(2, CountOccurrences(renderer, "if (SkipVanillaOwnedSection(key)) continue;"),
             "both opaque comparison paths share the same skip decision");
+        // Opaque only, still. Ownership may now hide cached water, but only inside a radius
+        // far smaller than a section, because the engine's water fades out at 80% of its
+        // view distance while its ground draws past 100%, and cached water has to keep
+        // filling that outer ring - G124's dry riverbeds. A whole-section decision cannot
+        // express that; the per-fragment test can.
         int waterMethod = renderer.IndexOf("void DrawLegacyWater()", StringComparison.Ordinal);
         c.True(waterMethod > 0, "the water pass has its own submission loop");
         string waterBody = waterMethod > 0
             ? renderer.Substring(waterMethod, Math.Min(1600, renderer.Length - waterMethod))
             : string.Empty;
         c.False(waterBody.Contains("SkipVanillaOwnedSection", StringComparison.Ordinal),
-            "water submission is never skipped for vanilla ownership");
+            "water submission is never skipped whole for vanilla ownership");
         c.False(skipBody.Contains("Evict", StringComparison.Ordinal)
             || skipBody.Contains("RenderDirty", StringComparison.Ordinal)
             || skipBody.Contains("Remove", StringComparison.Ordinal),
@@ -885,6 +890,16 @@ public static class StaticAssetChecks
             "opaque and water pass through exactly one shared ownership lookup");
         c.True(fragment.Contains("if (maskEnabled == 1 && ownershipBand != 1)", StringComparison.Ordinal),
             "a disabled mask executes no readiness sample, and water is never suppressed by one");
+        // Water gets out of vanilla's way by its OWN near cutoff instead. Ownership cannot do
+        // it: it proves a cell only where the engine reports a chunk drawn and holding
+        // geometry, which a real client log measured at 104 owned against 2,953 pending.
+        c.True(fragment.Contains("max(cacheHandoffDistance, waterNearRadius)", StringComparison.Ordinal)
+            && fragment.Contains("radialDistance < nearCutoff", StringComparison.Ordinal),
+            "cached water takes the larger of its own near cutoff and the shared one");
+        c.True(renderer.Contains("prog.Uniform(\"waterNearRadius\"", StringComparison.Ordinal)
+            && renderer.Contains("LodNearHandoff.WaterNearRadius(viewDistance, waterNearFraction)",
+                StringComparison.Ordinal),
+            "and the renderer derives it from the engine's view distance every frame");
 
         c.True(renderer.Contains("prog.Uniform(\"maskEnabled\"", StringComparison.Ordinal)
             && renderer.Contains("prog.Uniform(\"maskCapacity\"", StringComparison.Ordinal)
@@ -922,7 +937,7 @@ public static class StaticAssetChecks
         // Removing the radius must not touch the per-cell mask. The radius is one distance
         // around the camera; the mask is what hides cached terrain wherever vanilla is
         // actually drawing, which is the whole handoff and a different mechanism entirely.
-        c.True(fragment.Contains("if (maskEnabled == 1 && ownershipBand != 1)", StringComparison.Ordinal),
+        c.True(fragment.Contains("maskEnabled == 1 &&", StringComparison.Ordinal),
             "per-cell ownership still decides every land fragment, independently of the radius");
         c.True(renderer.Contains("readiness.Classify(key) != VanillaSectionOwnership.VanillaOnly",
                 StringComparison.Ordinal),

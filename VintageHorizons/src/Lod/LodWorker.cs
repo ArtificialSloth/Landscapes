@@ -118,6 +118,22 @@ public class MeshJob
     /// two different ways. See <see cref="LodCaveCull"/>.
     /// </summary>
     public int CaveCullReach;
+
+    /// <summary>
+    /// How many detail levels draw terrain slabs at their real half-block height, counting
+    /// from the finest: 0 is off, 1 is level 0 alone, and anything past the deepest level is
+    /// everywhere. Carried on the job for the same reason the cave reach is.
+    ///
+    /// Not free, and the cost lands as geometry rather than as shading. A slab beside a full
+    /// block exposes the top half of that block's wall, and a half-height plane between two
+    /// whole ones splits both of them - measured on the owner's slab-generated world at
+    /// +32% opaque vertices at level 0 and +23% to +41% at coarser levels. The default of one
+    /// level buys the near field, where a half block is a step the eye can resolve and where
+    /// the seam with vanilla's own smoothed ground actually is, and declines to pay for it
+    /// where a column is already eight blocks wide. Same argument, same shape, as the
+    /// level-0-only rule on block textures.
+    /// </summary>
+    public int HalfBlockLevels;
 }
 
 public class MeshResult

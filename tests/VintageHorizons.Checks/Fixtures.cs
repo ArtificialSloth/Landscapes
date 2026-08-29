@@ -86,13 +86,19 @@ public static class Fixtures
         };
     }
 
+    /// <summary>
+    /// A mesh job over one section. <paramref name="halfBlockLevels"/> defaults to the
+    /// renderer's own default of one - level 0 alone draws terrain slabs at half height -
+    /// so a check reads the shipping behaviour unless it says otherwise.
+    /// </summary>
     public static MeshJob Job(LodSection self, long key = 0, SectionSnapshot?[]? neighbors = null,
-        byte assumedCoveredSides = 0) =>
+        byte assumedCoveredSides = 0, int halfBlockLevels = 1) =>
         new()
         {
             Key = key,
             Self = Snap(self),
             Neighbors = neighbors ?? new SectionSnapshot?[4],
             AssumedCoveredSides = assumedCoveredSides,
+            HalfBlockLevels = halfBlockLevels,
         };
 }

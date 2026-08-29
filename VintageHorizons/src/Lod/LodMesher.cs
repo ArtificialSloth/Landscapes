@@ -17,6 +17,14 @@ namespace VintageHorizons;
 /// of explored space and renders as a wall - unless the job says that side only
 /// LOOKS missing because the section has not been loaded yet, in which case water
 /// leaves the edge open; see CollectSide.
+///
+/// HEIGHTS INSIDE THIS FILE ARE IN HALF BLOCKS. Stored runs are whole blocks, but a
+/// block flagged <see cref="LodPaletteEntry.FlagHalf"/> - a terrain slab - fills only the
+/// lower half of its cell, and the surface, the walls and every coverage test have to
+/// agree about that or a slab opens a half-block hole into the solid ground beside it.
+/// Doubling once, at the two accessors below, is what keeps the rest of the file integer
+/// interval arithmetic; only the emission points divide by two. The packed quad format
+/// stores Y in quarter blocks, so a half-block plane is exactly representable there.
 /// </summary>
 public static class LodMesher
 {
@@ -74,10 +82,14 @@ public static class LodMesher
         }
     }
 
-    /// <summary>One exposed horizontal face: column cell + plane y + palette.</summary>
+    /// <summary>
+    /// One exposed horizontal face: column cell + plane y + palette. Y and YBottom are in
+    /// HALF blocks. A short holds every height a 14-bit run can carry for any world height
+    /// up to 8,191 blocks, which is far past what the game builds.
+    /// </summary>
     readonly record struct HFace(short Cx, short Cz, short Y, short Pid, bool Bottom, bool Water, bool Thin, short YBottom);
 
-    /// <summary>One exposed wall segment on a column edge.</summary>
+    /// <summary>One exposed wall segment on a column edge. YTop and YBottom are half blocks.</summary>
     readonly record struct VFace(byte Dir, short Fixed, short Along, short YTop, short YBottom, short Pid, bool Water);
 
     [ThreadStatic] static List<HFace>? hFaces;
@@ -178,6 +190,11 @@ public static class LodMesher
         }
         SectionSnapshot self = cave.Self;
 
+        // Whether slabs are drawn at their real half height here. Off at coarse levels by
+        // default: a column already merges a whole neighbourhood, so half a block of
+        // vertical detail buys nothing and the extra walls it needs are not free.
+        bool half = level < job.HalfBlockLevels;
+
         var opaque = opaqueBuffers ??= new Buffers(pack: true);
         var water = waterBuffers ??= new Buffers(pack: false);
         var hf = hFaces ??= new List<HFace>(8192);
@@ -201,8 +218,10 @@ public static class LodMesher
                 for (int r = 0; r < runs.Length; r++)
                 {
                     ulong run = runs[r];
-                    int yTop = LodSection.RunYTop(run);
-                    int yBottom = LodSection.RunYBottom(run);
+                    // Half blocks from here down. A slab's run still ends on a whole-block
+                    // boundary in storage; its SURFACE is half a block lower.
+                    int yTop = TopHalf(self, run, half);
+                    int yBottom = BottomHalf(run);
                     int pid = LodSection.RunPaletteId(run);
                     bool isTranslucent = IsTranslucent(self.PaletteFlags[pid]);
 
@@ -219,8 +238,11 @@ public static class LodMesher
                         continue;
                     }
 
+                    // A slab's own top is half a block below the run above it, so this
+                    // comparison also answers "is there a half-block gap here" without a
+                    // second test: 2y-1 never equals 2y.
                     bool topCovered = r > 0
-                        && LodSection.RunYBottom(runs[r - 1]) == yTop
+                        && BottomHalf(runs[r - 1]) == yTop
                         && !IsThinRun(self, runs[r - 1])
                         && IsTranslucentRun(self, runs[r - 1]) == isTranslucent;
                     // YBottom is carried for thin cover only, which is the one face that
@@ -231,10 +253,10 @@ public static class LodMesher
                     if (!topCovered) hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, isTranslucent, false, 0));
 
                     bool bottomCovered = r < runs.Length - 1
-                        && LodSection.RunYTop(runs[r + 1]) == yBottom
+                        && TopHalf(self, runs[r + 1], half) == yBottom
                         && !IsThinRun(self, runs[r + 1])
                         && IsTranslucentRun(self, runs[r + 1]) == isTranslucent;
-                    if (!bottomCovered && yBottom > 1 && !isTranslucent)
+                    if (!bottomCovered && yBottom > 2 && !isTranslucent)
                     {
                         // A floor's own plane IS the run's bottom, so Y already carries it.
                         hf.Add(new HFace((short)cx, (short)cz, (short)yBottom, (short)pid, true, false, false, 0));
@@ -242,13 +264,13 @@ public static class LodMesher
 
                     bool solidCoverOnly = !isTranslucent;
                     CollectSide(vf, job, self, cave, W, cx, cz, cx - 1, cz,
-                        yTop, yBottom, pid, isTranslucent, solidCoverOnly);
+                        yTop, yBottom, pid, isTranslucent, solidCoverOnly, half);
                     CollectSide(vf, job, self, cave, E, cx, cz, cx + 1, cz,
-                        yTop, yBottom, pid, isTranslucent, solidCoverOnly);
+                        yTop, yBottom, pid, isTranslucent, solidCoverOnly, half);
                     CollectSide(vf, job, self, cave, N, cx, cz, cx, cz - 1,
-                        yTop, yBottom, pid, isTranslucent, solidCoverOnly);
+                        yTop, yBottom, pid, isTranslucent, solidCoverOnly, half);
                     CollectSide(vf, job, self, cave, S, cx, cz, cx, cz + 1,
-                        yTop, yBottom, pid, isTranslucent, solidCoverOnly);
+                        yTop, yBottom, pid, isTranslucent, solidCoverOnly, half);
                 }
             }
         }
@@ -395,8 +417,10 @@ public static class LodMesher
                 // coarse levels one run spans several blocks and a fixed drop from the
                 // top left the mat floating in mid-air. Clamped so it can never rise
                 // above the run it represents.
-                // Y is absolute blocks and is NOT scaled by step, so neither is the offset.
-                float y = first.Thin ? Math.Min(first.YBottom + 0.25f, first.Y) : first.Y;
+                // Y is absolute (half blocks) and is NOT scaled by step, so neither is
+                // the offset; the halving back to world blocks happens here.
+                float top = first.Y * 0.5f;
+                float y = first.Thin ? Math.Min(first.YBottom * 0.5f + 0.25f, top) : top;
 
                 // Counter-clockwise from outside the run, matching OpenGL's front-face
                 // default. The renderer may then reject opaque back faces without losing
@@ -473,30 +497,33 @@ public static class LodMesher
             };
             float a0 = seg.Along * step;
             float a1 = alongEnd * step;
+            // Half blocks back to world blocks. Y is absolute and is NOT scaled by step.
+            float yTop = seg.YTop * 0.5f;
+            float yBottom = seg.YBottom * 0.5f;
 
             if (seg.Dir == W)
             {
                 AddQuad(buf, LodPackedFace.West, step, color, alpha,
-                    fixedCoord, seg.YBottom, a0, fixedCoord, seg.YBottom, a1,
-                    fixedCoord, seg.YTop, a1, fixedCoord, seg.YTop, a0, textureSlot);
+                    fixedCoord, yBottom, a0, fixedCoord, yBottom, a1,
+                    fixedCoord, yTop, a1, fixedCoord, yTop, a0, textureSlot);
             }
             else if (seg.Dir == E)
             {
                 AddQuad(buf, LodPackedFace.East, step, color, alpha,
-                    fixedCoord, seg.YBottom, a0, fixedCoord, seg.YTop, a0,
-                    fixedCoord, seg.YTop, a1, fixedCoord, seg.YBottom, a1, textureSlot);
+                    fixedCoord, yBottom, a0, fixedCoord, yTop, a0,
+                    fixedCoord, yTop, a1, fixedCoord, yBottom, a1, textureSlot);
             }
             else if (seg.Dir == N)
             {
                 AddQuad(buf, LodPackedFace.North, step, color, alpha,
-                    a0, seg.YBottom, fixedCoord, a0, seg.YTop, fixedCoord,
-                    a1, seg.YTop, fixedCoord, a1, seg.YBottom, fixedCoord, textureSlot);
+                    a0, yBottom, fixedCoord, a0, yTop, fixedCoord,
+                    a1, yTop, fixedCoord, a1, yBottom, fixedCoord, textureSlot);
             }
             else
             {
                 AddQuad(buf, LodPackedFace.South, step, color, alpha,
-                    a0, seg.YBottom, fixedCoord, a1, seg.YBottom, fixedCoord,
-                    a1, seg.YTop, fixedCoord, a0, seg.YTop, fixedCoord, textureSlot);
+                    a0, yBottom, fixedCoord, a1, yBottom, fixedCoord,
+                    a1, yTop, fixedCoord, a0, yTop, fixedCoord, textureSlot);
             }
 
             i = j;
@@ -519,6 +546,25 @@ public static class LodMesher
     /// </summary>
     static bool IsThinRun(SectionSnapshot s, ulong run) =>
         (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagThin) != 0;
+
+    /// <summary>
+    /// The block only fills the lower half of its cell (a terrain slab, a shallow snow
+    /// layer). The flag is a property of the palette entry, so a run of them shortens once,
+    /// at its top: two slabs cannot actually stack without air between them, and a run that
+    /// merged them anyway is already an approximation of that column.
+    /// </summary>
+    static bool IsHalfRun(SectionSnapshot s, ulong run) =>
+        (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagHalf) != 0;
+
+    /// <summary>
+    /// This run's top surface, in half blocks. The single place slabs shorten, and the one
+    /// switch that turns the whole behaviour off for a level.
+    /// </summary>
+    static int TopHalf(SectionSnapshot s, ulong run, bool half) =>
+        LodSection.RunYTop(run) * 2 - (half && IsHalfRun(s, run) ? 1 : 0);
+
+    /// <summary>This run's floor, in half blocks. A run always starts on a block boundary.</summary>
+    static int BottomHalf(ulong run) => LodSection.RunYBottom(run) * 2;
 
     static (SectionSnapshot? snap, int col) NeighborColumn(
         MeshJob job, SectionSnapshot self, int cx, int cz)
@@ -544,10 +590,15 @@ public static class LodMesher
         return (nb, nb == null ? 0 : LodSection.ColumnIndex(ncx, ncz));
     }
 
-    /// <summary>Collect exposed wall segments for [yBottom, yTop) minus the neighbor's covered intervals.</summary>
+    /// <summary>
+    /// Collect exposed wall segments for [yBottom, yTop) minus the neighbor's covered
+    /// intervals. Every height here is in HALF blocks, including the neighbour's, so a
+    /// slab beside a full block leaves the top half of that block's wall exposed instead
+    /// of culling it and opening a see-through notch into the ground.
+    /// </summary>
     static void CollectSide(List<VFace> vf, MeshJob job, SectionSnapshot self,
         LodCaveCull.Prepared cave, int dir, int cx, int cz, int ncx, int ncz,
-        int yTop, int yBottom, int pid, bool isTranslucent, bool solidCoverOnly)
+        int yTop, int yBottom, int pid, bool isTranslucent, bool solidCoverOnly, bool half)
     {
         var (nb, ncol) = NeighborColumn(job, self, ncx, ncz);
 
@@ -579,7 +630,7 @@ public static class LodMesher
         if (external && cave.HasBoundaryCoverage && neighborRuns.Length > 0)
         {
             CollectSideWithCaveCoverage(vf, cave, neighborRuns, nb!, dir, fix, along,
-                ncx, ncz, yTop, yBottom, pid, isTranslucent, solidCoverOnly);
+                ncx, ncz, yTop, yBottom, pid, isTranslucent, solidCoverOnly, half);
             return;
         }
 
@@ -592,8 +643,8 @@ public static class LodMesher
             if (IsThinRun(nb!, neighborRuns[i])) continue;
             if (solidCoverOnly && IsTranslucentRun(nb!, neighborRuns[i])) continue;
 
-            int nTop = LodSection.RunYTop(neighborRuns[i]);
-            int nBottom = LodSection.RunYBottom(neighborRuns[i]);
+            int nTop = TopHalf(nb!, neighborRuns[i], half);
+            int nBottom = BottomHalf(neighborRuns[i]);
             if (nTop <= yBottom) break;
             if (nBottom >= cur) continue;
 
@@ -619,22 +670,33 @@ public static class LodMesher
     static void CollectSideWithCaveCoverage(List<VFace> vf, LodCaveCull.Prepared cave,
         Span<ulong> neighborRuns, SectionSnapshot neighbor, int dir, short fix, short along,
         int ncx, int ncz, int yTop, int yBottom, int pid, bool isTranslucent,
-        bool solidCoverOnly)
+        bool solidCoverOnly, bool half)
     {
+        // yTop/yBottom arrive in half blocks; the cave classification is per whole block,
+        // so the walk stays on whole cells and each cell reports how much of itself it
+        // covers. Only a neighbouring slab's own top cell covers a half.
         int columnTop = LodSection.RunYTop(neighborRuns[0]);
         int columnBottom = LodSection.RunYBottom(neighborRuns[^1]);
         int runAt = 0;
         int openTop = -1;
 
-        for (int y = yTop - 1; y >= yBottom; y--)
+        for (int y = (yTop + 1) / 2 - 1; y >= yBottom / 2; y--)
         {
+            // This cell clipped to the run being walled, again in half blocks. The top
+            // cell is short by half when the run itself is a slab.
+            int cellTop = Math.Min((y + 1) * 2, yTop);
+            int cellBottom = Math.Max(y * 2, yBottom);
+            if (cellTop <= cellBottom) continue;
+
             while (runAt < neighborRuns.Length
                 && LodSection.RunYBottom(neighborRuns[runAt]) > y)
             {
                 runAt++;
             }
 
-            bool covered = false;
+            // Where the neighbour's cover reaches inside this cell, or -1 for none. Cover
+            // always starts at the cell floor, so one number describes it.
+            int coverTop = -1;
             if (runAt < neighborRuns.Length)
             {
                 ulong run = neighborRuns[runAt];
@@ -642,25 +704,41 @@ public static class LodMesher
                     && !IsThinRun(neighbor, run)
                     && (!solidCoverOnly || !IsTranslucentRun(neighbor, run)))
                 {
-                    covered = true;
+                    coverTop = half && IsHalfRun(neighbor, run) && LodSection.RunYTop(run) == y + 1
+                        ? y * 2 + 1
+                        : y * 2 + 2;
                 }
             }
 
-            if (!covered && y >= columnBottom && y < columnTop && cave.Fills(ncx, ncz, y))
+            if (coverTop < 0 && y >= columnBottom && y < columnTop && cave.Fills(ncx, ncz, y))
             {
-                covered = true;
+                coverTop = y * 2 + 2;
             }
 
-            if (!covered)
+            if (coverTop < 0)
             {
-                if (openTop < 0) openTop = y + 1;
+                if (openTop < 0) openTop = cellTop;
+                continue;
             }
-            else if (openTop >= 0)
+
+            int openBottom = Math.Max(coverTop, cellBottom);
+            if (openBottom >= cellTop)
             {
-                vf.Add(new VFace((byte)dir, fix, along,
-                    (short)openTop, (short)(y + 1), (short)pid, isTranslucent));
-                openTop = -1;
+                // Fully covered: close whatever was open above it.
+                if (openTop >= 0)
+                {
+                    vf.Add(new VFace((byte)dir, fix, along,
+                        (short)openTop, (short)cellTop, (short)pid, isTranslucent));
+                    openTop = -1;
+                }
+                continue;
             }
+
+            // Half covered: the wall runs down to the slab's top and stops there.
+            if (openTop < 0) openTop = cellTop;
+            vf.Add(new VFace((byte)dir, fix, along,
+                (short)openTop, (short)openBottom, (short)pid, isTranslucent));
+            openTop = -1;
         }
 
         if (openTop >= 0)

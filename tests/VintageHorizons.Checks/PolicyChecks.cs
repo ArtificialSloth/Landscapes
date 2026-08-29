@@ -1,4 +1,5 @@
 using Vintagestory.API.Common;
+using Vintagestory.API.MathTools;
 
 namespace VintageHorizons.Checks;
 
@@ -14,6 +15,7 @@ public static class PolicyChecks
         Materials(c);
         GroundCover(c);
         FernTree(c);
+        HalfBlocks(c);
         Degenerate(c);
     }
 
@@ -67,6 +69,44 @@ public static class PolicyChecks
             "the same code as a plant would be treated as cover");
     }
 
+    /// <summary>
+    /// Terrain-slab mods replace the top block of a smoothed step with a half-height block.
+    /// Nothing here knows their names: the rule is the block's own shape, so it catches a
+    /// slab whatever a mod calls it and catches a shallow snow layer for free.
+    ///
+    /// The failure that matters is the false positive. Anything narrower than its cell -
+    /// a fence post, a torch, a plant stem - would sink a whole column of distant ground
+    /// half a block if it were treated as terrain half a block tall.
+    /// </summary>
+    static void HalfBlocks(Check c)
+    {
+        c.Eq(LodPaletteEntry.FlagHalf, Shaped(EnumBlockMaterial.Soil, "soil-low-normal", 0f, 0.5f),
+            "a bottom half-slab of soil is half a block tall");
+        c.Eq(LodPaletteEntry.FlagHalf, Shaped(EnumBlockMaterial.Stone, "rock-granite", 0f, 0.5f),
+            "so is a slab of rock");
+        c.Eq(LodPaletteEntry.FlagHalf, Shaped(EnumBlockMaterial.Snow, "snowlayer-3", 0f, 0.375f),
+            "and a snow layer no deeper than half a block");
+
+        c.Eq((byte)0, Shaped(EnumBlockMaterial.Soil, "soil-low-normal", 0f, 1f),
+            "a full block is unchanged");
+        c.Eq((byte)0, Shaped(EnumBlockMaterial.Snow, "snowlayer-6", 0f, 0.75f),
+            "deep snow rounds up to a full block rather than down to a half");
+        c.Eq((byte)0, Shaped(EnumBlockMaterial.Stone, "rock-granite", 0.5f, 1f),
+            "a TOP slab keeps its full height: its top face is where the ground is");
+
+        // Narrow things. Each of these is half a block tall or less and none of them is
+        // half a block of terrain.
+        c.Eq((byte)0, Boxed(EnumBlockMaterial.Wood, "fence-section", 0.4f, 0f, 0.4f, 0.6f, 0.5f, 0.6f),
+            "a post is not a slab, however short it is");
+        c.Eq((byte)0, Boxed(EnumBlockMaterial.Stone, "rock-granite", 0f, 0f, 0f, 0.5f, 0.5f, 1f),
+            "half a block wide is not half a block tall");
+
+        // Water keeps its own classification: it is answered before the shape test, and a
+        // half-height water surface is not something this mod draws.
+        c.Eq(LodPaletteEntry.FlagWater, Shaped(EnumBlockMaterial.Water, "water-still-3", 0f, 0.5f),
+            "a shallow water block is still water, not a slab");
+    }
+
     static void Degenerate(Check c)
     {
         // Code is null on a block that failed to resolve. Classification must survive it,
@@ -83,5 +123,18 @@ public static class PolicyChecks
         {
             BlockMaterial = material,
             Code = new AssetLocation("game", path),
+        });
+
+    /// <summary>A full-footprint block standing between two heights.</summary>
+    static byte Shaped(EnumBlockMaterial material, string path, float y1, float y2) =>
+        Boxed(material, path, 0f, y1, 0f, 1f, y2, 1f);
+
+    static byte Boxed(EnumBlockMaterial material, string path,
+        float x1, float y1, float z1, float x2, float y2, float z2) =>
+        LodBlockPolicy.FlagsFor(new Block
+        {
+            BlockMaterial = material,
+            Code = new AssetLocation("game", path),
+            CollisionBoxes = new[] { new Cuboidf(x1, y1, z1, x2, y2, z2) },
         });
 }
