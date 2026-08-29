@@ -40,25 +40,83 @@ uniform int maskVerticalChunks;
 // 1 paints hidden pixels red instead of hiding them. Diagnostic only.
 uniform int maskDebug;
 
-// A near-field cutoff for cached WATER alone, in blocks. Zero draws cached water everywhere,
-// which is what it used to do.
+// ---- Cached water ------------------------------------------------------------
 //
-// This is a RADIUS and not the ownership mask, and that distinction is the whole fix. Cached
-// terrain draws in the OPAQUE stage and writes depth, while the engine draws its water later,
-// in OIT - so unsuppressed cached water sits in the depth buffer in FRONT of the real thing
-// and hides it, and the cache's flat sheet stands in for vanilla's own animated surface on
-// every lake the player is looking at. The obvious answer was to let ownership hide water the
-// way it hides ground, and it did nothing: ownership is proven per 32-block cell only where
-// the engine reports a chunk both drawn and holding geometry, and a real client log showed
-// 104 owned cells against 2,953 still pending. Ownership is far too sparse to stand in front
-// of the player's own lake.
+// An optional near-field cutoff for cached WATER alone, measured in whole vanilla CHUNKS
+// around the camera's own chunk, and OFF by default.
 //
-// It cannot simply be unbounded either. The engine's water fades to nothing at 80% of its
-// view distance while its ground keeps drawing past 100% - chunkliquid.vsh clamps the liquid
-// alpha on that ratio - so past that point vanilla draws a riverbed and no river, and cached
-// water is the only water there is (G124). This radius has to stop well short of it, which
-// is what the default fraction of the view distance is for. See .vhwater.
-uniform float waterNearRadius;
+// No radius. A per-pixel distance test is a circle, a circle is a shape the world does not
+// contain, and it reads as an effect painted over the terrain rather than as terrain - the
+// same rule the blend band is built on. 0.3.141 used a radius and drew a hard ring across
+// every lake; 0.3.144 shrank it and drew a smaller one. So this is a Chebyshev distance in
+// 32-block chunk columns: its boundary can only ever run along chunk edges, in the game's own
+// grid, and at the default of zero it does not exist at all.
+//
+// The boundary between cached water and vanilla's is the ownership mask below - vanilla's
+// real chunk footprint - exactly as it is for solid ground. This is only a fallback for the
+// near field, where the mask can be slow to commit and the engine's own water is transparent
+// enough for a cached sheet under it to tint it. See .vhwater.
+uniform int waterNearChunks;
+
+// The camera's own vanilla chunk column, as two integer scalars. Never a Vec2i: the client's
+// only integer-pair setter reaches glUniform2f, which an integer uniform rejects outright, so
+// the value would silently stay at zero. See G42.
+uniform int camChunkX;
+uniform int camChunkZ;
+
+// Cached water obeys the ownership mask exactly as solid ground does, at every distance.
+// There is no outward allowance and no radius: an allowance measured from the camera is a
+// circle, and a circle drew cached water straight into chunks vanilla was already drawing.
+// The boundary is the mask's own 32-block cells, so it falls on vanilla chunk edges and
+// nowhere else.
+
+// 1 gives cached water the engine's own opacity instead of a flat constant. chunkliquid.vsh
+// grades water by view angle - about 16% opaque looking straight down at a pond at your feet,
+// clamped fully opaque by roughly 25 blocks out - so a flat 0.66 is simultaneously too opaque
+// up close and too transparent at the seam, where it let the cached lakebed show through a
+// surface vanilla draws solid. This is a property of the surface, not a correction, so it is
+// applied everywhere rather than on the band: band-weighting it would create a fresh seam of
+// its own.
+uniform int waterFresnel;
+
+// The two surface terms vanilla's water has and cached water did not, both weighted by the
+// SAME blend band the ground uses - full at the vanilla seam, relaxing outward in the band's
+// own 8-block steps.
+//
+// glint is the specular sun reflection on a noise-perturbed surface normal. It is the loudest
+// single difference on a sunny day: the game's water is shiny to the horizon and ours went
+// matte at the line. foam is vanilla's open-water surface noise, which is the same argument
+// bandSpeckle makes for ground - vanilla's water is never one flat colour.
+//
+// Band-weighted rather than global because these are the expensive per-pixel terms, because
+// past the band fog dominates and the detail is sub-pixel anyway, and because the whole point
+// is to match vanilla where vanilla is standing next to us.
+//
+// What is NOT reproduced here is vanilla's shoreline rim, which it derives by sampling the
+// depth texture during OIT. This shader runs in the opaque stage where that same depth buffer
+// is the live render target, and sampling an attachment while it is bound is undefined - so
+// shore foam has to come from mesh data instead, and does not exist yet.
+uniform float waterGlint;
+uniform float waterFoam;
+
+// Engine state the liquid shader uses, uploaded under mod-owned names so nothing here can
+// collide with a uniform the engine manages on its own programs. All are public API:
+// ShaderUniforms.SunPosition3D / SunSpecularIntensity / WaterWaveCounter / WindWaveCounter /
+// WaterFlowCounter / WindSpeed / PlayerPosForFoam, and Calendar.ReflectColor.
+uniform vec3 vhSunPosRel;
+uniform vec3 vhReflectColor;
+uniform float vhSunSpecular;
+uniform float vhWaterWave;
+uniform float vhWindWave;
+uniform float vhWaterFlow;
+uniform float vhWindSpeed;
+
+// The engine's own foam anchor: an absolute world position re-based to a reference point that
+// only moves when the player leaves a 200-block radius. Using it rather than a raw world
+// coordinate is what keeps the noise both stable under the player and precise at map edges -
+// and it puts our noise in exactly the phase vanilla's water is in.
+uniform vec3 vhFoamOrigin;
+// -------------------------------------------------------------------------------
 
 // ---- Blend band --------------------------------------------------------------
 //
@@ -280,41 +338,70 @@ void main()
     // the close field entirely to ready vanilla terrain so the approximate surfaces do
     // not mix. This boundary is deliberately much nearer than the old 78.5% cutoff.
     //
-    // Water takes the larger of the two cutoffs: see waterNearRadius for why it needs one
-    // of its own and why ownership could not supply it.
-    float nearCutoff = ownershipBand == 1
-        ? max(cacheHandoffDistance, waterNearRadius)
-        : cacheHandoffDistance;
-    if (radialDistance < nearCutoff || dist > 1.0) discard;
+    // Water takes the larger of the two cutoffs. Its own is a small absolute distance
+    // shared with solid ground. Water gets nothing extra here: its own near rule is a chunk
+    // count, applied below, and it is off by default.
+    if (radialDistance < cacheHandoffDistance || dist > 1.0) discard;
+
+    // This fragment's vanilla chunk cell. Hoisted out of the ownership block because the
+    // water near rule needs the same address: both must be an integer section origin plus a
+    // section-local offset, never a summed world coordinate, or a fragment at a chunk edge
+    // rounds onto its neighbour at large world coordinates.
+    int cellX = maskSectionOriginX + int(floor(sectionLocal.x / 32.0));
+    int cellY = int(floor(sectionLocal.y / 32.0));
+    int cellZ = maskSectionOriginZ + int(floor(sectionLocal.z / 32.0));
+
+    // Cached water immediately around the camera, by CHUNK rather than by distance, so its
+    // boundary runs along chunk edges instead of drawing a circle. Off at zero.
+    if (ownershipBand == 1 && waterNearChunks > 0
+        && max(abs(cellX - camChunkX), abs(cellZ - camChunkZ)) < waterNearChunks)
+    {
+        discard;
+    }
 
     // Ownership is decided before normals, noise, tint, lighting, fog, sky and water work,
     // so an owned fragment costs one point fetch rather than a whole shaded pixel. Every
     // address outside the tracked window, above or below the world, or reading a
     // cache-owned texel falls through to normal cached drawing: the mask can only take
     // ground away from the cache where vanilla has proven it draws there.
-    // Water is exempt here, and stays exempt. Ownership is decided by whether the engine is
-    // drawing a chunk, which its ground answers for, and the engine's water stops before its
-    // ground does - suppressing ours by ownership left a measured stretch of dry riverbed
-    // (G124). The near cutoff above is what handles water, by distance.
-    if (maskEnabled == 1 && ownershipBand != 1)
+    // WATER IS UNDER THIS RULE TOO, at every distance and with no exception of any kind.
+    //
+    // Water carried an outward allowance for two builds: ownership was barred from hiding it
+    // past a fraction of the view distance, on the argument that the engine's liquid alpha can
+    // reach zero while its ground keeps drawing, leaving a ring where vanilla draws a bed and
+    // no river (G124). Whatever that argument was worth, the allowance was a RADIUS, and past
+    // it cached water drew straight into chunks vanilla was already drawing - measured in play
+    // as cached water inside vanilla territory, which is the one thing this rule exists to
+    // prevent. A boundary that ignores the chunk grid is not a boundary; it is an effect.
+    //
+    // The mask's cells are whole 32-block vanilla chunks, so this edge falls on chunk edges
+    // and nowhere else. If G124's dry riverbeds return they will be visible as a bed with no
+    // water at distance, and the answer will be a better ownership signal, never a radius.
+    if (maskEnabled == 1)
     {
-        int cellX = maskSectionOriginX + int(floor(sectionLocal.x / 32.0));
-        int cellY = int(floor(sectionLocal.y / 32.0));
-        int cellZ = maskSectionOriginZ + int(floor(sectionLocal.z / 32.0));
         if (cellY >= 0 && cellY < maskVerticalChunks
             && cellX >= maskMinX && cellX < maskMinX + maskWidth
             && cellZ >= maskMinZ && cellZ < maskMinZ + maskDepth)
         {
             int wrap = maskCapacity - 1;
             ivec2 maskTexel = ivec2(cellX & wrap, (cellZ & wrap) + cellY * maskCapacity);
-            if (texelFetch(readinessMask, maskTexel, 0).r > 0.5)
+            // Red is the GROUND footprint, green is water's own. They differ by a whole
+            // number of chunks: ground keeps drawing through the ring ownership refuses, as a
+            // hole guard, and water does not need that guard - a missing river is local and
+            // obvious, while cached water standing inside live terrain is not. Both edges fall
+            // on chunk boundaries because the green channel is a chunk-wise dilation of the
+            // red one, never a distance from the camera.
+            vec4 ownership = texelFetch(readinessMask, maskTexel, 0);
+            if ((ownershipBand == 1 ? ownership.g : ownership.r) > 0.5)
             {
                 // Debug mode paints instead of discarding, which turns an ambiguous gap
                 // into a yes/no question: red means the mask hid this pixel, and a gap
                 // that stays empty in this mode was never the mask's doing.
                 if (maskDebug == 1)
                 {
-                    outColor = vec4(1.0, 0.0, 0.0, 1.0);
+                    // MAGENTA, not red. The band's shape view paints red too, and a red
+                    // region in a screenshot could not be attributed to either one.
+                    outColor = vec4(1.0, 0.0, 1.0, 1.0);
                     outGlow = vec4(0.0);
                     outGNormal = vec4(0.0);
                     outGPosition = vec4(0.0);
@@ -360,9 +447,16 @@ void main()
     // a bad correction cannot be mistaken for one another.
     if (bandDebug == 1 && bandWeight > 0.0)
     {
-        vec3 ramp = bandWeight > 0.5
-            ? mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), (bandWeight - 0.5) * 2.0)
-            : mix(vec3(0.0, 0.6, 1.0), vec3(1.0, 1.0, 0.0), bandWeight * 2.0);
+        // Two palettes, because "the red thing is a square" and "the band is a circle" were
+        // both true at once and there was no way to tell which surface each belonged to.
+        // GROUND ramps blue-yellow-red. WATER ramps dark-green to bright green. Any solid
+        // block of one colour is a weight that is not varying, and its hue says which pass
+        // drew it - which is the question two builds of screenshots could not answer.
+        vec3 ramp = ownershipBand == 1
+            ? mix(vec3(0.0, 0.25, 0.0), vec3(0.2, 1.0, 0.2), bandWeight)
+            : (bandWeight > 0.5
+                ? mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), (bandWeight - 0.5) * 2.0)
+                : mix(vec3(0.0, 0.6, 1.0), vec3(1.0, 1.0, 0.0), bandWeight * 2.0));
         outColor = vec4(ramp, 1.0);
         outGlow = vec4(0.0);
 #if SSAOLEVEL > 0
@@ -411,6 +505,27 @@ void main()
 
     vec3 albedo = vertexColor.rgb * tint;
     float outAlpha = band == 2 ? THIN_ALPHA : (band == 1 ? WATER_ALPHA : 1.0);
+
+    // A cached water surface faces up unless it is a wall; the derivative normal's SIGN is
+    // whichever way the triangle happened to be wound on screen, so only its magnitude can be
+    // trusted here. Vanilla splits on exactly the same threshold, fragNormal.y < 0.5.
+    bool waterTop = abs(normal.y) > 0.5;
+
+    // Vanilla's water opacity, transcribed from chunkliquid.vsh. The eye vector is biased
+    // 3.5 blocks up, as vanilla's is, and the surface normal is up: the result is a grazing
+    // -angle term that is nearly transparent at your feet and clamps opaque within a few tens
+    // of blocks. Cached water was a flat 0.66 at every distance, which is why the cached
+    // lakebed showed through at the seam where vanilla's water is solid.
+    if (band == 1 && waterFresnel == 1)
+    {
+        vec3 eyeFresnel = normalize(vec3(worldPos.x, worldPos.y - 3.5, worldPos.z));
+        // max() rather than vanilla's bare add: a dot product one ulp below -1 would make
+        // the cube of a negative number, which is undefined for pow and free here.
+        float rise = max(0.0, 1.0 + eyeFresnel.y);
+        float fresnel = max(0.2, 0.01 + 4.5 * rise * rise * rise);
+        outAlpha = clamp(0.8 * fresnel, 0.0, 1.0);
+        if (!waterTop) outAlpha *= 0.3333333;
+    }
 
 #ifdef VH_PACKED
     // Real vanilla texels, where the band asks for them.
@@ -525,6 +640,69 @@ void main()
 
     vec4 terraColor = vec4(albedo, outAlpha);
     terraColor.rgb *= shade * light;
+
+    // Vanilla's own two water surface terms, on the same band the ground's corrections use.
+    // Both are transcribed from chunkliquid.fsh's cold-liquid branch for the case a distant
+    // LOD lake is in: still water, so its flow vector is zero and the flow counter passes
+    // through; open water, so its depth-difference term is zero and drops out of the foam
+    // exactly. Applied AFTER lighting and before fog, where vanilla applies them.
+    // Every cached water fragment, NOT the blend band.
+    //
+    // These were band-weighted for cost, and that was a mistake with a visible edge: the two
+    // terms faded out over the band and then stopped, so distant water carried a line across
+    // it exactly where the band ended. Vanilla's water is shiny and grainy everywhere it is
+    // drawn, out to its own horizon, so cached water carrying the same terms everywhere is
+    // MORE faithful than fading them, not less - and a term that ends nowhere cannot draw an
+    // edge anywhere. waterGlint and waterFoam are the strengths; zero turns each off.
+    float waterAmount = band == 1 ? 1.0 : 0.0;
+    if (waterAmount > 0.0 && (waterFoam > 0.0 || waterGlint > 0.0))
+    {
+        float upness = clamp(abs(normal.y), 0.0, 1.0);
+        vec3 foamPos = worldPos.xyz + vhFoamOrigin;
+        float a = foamPos.x + foamPos.y;
+        float b = foamPos.z;
+        float noise1 = gnoise(vec3(a * 15.0, -abs(b * 15.0), vhWaterFlow))
+            + gnoise(vec3(a * 5.0, b * 5.0, vhWaterFlow));
+        float noise2 = gnoise(vec3(a, b, vhWaterFlow));
+
+        if (waterFoam > 0.0)
+        {
+            float foamAmount = waterAmount * waterFoam;
+            float diff = upness * clamp(1.0 - noise1 / 2.0 + noise2 / 2.0, 0.0, 1.0);
+            float grain = upness
+                * (gnoise(vec3(a * 0.4, b * 0.4, vhWaterFlow)) / 2.0 + noise2 / 2.0 + 0.5) / 2.0;
+            float bright = (terraColor.r + terraColor.g + terraColor.b) / 3.0;
+            terraColor.rgb += vec3(max(0.0, bright * (diff * 0.3 + grain / 10.0)) * foamAmount);
+            terraColor.a += max(0.0,
+                diff / 16.0 + grain / (12.0 - 8.0 * min(1.0, vhWindSpeed))) * foamAmount;
+        }
+
+        // Specular sun glint. Vanilla also scales this by a shadow-map sample; distant open
+        // water is unshadowed, and this shader has no shadow lookup, so that factor is 1.
+        if (waterGlint > 0.0 && vhSunSpecular > 0.0)
+        {
+            vec3 noisepos = vec3(foamPos.x, foamPos.z, vhWaterWave / 8.0 + vhWindWave / 6.0);
+            float dy = noise2 / 20.0 + clamp(gnoise(noisepos) / 10.0, 0.0, 0.6);
+            vec3 waveNormal = normalize(vec3(dy, 1.0, -dy));
+            vec3 eye = normalize(vec3(worldPos.x, worldPos.y - 2.0, worldPos.z));
+            float p = dot(reflect(vhSunPosRel, waveNormal), eye);
+            if (p > 0.0)
+            {
+                float sunb = clamp(vhSunPosRel.y * 10.0, 0.0, 1.0)
+                    * clamp(1.5 - vhSunPosRel.y, 0.0, 1.0) * vhSunSpecular;
+                float specular = pow(p, 50.0) * sunb;
+                float weight = upness
+                    * clamp(specular * clamp(1.5 * shadowIntensity, 0.0, 1.0), 0.0, 1.0)
+                    * waterAmount * waterGlint;
+                // The reflection colour is left unfogged on purpose: applyFog runs on the
+                // finished pixel two lines down, so fogging it here would apply twice.
+                terraColor.rgb = mix(terraColor.rgb, vhReflectColor + noise1 * 0.2, weight);
+                terraColor.a = mix(terraColor.a, terraColor.a + specular / 2.0, weight);
+            }
+        }
+
+        terraColor.a = clamp(terraColor.a, 0.0, 1.0);
+    }
 
     terraColor = applyFog(terraColor, fogAmount);
     terraColor = applySpheresFog(terraColor, fogAmount, worldPos.xyz);

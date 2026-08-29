@@ -758,11 +758,17 @@ public class VintageHorizonsModSystem : ModSystem
     const int StableColorSamples = 64;
 
     /// <summary>Where cached water stops and the game's own takes over, in words.</summary>
-    static string DescribeWater(LodTerrainRenderer renderer) =>
-        renderer.WaterNearFraction <= 0f
-            ? "cached water is drawn everywhere, including in front of the game's own"
-            : $"cached water is hidden within {renderer.WaterNearFraction:0.00} of the view "
-                + "distance, so the water near you is the game's own";
+    static string DescribeWater(LodTerrainRenderer renderer)
+    {
+        string near = renderer.WaterNearChunks <= 0
+            ? "cached water is drawn right up to the near handoff"
+            : $"cached water is hidden within {renderer.WaterNearChunks} chunk(s) of yours "
+                + $"({renderer.WaterNearChunks * 32} blocks, on chunk edges)";
+        return $"{near} and stops at the game's own chunk edges at every distance, "
+            + "the same rule distant ground follows | "
+            + $"opacity {(renderer.WaterFresnel ? "the game's own, by view angle" : "flat")} "
+            + $"| glint {renderer.WaterGlint:0.00} | foam {renderer.WaterFoam:0.00}";
+    }
 
     /// <summary>How many detail levels draw half-block terrain, in words.</summary>
     static string Describe(int halfBlockLevels) => halfBlockLevels switch
@@ -2026,7 +2032,7 @@ public class VintageHorizonsModSystem : ModSystem
         // the next build disagree with what it says it does.
         capi.ChatCommands.Create("vhband")
             .WithDescription("Blend the seam between game terrain and distant terrain. "
-                + "No argument reports the settings. on | off | shape | speckle | width | step | inner | strength | darken | saturate | sink | overlap.")
+                + "No argument reports the settings. on | off | shape | map | speckle | width | step | inner | strength | darken | saturate | sink | overlap.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
                       capi.ChatCommands.Parsers.OptionalWord("value"),
                       capi.ChatCommands.Parsers.OptionalWord("green"),
@@ -2049,6 +2055,13 @@ public class VintageHorizonsModSystem : ModSystem
                         renderer.BandEnabled = part == "on";
                         return TextCommandResult.Success(
                             $"[VintageHorizons] blending {part}. " + renderer.DescribeBlendBand());
+
+                    case "map":
+                        // The picture cannot answer this one. A ramp seen from altitude is a
+                        // few pixels tall, so a gradient and a cliff look identical, and the
+                        // number that separates them is not on screen at all.
+                        return TextCommandResult.Success(
+                            "[VintageHorizons] " + renderer.LogBlendBandMap());
 
                     case "shape":
                         // Judging the ring's outline is a different question from judging its
@@ -2544,39 +2557,112 @@ public class VintageHorizonsModSystem : ModSystem
             });
 
         capi.ChatCommands.Create("vhwater")
-            .WithDescription("Keep cached water out of the near field so the game draws its own. Takes effect immediately. off | on | a fraction of the view distance.")
-            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("on"))
+            .WithDescription("How distant water meets the game's own. No argument reports the settings. "
+                + "off | a number of chunks | edge <chunks> | fresnel on|off | glint <0-1> | foam <0-1>.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
+                      capi.ChatCommands.Parsers.OptionalWord("value"))
             .HandleWith(args =>
             {
                 if (renderer == null)
                     return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
 
-                if (args.Parsers[0].IsMissing)
-                {
-                    return TextCommandResult.Success(
-                        $"[VintageHorizons] {DescribeWater(renderer)}. Use: .vhwater off | on |"
-                        + " a fraction such as 0.5 or 0.8. The cache draws its water in the"
-                        + " opaque pass and the game draws its own later, so cached water"
-                        + " nearby sits in front of the real thing and hides it - that is what"
-                        + " the cutoff removes. Raise it if flat cache water still shows on a"
-                        + " lake you are looking at; LOWER it if a river or lake in the"
-                        + " distance loses its water, and say roughly how far away it was.");
-                }
+                string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
+                string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
 
-                string word = ((string)args[0]).ToLowerInvariant();
-                float wanted;
-                if (word == "off") wanted = 0f;
-                else if (word == "on") wanted = LodNearHandoff.WaterNearFraction;
-                else if (!float.TryParse(word, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out wanted))
+                switch (part)
                 {
-                    return TextCommandResult.Error(
-                        "[VintageHorizons] use: .vhwater off | on | a fraction such as 0.7");
-                }
+                    case "":
+                        // Written to the log as well as to chat. Chat cannot be copied out of
+                        // the game, so a setting that only ever reported to chat could not be
+                        // read back when a screenshot disagreed with what the code should do.
+                        capi.Logger.Notification(
+                            "[VintageHorizons] water settings: " + DescribeWater(renderer));
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] {DescribeWater(renderer)}. Use: .vhwater off |"
+                            + " a number of CHUNKS | edge <chunks> | fresnel on/off |"
+                            + " glint 0-1 | foam 0-1."
+                            + " Distant water hands over to the game's water at the game's own"
+                            + " chunk edges and nowhere else - there is no radius any more, in"
+                            + " either direction. The chunk count is an off-by-default fallback"
+                            + " for water right at your feet, and it steps along chunk edges."
+                            + " Glint and foam are the game's own sun reflection and surface"
+                            + " noise, carried everywhere distant water is drawn.");
 
-                renderer.WaterNearFraction = wanted;
-                return TextCommandResult.Success(
-                    $"[VintageHorizons] {DescribeWater(renderer)}. No rebuild needed - look now.");
+                    case "edge":
+                        if (!int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out int edge))
+                        {
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] water edge {renderer.WaterEdgeChunks} "
+                                + "(-1 derives it). How many whole chunks further out than "
+                                + "distant GROUND distant water stops. Ground deliberately "
+                                + "overlaps the game's terrain to guard against holes; water "
+                                + "does not need that and gives it back. Raise it by one if "
+                                + "distant water reaches into the game's own water, lower it "
+                                + "by one if there is a strip with no water in it at all.");
+                        }
+                        renderer.WaterEdgeChunks = edge;
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] water edge {renderer.WaterEdgeChunks}. "
+                            + "Takes a moment to settle as ownership moves - look at a "
+                            + "shoreline at distance.");
+
+                    case "fresnel":
+                        if (value is not ("on" or "off"))
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] opacity {(renderer.WaterFresnel ? "on" : "off")}. "
+                                + "On gives distant water the game's own opacity, which changes with "
+                                + "the angle you look at it: see-through underfoot, solid further "
+                                + "out. Off makes it one flat value at every distance, which is what "
+                                + "let the lake bottom show through where the game's water is solid.");
+                        renderer.WaterFresnel = value == "on";
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] {DescribeWater(renderer)}. Look now.");
+
+                    case "glint":
+                        if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out float glint))
+                        {
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] glint {renderer.WaterGlint:0.00}. 0 to 1. How much "
+                                + "of the game's sun reflection distant water carries. The game's "
+                                + "water is shiny out to its own horizon, so this is carried "
+                                + "everywhere rather than faded out - a term that ends somewhere "
+                                + "draws a line where it ends. 0 turns it off.");
+                        }
+                        renderer.WaterGlint = glint;
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] glint {renderer.WaterGlint:0.00}. Look now.");
+
+                    case "foam":
+                        if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out float foam))
+                        {
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] foam {renderer.WaterFoam:0.00}. 0 to 1. The game's "
+                                + "own surface noise on open water, carried everywhere distant water "
+                                + "is drawn. The game's water is never one flat colour, and this is "
+                                + "what stops ours meeting it as a flat sheet. 0 turns it off.");
+                        }
+                        renderer.WaterFoam = foam;
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] foam {renderer.WaterFoam:0.00}. Look now.");
+
+                    default:
+                        int chunks;
+                        if (part == "off") chunks = 0;
+                        else if (!int.TryParse(part, System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out chunks))
+                        {
+                            return TextCommandResult.Error(
+                                "[VintageHorizons] use: .vhwater off | a number of chunks | "
+                                + "edge <chunks> | fresnel on/off | glint 0-1 | foam 0-1");
+                        }
+
+                        renderer.WaterNearChunks = chunks;
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] {DescribeWater(renderer)}. No rebuild needed - look now.");
+                }
             });
 
         capi.ChatCommands.Create("vhslabs")

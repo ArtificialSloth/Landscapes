@@ -283,34 +283,83 @@ public class LodTerrainRenderer : IRenderer
     /// </summary>
     public bool WholeMeshSkip { get; set; } = true;
 
-    float waterNearFraction = LodNearHandoff.WaterNearFraction;
+    int waterNearChunks = LodNearHandoff.WaterNearChunks;
 
     /// <summary>
-    /// How much of the engine's view distance cached water gets out of the way for, as a
-    /// fraction. Zero draws cached water everywhere, which is what it used to do.
+    /// How many vanilla chunk columns around the camera's own hide cached water outright.
+    /// Zero, the default, is no near rule at all.
     ///
-    /// Water needs a rule of its own because it fails at both ends. NEAR: cached terrain
-    /// draws in the OPAQUE stage and writes depth, while the engine draws its water later,
-    /// in OIT - so unsuppressed cached water lands in the depth buffer in FRONT of vanilla's
-    /// own surface and hides it, and the cache's flat sheet stands in for the real animated
-    /// water on every lake the player is looking at. FAR: the engine's water fades to
-    /// nothing at 80% of its view distance while its ground keeps drawing past 100%
-    /// (chunkliquid.vsh clamps the liquid alpha on that ratio), so past that point vanilla
-    /// draws a bed and no river and cached water is the only water there is - G124.
+    /// Measured in CHUNKS and never in blocks, because the two builds that measured it in
+    /// blocks both drew a circle. A per-pixel distance test is a circle by construction, and
+    /// a circle is a shape the world does not contain: it reads as an effect painted over the
+    /// terrain rather than as terrain, which is the exact rule the blend band was built on and
+    /// the exact complaint that came back from play, twice. A Chebyshev count of 32-block
+    /// columns can only ever put its boundary on a chunk edge.
     ///
-    /// A radius, NOT the ownership mask. Ownership was tried first and did not work: it
-    /// proves a 32-block cell only where the engine reports the chunk both drawn and holding
-    /// geometry, and the owner's client log showed 104 owned cells against 2,953 pending, so
-    /// almost no water near the player was ever covered.
-    ///
-    /// `.vhwater off` draws cached water everywhere again. What to look for if the radius is
-    /// too large is the G124 failure returning: a river or lake bed with no water in it, at
-    /// distance.
+    /// Off by default because the ownership mask is the real boundary and cached water no
+    /// longer writes depth, so an uncommitted cell near the player costs a faint tint under
+    /// the engine's own water rather than a flat sheet in front of it. Turn it on only if
+    /// shallow water close to you looks murky, and then it is the smallest count that fixes
+    /// it - each one is a whole 32-block ring.
     /// </summary>
-    public float WaterNearFraction
+    public int WaterNearChunks
     {
-        get => waterNearFraction;
-        set => waterNearFraction = Math.Clamp(value, 0f, 1f);
+        get => waterNearChunks;
+        set => waterNearChunks = Math.Clamp(value, 0, 16);
+    }
+
+    /// <summary>
+    /// Give cached water the engine's own view-angle opacity instead of a flat constant.
+    ///
+    /// Cached water was 0.66 opaque at every distance and from every angle. Vanilla's is a
+    /// grazing-angle term, transcribed in the fragment shader from `chunkliquid.vsh`, which
+    /// is nearly transparent underfoot and fully opaque by a few tens of blocks. The flat
+    /// constant was therefore wrong in both directions, and at the seam it was the visible
+    /// one: the cached lakebed showed through a surface vanilla draws solid.
+    ///
+    /// Applied everywhere, deliberately NOT on the blend band. It describes the surface
+    /// rather than correcting it, and fading it in across a band would put back a seam of
+    /// exactly the kind this work removes. `.vhwater fresnel off` restores the constant.
+    /// </summary>
+    public bool WaterFresnel { get; set; } = true;
+
+
+
+    float waterGlint = 1f;
+    float waterFoam = 1f;
+
+    /// <summary>
+    /// How much of vanilla's specular sun reflection cached water carries, 0 to 1.
+    ///
+    /// The single loudest difference between the two waters on a sunny day: the game's water
+    /// is shiny out to the horizon and cached water went matte at the line.
+    ///
+    /// Carried on EVERY cached water fragment. It was weighted by the blend band for one
+    /// build, to bound the per-pixel cost, and that produced the defect it was meant to cure:
+    /// the term faded out across the band and then stopped, leaving a line across distant
+    /// water exactly where the band ended. Vanilla's water is shiny everywhere it draws, so
+    /// carrying this everywhere is the more faithful answer as well as the one with no edge.
+    /// </summary>
+    public float WaterGlint
+    {
+        get => waterGlint;
+        set => waterGlint = Math.Clamp(value, 0f, 1f);
+    }
+
+    /// <summary>
+    /// How much of vanilla's open-water surface noise cached water carries, 0 to 1. Carried
+    /// everywhere for the same reason as <see cref="WaterGlint"/>, and resting on the same
+    /// argument <see cref="BandSpeckle"/> makes for ground: vanilla's water is never one flat
+    /// colour, and no adjustment to an average can close a difference not in the average.
+    ///
+    /// This is vanilla's OPEN-water term only. Its shoreline rim is derived from the depth
+    /// texture during OIT; this shader runs in the opaque stage where that buffer is the live
+    /// render target, so the rim has to come from mesh data and does not exist yet.
+    /// </summary>
+    public float WaterFoam
+    {
+        get => waterFoam;
+        set => waterFoam = Math.Clamp(value, 0f, 1f);
     }
 
     /// <summary>
@@ -958,6 +1007,7 @@ public class LodTerrainRenderer : IRenderer
     LoadedTexture? readinessMaskTexture;
     bool readinessMaskFailed;
     bool readinessMaskActive;
+    long waterFootprintRevision = -1;
     long readinessMaskUploadUs;
     VanillaSeamDistanceField? seamField;
     LoadedTexture? seamFieldTexture;
@@ -2789,9 +2839,64 @@ public class LodTerrainRenderer : IRenderer
     /// mask outright and leaves the measured radius as the only ownership decision, because
     /// a stale mask would suppress cached terrain vanilla has not replaced.
     /// </summary>
+    int waterEdgeChunks = -1;
+
+    /// <summary>
+    /// How far water's footprint is grown past the ground footprint, in whole chunk columns.
+    /// Negative derives it; zero or more overrides it. See `.vhwater edge`.
+    /// </summary>
+    public int WaterEdgeChunks
+    {
+        get => waterEdgeChunks;
+        set => waterEdgeChunks = Math.Clamp(value, -1, 8);
+    }
+
+    /// <summary>
+    /// The derived growth, and the subtraction in it is the whole point.
+    ///
+    /// Ownership is refused for <c>SphereCentreSlackBlocks</c> plus
+    /// <see cref="OverlapMarginBlocks"/> - 62 blocks at the defaults - so cached ground keeps
+    /// covering chunks the engine may already have dropped. The obvious reading is that water
+    /// must grow back all 62 blocks, two chunks, and that is what 0.3.151 did. It overshot by
+    /// exactly one chunk, measured in play as a chunk-wide strip with no water in it at all.
+    ///
+    /// The reason is which FACE the refusal measures from. It compares the column's NEAREST
+    /// face against the threshold, so the outermost column that still owns anything has its
+    /// near face just inside it and its FAR face a whole chunk further out again. One chunk of
+    /// the ring is therefore already inside the ground footprint, and only what remains has to
+    /// be grown back: 62 - 32 = 30 blocks, which is one chunk.
+    ///
+    /// Rounding UP on what remains, because falling short leaves cached water inside live
+    /// terrain and overshooting leaves a gap with no water in it - and of the two, the strip
+    /// of missing water is the one the owner can see from anywhere.
+    /// </summary>
+    int WaterFootprintDilationChunks()
+    {
+        if (waterEdgeChunks >= 0) return waterEdgeChunks;
+
+        float ring = VanillaRenderReadiness.SphereCentreSlackBlocks
+            + Math.Max(0f, OverlapMarginBlocks);
+        float remaining = ring - VanillaReadinessMask.ChunkBlocks;
+        return Math.Clamp(
+            (int)Math.Ceiling(Math.Max(0f, remaining) / VanillaReadinessMask.ChunkBlocks), 0, 8);
+    }
+
     void PublishReadinessMask()
     {
         if (readinessMask == null || readinessMaskFailed) return;
+
+        // Water's footprint is derived from the ground one, so it is rebuilt whenever
+        // ownership has moved and before the atlas is uploaded. Keyed on the mask's revision
+        // rather than on Dirty: upload clears Dirty, and a rebuild that ran after the upload
+        // would sit in the buffer unseen until something else happened to dirty it.
+        if (readiness != null && waterFootprintRevision != readinessMask.Revision)
+        {
+            readinessMask.RebuildWaterFootprint(
+                readiness.ActiveMinChunkX, readiness.ActiveMinChunkZ,
+                readiness.ActiveWidth, readiness.ActiveDepth, WaterFootprintDilationChunks());
+            waterFootprintRevision = readinessMask.Revision;
+        }
+
         if (!readinessMask.Dirty && readinessMaskActive) return;
 
         long started = Stopwatch.GetTimestamp();
@@ -3019,11 +3124,24 @@ public class LodTerrainRenderer : IRenderer
     /// How far past the mask's own window the field must reach, in 8-block cells. The mask
     /// tracks only a couple of chunks past vanilla, and the band lives entirely outside
     /// vanilla, so the field needs the band's full reach plus one cell of slack.
+    ///
+    /// The reach is the band's width PLUS its inner offset, and leaving the inner offset out
+    /// was a visible defect rather than a rounding question. The shader ramps on
+    /// <c>seamBlocks = seamCells * 8 - bandInnerBlocks</c>, so the weight only reaches zero
+    /// <c>BandWidthBlocks + BandInnerBlocks</c> past the last owned column - 174 blocks at the
+    /// defaults, against a margin sized for 136. Every cell past the margin is outside the
+    /// field's window and reads no band at all, so the ramp was being cut while it still
+    /// carried a weight of 0.31 and the correction fell to zero in a single step, on the
+    /// window's own straight edge. That is a hard line across the world, in the one place the
+    /// whole design exists to avoid having one.
+    ///
+    /// The capacity clamp can still truncate it at extreme settings, where the same step
+    /// returns; `.vhband map` reports the weight the field actually ends on.
     /// </summary>
     int SeamFieldMarginCells()
     {
-        float width = Math.Max(0f, BandWidthBlocks);
-        int cells = (int)Math.Ceiling(width / VanillaSeamDistanceField.CellBlocks) + 1;
+        float reach = Math.Max(0f, BandWidthBlocks) + Math.Max(0f, BandInnerBlocks);
+        int cells = (int)Math.Ceiling(reach / VanillaSeamDistanceField.CellBlocks) + 1;
         return Math.Clamp(cells, 1, BandMaxCapacityCells / 4);
     }
 
@@ -3367,10 +3485,13 @@ public class LodTerrainRenderer : IRenderer
         string maskState = readinessMaskFailed ? "failed"
             : readinessMask == null ? "off"
             : readinessMaskActive
-                ? $"{readinessMask.ReadyTexels} owned/{readinessMask.Bytes / 1024} KiB/"
+                ? $"{readinessMask.ReadyTexels} owned/{readinessMask.WaterColumns} water columns/{readinessMask.Bytes / 1024} KiB/"
                   + $"{readinessMask.Uploads} uploads/last {readinessMaskUploadUs}us"
                 : "pending";
 
+        string fresnelState = WaterFresnel ? "on" : "off";
+        string maskPaintState = MaskDebugPaint ? "ON" : "off";
+        string bandPaintState = BandDebugPaint ? "ON" : "off";
         return $"shadow {readiness.ActiveWidth}x{readiness.VerticalChunks}x{readiness.ActiveDepth}, "
             + $"{ready} ready/{observed} observed/{pending} pending/{unknown} unknown, "
             + $"{readiness.PendingCandidates} probes/{readiness.PendingObservations} observations queued, "
@@ -3393,7 +3514,17 @@ public class LodTerrainRenderer : IRenderer
             + $"handoff {appliedHandoff:0} blocks ({handoffSource}, radial {radialHandoff:0}), "
             + $"mask {maskState}, {VanillaOwnedDrawsSkipped} owned draws skipped, "
             + $"band {BandState()}, textures {BlockTextureState()}, "
-            + $"near suppression {NearSuppressionBlocks:0} blocks";
+            + $"near suppression {NearSuppressionBlocks:0} blocks, "
+            // Water settings and debug paints ride the periodic report because a screenshot
+            // cannot show which of them is active, and every square, ring and line this work
+            // produced was attributed to the wrong one at least once for want of these.
+            //
+            // Composed into locals first, never inline conditionals: the benchmark runner
+            // parses this line by extracting the interpolated literal, and a nested quote
+            // inside a hole terminates that extraction. A static check holds it.
+            + $"water near {waterNearChunks} chunks/fresnel {fresnelState}"
+            + $"/glint {waterGlint:0.00}/foam {waterFoam:0.00}, "
+            + $"paints mask {maskPaintState}/band shape {bandPaintState}";
     }
 
     /// <summary>
@@ -3453,6 +3584,121 @@ public class LodTerrainRenderer : IRenderer
         string state = BandState();
         capi.Logger.Notification("[VintageHorizons] band {0}", state);
         return "blending band " + state + ".";
+    }
+
+    /// <summary>
+    /// Writes the live seam field to the client log as an ASCII map of the weight the shader
+    /// would compute, plus the weight the field's own outer edge ends on.
+    ///
+    /// The band's shape was judged from a screenshot for three builds and the screenshot could
+    /// not answer the question. `.vhband shape on` paints the weight, but a ramp seen at a
+    /// shallow angle from altitude is a few pixels tall, so a gradient and a cliff look alike -
+    /// and the number that decides which it is, the weight where the field's window stops, is
+    /// not on screen at all. This puts both in the log, where they can be read exactly.
+    ///
+    /// Deliberately a whole-map dump on demand rather than a line in the periodic report: the
+    /// question is what the SHAPE is, and no summary statistic answers that.
+    /// </summary>
+    public string LogBlendBandMap()
+    {
+        if (seamField == null || !seamFieldActive)
+            return "no blend band to map: the seam field is not live. " + BandState();
+
+        int stride = Math.Max(1, seamField.WidthCells / 96);
+        float width = Math.Max(1f, BandWidthBlocks);
+        float step = Math.Max(VanillaSeamDistanceField.CellBlocks, BandStepBlocks);
+        float inner = Math.Max(0f, BandInnerBlocks);
+
+        float WeightAt(int cellX, int cellZ)
+        {
+            int index = VanillaSeamDistanceField.TexelIndex(cellX, cellZ, seamField.Capacity);
+            float cells = (seamField.Texels[index] >> 16) & 0xFF;
+            float blocks = Math.Max(0f, cells * VanillaSeamDistanceField.CellBlocks - inner);
+            return Math.Clamp(1f - MathF.Floor(blocks / step) * step / width, 0f, 1f);
+        }
+
+        // Ownership first, because the band is derived from it and a wrong band with a right
+        // ownership map is a different bug from a wrong band with a wrong one. Offline
+        // reproduction of this exact configuration produces a clean ring with a full gradient,
+        // so if the shape on screen is not that, the difference is in this map and nowhere
+        // else. Printed per chunk column - "any cell owned", the same question the field asks.
+        var owned = new StringBuilder();
+        if (readiness != null && readinessMask != null)
+        {
+            int chunkStride = Math.Max(1, readiness.ActiveWidth / 96);
+            owned.Append("[VintageHorizons] vanilla ownership footprint: ")
+                .Append(readiness.ActiveWidth).Append('x').Append(readiness.ActiveDepth)
+                .Append(" chunk columns (").Append(readiness.ActiveWidth * 32)
+                .Append(" blocks across), ").Append(readinessMask.ReadyTexels)
+                .Append(" cells owned. Ownership is denied past ")
+                .Append($"{Math.Max(0f, ApprovedViewDistance() - VanillaRenderReadiness.SphereCentreSlackBlocks - Math.Max(0f, OverlapMarginBlocks)):0}")
+                .Append(" blocks by the draw-range rule, so the band's inner edge is that ")
+                .Append("boundary and not vanilla's real chunk footprint. 'O' owned, '.' not. ")
+                .Append("'+' is the camera's own column.");
+            int camChunkX = VanillaRenderReadiness.ChunkCoordinate(camPos.X);
+            int camChunkZ = VanillaRenderReadiness.ChunkCoordinate(camPos.Z);
+            for (int z = 0; z < readiness.ActiveDepth; z += chunkStride)
+            {
+                owned.Append('\n').Append("    ");
+                for (int x = 0; x < readiness.ActiveWidth; x += chunkStride)
+                {
+                    int chunkX = readiness.ActiveMinChunkX + x;
+                    int chunkZ = readiness.ActiveMinChunkZ + z;
+                    owned.Append(chunkX == camChunkX && chunkZ == camChunkZ ? '+'
+                        : readinessMask.ColumnHasReady(chunkX, chunkZ) ? 'O' : '.');
+                }
+            }
+            capi.Logger.Notification(owned.ToString());
+        }
+
+        var report = new StringBuilder();
+        report.Append("[VintageHorizons] blend band map: ")
+            .Append(seamField.WidthCells).Append('x').Append(seamField.DepthCells)
+            .Append(" cells of 8 blocks (")
+            .Append(seamField.WidthCells * VanillaSeamDistanceField.CellBlocks)
+            .Append(" blocks across), margin ").Append(SeamFieldMarginCells())
+            .Append(" cells, reach ").Append($"{inner:0}+{width:0}")
+            .Append(" blocks, mask ").Append(readinessMask?.ReadyTexels ?? 0).Append(" ground cells owned, ")
+            .Append(readinessMask?.WaterColumns ?? 0).Append(" columns in water's own footprint (")
+            .Append(WaterFootprintDilationChunks()).Append(" chunks wider). ")
+            .Append("'.' none, 1-9 partial, '#' full.");
+
+        // How the ramp ends. A field whose outermost ring still carries weight is a field that
+        // stops mid-ramp, and its window edge is a straight line across the world.
+        float edgeMax = 0f;
+        for (int x = 0; x < seamField.WidthCells; x++)
+        {
+            edgeMax = Math.Max(edgeMax, WeightAt(seamField.MinCellX + x, seamField.MinCellZ));
+            edgeMax = Math.Max(edgeMax, WeightAt(
+                seamField.MinCellX + x, seamField.MinCellZ + seamField.DepthCells - 1));
+        }
+        for (int z = 0; z < seamField.DepthCells; z++)
+        {
+            edgeMax = Math.Max(edgeMax, WeightAt(seamField.MinCellX, seamField.MinCellZ + z));
+            edgeMax = Math.Max(edgeMax, WeightAt(
+                seamField.MinCellX + seamField.WidthCells - 1, seamField.MinCellZ + z));
+        }
+        report.Append(" Outer edge ends at weight ").Append($"{edgeMax:0.00}")
+            .Append(edgeMax > 0.02f
+                ? " - the ramp is CUT, and that edge is a straight line on screen."
+                : " - the ramp completes inside the window.");
+
+        for (int z = 0; z < seamField.DepthCells; z += stride)
+        {
+            report.Append('\n').Append("    ");
+            for (int x = 0; x < seamField.WidthCells; x += stride)
+            {
+                float weight = WeightAt(seamField.MinCellX + x, seamField.MinCellZ + z);
+                report.Append(weight <= 0f ? '.'
+                    : weight >= 1f ? '#'
+                    : (char)('0' + (int)(weight * 9f)));
+            }
+        }
+
+        capi.Logger.Notification(report.ToString());
+        return $"blend band map written to the client log: {seamField.WidthCells} cells across, "
+            + $"outer edge ends at weight {edgeMax:0.00}"
+            + (edgeMax > 0.02f ? " (the ramp is cut - that is a line on screen)." : ".");
     }
 
     /// <summary>
@@ -3674,8 +3920,10 @@ public class LodTerrainRenderer : IRenderer
         // and a plant mat has no opposite face to take over when the camera is underneath.
         renderPaths.DrawWater();
 
-        // The split's mid-frame picture deliberately excludes water: water is blended but
-        // writes depth, so treating it as an occluder could remove visible ground beneath it.
+        // The split's mid-frame picture deliberately excludes water. It excluded it because
+        // water was blended and still wrote depth, so treating it as an occluder could remove
+        // visible ground beneath it; the water pass no longer writes depth at all, so it can
+        // no longer occlude anything and the exclusion is now simply correct by construction.
         // Classification reads the unchanged private pyramid, not the live depth attachment.
         hzbCollecting = false;
         ClassifyAgainstDepthPyramid();
@@ -3737,8 +3985,27 @@ public class LodTerrainRenderer : IRenderer
                 ? readinessHandoffDistance
                 : LodNearHandoff.InnerDiscardRadius(viewDistance));
         prog.Uniform("maskEnabled", maskOwnsPixels ? 1 : 0);
-        prog.Uniform("waterNearRadius",
-            LodNearHandoff.WaterNearRadius(viewDistance, waterNearFraction));
+        prog.Uniform("waterNearChunks", waterNearChunks);
+        // Two integer scalars, never the Vec2i overload: that one reaches glUniform2f, which
+        // an integer uniform rejects, and the camera chunk would silently stay at zero (G42).
+        prog.Uniform("camChunkX", (int)VanillaRenderReadiness.ChunkCoordinate((double)camPos.X));
+        prog.Uniform("camChunkZ", (int)VanillaRenderReadiness.ChunkCoordinate((double)camPos.Z));
+        prog.Uniform("waterFresnel", WaterFresnel ? 1 : 0);
+        prog.Uniform("waterGlint", waterGlint);
+        prog.Uniform("waterFoam", waterFoam);
+
+        // Everything the engine's own liquid shader reads, under mod-owned names so no
+        // engine-managed uniform can be shadowed. All public API: nothing here reaches into
+        // the client. The counters animate, so they upload every frame with the rest.
+        DefaultShaderUniforms engineUniforms = capi.Render.ShaderUniforms;
+        prog.Uniform("vhSunPosRel", engineUniforms.SunPosition3D);
+        prog.Uniform("vhReflectColor", capi.World.Calendar.ReflectColor);
+        prog.Uniform("vhSunSpecular", engineUniforms.SunSpecularIntensity);
+        prog.Uniform("vhWaterWave", engineUniforms.WaterWaveCounter);
+        prog.Uniform("vhWindWave", engineUniforms.WindWaveCounter);
+        prog.Uniform("vhWaterFlow", engineUniforms.WaterFlowCounter);
+        prog.Uniform("vhWindSpeed", engineUniforms.WindSpeed);
+        prog.Uniform("vhFoamOrigin", engineUniforms.PlayerPosForFoam);
         prog.Uniform("maskDebug", MaskDebugPaint ? 1 : 0);
         prog.Uniform("flatTopLight", FlatTopLight ? 1 : 0);
         prog.Uniform("lightMoonDir", LightMoonDirection ? 1 : 0);
@@ -4275,6 +4542,28 @@ public class LodTerrainRenderer : IRenderer
         {
             drawProgram.Stop();
             prog.Use();
+
+            // Use() is not free of side effects, and this is the bug that cost four builds.
+            //
+            // ShaderProgramBase.Use() re-binds every sampler the shared includes declare -
+            // shadowMapFar, shadowMapNear, sky, glow, liquidDepth - to whichever texture unit
+            // the LINKER gave that name in THIS program. Those numbers are per program, and
+            // the three variants here declare different sampler sets, so a unit that is free
+            // in the packed program is not necessarily free in the legacy one. Texture unit
+            // bindings are global GL state, so one of those binds can land on unit 7 and take
+            // the seam field away.
+            //
+            // The opaque pass never saw it: it re-applies the frame uniforms immediately after
+            // its own Use(), which rebinds everything. The water pass did, because nothing
+            // re-applied anything between this Use() and its draws - and water and thin cover
+            // are the two things drawn there. The result was a seam field that sampled a
+            // shadow map and read ~0, which the shader reads as "distance zero from vanilla",
+            // which is full band strength, over the whole field window and nowhere else. A
+            // flat square, on water and on flowers, with the ground beside it correct.
+            //
+            // Exactly G42's shape: not an error, not a log line, and a wrong value that looks
+            // like a legitimate answer.
+            RebindOwnSamplers(prog);
         }
 
         if (drew)
@@ -4403,27 +4692,87 @@ public class LodTerrainRenderer : IRenderer
     public int ShadowIndirectMissing { get; private set; }
     public double ShadowIndirectCoverage { get; private set; }
 
+    /// <summary>
+    /// Re-binds this mod's own samplers to the units its shader expects.
+    ///
+    /// Sampler UNIFORMS are per-program and survive anything. The texture unit BINDINGS they
+    /// point at are global GL state, and the engine rewrites several of them on every
+    /// <c>Use()</c> - so any code path that activates a program without re-applying the frame
+    /// uniforms is drawing with whatever the engine left on those units.
+    ///
+    /// Cheap enough to be unconditional: four binds, once per pass, against a defect that is
+    /// invisible until someone paints a debug colour and notices the shape is wrong.
+    /// </summary>
+    void RebindOwnSamplers(IShaderProgram target)
+    {
+        if (readinessMaskActive && readinessMask != null && readinessMaskTexture != null)
+            target.BindTexture2D("readinessMask", readinessMaskTexture.TextureId, 6);
+        if (seamFieldActive && seamField != null && seamFieldTexture != null)
+            target.BindTexture2D("seamField", seamFieldTexture.TextureId, 7);
+        if (blockTexturesLive && blockTableTexture != 0)
+            target.BindTexture2D("blockTable", blockTableTexture, 8);
+        if (blockTexturesLive && blockTextures != null && blockTextures.AtlasTextureId > 0
+            && BlockTexturesEnabled)
+        {
+            target.BindTexture2D("blockAtlas", blockTextures.AtlasTextureId, 9);
+        }
+    }
+
     void DrawLegacyWater()
     {
         var rapi = capi.Render;
+
+        // Belt and braces with the rebind in DrawIndirectBucket: this pass is the one that was
+        // measured drawing with a clobbered seam field, and it must be correct whether or not
+        // an indirect bucket ran this frame to restore it.
+        RebindOwnSamplers(prog!);
         rapi.GlDisableCullFace();
         rapi.GlToggleBlend(true);
+
+        // Cached water must not write depth, and this is the root fix for the whole water
+        // problem rather than a tuning choice.
+        //
+        // This mod draws in EnumRenderStage.Opaque. The engine draws its own water in the
+        // LATER OIT stage, from SystemRenderTerrain's OIT renderer, into an accumulation
+        // buffer that is composited over the opaque scene - and it enters that stage with
+        // GlDepthMask(false) and the depth test still on, reading the depth this stage left
+        // behind. So every cached water fragment that wrote depth here depth-REJECTED the
+        // real animated surface behind it, everywhere the two overlapped, and the cache's
+        // flat sheet silently stood in for vanilla's own water on the lake in front of the
+        // player. Nothing errored and nothing was missing, which is why it was read as a
+        // colour problem for three builds. G126.
+        //
+        // With the write off, the depth TEST still runs: cached water is still occluded by
+        // anything nearer in the depth buffer, and it is still drawn after the opaque pass,
+        // so cached and vanilla ground both remain in front of it where they should be. What
+        // changes is only that vanilla's water is now allowed to draw on top - which makes
+        // every suppression rule for cached water a soft one, because the failure mode of a
+        // cell the ownership mask has not yet proven becomes a faint tint under real water
+        // instead of a replacement of it.
+        //
+        // Restored explicitly rather than left to the engine: the opaque stage owns
+        // GlDepthMask(true) and anything registered after this renderer inherits whatever we
+        // leave behind.
+        GL.DepthMask(false);
         gpuTelemetry.BeginWater();
         try
         {
             foreach (long key in drawList)
             {
                 if (!waterMeshes.TryGetValue(key, out MeshRef? mesh)) continue;
-                // Never skipped whole for ownership. Cached water gets out of vanilla's way
-                // by a radius rather than by ownership (see WaterNearFraction), and a section
-                // is far wider than that radius, so a whole-section decision could not
-                // express it without taking water out of the outer ring G124's dry riverbeds
-                // came from. The per-fragment cutoff does it exactly.
+                // Never skipped whole for ownership. A section is far wider than the near
+                // cutoff, and the per-fragment test expresses both that cutoff and the
+                // outward bound on ownership (G124) exactly, where a whole-section decision
+                // could express neither.
                 if (!SetupSectionTransform(key, renderCullDistanceSquared, waterPass: true)) continue;
                 SubmitWaterMesh(key, mesh);
             }
         }
-        finally { gpuTelemetry.EndWater(); }
+        finally
+        {
+            gpuTelemetry.EndWater();
+            GL.DepthMask(true);
+        }
         rapi.GlToggleBlend(false);
     }
 

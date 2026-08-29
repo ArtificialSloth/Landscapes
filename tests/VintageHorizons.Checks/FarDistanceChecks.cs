@@ -13,41 +13,33 @@ public static class FarDistanceChecks
     }
 
     /// <summary>
-    /// How near cached water gets out of the way for the engine's own. The engine's water
-    /// fades to nothing at 80% of its view distance while its ground draws past 100%, so
-    /// past that ratio cached water is the only water there is (G124) and this radius must
-    /// stay well short of it - at every view distance, including the low ones this mod
-    /// exists to make usable, which is where the near-field defect it fixes is worst.
+    /// The two distances cached water answers to, and the properties that keep each of them
+    /// from being the visible boundary.
+    ///
+    /// There is no near cutoff measured from the camera at all, and that is the point. Two
+    /// builds tried one - a share of the view distance, then an absolute distance - and both
+    /// drew a visible ring across every lake, because a per-pixel distance test is a circle
+    /// however small you make it and the world contains no circles. What remains is an
+    /// off-by-default count of whole chunk columns, whose boundary falls on chunk edges.
+    ///
+    /// And there is no outward allowance either. Ownership hides cached water at every
+    /// distance, exactly as it hides ground, so the only boundary cached water has is the
+    /// mask's own 32-block cells - vanilla chunk edges.
     /// </summary>
     static void WaterOwnershipRadius(Check c)
     {
-        c.True(LodNearHandoff.WaterNearFraction < LodNearHandoff.VanillaWaterFadeStart,
-            "the radius stops before the engine's own water begins to fade");
+        c.Eq(0, LodNearHandoff.WaterNearChunks,
+            "there is no near rule for cached water by default: the mask is the boundary");
 
-        foreach (float viewDistance in new[] { 64f, 128f, 192f, 256f, 320f, 512f, 1024f })
-        {
-            float radius = LodNearHandoff.WaterNearRadius(
-                viewDistance, LodNearHandoff.WaterNearFraction);
-            c.True(radius > 0f,
-                $"cached water yields somewhere at a {viewDistance:0}-block view distance");
-            c.True(radius < viewDistance * LodNearHandoff.VanillaWaterFadeStart,
-                $"and never where the engine's own water has started fading, at {viewDistance:0}");
-        }
+        // Nothing in the water path is a function of the view distance any more. The mask's
+        // cells are whole vanilla chunks, so the boundary falls on chunk edges at every view
+        // distance rather than scaling with one.
 
-        float full = LodNearHandoff.WaterNearFraction;
-        c.Eq(0f, LodNearHandoff.WaterNearRadius(0f, full), "no view distance, no radius");
-        c.Eq(0f, LodNearHandoff.WaterNearRadius(-10f, full), "and a negative one cannot invert it");
-        c.Eq(0f, LodNearHandoff.WaterNearRadius(320f, 0f), "a zero fraction turns it off");
-        c.Eq(0f, LodNearHandoff.WaterNearRadius(320f, -1f), "and so does a negative one");
-        c.Eq(320f, LodNearHandoff.WaterNearRadius(320f, 5f),
-            "a fraction past one cannot reach beyond the view distance itself");
-
-        // The reason it is a plain fraction and not the fallback handoff radius: that one
-        // subtracts a fixed 192-block overlap, so it is zero exactly where this is needed
-        // most - the low view distances this mod exists to make usable.
+        // The near cutoff cannot be the fallback handoff radius instead: that one subtracts a
+        // fixed 192-block overlap, so it is zero exactly at the low view distances this mod
+        // exists to make usable - which is where cached water sits closest to the player.
         c.Eq(0f, LodNearHandoff.InnerDiscardRadius(128f),
             "the fallback handoff radius collapses at a low view distance");
-        c.True(LodNearHandoff.WaterNearRadius(128f, full) > 0f, "this one does not");
     }
 
     static void CachedBounds(Check c)

@@ -3,14 +3,17 @@
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
 **Status date:** 2026-08-29
-**Mod version:** `0.3.143`, built, verified, and copy-installed. The surface-slab behavior was
-human-tested and accepted in 0.3.142; selecting it automatically at startup in 0.3.143 has not
-been separately human-run. The development line remains 0.3.x
+**Mod version:** `0.3.152`, built, verified, and copy-installed. **Not human-tested:** the owner
+tested 0.3.151 and reported a one-chunk gap between cached and vanilla water, which 0.3.152's
+corrected dilation derivation addresses. The surface-slab behavior was human-tested and accepted
+in 0.3.142 and remains the default. The development line remains 0.3.x
 (`0.2.1` is the public released version; 0.4.0 remains a preserved local rollback artifact from the
 GPU-renderer milestone).
-**Active branch:** `codex/terrain-slabs-and-near-water`, branched from `a55fc5b` on
+**Active branch:** `codex/water-seam-transition`, branched from `94cde0e` on
+`codex/terrain-slabs-and-near-water`, itself branched from `a55fc5b` on
 `codex/seam-blending-and-block-textures`, itself branched from `master` at `21da6be` (the accepted
-0.3.127 baseline). Not pushed.
+0.3.127 baseline). The pre-session tree is preserved as
+`codex/checkpoint-pre-water-transition-20260829`. Not pushed.
 **Target:** Vintage Story 1.22.5+, .NET 10
 **Source files:** `77` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
@@ -413,25 +416,58 @@ effect on the reported tiny or three-to-six-second spikes.
 > unchanged. `.vhtexture` reports how many blocks resolved a texture, how many grass overlays landed,
 > and why the rest were refused.
 
-> **Water at the transition.** Cached water is still never suppressed by per-cell ownership, and
-> G124 records why: ownership asks whether the engine is drawing a chunk and the chunk's ground
-> answers, while the engine's water fades to nothing at 80% of its view distance and its ground
-> draws past 100%, so there is a ring where vanilla draws the bed and no longer draws the river.
+> **Water at the transition.** Rebuilt through 0.3.144-0.3.152. Three facts now hold, and the
+> first is what makes the other two safe.
 >
-> Since **0.3.141** cached water instead yields to a plain **near radius**, 0.70 of the engine's
-> view distance, which proves nothing and asks nothing. It exists because cached terrain draws in
-> the engine's opaque stage and writes depth while the engine draws its own water later, in OIT
-> (G126) - so unsuppressed cached water was depth-rejecting vanilla's own surface everywhere the
-> player could see, and the near-field suppression radius defaulting to zero let that reach the
-> camera. The bound is read from the engine's own liquid shader, whose alpha clamp holds its
-> ceiling to 0.725 and reaches zero at 0.8, so the cutoff stops short of the ring above. Ownership
-> was tried for this first, in 0.3.140, and did nothing measurable: a real client log showed 104
-> owned mask cells against 2,953 still pending (G125). `.vhwater` moves the fraction or turns it
-> off. **Not human-tested.**
+> **Cached water does not write depth.** The mod draws in `EnumRenderStage.Opaque`; the engine
+> draws its water in the later OIT stage, entering it with `GlDepthMask(false)` and the depth test
+> reading whatever the opaque stage left - so cached water writing depth was depth-rejecting the
+> real animated surface everywhere the two overlapped (G126, corroborated in the engine's own
+> source). With the write off the depth test still runs, so cached water is still occluded
+> correctly; what changes is that vanilla's water always wins where it exists. Every downstream
+> failure mode inverts with it: an ownership cell that has not committed now costs a faint tint
+> under real water rather than a flat sheet in front of it.
+>
+> **One ownership rule, no radius.** Cached water obeys the per-cell ownership mask at every
+> distance, exactly as solid ground does, so its boundary falls on vanilla chunk edges. The
+> 0.3.141 near fraction, its 0.3.144 absolute-distance replacement, and the 0.725 outward
+> allowance are all deleted rather than retuned - each was rejected in play as a visible circle,
+> and a radius cannot express a chunk boundary (G131). No distance-from-camera term survives
+> anywhere in the water path. This supersedes G124's exemption; that entry records the conditions
+> under which it becomes live again.
+>
+> **Water has its own footprint, one chunk tighter than ground's.** Ownership is refused for
+> `SphereCentreSlackBlocks` (46) plus `OverlapMarginBlocks` (16) inside vanilla's real edge so
+> cached ground can cover any chunk the engine has quietly stopped submitting - a hole guard that
+> earns its cost. Water has no such stake, and paying it put cached water inside live terrain.
+> Water's footprint therefore lives in the mask texel's previously unused green channel: the ground
+> footprint dilated by whole chunk columns with a **Chebyshev** element, so corners stay square and
+> the edge stays on the grid. Dilation also closes the uncommitted pockets a range test would leave
+> open. The dilation is derived, not tuned: the refusal measures a column's nearest face, so one
+> chunk of the ring is already inside the footprint and only `62 - 32 = 30` blocks remain (G132).
+> `.vhwater edge` overrides it live. **The ground footprint, the near handoff and the blend band
+> all still read the original channel and are unchanged.**
+>
+> **Appearance.** Cached water carries vanilla's own view-angle opacity, specular sun glint and
+> open-water surface noise, transcribed from `chunkliquid` rather than approximated, with vanilla's
+> own noise function and foam anchor. All three are applied to every cached water fragment and none
+> is band-weighted: glint and foam were weighted for one build and drew a line where the band
+> ended. Vanilla's shoreline rim is not reproduced - it comes from the depth texture during OIT,
+> which this shader cannot sample from the opaque stage.
+>
+> **Not human-tested at 0.3.152.** The owner tested 0.3.151 and reported the one-chunk gap the
+> derivation now fixes. `.vhwater` reports every setting and writes them to the log.
 >
 > Separately, lake and river floors were z-fighting in the overlap; solid cached geometry is
 > lowered by a constant sub-block sink with no ramp and no edge, and water surfaces are exempt so
 > no lip can appear across a flat surface.
+
+> **Renderer sampler ownership.** `ShaderProgramBase.Use()` re-binds the shared includes' samplers
+> to per-program linker-assigned units, in global GL state, so any program activation that is not
+> immediately followed by a full frame-uniform apply leaves this mod's textures pointing at the
+> engine's. `RebindOwnSamplers` runs after the indirect path's program switch and again at the head
+> of the water pass; static checks pin both sites and their ordering. This was the cause of a flat
+> square painted on water and thin cover for four builds (G130).
 
 > **Half-block terrain (terrain-slab mods).** Runs are stored in whole blocks, so a block filling
 > only the lower half of its cell was rebuilt as a full cube: the stair-steps a slab mod exists to

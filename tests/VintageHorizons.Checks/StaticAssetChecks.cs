@@ -20,6 +20,7 @@ public static class StaticAssetChecks
         ReadinessShadowWiring(c);
         ReadinessTelemetryContract(c);
         OwnershipMaskWiring(c);
+        WaterSurfaceWiring(c);
         OcclusionCullingWiring(c);
         PersistenceCadenceWiring(c);
         CaveCullingDefaultsOn(c);
@@ -32,6 +33,90 @@ public static class StaticAssetChecks
         SourceHasNoControlCharacters(c);
         IndirectShaderVariant(c);
         SubtreeBoundsStayOutOfTheCoverageGate(c);
+    }
+
+    /// <summary>
+    /// Cached water's surface terms, which exist to make it meet vanilla's without a line.
+    ///
+    /// Every one of them is a uniform the renderer must actually upload. An uploaded-nowhere
+    /// float uniform reads as zero with nothing in the log, and zero is a plausible-looking
+    /// value for all of these - no glint, no foam, a flat surface - so the whole feature
+    /// would silently not exist and look exactly like a tuning problem. That is G42's shape,
+    /// and this is the only place it can be caught.
+    /// </summary>
+    static void WaterSurfaceWiring(Check c)
+    {
+        string renderer = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons",
+            "src", "Render", "LodTerrainRenderer.cs"));
+        string fragment = ShaderBody("fsh");
+
+        // The opacity term. Vanilla grades water by view angle; cached water was one flat
+        // constant, which at the seam let the cached lakebed show through a surface vanilla
+        // draws solid. Transcribed rather than approximated, so the two agree by derivation.
+        c.True(fragment.Contains("float fresnel = max(0.2, 0.01 + 4.5 * rise * rise * rise);",
+                StringComparison.Ordinal)
+            && fragment.Contains("outAlpha = clamp(0.8 * fresnel, 0.0, 1.0);", StringComparison.Ordinal),
+            "cached water carries the engine's own view-angle opacity expression");
+        // A dot product one ulp below -1 would cube a negative number. Vanilla writes the
+        // bare add and gets away with it; the guard is free and this pins it.
+        c.True(fragment.Contains("float rise = max(0.0, 1.0 + eyeFresnel.y);", StringComparison.Ordinal),
+            "and cannot raise a negative base to an odd power");
+        // Applied to every cached water fragment, not faded in over the band: it describes the
+        // surface rather than correcting it, and a band-weighted opacity would BE a seam.
+        c.False(fragment.Contains("waterFresnel", StringComparison.Ordinal)
+            && fragment.Contains("bandWeight * clamp(bandStrength, 0.0, 1.0) * waterFresnel",
+                StringComparison.Ordinal),
+            "opacity is never weighted by the blend band");
+
+        // Carried on every cached water fragment, NOT faded across the band. Band-weighting
+        // them was tried for one build to bound the per-pixel cost and produced the defect it
+        // was meant to avoid: the terms faded out and then stopped, drawing a line across
+        // distant water exactly where the band ended. A term that ends nowhere has no edge.
+        c.True(fragment.Contains("float waterAmount = band == 1 ? 1.0 : 0.0;",
+                StringComparison.Ordinal),
+            "glint and foam are carried everywhere cached water draws");
+        c.False(fragment.Contains("band == 1 ? bandWeight", StringComparison.Ordinal),
+            "and are never faded out across the blend band, which would put back the line");
+
+        foreach (string uniform in new[]
+        {
+            "waterFresnel", "waterGlint", "waterFoam", "waterNearChunks",
+            "camChunkX", "camChunkZ",
+            "vhSunPosRel", "vhReflectColor", "vhSunSpecular",
+            "vhWaterWave", "vhWindWave", "vhWaterFlow", "vhWindSpeed", "vhFoamOrigin",
+        })
+        {
+            c.True(fragment.Contains($" {uniform};", StringComparison.Ordinal),
+                $"the fragment shader declares {uniform}");
+            c.True(renderer.Contains($"prog.Uniform(\"{uniform}\"", StringComparison.Ordinal),
+                $"and the renderer uploads {uniform} - an unuploaded float reads as zero (G42)");
+        }
+
+        // Sampler bindings are GLOBAL GL state and the engine rewrites several of them on
+        // every ShaderProgramBase.Use(), binding the shared includes' own samplers to whatever
+        // unit the linker gave them in THAT program. So a program that is activated without
+        // re-applying the frame uniforms draws with someone else's textures on this mod's
+        // units. That is what put a flat square on water and thin cover for four builds: the
+        // seam field sampled a shadow map, read ~0, and the shader read zero as "distance zero
+        // from vanilla", which is full band strength everywhere inside the field window.
+        //
+        // Two rebind sites, and both matter. The one in the indirect bucket covers every path
+        // downstream of a program switch; the one in the water pass covers the frame where no
+        // bucket ran. Neither reports anything when it is missing, which is why this is here.
+        c.True(renderer.Contains("void RebindOwnSamplers(IShaderProgram target)", StringComparison.Ordinal),
+            "the renderer can re-bind its own samplers independently of the frame uniforms");
+        c.Eq(2, CountOccurrences(renderer, "RebindOwnSamplers(prog"),
+            "and does so after a program switch and again before the water pass");
+        int bucketUse = renderer.IndexOf("drawProgram.Stop();", StringComparison.Ordinal);
+        int bucketRebind = renderer.IndexOf("RebindOwnSamplers(prog);", StringComparison.Ordinal);
+        c.True(bucketUse > 0 && bucketRebind > bucketUse,
+            "the rebind follows the Use() that can clobber the units, never precedes it");
+
+        // Engine state only, and only through public API. Reaching into the client for any of
+        // this would tie the water terms to an internal the engine is free to move.
+        c.True(renderer.Contains("capi.Render.ShaderUniforms", StringComparison.Ordinal)
+            && renderer.Contains("capi.World.Calendar.ReflectColor", StringComparison.Ordinal),
+            "the engine's own liquid inputs are read from public API");
     }
 
     static void HorizonSuppressionWiring(Check c)
@@ -555,12 +640,12 @@ public static class StaticAssetChecks
 
         c.False(fragment.Contains("dist < 0.0", StringComparison.Ordinal),
             "cached terrain is not discarded at the old outer handoff boundary");
-        // Solid ground still hands the conservative close field back by the shared handoff
-        // distance; water takes the larger of that and its own cutoff, which is why the
-        // comparison reads a derived name rather than the uniform directly.
-        c.True(fragment.Contains("? max(cacheHandoffDistance, waterNearRadius)", StringComparison.Ordinal)
-            && fragment.Contains(": cacheHandoffDistance;", StringComparison.Ordinal)
-            && fragment.Contains("radialDistance < nearCutoff", StringComparison.Ordinal),
+        // One shared handoff distance for every cached fragment, water included. Water used to
+        // take the larger of this and a cutoff of its own; that cutoff was a circle and is
+        // gone. See WaterSurfaceWiring for what replaced it.
+        c.True(fragment.Contains(
+                "if (radialDistance < cacheHandoffDistance || dist > 1.0) discard;",
+                StringComparison.Ordinal),
             "cached terrain hands the conservative close field back to vanilla terrain");
         c.True(renderer.Contains("prog.Uniform(\"cacheHandoffDistance\"", StringComparison.Ordinal),
             "the renderer uploads the conservative near handoff radius");
@@ -844,18 +929,35 @@ public static class StaticAssetChecks
             "a section is never skipped unless the GPU mask is live");
         c.Eq(2, CountOccurrences(renderer, "if (SkipVanillaOwnedSection(key)) continue;"),
             "both opaque comparison paths share the same skip decision");
-        // Opaque only, still. Ownership may now hide cached water, but only inside a radius
-        // far smaller than a section, because the engine's water fades out at 80% of its
-        // view distance while its ground draws past 100%, and cached water has to keep
-        // filling that outer ring - G124's dry riverbeds. A whole-section decision cannot
-        // express that; the per-fragment test can.
+        // Opaque only, still. Ownership hides cached water per fragment and only inside
+        // waterMaskRadius, because the engine's liquid alpha can reach zero before its ground
+        // stops drawing and cached water has to keep filling that outer ring - G124's dry
+        // riverbeds. A whole-section decision cannot express that; the per-fragment test can.
         int waterMethod = renderer.IndexOf("void DrawLegacyWater()", StringComparison.Ordinal);
         c.True(waterMethod > 0, "the water pass has its own submission loop");
         string waterBody = waterMethod > 0
-            ? renderer.Substring(waterMethod, Math.Min(1600, renderer.Length - waterMethod))
+            ? renderer.Substring(waterMethod, Math.Min(3200, renderer.Length - waterMethod))
             : string.Empty;
         c.False(waterBody.Contains("SkipVanillaOwnedSection", StringComparison.Ordinal),
             "water submission is never skipped whole for vanilla ownership");
+
+        // The root fix for cached water hiding vanilla's, and the one thing in this file that
+        // cannot be observed anywhere else. This mod draws in the Opaque stage; the engine
+        // draws its water in the LATER OIT stage with depth writes already off, testing
+        // against the depth this stage left behind. A cached water fragment that writes depth
+        // therefore depth-rejects the real animated surface, silently, with nothing missing
+        // and nothing in the log - G126. Both halves are pinned: an unbalanced disable would
+        // leak into every renderer registered after this one.
+        c.True(waterBody.Contains("GL.DepthMask(false);", StringComparison.Ordinal),
+            "the water pass disables depth writes so vanilla's later water pass survives it");
+        c.True(waterBody.Contains("GL.DepthMask(true);", StringComparison.Ordinal),
+            "and restores them before returning");
+        int disable = waterBody.IndexOf("GL.DepthMask(false);", StringComparison.Ordinal);
+        int restore = waterBody.IndexOf("GL.DepthMask(true);", StringComparison.Ordinal);
+        c.True(disable > 0 && restore > disable, "in that order");
+        c.True(waterBody.Contains("finally", StringComparison.Ordinal)
+            && restore > waterBody.IndexOf("finally", StringComparison.Ordinal),
+            "and the restore is in the finally block, so a throwing draw cannot leak it");
         c.False(skipBody.Contains("Evict", StringComparison.Ordinal)
             || skipBody.Contains("RenderDirty", StringComparison.Ordinal)
             || skipBody.Contains("Remove", StringComparison.Ordinal),
@@ -914,18 +1016,58 @@ public static class StaticAssetChecks
             "ownership is decided before normals, lighting, noise, fog and output work");
         c.Eq(1, CountOccurrences(fragment, "texelFetch(readinessMask"),
             "opaque and water pass through exactly one shared ownership lookup");
-        c.True(fragment.Contains("if (maskEnabled == 1 && ownershipBand != 1)", StringComparison.Ordinal),
-            "a disabled mask executes no readiness sample, and water is never suppressed by one");
-        // Water gets out of vanilla's way by its OWN near cutoff instead. Ownership cannot do
-        // it: it proves a cell only where the engine reports a chunk drawn and holding
-        // geometry, which a real client log measured at 104 owned against 2,953 pending.
-        c.True(fragment.Contains("max(cacheHandoffDistance, waterNearRadius)", StringComparison.Ordinal)
-            && fragment.Contains("radialDistance < nearCutoff", StringComparison.Ordinal),
-            "cached water takes the larger of its own near cutoff and the shared one");
-        c.True(renderer.Contains("prog.Uniform(\"waterNearRadius\"", StringComparison.Ordinal)
-            && renderer.Contains("LodNearHandoff.WaterNearRadius(viewDistance, waterNearFraction)",
+        c.True(fragment.Contains("if (maskEnabled == 1)", StringComparison.Ordinal),
+            "a disabled mask executes no readiness sample");
+        // Water is under the mask again, which is what gives it a chunk-shaped edge rather
+        // than the circle a per-pixel radius draws - but bounded outward, because ownership
+        // asks whether the engine draws a CHUNK and its ground answers for that. Vanilla's
+        // water can stop before its ground does, and suppressing ours inside that ring is
+        // G124's dry riverbed.
+        // ONE ownership test, for every band, at every distance. Water carried an outward
+        // allowance for two builds - ownership barred from hiding it past a fraction of the
+        // view distance - and past that fraction cached water drew straight into chunks the
+        // engine was already drawing. Measured in play, twice. The allowance was a radius, and
+        // a radius cannot express a chunk boundary, so it is gone rather than retuned.
+        c.False(fragment.Contains("maskMaySuppress", StringComparison.Ordinal)
+            || fragment.Contains("waterMaskRadius", StringComparison.Ordinal)
+            || fragment.Contains("waterMaskBounded", StringComparison.Ordinal),
+            "no outward allowance exempts cached water from the ownership mask");
+        c.True(fragment.Contains("if (maskEnabled == 1)", StringComparison.Ordinal),
+            "cached water obeys the ownership mask exactly as solid ground does");
+        // Two channels of the same texel, one lookup. Red is ground's footprint, green is
+        // water's - the same footprint grown by whole chunks, because ground keeps drawing
+        // through the ring ownership refuses as a hole guard and water must not.
+        c.True(fragment.Contains(
+                "if ((ownershipBand == 1 ? ownership.g : ownership.r) > 0.5)",
                 StringComparison.Ordinal),
-            "and the renderer derives it from the engine's view distance every frame");
+            "water reads its own ownership channel and ground reads its own");
+        c.Eq(1, CountOccurrences(fragment, "texelFetch(readinessMask"),
+            "and both still come from exactly one ownership lookup");
+        c.True(renderer.Contains("readinessMask.RebuildWaterFootprint(", StringComparison.Ordinal)
+            && renderer.Contains("WaterFootprintDilationChunks()", StringComparison.Ordinal),
+            "the renderer rebuilds water's footprint from the ground one every time it moves");
+        c.False(renderer.Contains("WaterMaskRadius", StringComparison.Ordinal)
+            || renderer.Contains("WaterMaskBounded", StringComparison.Ordinal),
+            "and the renderer has no view-distance bound left to upload");
+        // NO RADIUS. Two builds gave cached water a near cutoff measured against the camera -
+        // first a share of the view distance, then an absolute distance - and both drew a
+        // visible ring across every lake, because a per-pixel distance test is a circle and
+        // the world contains no circles. The only near rule left is a Chebyshev count of
+        // 32-block chunk columns, whose boundary can only fall on a chunk edge, and it is off
+        // by default. Pinned as source text because the failure is invisible to every other
+        // check here: it compiles, it runs, and it looks like a GPU effect painted on the sea.
+        c.False(fragment.Contains("waterNearRadius", StringComparison.Ordinal),
+            "no camera-distance cutoff survives anywhere in the water path");
+        c.True(fragment.Contains(
+                "max(abs(cellX - camChunkX), abs(cellZ - camChunkZ)) < waterNearChunks",
+                StringComparison.Ordinal),
+            "the near water rule is a chunk count, so its boundary lands on chunk edges");
+        c.True(renderer.Contains("prog.Uniform(\"waterNearChunks\", waterNearChunks);", StringComparison.Ordinal),
+            "and the renderer uploads it as whole chunks");
+        c.Eq(0, LodNearHandoff.WaterNearChunks, "with no near rule at all by default");
+        c.False(renderer.Contains("WaterNearFraction", StringComparison.Ordinal)
+            || renderer.Contains("WaterNearBlocks", StringComparison.Ordinal),
+            "and neither block nor view-distance form of the old cutoff survives");
 
         c.True(renderer.Contains("prog.Uniform(\"maskEnabled\"", StringComparison.Ordinal)
             && renderer.Contains("prog.Uniform(\"maskCapacity\"", StringComparison.Ordinal)
@@ -963,8 +1105,8 @@ public static class StaticAssetChecks
         // Removing the radius must not touch the per-cell mask. The radius is one distance
         // around the camera; the mask is what hides cached terrain wherever vanilla is
         // actually drawing, which is the whole handoff and a different mechanism entirely.
-        c.True(fragment.Contains("maskEnabled == 1 &&", StringComparison.Ordinal),
-            "per-cell ownership still decides every land fragment, independently of the radius");
+        c.True(fragment.Contains("if (maskEnabled == 1)", StringComparison.Ordinal),
+            "per-cell ownership still decides every fragment, independently of the radius");
         c.True(renderer.Contains("readiness.Classify(key) != VanillaSectionOwnership.VanillaOnly",
                 StringComparison.Ordinal),
             "wholly owned sections are still skipped before drawing");

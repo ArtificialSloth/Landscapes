@@ -15,21 +15,44 @@ sink experiment and default decision are closed. Two non-blocking measurements r
   complete surface-mode 0.3.142 build in the scene that exposed the regression and reported very
   little performance cost; paired cache geometry supplies the quantitative result.
 
-## Near-field water: the mechanism is source-traced, the boundary is not
+## Distant water: what 0.3.152 has not proven
 
-Cached water is suppressed within `WaterNearFraction` (0.70) of the engine's view distance.
+Cached water no longer writes depth, obeys the ownership mask at every distance, and has its own
+footprint one chunk tighter than ground's. No distance-from-camera term remains in the water path.
 
-- **Not human-tested.** The failure to watch for is G124 returning: a river or lake bed with no
-  water in it at distance. If it appears, the fraction is too high.
-- The opposite failure sets the floor: flat cache water still visible on a lake the player is
-  looking at means the fraction is too low. `.vhwater <fraction>` moves it live.
-- The 0.70 comes from the engine's own `chunkliquid.vsh` alpha clamp, which holds its ceiling to
-  0.725 and reaches zero at 0.8. That is source-traced, not measured in play, and the 0.10 of
-  margin below the fade is a judgement.
-- **The depth explanation is source-traced only.** Cached water writing depth in the opaque stage
-  rejecting vanilla's OIT water has not been confirmed by a run in which only the depth behaviour
-  changed. If the radius turns out not to fix it, clearing the depth mask around the water pass is
-  the next thing to try, and it would be a smaller change than this one.
+- **0.3.152 is not human-tested.** The owner tested 0.3.151, which derived a two-chunk dilation,
+  and reported a chunk-wide strip of missing water. The corrected derivation subtracts the chunk
+  the refusal already covers (G132). `.vhwater edge <chunks>` overrides it live: raise it if water
+  reaches into vanilla's, lower it if the gap is back.
+- **G124 may return.** Water is under ownership everywhere now. The argument that vanilla's liquid
+  fade cannot produce a dry ring rests on this mod's own horizon hook moving that fade out of
+  range, which is source-traced and fails open per pass. The failure to watch for is a riverbed
+  with no water in it at distance.
+- **No shader edited this session was compile-verified offline.** There is no GLSL validator in the
+  toolchain; the only proof is the game loading it. 0.3.144 through 0.3.151 did load, 0.3.152 has
+  not been run.
+- **Glint and foam are untuned.** Both default to 1.00 and were never adjusted in play.
+- **No benchmark.** Cached water now evaluates roughly six `gnoise` calls per water fragment where
+  it previously evaluated none, on every water fragment rather than inside the band.
+- **Vanilla's shoreline rim is not reproduced.** It comes from the depth texture during OIT, which
+  this shader cannot sample from the opaque stage; it needs mesh-side data instead.
+
+## The blend band is circular by construction
+
+Not a defect introduced this session, and the owner accepts the band as it stands - recorded so it
+is not rediscovered a fourth time. Confirmed from a live `.vhband map`: concentric rings, full
+strength to about 190 blocks, fading to nothing at about 310.
+
+Two independent causes, either of which alone produces a circle:
+
+- Ownership is refused by a distance rule (`BeyondVanillaDrawRange`), so the footprint the band
+  measures from is a disc of chunks whose edge sits 62 blocks inside vanilla's real one - not
+  vanilla's loaded footprint, which is what the band's design claims.
+- A chamfer distance field's level sets are smooth curves however blocky the seed is, and the
+  weights are chosen specifically to stay within 2% of Euclidean.
+
+If it is ever revisited: step the ramp on 32-block chunk edges rather than 8-block cells, and seed
+from vanilla's loaded footprint rather than range-clipped ownership.
 
 ## Seam blending and block textures: what is unproven
 

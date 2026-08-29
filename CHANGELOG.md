@@ -8,6 +8,47 @@ first.
 
 ## [Unreleased]
 
+## [0.3.152] - 2026-08-29
+
+**Distant water now meets the game's own water instead of standing in front of it, and stops at
+the game's chunk edges rather than at a circle drawn around you.**
+
+The game draws its water in a later pass than distant terrain, and distant water was writing
+into the depth buffer first — so the cache's flat sheet was quietly replacing the real animated
+surface wherever the two overlapped. Distant water no longer writes depth, so the game's own
+water always wins where it exists. That one change is what made everything below possible: a
+chunk the mod has not yet confirmed now costs a faint tint underneath real water instead of a
+flat sheet in front of it.
+
+**Every circle is gone.** Three separate versions of "hide distant water within a radius" have
+been removed outright rather than retuned. Distant water is now hidden by exactly one rule — the
+same per-chunk ownership test distant ground uses — so its boundary falls on the game's own
+chunk edges and nowhere else. There is no distance-from-camera term left anywhere in the water
+path.
+
+**Distant water no longer overlaps the game's terrain.** Distant *ground* deliberately keeps
+drawing a little way inside the game's own area, as a guard against holes; water does not need
+that guard, and paying it anyway put distant water inside live terrain. Water now has its own
+boundary, one chunk tighter than ground's, with ground's overlap completely unchanged.
+
+**Distant water is shaded like the game's.** It carries the game's own opacity, which changes
+with the angle you look at it — see-through underfoot, solid further out — instead of one flat
+value at every distance. It also carries the game's own sun glint and surface noise, so it no
+longer goes matte and flat where the game's water ends.
+
+`.vhwater` reports and adjusts all of it: `edge` moves the boundary by whole chunks, `fresnel`,
+`glint` and `foam` control each term, and a chunk count can hide water immediately around you if
+shallow water ever looks murky.
+
+Also fixed: the seam blending band's fade was being cut off before it reached zero, leaving a
+straight-edged step on the boundary of its own data window. It now completes at every setting.
+
+Diagnostics, after several rounds where screenshots could not answer the question: `.vhband map`
+writes the game's committed chunk footprint and the band's weight to the client log; `.vhband
+shape` paints ground and water in different colours so a coloured region can be attributed to
+the pass that drew it; and every water setting reaches the log, since chat cannot be copied out
+of the game.
+
 ## [0.3.143] - 2026-08-29
 
 **Terrain slabs are now on by default without the former geometry cliff.** The default

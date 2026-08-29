@@ -2399,11 +2399,18 @@ chunk-aligned edges, in both rivers and lakes.
 skip. Cached water underneath vanilla's own water is hidden and costs a little overdraw; cached
 water missing is a hole in a river.
 
-**Still current.** Tested again in 0.3.140 on the argument that 0.3.127 had moved the liquid
-program's fade out with the other terrain programs and so closed the ring. It had not: these dry
-riverbeds were observed in session 65, AFTER 0.3.127 shipped. Cached water yields to the
-near-field radius of G126 and to nothing else. A gotcha is only expired when the evidence
-post-dates the change that supposedly expired it.
+**Superseded in 0.3.150, deliberately, and with the reasoning recorded.** Cached water is now
+under the ownership mask at every distance, with no outward allowance at all. Two things changed
+the balance. First, cached water no longer writes depth (G126), so suppressing it where vanilla
+draws its own costs nothing and failing to suppress it is what put a flat sheet inside live
+terrain - the owner's repeated report. Second, the ring this entry depends on is pushed out of
+range by this mod's own horizon hook: `VanillaHorizonEffects` rewrites `chunkliquid`'s
+`viewDistance` so the 0.725-to-0.8 alpha fade lands beyond the furthest vertex the engine's
+culler will submit, which means vanilla's water does not fade at all while this mod runs.
+
+That second argument is source-traced, not measured, and the hook fails open per pass. **If dry
+riverbeds return, this entry is live again** - and the answer is a better ownership signal, never
+a radius (G131).
 
 ### G125 - Per-cell ownership is far too sparse to hide anything the player is standing beside
 
@@ -2417,10 +2424,15 @@ observation commits. A real client log during ordinary play showed **104 owned c
 beyond the draw range. A rule gated on ownership therefore fires almost nowhere near the player,
 and the change looks like it never shipped.
 
-**Do:** use ownership for ground at distance, where the mask has time to commit and a wrong
-answer costs a correction rather than a hole. Use a plain radius for anything in the near field,
-where density matters more than precision. Read the `vanilla readiness:` line of the periodic
-log - it carries the owned and pending counts - before designing against ownership at all.
+**Do:** read the `vanilla readiness:` line of the periodic log - it carries the owned and pending
+counts - before designing against ownership at all.
+
+**Amended in 0.3.150.** The original advice ended "use a plain radius for anything in the near
+field", and that is now wrong twice over: a radius was rejected in play on sight (G131), and the
+sparsity is far less dangerous than it looks once the failure mode is soft. Cached water no
+longer writes depth, so a cell the mask has not proven costs a faint tint under real water rather
+than a sheet in front of it - which is what made ownership usable for water after all. Where a
+denser footprint is genuinely needed, dilate the one you have.
 
 **Found:** 0.3.140, from a water fix that was measured, built, shipped, and did nothing.
 
@@ -2499,3 +2511,72 @@ primary checkout, and silently validated the other branch's assets.
 the worktree whose binaries or assets are under test.
 
 **Found:** 0.3.143, when a linked-worktree shader check disagreed with the file being edited.
+
+### G130 - `Use()` re-binds the shared includes' samplers, per program, into global state
+
+**Trigger:** binding a texture for a shader program and then activating any program - including
+that same one - before the draw.
+
+**Trap:** `ShaderProgramBase.Use()` re-binds every sampler the shared includes declare -
+`shadowMapFar`, `shadowMapNear`, `sky`, `glow`, `liquidDepth` - to whichever texture unit the
+LINKER assigned that name **in that program**. Those numbers are per program, and a mod's shader
+variants declare different sampler sets, so a unit that is free in one is not free in another.
+The sampler *uniform* is per-program state and survives; the unit *binding* it points at is
+global and does not.
+
+The mod's opaque pass never saw it, because the indirect path re-applies its frame uniforms
+immediately after activating the packed program. The water pass did: `prog.Use()` in the
+indirect bucket's `finally` re-ran the engine's binds, and nothing re-applied anything before
+the water draws. The seam field sampled another texture, read approximately zero, and the shader
+reads zero as "distance zero from vanilla" - full band strength, across the whole field window
+and nowhere else. A flat square on water and thin cover, with correct ground beside it, for four
+builds.
+
+**Do:** treat `Use()` as clobbering every texture unit this mod owns, and re-bind them after any
+program activation that is not immediately followed by a full frame-uniform apply. Choosing a
+"high enough" unit number is not protection: the assignment is per program and not yours.
+
+**Do not** attribute a wrong-looking region to the feature whose data is wrong. Paint the
+candidate passes in different colours first; the defect was in the pass, not the feature.
+
+**Found:** 0.3.149, after the owner reported that a debug square turned green on water but stayed
+red on flowers - and thin cover is drawn in the water pass.
+
+### G131 - A distance test is a circle wherever it is measured from
+
+**Trigger:** hiding, fading, or correcting cached geometry by comparing a distance against a
+threshold, in the shader or on the CPU.
+
+**Trap:** the result is a perfect circle, and a perfect circle is a shape the world does not
+contain. It reads as an effect painted over the terrain rather than as terrain, and shrinking it
+does not help - 0.3.141 used 0.70 of the view distance, 0.3.144 used an absolute 48 blocks, and
+both were rejected in play on sight. The same applies to a bound that only *permits* suppression
+inside a radius: past it, nothing suppresses, and cached geometry draws into live vanilla chunks.
+
+**Do:** express every such boundary in the world's own grid. A Chebyshev count of 32-block chunk
+columns can only put its edge on a chunk edge. Where a footprint is wanted, dilate the footprint
+rather than measuring a range from the camera - dilation also closes the uncommitted pockets
+inside it, which a range test leaves open.
+
+**Do not** use a Euclidean or chamfer dilation for this. Its level sets are smooth curves however
+blocky the seed is, which is the same defect by another route; the seam field's chamfer weights
+are chosen specifically to stay near-Euclidean, and its contours are correspondingly round.
+
+**Found:** 0.3.150, after the third radius in the water path was removed.
+
+### G132 - A chunk-level refusal measured to the nearest face already covers one chunk
+
+**Trigger:** reconstructing, dilating, or compensating for a rule that refuses whole chunk
+columns beyond a distance threshold.
+
+**Trap:** `BeyondVanillaDrawRange` compares a column's NEAREST face against the threshold, so the
+outermost column that still qualifies has its near face just inside it and its far face a whole
+chunk further out again. Growing a footprint back by the full ring depth therefore overshoots by
+exactly one chunk. Measured in play as a chunk-wide strip of missing water between cached water
+and vanilla's.
+
+**Do:** subtract one chunk from the ring before converting it to a dilation, and round up on what
+remains. Check the arithmetic against the face the threshold actually uses, not against the
+distance the constant is named for.
+
+**Found:** 0.3.152, from a one-chunk gap the owner reported at a shoreline.

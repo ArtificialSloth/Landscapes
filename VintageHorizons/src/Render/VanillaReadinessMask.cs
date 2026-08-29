@@ -14,8 +14,29 @@ namespace VintageHorizons;
 /// </summary>
 internal sealed class VanillaReadinessMask
 {
-    /// <summary>Opaque white: vanilla owns this cell and cached fragments must not draw.</summary>
+    /// <summary>
+    /// Vanilla owns this cell's GROUND, and cached ground must not draw. The shader reads the
+    /// red channel for that; the green channel carries water's own footprint, so a
+    /// ground-owned cell sets both and this stays opaque white.
+    /// </summary>
     public const int ReadyTexel = unchecked((int)0xFFFFFFFF);
+
+    /// <summary>
+    /// Vanilla owns this column for WATER but not for ground. Green channel, red clear.
+    ///
+    /// The two footprints differ on purpose. Ownership is refused for a 62-block ring inside
+    /// vanilla's real edge - 46 blocks because the engine range-culls a mesh on its
+    /// bounding-sphere centre rather than its near face, plus a 16-block early handover - so
+    /// cached GROUND keeps drawing there and covers any chunk vanilla has quietly stopped
+    /// submitting. That ring is a hole guard and it earns its cost: a hole in the ground is the
+    /// worst thing this renderer can produce.
+    ///
+    /// Water has no such stake. Cached water missing where vanilla draws none is a river with
+    /// no water in it - bad, but local and obvious - while cached water drawn where vanilla is
+    /// drawing its own is a flat sheet standing inside live terrain. So water takes the ring
+    /// back, and this bit is the columns ground gives up that water does not.
+    /// </summary>
+    public const int WaterOnlyTexel = unchecked((int)0xFF00FF00);
 
     /// <summary>Zero: cache owns this cell. Every failure path leaves texels at this value.</summary>
     public const int CacheTexel = 0;
@@ -64,7 +85,10 @@ internal sealed class VanillaReadinessMask
     public long Revision { get; private set; }
 
     /// <summary>
-    /// True when any cell in this column is owned by vanilla.
+    /// True when any cell in this column is owned by vanilla FOR GROUND.
+    ///
+    /// Ground only, deliberately. The seam band is derived from this, and water's dilated
+    /// footprint must not be able to move the band the ground uses.
     ///
     /// "Any" rather than "all" on purpose: the band needs vanilla's horizontal footprint,
     /// and a column's ground cell is owned while the air chunks stacked above it are
@@ -98,15 +122,79 @@ internal sealed class VanillaReadinessMask
         if (cell.Y < 0 || cell.Y >= verticalChunks) return false;
 
         int index = TexelIndex(cell.X, cell.Y, cell.Z, capacity, verticalChunks);
-        int value = ready ? ReadyTexel : CacheTexel;
+        // Ground ownership implies water ownership, so a ready cell writes both bits. Losing
+        // ground ownership must NOT clear water's: the two footprints are maintained by
+        // different passes, and dropping to zero here would punch a hole in water's until the
+        // next rebuild.
+        int value = ready ? ReadyTexel
+            : (texels[index] == ReadyTexel ? WaterOnlyTexel : texels[index]);
         if (texels[index] == value) return false;
 
-        if (ready) ReadyTexels++;
-        else ReadyTexels--;
+        if (ready && texels[index] != ReadyTexel) ReadyTexels++;
+        else if (!ready && texels[index] == ReadyTexel) ReadyTexels--;
         texels[index] = value;
         Dirty = true;
         Revision++;
         return true;
+    }
+
+    /// <summary>Columns carrying water's footprint, ground-owned or dilated into it.</summary>
+    public long WaterColumns { get; private set; }
+
+    /// <summary>
+    /// Recomputes water's own footprint: every column within <paramref name="dilateChunks"/>
+    /// of a column vanilla owns any ground in.
+    ///
+    /// A CHEBYSHEV dilation in whole chunk columns, so the result is the ground footprint
+    /// grown by a whole number of chunks and its boundary still lands exactly on chunk edges.
+    /// A Euclidean or chamfer dilation would round every corner onto a smooth curve, which is
+    /// the one thing this seam must not do.
+    ///
+    /// A dilation rather than a distance test from the camera, for the same reason: a radius
+    /// is a circle wherever it is measured from, and what is being reconstructed here is a
+    /// footprint. Growing the footprint also closes the pockets inside it that ownership has
+    /// not committed yet, which a range test would leave open.
+    /// </summary>
+    public void RebuildWaterFootprint(
+        int minChunkX, int minChunkZ, int width, int depth, int dilateChunks)
+    {
+        if (width <= 0 || depth <= 0) return;
+        int reach = Math.Max(0, dilateChunks);
+        long columns = 0;
+
+        for (int z = 0; z < depth; z++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                bool near = false;
+                for (int dz = -reach; dz <= reach && !near; dz++)
+                {
+                    for (int dx = -reach; dx <= reach; dx++)
+                    {
+                        int sx = x + dx, sz = z + dz;
+                        if (sx < 0 || sx >= width || sz < 0 || sz >= depth) continue;
+                        if (!ColumnHasReady(minChunkX + sx, minChunkZ + sz)) continue;
+                        near = true;
+                        break;
+                    }
+                }
+
+                if (near) columns++;
+                int value = near ? WaterOnlyTexel : CacheTexel;
+                for (int y = 0; y < verticalChunks; y++)
+                {
+                    int index = TexelIndex(minChunkX + x, y, minChunkZ + z, capacity, verticalChunks);
+                    // Ground ownership always wins: it already carries the water bit, and
+                    // rewriting it here would drop the red bit the ground path reads.
+                    if (texels[index] == ReadyTexel || texels[index] == value) continue;
+                    texels[index] = value;
+                    Dirty = true;
+                    Revision++;
+                }
+            }
+        }
+
+        WaterColumns = columns;
     }
 
     public bool IsReady(VanillaChunkCell cell) =>
@@ -119,9 +207,10 @@ internal sealed class VanillaReadinessMask
     /// </summary>
     public void Clear()
     {
-        if (ReadyTexels == 0 && !Dirty) return;
+        if (ReadyTexels == 0 && WaterColumns == 0 && !Dirty) return;
         Array.Clear(texels);
         ReadyTexels = 0;
+        WaterColumns = 0;
         Dirty = true;
         Revision++;
     }
@@ -137,8 +226,8 @@ internal sealed class VanillaReadinessMask
         {
             int index = TexelIndex(chunkX, y, chunkZ, capacity, verticalChunks);
             if (texels[index] == CacheTexel) continue;
+            if (texels[index] == ReadyTexel) ReadyTexels--;
             texels[index] = CacheTexel;
-            ReadyTexels--;
             Dirty = true;
             Revision++;
         }
