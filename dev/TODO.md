@@ -2,16 +2,40 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Terrain Slabs: the next piece of work
+## Terrain slabs: built, priced, and waiting on one cheap experiment
 
-The owner's world was generated with **Terrain Slabs**, a mod that adds half-block slabs of every
-terrain block to smooth the landscape, and reports that Vintage Horizons handles them poorly. Not
-investigated at all - no symptom detail, no capture, no source trace. Opened as the next session's
-subject at the owner's direction.
+Half-block terrain is implemented and **off by default**. The whole open question is whether the
+owner needs it at all.
 
-Worth knowing before starting: LOD runs are packed as `paletteId | yTop | yBottom` with Y in
-QUARTER-block units in the packed quad format, so half-block geometry is representable; the question
-is what capture and meshing actually do with a slab block, not whether the format can hold it.
+- **`.vhband sink 8` has not been tried.** The owner's actual complaint is cached full cubes
+  standing through vanilla's slabs where the two terrains overlap, not distant terrain looking
+  chunky. The existing constant sink already answers that shape of problem for no geometry, and
+  half a block is what the pokethrough measures. This is the first thing to test, and if it works
+  the half-block mesher stays off and the item closes.
+- If it does not work, the default should probably become `.vhslabs near`, and the +32% is then
+  a priced decision rather than an open one.
+- **The half-block cave-boundary branch has no dedicated check.** `CollectSideWithCaveCoverage`
+  handles a neighbouring slab covering only the lower half of its top cell, and nothing exercises
+  that specific branch. Its non-slab behaviour is regression-covered: `slabfield --half-levels 0`
+  produced bit-identical meshes to the baseline over 120 real sections with cave culling on.
+- No frame-time benchmark was run. The owner observed 300 to 270 FPS in one uncontrolled scene;
+  the +31.76% vertex figure is one seeded 120-section sample of one world.
+
+## Near-field water: the mechanism is source-traced, the boundary is not
+
+Cached water is suppressed within `WaterNearFraction` (0.70) of the engine's view distance.
+
+- **Not human-tested.** The failure to watch for is G124 returning: a river or lake bed with no
+  water in it at distance. If it appears, the fraction is too high.
+- The opposite failure sets the floor: flat cache water still visible on a lake the player is
+  looking at means the fraction is too low. `.vhwater <fraction>` moves it live.
+- The 0.70 comes from the engine's own `chunkliquid.vsh` alpha clamp, which holds its ceiling to
+  0.725 and reaches zero at 0.8. That is source-traced, not measured in play, and the 0.10 of
+  margin below the fade is a judgement.
+- **The depth explanation is source-traced only.** Cached water writing depth in the opaque stage
+  rejecting vanilla's OIT water has not been confirmed by a run in which only the depth behaviour
+  changed. If the radius turns out not to fix it, clearing the depth mask around the water pass is
+  the next thing to try, and it would be a smaller change than this one.
 
 ## Seam blending and block textures: what is unproven
 

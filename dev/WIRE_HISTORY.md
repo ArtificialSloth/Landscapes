@@ -32,6 +32,15 @@ Protobuf fields are append-compatible. Bump the protocol when an existing messag
 
 Earlier blob formats existed in the original development history but have not yet been reconstructed from Git. Do not invent their meanings from the current reader; add rows only from source history or preserved release evidence.
 
+**Material-flag bits within format 4.** `0.3.140` began writing flag bit 2 (`FlagHalf`, terrain
+that fills only the lower half of its cell). The format was deliberately NOT bumped, on two
+grounds that must both hold before any future flag bit does the same: older readers test named
+bits individually and ignore unknown ones, so a set bit 2 cannot be misread as water, thin cover
+or skip; and flags are recomputed from the live block on load (`LodStore.Reclassify`), so the
+stored byte is a cache of a derived value rather than the authority. A flag bit that fails either
+test - one an old reader would act on, or one that cannot be re-derived from the block registry -
+requires a format bump and a ledger row.
+
 ## Database schema-meaning ledger
 
 | Schema | Released | Meaning |

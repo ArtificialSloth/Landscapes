@@ -8,6 +8,33 @@ first.
 
 ## [Unreleased]
 
+## [0.3.141] - 2026-08-28
+
+**The water right in front of you is the game's own again, and distant terrain can now be built
+with real half blocks for worlds that use a slab mod.**
+
+Cached water was being drawn on top of the game's own water, everywhere, including on the lake
+you are standing beside. The cache draws its terrain in the game's opaque pass, and the game
+draws its water in a later pass, so the cache's flat sheet was landing in front of the real
+animated surface and hiding it. Cached water now stays out of the near field entirely and only
+appears further out, where the game has begun to drop its own - which is what keeps rivers and
+lakes from going dry at distance. `.vhwater` moves the boundary or turns it off.
+
+**Terrain Slabs and other half-block terrain mods.** The cache stores terrain a whole block at a
+time, so every half-block slab was rebuilt in the distance as a full cube: the stair-steps a slab
+mod exists to remove were being put back, and the ground stood half a block high wherever one
+sat. On a slab-generated world that is about a third of all soil-covered ground. Distant terrain
+can now draw them at their real height, derived from the block's own shape, so it works for any
+mod that adds half blocks and picks up shallow snow as well.
+
+It is **off by default**, because it is not free: half-height ground has to show the top half of
+the side of every full block beside it, and that is about a third more distant geometry. Turn it
+on with `.vhslabs near`, or `.vhslabs all` for every distance. If the only thing that bothers you
+is cached blocks standing through the game's own slabs where the two terrains overlap, `.vhband
+sink 8` lowers cached ground under vanilla's for no cost at all.
+
+Existing caches gain both without re-exploring anything.
+
 ## [0.3.139] - 2026-08-28
 
 **Distant terrain now blends into the game's own terrain at the seam, and near the seam it is drawn

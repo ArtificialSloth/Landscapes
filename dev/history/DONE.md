@@ -2,6 +2,34 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-08-28 - Terrain slabs read correctly, and cached water kept out of the near field
+
+- **Half-block terrain.** `LodPaletteEntry.FlagHalf` takes free flag bit 2 and is derived from the
+  block's own collision shape, so no mod is named anywhere and shallow snow layers are caught for
+  free. Flags are recomputed from the live block on load, so an existing cache gains half blocks
+  with no re-exploration. The mesher moved to half-block Y units throughout rather than shaving
+  surfaces alone: coverage is computed from run spans, so a run reporting one height and drawing
+  another culls its neighbour's wall and opens a see-through notch into solid ground.
+- **Slab capture was never broken.** Decoding the owner's live cache showed `terrainslabs:` blocks
+  carrying byte-identical colours and flags to their vanilla counterparts. Height was the only
+  defect, on 13.9% of all captured surface columns and about 31% of soil-family ones.
+- **Priced with a new offline harness.** `slabfield` meshes real cache sections twice with the
+  shipping mesher and reported +31.76% opaque vertices at level 0 over 120 sections, of which 77%
+  is walls. Coarse levels measured +40.60% (L1), +33.48% (L2) and +22.98% (L3), so the feature is
+  level-gated and defaults off behind `.vhslabs`.
+- **The owner's real complaint has a cheaper answer.** Cached full cubes standing through vanilla's
+  slabs at the mesh overlap is what the existing `bandSinkBlocks` was built for; `.vhband sink 8`
+  is half a block and costs no geometry. Handed over untested.
+- **Cached water no longer stands in front of the game's own.** Vanilla renders its liquid pass in
+  the OIT stage, after the opaque stage the mod draws in, so cached water writing depth was
+  depth-rejecting vanilla's water everywhere the player could see. Suppression by a plain radius,
+  0.70 of the view distance, bounded by the engine's own liquid alpha clamp.
+- **One wrong build recorded rather than quietly replaced.** 0.3.140 hung water suppression on the
+  per-cell ownership mask, arguing that 0.3.127 had closed G124's ring. G124 was observed after
+  0.3.127, and the owner's client log then showed 104 owned mask cells against 2,953 pending -
+  ownership is far too sparse to stand between the player and a nearby lake. G125 records it.
+- 5,622 assertions, zero failures. G125, G126 and G127 added; G124 annotated as still current.
+
 ## 2026-08-27 - Terrain-only horizon wall correction accepted in 0.3.127
 
 - Corrected 0.3.125's over-broad product behavior. The ambient-manager patch, default clear-air

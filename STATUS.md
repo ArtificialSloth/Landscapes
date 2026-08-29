@@ -3,12 +3,13 @@
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
 **Status date:** 2026-08-28
-**Mod version:** `0.3.139`, built, verified, copy-installed, and human-tested; the development
-line remains 0.3.x
+**Mod version:** `0.3.141`, built, verified, and copy-installed. **Not human-tested**: 0.3.139 is
+the newest version a person has played. The development line remains 0.3.x
 (`0.2.1` is the public released version; 0.4.0 remains a preserved local rollback artifact from the
 GPU-renderer milestone).
-**Active branch:** `codex/seam-blending-and-block-textures` at `04ea3e6`, branched from `master`
-at `21da6be` (the accepted 0.3.127 baseline). Not pushed.
+**Active branch:** `codex/terrain-slabs-and-near-water`, branched from `a55fc5b` on
+`codex/seam-blending-and-block-textures`, itself branched from `master` at `21da6be` (the accepted
+0.3.127 baseline). Not pushed.
 **Target:** Vintage Story 1.22.5+, .NET 10
 **Source files:** `77` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
@@ -411,13 +412,47 @@ effect on the reported tiny or three-to-six-second spikes.
 > unchanged. `.vhtexture` reports how many blocks resolved a texture, how many grass overlays landed,
 > and why the rest were refused.
 
-> **Water at the transition.** Cached water is never suppressed by per-cell ownership. Ownership
-> asks whether the engine is drawing a chunk and the chunk's ground answers, while the engine's
-> water is a separate pass with a shorter reach - so there was a ring where vanilla drew the bed and
-> no longer drew the river, and the mod suppressed its own water there, leaving dry riverbeds. The
-> exemption can only ever add water. Separately, lake and river floors were z-fighting in the
-> overlap; solid cached geometry is now lowered by a constant sub-block sink with no ramp and no
-> edge, and water surfaces are exempt so no lip can appear across a flat surface.
+> **Water at the transition.** Cached water is still never suppressed by per-cell ownership, and
+> G124 records why: ownership asks whether the engine is drawing a chunk and the chunk's ground
+> answers, while the engine's water fades to nothing at 80% of its view distance and its ground
+> draws past 100%, so there is a ring where vanilla draws the bed and no longer draws the river.
+>
+> Since **0.3.141** cached water instead yields to a plain **near radius**, 0.70 of the engine's
+> view distance, which proves nothing and asks nothing. It exists because cached terrain draws in
+> the engine's opaque stage and writes depth while the engine draws its own water later, in OIT
+> (G126) - so unsuppressed cached water was depth-rejecting vanilla's own surface everywhere the
+> player could see, and the near-field suppression radius defaulting to zero let that reach the
+> camera. The bound is read from the engine's own liquid shader, whose alpha clamp holds its
+> ceiling to 0.725 and reaches zero at 0.8, so the cutoff stops short of the ring above. Ownership
+> was tried for this first, in 0.3.140, and did nothing measurable: a real client log showed 104
+> owned mask cells against 2,953 still pending (G125). `.vhwater` moves the fraction or turns it
+> off. **Not human-tested.**
+>
+> Separately, lake and river floors were z-fighting in the overlap; solid cached geometry is
+> lowered by a constant sub-block sink with no ramp and no edge, and water surfaces are exempt so
+> no lip can appear across a flat surface.
+
+> **Half-block terrain (terrain-slab mods).** Runs are stored in whole blocks, so a block filling
+> only the lower half of its cell was rebuilt as a full cube: the stair-steps a slab mod exists to
+> remove were put back, and cached ground stood half a block high wherever one sat. On the owner's
+> slab-generated world that is 13.9% of all captured surface columns and about 31% of soil-family
+> ones, established by decoding the live cache rather than in play. Capture, colour and
+> classification were never wrong - `terrainslabs:` palette entries carry byte-identical colour and
+> flags to their vanilla counterparts.
+>
+> Since **0.3.140** the mesher can draw them at their real height. `LodPaletteEntry.FlagHalf` is
+> derived from the block's own collision shape, so no mod is named anywhere and shallow snow layers
+> are caught too, and flags are recomputed from the live block on load, so an existing cache gains
+> half blocks with no re-exploration.
+>
+> **Off by default.** Measured with a new offline harness (`slabfield`, which meshes real cache
+> sections twice with the shipping mesher) at **+31.76% opaque vertices** at level 0 over 120
+> sections, of which 77% is walls: a slab beside a full block exposes the top half of that block's
+> side, which is the half-step itself and cannot be had for less (G127). Coarse levels measured
+> +40.60% / +33.48% / +22.98% at L1/L2/L3. The owner observed 300 to 270 FPS in one scene and then
+> named the symptom he actually cares about - cached cubes standing through vanilla's slabs at the
+> mesh overlap - which the existing constant sink answers for no geometry at all. `.vhband sink 8`
+> is the untested first thing to try; `.vhslabs near` turns half blocks on if it is not enough.
 
 > **Overlap and the near field.** Cached terrain takes ground back from vanilla 16 blocks earlier
 > than the geometric slack alone would allow, because vanilla unloads on its own schedule and

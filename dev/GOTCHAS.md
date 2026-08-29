@@ -2398,3 +2398,65 @@ chunk-aligned edges, in both rivers and lakes.
 **Do:** never let ownership suppress cached water, in the fragment shader or in the whole-section
 skip. Cached water underneath vanilla's own water is hidden and costs a little overdraw; cached
 water missing is a hole in a river.
+
+**Still current.** Tested again in 0.3.140 on the argument that 0.3.127 had moved the liquid
+program's fade out with the other terrain programs and so closed the ring. It had not: these dry
+riverbeds were observed in session 65, AFTER 0.3.127 shipped. Cached water yields to the
+near-field radius of G126 and to nothing else. A gotcha is only expired when the evidence
+post-dates the change that supposedly expired it.
+
+### G125 - Per-cell ownership is far too sparse to hide anything the player is standing beside
+
+**Trigger:** reaching for the vanilla readiness mask to suppress cached geometry in the near
+field, for water or for anything else.
+
+**Trap:** ownership is not "vanilla is drawing here". It is proven per 32-block cell only where
+the engine reports a chunk both drawn AND holding mesh pool locations, and only once that
+observation commits. A real client log during ordinary play showed **104 owned cells against
+2,953 still pending**, with 33,506 cells denied for holding no geometry and 59,798 denied as
+beyond the draw range. A rule gated on ownership therefore fires almost nowhere near the player,
+and the change looks like it never shipped.
+
+**Do:** use ownership for ground at distance, where the mask has time to commit and a wrong
+answer costs a correction rather than a hole. Use a plain radius for anything in the near field,
+where density matters more than precision. Read the `vanilla readiness:` line of the periodic
+log - it carries the owned and pending counts - before designing against ownership at all.
+
+**Found:** 0.3.140, from a water fix that was measured, built, shipped, and did nothing.
+
+### G126 - Vanilla's water is drawn in a LATER render stage than anything this mod draws
+
+**Trigger:** any cached surface that writes depth and has a vanilla counterpart drawn outside the
+opaque stage.
+
+**Trap:** the mod registers at `EnumRenderStage.Opaque` at order 0.5 and vanilla terrain is 0.37,
+so cached ground correctly draws after vanilla's ground. Vanilla's *water* is not in that stage:
+`SystemRenderTerrain` renders the liquid pool from `RenderOIT`, in the later OIT stage. The
+engine leaves `GlDepthMask(true)` on through the opaque stage and the mod never clears it, so
+cached water writes depth before vanilla's water is drawn and depth-rejects it. Nothing errors,
+nothing is missing, and the cache's flat sheet simply stands in for the real animated surface.
+
+**Do:** "we draw after vanilla" is a claim about one stage. Check which stage the vanilla
+counterpart actually renders in before relying on ordering, and treat a depth write in the opaque
+stage as a claim over every later stage too.
+
+**Found:** 0.3.141, source-traced from the decompiled client after the owner reported that nearby
+water looked like cache water.
+
+### G127 - Coverage changes cost walls, and the surface delta will not tell you
+
+**Trigger:** costing any mesher change that alters what counts as cover, rather than one that
+adds faces directly.
+
+**Trap:** giving terrain slabs their real half height added 20% more flat surfaces and **38% more
+walls**, for +32% overall. The walls are the whole point - a slab beside a full block exposes the
+top half of that block's side, which used to be culled outright because the slab claimed the
+entire cell - but nothing about "lower a surface by half a block" suggests that walls are three
+quarters of the bill. Slabs buried under another block, where the added faces are sealed inside
+solid ground and genuinely wasted, were only 12,134 of 158,754.
+
+**Do:** split any geometry measurement by face orientation before quoting a number, and mesh the
+real cache twice with the shipping mesher rather than counting faces in a reimplementation. See
+`slabfield` in the checks project.
+
+**Found:** 0.3.140, after the owner measured 300 to 270 FPS in one scene.
