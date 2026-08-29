@@ -592,9 +592,12 @@ public class LodTerrainRenderer : IRenderer
     public bool CaveCulling { get; set; } =
         Environment.GetEnvironmentVariable("VINTAGEHORIZONS_CAVE_CULLING") != "0";
 
-    int halfBlockLevels;
+    int halfBlockLevels = NearHalfBlockLevels;
 
-    /// <summary>What `.vhslabs near` selects: level 0 alone, the near band.</summary>
+    /// <summary>
+    /// What `.vhslabs surface` and `.vhslabs near` select: all of level 0, out to the
+    /// configured L1 transition (512 blocks by default), independently of the blend band.
+    /// </summary>
     internal const int NearHalfBlockLevels = 1;
 
     /// <summary>
@@ -603,20 +606,23 @@ public class LodTerrainRenderer : IRenderer
     /// which puts back exactly the stair-steps they removed and stands the ground half a
     /// block high.
     ///
-    /// OFF by default, because it is not free and there is a cheaper answer to the symptom
-    /// it was built for. Measured on the owner's slab-generated world at +32% opaque
-    /// vertices at level 0, three quarters of it walls: a slab beside a full block exposes
-    /// the top half of that block's side, which is the half-step itself and cannot be had
-    /// for less. The complaint it came from is that cached full cubes stand through vanilla's
-    /// slabs where the two terrains overlap, and `.vhband sink` answers exactly that for no
-    /// geometry at all by lowering cached ground under vanilla's. This stays as the honest
-    /// version for anyone who wants distant terrain to actually have half blocks in it.
+    /// Surface-only level 0 is the default after the owner's same-scene test found very
+    /// little performance cost. It applies throughout level 0, not merely in the blend
+    /// band, and retains the landscape result while the exact all-run version remains
+    /// available through `.vhslabs near` and `.vhslabs all`.
     /// </summary>
     public int HalfBlockLevels
     {
         get => halfBlockLevels;
         set => halfBlockLevels = Math.Clamp(value, 0, 8);
     }
+
+    /// <summary>
+    /// Keep half-block detail to the highest solid run in each column. This is the
+    /// performance-oriented terrain mode: outdoor slabs stay exact, while lower distant
+    /// cave and overhang slabs use the established full-block LOD approximation.
+    /// </summary>
+    public bool SurfaceHalfBlocksOnly { get; set; } = true;
 
     int caveCullReach = LodCaveCull.DefaultReach;
 
@@ -1995,6 +2001,7 @@ public class LodTerrainRenderer : IRenderer
                 AssumedCoveredSides = assumedCovered,
                 CaveCullReach = CaveCulling ? caveCullReach : 0,
                 HalfBlockLevels = halfBlockLevels,
+                SurfaceHalfBlocksOnly = SurfaceHalfBlocksOnly,
             });
         }
 
@@ -3715,6 +3722,10 @@ public class LodTerrainRenderer : IRenderer
 
         prog.Uniform("viewDistance", viewDistance);
         prog.Uniform("farViewDistance", EffectiveFarDistance);
+        // The uniform exists in the shared body but only the packed decoder reads it.
+        // Keeping it tied to the established switch makes `.vhbackface off` disable both
+        // the early exact rejection and OpenGL's later winding rejection together.
+        prog.Uniform("packedBackfaceCull", OpaqueBackfaceCulling ? 1 : 0);
         // Per-cell ownership supersedes the radius entirely: the mask knows which
         // individual cells vanilla owns, so leaving a radius active would suppress cached
         // terrain the mask says is still ours. With the mask off, the measured radius (or

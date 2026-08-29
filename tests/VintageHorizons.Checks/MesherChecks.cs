@@ -659,9 +659,37 @@ public static class MesherChecks
             LodSection.PackRun(lid, 11, 10),
             LodSection.PackRun(seat, 10, 9),
         });
-        MeshResult gap = LodMesher.BuildMesh(Fixtures.Job(stacked));
+        MeshResult gap = LodMesher.BuildMesh(Fixtures.Job(
+            stacked, surfaceHalfBlocksOnly: false));
         c.Eq(1, QuadsOnPlaneY(gap.Xyz, 9.5f), "the buried slab still shows its own surface");
         c.Eq(1, QuadsOnPlaneY(gap.Xyz, 10f), "and the block above it shows a floor");
+
+        // The performance mode deliberately spends half-block geometry only on landscape
+        // surfaces. The same buried slab rounds up and meets the lid, removing both hidden
+        // faces; the exact mode above remains available through `.vhslabs near`.
+        MeshResult surfaceOnly = LodMesher.BuildMesh(Fixtures.Job(
+            stacked, surfaceHalfBlocksOnly: true));
+        c.Eq(0, QuadsOnPlaneY(surfaceOnly.Xyz, 9.5f),
+            "surface-only mode rounds a lower cave slab back to a full block");
+        c.Eq(0, QuadsOnPlaneY(surfaceOnly.Xyz, 10f),
+            "and touching full blocks have no hidden internal faces");
+
+        // Water and ground cover are not solid terrain above the slab. A submerged outdoor
+        // slab therefore keeps its half height in surface-only mode.
+        var submerged = new LodSection();
+        int water = submerged.FindOrAddPaletteEntry(
+            blockId: 3, color: 0x00406080, flags: LodPaletteEntry.FlagWater);
+        int bed = submerged.FindOrAddPaletteEntry(
+            blockId: 4, color: 0x00304050, flags: LodPaletteEntry.FlagHalf);
+        submerged.SetColumn(LodSection.ColumnIndex(5, 5), new[]
+        {
+            LodSection.PackRun(water, 11, 10),
+            LodSection.PackRun(bed, 10, 9),
+        });
+        MeshResult wetSurface = LodMesher.BuildMesh(Fixtures.Job(
+            submerged, surfaceHalfBlocksOnly: true));
+        c.Eq(1, QuadsOnPlaneY(wetSurface.Xyz, 9.5f),
+            "surface-only mode keeps a terrain slab beneath water at half height");
 
         // The level gate. Half a block of vertical detail is not resolvable once a column
         // is two or more blocks wide, and the extra walls it needs are not free, so coarse

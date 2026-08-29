@@ -87,7 +87,11 @@ public static class GameAssemblies
             var dir = new DirectoryInfo(AppContext.BaseDirectory);
             while (dir != null)
             {
-                if (Directory.Exists(Path.Combine(dir.FullName, ".git"))) return dir.FullName;
+                string marker = Path.Combine(dir.FullName, ".git");
+                // A linked worktree has a .git FILE pointing at the primary repository,
+                // while an ordinary checkout has a .git directory. Accepting both keeps
+                // static asset checks on the branch whose binaries invoked them.
+                if (Directory.Exists(marker) || File.Exists(marker)) return dir.FullName;
                 dir = dir.Parent;
             }
             throw new DirectoryNotFoundException(

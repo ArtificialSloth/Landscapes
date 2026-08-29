@@ -8,6 +8,24 @@ first.
 
 ## [Unreleased]
 
+## [0.3.143] - 2026-08-29
+
+**Terrain slabs are now on by default without the former geometry cliff.** The default
+`.vhslabs surface` mode draws half-height slabs throughout level 0 - the first cached-terrain
+detail tier, 512 blocks by default - but only on the highest solid terrain in each column.
+Slabs under water or plants remain half-height; lower cave and overhang slabs use the ordinary
+full-block distant approximation. This is independent of the vanilla blend band.
+
+On the same 120 real cached sections, the shipping clustered stream rises 7.84% instead of
+31.52%, with no additional draw clusters. The owner reported that the surface mode works very
+well with very little performance cost and selected it as the default. `.vhslabs near` retains
+the previous exact level-0 behavior, `.vhslabs all` remains exact at every level, and
+`.vhslabs off` remains available.
+
+Packed vertical back faces also stop immediately after their exact camera-side test, before
+block-material lookups, tinting, warping, seam, fog, and projection work that fixed-function
+back-face culling would otherwise discard only after the vertex shader completed.
+
 ## [0.3.141] - 2026-08-28
 
 **The water right in front of you is the game's own again, and distant terrain can now be built

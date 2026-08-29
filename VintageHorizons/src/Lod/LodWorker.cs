@@ -127,13 +127,21 @@ public class MeshJob
     /// Not free, and the cost lands as geometry rather than as shading. A slab beside a full
     /// block exposes the top half of that block's wall, and a half-height plane between two
     /// whole ones splits both of them - measured on the owner's slab-generated world at
-    /// +32% opaque vertices at level 0 and +23% to +41% at coarser levels. The default of one
-    /// level buys the near field, where a half block is a step the eye can resolve and where
-    /// the seam with vanilla's own smoothed ground actually is, and declines to pay for it
-    /// where a column is already eight blocks wide. Same argument, same shape, as the
-    /// level-0-only rule on block textures.
+    /// +32% opaque vertices at level 0 and +23% to +41% at coarser levels when every run is
+    /// exact. The surface-only level-0 default measured +7.95% ordinary geometry and +7.84%
+    /// clustered geometry instead. It buys the near landscape, where a half block is a step
+    /// the eye can resolve and where the seam with vanilla's own smoothed ground actually is,
+    /// and declines to pay for it in distant caves or where columns already span many blocks.
     /// </summary>
     public int HalfBlockLevels;
+
+    /// <summary>
+    /// Apply half-block detail only to the highest solid run in each column. Water and
+    /// thin cover do not disqualify the ground beneath them. This preserves outdoor terrain
+    /// slabs while declining the much larger geometry cost of distant cave and overhang
+    /// slabs; false retains the exact all-runs behaviour.
+    /// </summary>
+    public bool SurfaceHalfBlocksOnly;
 }
 
 public class MeshResult

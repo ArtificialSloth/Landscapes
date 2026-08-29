@@ -2,24 +2,18 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Terrain slabs: built, priced, and waiting on one cheap experiment
+## Terrain slabs: optional exact-mode verification debt
 
-Half-block terrain is implemented and **off by default**. The whole open question is whether the
-owner needs it at all.
+Surface-only terrain slabs are implemented, human-accepted, and the 0.3.143 default. The former
+sink experiment and default decision are closed. Two non-blocking measurements remain:
 
-- **`.vhband sink 8` has not been tried.** The owner's actual complaint is cached full cubes
-  standing through vanilla's slabs where the two terrains overlap, not distant terrain looking
-  chunky. The existing constant sink already answers that shape of problem for no geometry, and
-  half a block is what the pokethrough measures. This is the first thing to test, and if it works
-  the half-block mesher stays off and the item closes.
-- If it does not work, the default should probably become `.vhslabs near`, and the +32% is then
-  a priced decision rather than an open one.
 - **The half-block cave-boundary branch has no dedicated check.** `CollectSideWithCaveCoverage`
   handles a neighbouring slab covering only the lower half of its top cell, and nothing exercises
   that specific branch. Its non-slab behaviour is regression-covered: `slabfield --half-levels 0`
   produced bit-identical meshes to the baseline over 120 real sections with cave culling on.
-- No frame-time benchmark was run. The owner observed 300 to 270 FPS in one uncontrolled scene;
-  the +31.76% vertex figure is one seeded 120-section sample of one world.
+- No controlled frame-time benchmark isolates the packed shader early exit. The owner did test the
+  complete surface-mode 0.3.142 build in the scene that exposed the regression and reported very
+  little performance cost; paired cache geometry supplies the quantitative result.
 
 ## Near-field water: the mechanism is source-traced, the boundary is not
 

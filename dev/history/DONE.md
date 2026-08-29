@@ -2,6 +2,30 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-08-29 - Surface slabs retained the landscape without the geometry cliff
+
+- **The regression was geometry, not draw calls.** On 120 real level-0 sections, exact half-height
+  slabs increased ordinary opaque quads 31.76% and shipping clustered quads 31.52%, while the
+  populated draw-cluster count remained 1,851. Added X/Z walls were the dominant bill.
+- **Two apparent exact optimizations were measured and reverted.** An alternate vertical rectangle
+  cover changed the relative clustered delta to 31.59%; merging render-equivalent palette entries
+  changed it to 35.34%. Neither recovered the broad cover planes lost when a cube became shorter.
+- **Surface fidelity is the useful boundary.** Only the highest solid run in each column is shortened;
+  water and thin cover do not disqualify the ground beneath, while lower cave and overhang slabs use
+  the established full-block LOD approximation. Clustered geometry rose 7.84% rather than 31.52%,
+  with no additional clusters. The owner accepted the 0.3.142 result as very low cost.
+- **0.3.143 makes surface slabs the default throughout all of level 0.** That reaches the configured
+  L1 transition, 512 blocks by default, and is independent of the blend band. `.vhslabs near` keeps
+  exact level-0 behavior; `all` and `off` remain available.
+- **Packed vertical back faces return before expensive shader work.** Exact camera-side plane tests
+  now precede material lookup, tint, warp, seam, fog, and projection, following the existing
+  back-face-culling switch.
+- **Linked-worktree checks now inspect their own files.** Repository-root discovery accepts `.git`
+  as either a file or directory, closing a silent cross-branch static-check failure.
+- Warning-free Release build, 5,628 fast assertions, and 453 documentation checks. The verified
+  14-entry 0.3.143 package was copy-installed with SHA-256
+  `7A8AA4ABE1C789F3CC99C44F74E781C1752B3FB862EE8CDFBE1488BAB991A8DE`.
+
 ## 2026-08-28 - Terrain slabs read correctly, and cached water kept out of the near field
 
 - **Half-block terrain.** `LodPaletteEntry.FlagHalf` takes free flag bit 2 and is derived from the

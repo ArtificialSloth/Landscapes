@@ -2,9 +2,10 @@
 
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
-**Status date:** 2026-08-28
-**Mod version:** `0.3.141`, built, verified, and copy-installed. **Not human-tested**: 0.3.139 is
-the newest version a person has played. The development line remains 0.3.x
+**Status date:** 2026-08-29
+**Mod version:** `0.3.143`, built, verified, and copy-installed. The surface-slab behavior was
+human-tested and accepted in 0.3.142; selecting it automatically at startup in 0.3.143 has not
+been separately human-run. The development line remains 0.3.x
 (`0.2.1` is the public released version; 0.4.0 remains a preserved local rollback artifact from the
 GPU-renderer milestone).
 **Active branch:** `codex/terrain-slabs-and-near-water`, branched from `a55fc5b` on
@@ -445,14 +446,20 @@ effect on the reported tiny or three-to-six-second spikes.
 > are caught too, and flags are recomputed from the live block on load, so an existing cache gains
 > half blocks with no re-exploration.
 >
-> **Off by default.** Measured with a new offline harness (`slabfield`, which meshes real cache
-> sections twice with the shipping mesher) at **+31.76% opaque vertices** at level 0 over 120
-> sections, of which 77% is walls: a slab beside a full block exposes the top half of that block's
-> side, which is the half-step itself and cannot be had for less (G127). Coarse levels measured
-> +40.60% / +33.48% / +22.98% at L1/L2/L3. The owner observed 300 to 270 FPS in one scene and then
-> named the symptom he actually cares about - cached cubes standing through vanilla's slabs at the
-> mesh overlap - which the existing constant sink answers for no geometry at all. `.vhband sink 8`
-> is the untested first thing to try; `.vhslabs near` turns half blocks on if it is not enough.
+> **Surface slabs are the 0.3.143 default throughout all of level 0.** Level 0 ends at the
+> configured L1 transition, **512 blocks by default**, and this is independent of the much narrower
+> vanilla/cache blend band. Only the highest solid run in a column uses its real half height; water
+> and thin cover do not disqualify the ground below, while lower cave and overhang slabs retain the
+> established full-block LOD approximation. `.vhslabs near` keeps exact all-run level-0 behavior,
+> `.vhslabs all` is exact at every level, and `.vhslabs off` remains the escape switch.
+>
+> The exact policy measured **+31.76% ordinary opaque quads** and **+31.52% shipping clustered
+> quads** over 120 real level-0 sections. Surface mode reduced those deltas to **+7.95%** and
+> **+7.84%**, respectively, with the populated draw-cluster count unchanged at 1,851. The owner
+> tested 0.3.142 in the scene that exposed the regression and reported that surface mode worked
+> very well with very little performance cost. Packed vertical back faces also return immediately
+> after an exact camera-side plane test, before material lookup, tint, warp, seam, fog, and
+> projection; its contribution has not been isolated from the geometry reduction.
 
 > **Overlap and the near field.** Cached terrain takes ground back from vanilla 16 blocks earlier
 > than the geometric slack alone would allow, because vanilla unloads on its own schedule and

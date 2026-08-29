@@ -773,6 +773,13 @@ public class VintageHorizonsModSystem : ModSystem
         _ => $"the nearest {halfBlockLevels} levels",
     };
 
+    static string DescribeSlabs(LodTerrainRenderer renderer) =>
+        renderer.HalfBlockLevels == LodTerrainRenderer.NearHalfBlockLevels
+            && renderer.SurfaceHalfBlocksOnly
+            ? $"surface terrain throughout level 0 (to the {LodWorld.ThresholdForLevel(1):0}-block "
+                + "L1 transition; caves stay full-height)"
+            : Describe(renderer.HalfBlockLevels);
+
     readonly Dictionary<int, int> stableColorByBlockId = new();
 
     /// <summary>Sky above the world origin: guaranteed to carry no decor. See StableColorOf.</summary>
@@ -2573,7 +2580,7 @@ public class VintageHorizonsModSystem : ModSystem
             });
 
         capi.ChatCommands.Create("vhslabs")
-            .WithDescription("Draw terrain slabs at their real half-block height in the distance. Off by default because it costs geometry; try .vhband sink first. Changing it rebuilds distant terrain.")
+            .WithDescription("Draw terrain slabs at half height. 'surface' is the default low-cost mode throughout level 0, independent of the blend band; 'near' also includes caves. Changing it rebuilds distant terrain.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("levels"))
             .HandleWith(args =>
             {
@@ -2583,29 +2590,34 @@ public class VintageHorizonsModSystem : ModSystem
                 if (args.Parsers[0].IsMissing)
                 {
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] half-block terrain: {Describe(renderer.HalfBlockLevels)} "
+                        $"[VintageHorizons] half-block terrain: {DescribeSlabs(renderer)} "
                         + $"| live geometry {renderer.LiveOpaqueVertices:n0} opaque vertices over "
-                        + $"{renderer.MeshCount} meshes. Use: .vhslabs off | near | all. "
+                        + $"{renderer.MeshCount} meshes. Use: .vhslabs off | surface | near | all. "
+                        + "Surface and near cover all of level 0, not just the blend band. "
                         + "Read the vertex total on each setting after the rebuild settles - "
                         + "that number is the cost, and the picture is the benefit.");
                 }
 
                 string word = ((string)args[0]).ToLowerInvariant();
+                bool surfaceOnly = word == "surface";
                 int wanted = word switch
                 {
                     "off" => 0,
+                    "surface" => LodTerrainRenderer.NearHalfBlockLevels,
                     "near" => LodTerrainRenderer.NearHalfBlockLevels,
                     "all" => 8,
                     _ => int.TryParse(word, out int levels) ? levels : -1,
                 };
                 if (wanted < 0)
-                    return TextCommandResult.Error("[VintageHorizons] use: .vhslabs off | near | all");
+                    return TextCommandResult.Error(
+                        "[VintageHorizons] use: .vhslabs off | surface | near | all");
 
                 renderer.HalfBlockLevels = wanted;
+                renderer.SurfaceHalfBlocksOnly = surfaceOnly;
                 int queued = renderer.RemeshAll();
 
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] half-block terrain: {Describe(renderer.HalfBlockLevels)}. "
+                    $"[VintageHorizons] half-block terrain: {DescribeSlabs(renderer)}. "
                     + $"Rebuilding {queued} distant sections - give it a few seconds. Mods that "
                     + "smooth the landscape with half blocks are otherwise rebuilt as full cubes "
                     + "out here, which puts the steps they removed back. What to watch for is the "

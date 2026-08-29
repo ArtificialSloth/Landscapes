@@ -34,6 +34,7 @@ public static class SlabField
         public int Level;
         public int Cull = 64;
         public int HalfLevels = 99;
+        public bool SurfaceOnly;
         public string Prefix = "terrainslabs:";
         public bool Help;
     }
@@ -79,7 +80,12 @@ public static class SlabField
         var sections = new CacheSections(conn);
 
         long baseVerts = 0, slabVerts = 0, baseWater = 0, slabWater = 0;
+        long baseClusterQuads = 0, slabClusterQuads = 0;
+        long baseClusters = 0, slabClusters = 0;
+        long baseEarlyBackfaces = 0, slabEarlyBackfaces = 0;
         long baseFlat = 0, slabFlat = 0, baseWall = 0, slabWall = 0;
+        var baseFaces = new FaceCounts();
+        var slabFaces = new FaceCounts();
         long buriedSlabs = 0, exposedSlabs = 0;
         long columns = 0, slabTopped = 0;
         int meshed = 0, withSlabs = 0;
@@ -118,14 +124,27 @@ public static class SlabField
                 // half-block surface costs at the level being sampled, not what the
                 // shipping level gate chooses to pay for.
                 HalfBlockLevels = o.HalfLevels,
+                SurfaceHalfBlocksOnly = o.SurfaceOnly,
             });
 
             meshed++;
             if (anyHere) withSlabs++;
             baseVerts += before.VertexCount;
             slabVerts += after.VertexCount;
+            baseClusterQuads += before.ClusteredPackedOpaqueQuads.Length
+                / LodPackedQuadFormat.WordsPerQuad;
+            slabClusterQuads += after.ClusteredPackedOpaqueQuads.Length
+                / LodPackedQuadFormat.WordsPerQuad;
+            baseClusters += before.PackedOpaqueClusters.Length;
+            slabClusters += after.PackedOpaqueClusters.Length;
+            baseEarlyBackfaces += PackedVerticalBackfacesFromSectionCenter(
+                before.ClusteredPackedOpaqueQuads);
+            slabEarlyBackfaces += PackedVerticalBackfacesFromSectionCenter(
+                after.ClusteredPackedOpaqueQuads);
             Split(before.Xyz, ref baseFlat, ref baseWall);
             Split(after.Xyz, ref slabFlat, ref slabWall);
+            Classify(before.Xyz, baseFaces);
+            Classify(after.Xyz, slabFaces);
             CountBuried(self, halfSelf, ref buriedSlabs, ref exposedSlabs);
             baseWater += before.WaterVertexCount;
             slabWater += after.WaterVertexCount;
@@ -137,7 +156,8 @@ public static class SlabField
         Console.WriteLine("  half-block terrain, measured against a real cache");
         Console.WriteLine("  cache:   " + cache);
         Console.WriteLine($"  sample:  {meshed} level-{o.Level} sections, "
-            + $"{withSlabs} holding a '{o.Prefix}' block, cave reach {o.Cull}");
+            + $"{withSlabs} holding a '{o.Prefix}' block, cave reach {o.Cull}, "
+            + (o.SurfaceOnly ? "surface slabs only" : "all slab runs"));
         Console.WriteLine();
         Console.WriteLine($"  captured columns        {columns,12:n0}");
         Console.WriteLine($"  ending in a half block  {slabTopped,12:n0}   "
@@ -147,10 +167,24 @@ public static class SlabField
             + Delta(baseVerts, slabVerts));
         Console.WriteLine($"  opaque quads     {baseVerts / 4,12:n0} -> {slabVerts / 4,12:n0}   "
             + Delta(baseVerts / 4, slabVerts / 4));
+        Console.WriteLine($"  clustered quads  {baseClusterQuads,12:n0} -> {slabClusterQuads,12:n0}   "
+            + Delta(baseClusterQuads, slabClusterQuads));
+        Console.WriteLine($"  draw clusters    {baseClusters,12:n0} -> {slabClusters,12:n0}   "
+            + Delta(baseClusters, slabClusters));
+        Console.WriteLine($"  early wall exits {baseEarlyBackfaces,12:n0} -> {slabEarlyBackfaces,12:n0}   "
+            + Delta(baseEarlyBackfaces, slabEarlyBackfaces));
         Console.WriteLine($"  of which flat    {baseFlat,12:n0} -> {slabFlat,12:n0}   "
             + Delta(baseFlat, slabFlat));
         Console.WriteLine($"  of which walls   {baseWall,12:n0} -> {slabWall,12:n0}   "
             + Delta(baseWall, slabWall));
+        Console.WriteLine($"  top quads        {baseFaces.Top,12:n0} -> {slabFaces.Top,12:n0}   "
+            + Delta(baseFaces.Top, slabFaces.Top));
+        Console.WriteLine($"  bottom quads     {baseFaces.Bottom,12:n0} -> {slabFaces.Bottom,12:n0}   "
+            + Delta(baseFaces.Bottom, slabFaces.Bottom));
+        Console.WriteLine($"  X-wall quads     {baseFaces.XWall,12:n0} -> {slabFaces.XWall,12:n0}   "
+            + Delta(baseFaces.XWall, slabFaces.XWall));
+        Console.WriteLine($"  Z-wall quads     {baseFaces.ZWall,12:n0} -> {slabFaces.ZWall,12:n0}   "
+            + Delta(baseFaces.ZWall, slabFaces.ZWall));
         Console.WriteLine($"  water vertices   {baseWater,12:n0} -> {slabWater,12:n0}   "
             + Delta(baseWater, slabWater));
         Console.WriteLine();
@@ -221,6 +255,72 @@ public static class SlabField
                 && Math.Abs(xyz[v + 10] - y) < 0.0001f;
             if (level) flat += 4; else wall += 4;
         }
+    }
+
+    sealed class FaceCounts
+    {
+        public long Top;
+        public long Bottom;
+        public long XWall;
+        public long ZWall;
+    }
+
+    /// <summary>Count emitted quads by their geometric normal.</summary>
+    static void Classify(float[]? xyz, FaceCounts counts)
+    {
+        if (xyz == null) return;
+        for (int v = 0; v + 12 <= xyz.Length; v += 12)
+        {
+            float ax = xyz[v + 3] - xyz[v];
+            float ay = xyz[v + 4] - xyz[v + 1];
+            float az = xyz[v + 5] - xyz[v + 2];
+            float bx = xyz[v + 6] - xyz[v];
+            float by = xyz[v + 7] - xyz[v + 1];
+            float bz = xyz[v + 8] - xyz[v + 2];
+            float nx = ay * bz - az * by;
+            float ny = az * bx - ax * bz;
+            float nz = ax * by - ay * bx;
+
+            float absX = Math.Abs(nx);
+            float absY = Math.Abs(ny);
+            float absZ = Math.Abs(nz);
+            if (absY >= absX && absY >= absZ)
+            {
+                if (ny >= 0) counts.Top++; else counts.Bottom++;
+            }
+            else if (absX >= absZ) counts.XWall++;
+            else counts.ZWall++;
+        }
+    }
+
+    /// <summary>
+    /// Packed vertical quads whose complete shader tail the new camera-side test avoids,
+    /// with the camera placed at the centre of each section. This is an estimate rather
+    /// than an FPS claim, but it counts the shipping clustered stream the GPU consumes.
+    /// A distant section moves the dividing plane; it does not change the test itself.
+    /// </summary>
+    static long PackedVerticalBackfacesFromSectionCenter(uint[] packed)
+    {
+        const float camera = LodSection.GridSize * 0.5f;
+        int quads = packed.Length / LodPackedQuadFormat.WordsPerQuad;
+        long rejected = 0;
+        for (int quad = 0; quad < quads; quad++)
+        {
+            LodPackedFace face = LodPackedQuadFormat.FaceOf(packed, quad);
+            if (face is LodPackedFace.Bottom or LodPackedFace.Top) continue;
+            LodPackedQuadFormat.DecodeVertex(packed, quad, 0, 1,
+                out float x, out _, out float z, out _);
+            bool back = face switch
+            {
+                LodPackedFace.West => x <= camera,
+                LodPackedFace.East => x >= camera,
+                LodPackedFace.North => z <= camera,
+                LodPackedFace.South => z >= camera,
+                _ => false,
+            };
+            if (back) rejected++;
+        }
+        return rejected;
     }
 
     /// <summary>
@@ -365,6 +465,7 @@ public static class SlabField
                 case "--level": o.Level = int.Parse(Next(args, ref i)); break;
                 case "--cull": o.Cull = int.Parse(Next(args, ref i)); break;
                 case "--half-levels": o.HalfLevels = int.Parse(Next(args, ref i)); break;
+                case "--surface-only": o.SurfaceOnly = true; break;
                 default:
                     if (args[i].StartsWith('-'))
                     {
@@ -393,6 +494,7 @@ public static class SlabField
         Console.WriteLine("    --level <n>      detail level to sample (default 0)");
         Console.WriteLine("    --cull <blocks>  cave-cull reach used for both meshes (default 64)");
         Console.WriteLine("    --half-levels <n>  levels that draw half blocks (default: all)");
+        Console.WriteLine("    --surface-only     shorten only the highest solid run per column");
         Console.WriteLine();
     }
 }

@@ -2459,4 +2459,43 @@ solid ground and genuinely wasted, were only 12,134 of 158,754.
 real cache twice with the shipping mesher rather than counting faces in a reimplementation. See
 `slabfield` in the checks project.
 
+**Corrected in 0.3.143:** "buried" was too narrow a boundary for the useful work. The exact sample
+contained 158,754 slab runs but only 65,624 columns whose highest solid run was a slab. Preserving
+those outdoor slabs, including ground under water and thin cover, while leaving lower cave and
+overhang slabs at the established full-block LOD approximation reduced the clustered delta from
+31.52% to 7.84%. The landscape boundary, not merely whether a slab is immediately sealed, is the
+high-value fidelity boundary.
+
 **Found:** 0.3.140, after the owner measured 300 to 270 FPS in one scene.
+
+### G128 - Better rectangle covers cannot recover geometry the fidelity rule requires
+
+**Trigger:** optimizing a large geometry regression after a shorter block changes which neighbour
+surfaces are exposed.
+
+**Trap:** assuming a stronger greedy cover or merging render-equivalent materials will turn exact
+slabs back into roughly cube-priced geometry. A dedicated alternate cover removed only a few
+thousand quads and slightly worsened the relative clustered delta, 31.52% to 31.59%. Palette
+equivalence removed 8,464 slab quads but worsened the relative delta to 35.34%. Both optimize the
+packing of faces that still have to exist; neither restores the broad cover planes a full cube
+provided.
+
+**Do:** first decide where exact half-height fidelity is valuable. The highest-solid-run policy cut
+the same clustered delta to 7.84% with no new draw clusters. Only then optimize representation, and
+keep rejected prototypes measured and reverted.
+
+**Found:** 0.3.143, by paired real-cache meshing of both rejected alternatives.
+
+### G129 - A linked worktree has a `.git` file, not a `.git` directory
+
+**Trigger:** a test or build helper discovers the repository root by walking upward until it finds
+`.git`.
+
+**Trap:** requiring that marker to be a directory. In a linked worktree `.git` is a text file that
+points at the shared repository metadata. The slab static checks skipped it, walked into the
+primary checkout, and silently validated the other branch's assets.
+
+**Do:** accept either a file or a directory as the repository marker, and keep the check rooted in
+the worktree whose binaries or assets are under test.
+
+**Found:** 0.3.143, when a linked-worktree shader check disagreed with the file being edited.

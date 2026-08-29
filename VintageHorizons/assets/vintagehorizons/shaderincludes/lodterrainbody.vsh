@@ -26,6 +26,14 @@ uniform float fogDensityIn;
 
 uniform float farViewDistance;
 
+// The packed path knows a quad's exact axis-aligned face before it does any material,
+// tint, warp, fog or projection work. Fixed-function back-face culling happens after the
+// complete vertex shader, so rejecting vertical faces here avoids paying that full price
+// for walls OpenGL will discard anyway. The test is exact for a vertical plane even after
+// global Y warping: the warp never changes which side of its X/Z plane the camera occupies.
+// It follows the ordinary back-face switch so `.vhbackface off` remains a complete escape.
+uniform int packedBackfaceCull;
+
 // How far to lower solid cached terrain, in blocks. A constant global offset, NOT a ramp
 // and NOT a function of distance: an earlier transition sink was eight blocks deep and
 // ramped, so it slid visibly as the player walked toward it, and it was removed. A constant
@@ -165,6 +173,21 @@ void main()
     uint vhFace = (vhGeometry >> 28u) & 7u;
     float vhY0 = float(vhHeights & 65535u) * 0.25;
     float vhY1 = float(vhHeights >> 16u) * 0.25;
+
+    // vhRecordOrigin is camera-relative. West/North normals point toward negative X/Z;
+    // East/South normals point positive. A camera on the opposite side of that plane is
+    // exactly the face the fixed-function culler rejects later. Put every corner outside
+    // the same clip plane and return before the block-table fetches and shared shader body.
+    bool vhBackface = packedBackfaceCull != 0
+        && ((vhFace == 2u && vhRecordOrigin.x + vhX0 <= 0.0)
+            || (vhFace == 3u && vhRecordOrigin.x + vhX1 >= 0.0)
+            || (vhFace == 4u && vhRecordOrigin.z + vhZ0 <= 0.0)
+            || (vhFace == 5u && vhRecordOrigin.z + vhZ1 >= 0.0));
+    if (vhBackface)
+    {
+        gl_Position = vec4(2.0, 0.0, 0.0, 1.0);
+        return;
+    }
 
     vec3 vertexPositionIn;
     if (vhFace == 0u)

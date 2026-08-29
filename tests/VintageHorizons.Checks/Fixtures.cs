@@ -92,7 +92,8 @@ public static class Fixtures
     /// so a check reads the shipping behaviour unless it says otherwise.
     /// </summary>
     public static MeshJob Job(LodSection self, long key = 0, SectionSnapshot?[]? neighbors = null,
-        byte assumedCoveredSides = 0, int halfBlockLevels = 1) =>
+        byte assumedCoveredSides = 0, int halfBlockLevels = 1,
+        bool surfaceHalfBlocksOnly = true) =>
         new()
         {
             Key = key,
@@ -100,5 +101,6 @@ public static class Fixtures
             Neighbors = neighbors ?? new SectionSnapshot?[4],
             AssumedCoveredSides = assumedCoveredSides,
             HalfBlockLevels = halfBlockLevels,
+            SurfaceHalfBlocksOnly = surfaceHalfBlocksOnly,
         };
 }

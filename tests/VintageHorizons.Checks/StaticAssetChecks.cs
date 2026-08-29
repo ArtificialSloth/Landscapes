@@ -307,6 +307,32 @@ public static class StaticAssetChecks
                 StringComparison.Ordinal),
             "the packed variant pulls three scalar words for four reusable corners");
 
+        int earlyBackface = vertex.IndexOf("bool vhBackface = packedBackfaceCull != 0",
+            StringComparison.Ordinal);
+        int materialFetch = vertex.IndexOf("texelFetch(blockTable", StringComparison.Ordinal);
+        c.True(renderer.Contains(
+                "prog.Uniform(\"packedBackfaceCull\", OpaqueBackfaceCulling ? 1 : 0);",
+                StringComparison.Ordinal)
+            && vertex.Contains("vhFace == 2u && vhRecordOrigin.x + vhX0 <= 0.0",
+                StringComparison.Ordinal)
+            && vertex.Contains("vhFace == 3u && vhRecordOrigin.x + vhX1 >= 0.0",
+                StringComparison.Ordinal)
+            && vertex.Contains("vhFace == 4u && vhRecordOrigin.z + vhZ0 <= 0.0",
+                StringComparison.Ordinal)
+            && vertex.Contains("vhFace == 5u && vhRecordOrigin.z + vhZ1 >= 0.0",
+                StringComparison.Ordinal),
+            "the packed shader rejects each vertical orientation only from its back side");
+        c.True(renderer.Contains("int halfBlockLevels = NearHalfBlockLevels;",
+                StringComparison.Ordinal)
+            && renderer.Contains("SurfaceHalfBlocksOnly { get; set; } = true;",
+                StringComparison.Ordinal)
+            && mod.Contains("'surface' is the default low-cost mode throughout level 0, independent of the blend band",
+                StringComparison.Ordinal),
+            "surface-only slabs are the shipping default throughout level 0, not only the blend band");
+        c.True(earlyBackface >= 0 && materialFetch > earlyBackface
+            && vertex.IndexOf("return;", earlyBackface, StringComparison.Ordinal) < materialFetch,
+            "packed back faces return before block material and shared vertex work");
+
         // One #else per stage: the declaration block. The second vertex branch only fills
         // the varyings and has no established-path half, and the SSAO branches the engine
         // includes bring in are #if, not #ifdef, so they are not counted here.
