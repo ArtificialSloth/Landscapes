@@ -18,6 +18,7 @@ public static class StaticAssetChecks
         LodFallbackAndStableColour(c);
         VanillaLightingWiring(c);
         ReadinessShadowWiring(c);
+        ShaderLoadReportsSuccessNotOnlyFailure(c);
         ReadinessTelemetryContract(c);
         OwnershipMaskWiring(c);
         WaterSurfaceWiring(c);
@@ -876,6 +877,66 @@ public static class StaticAssetChecks
             "the light vector and shadow intensity are left to the engine's own upload");
     }
 
+    /// <summary>
+    /// The shader load path must be able to say that it WORKED, not only that it failed.
+    ///
+    /// <para>
+    /// G68 established this in session 42 and only half of it was built: the indirect variant
+    /// reported its success while the main program - the one whose failure means no distant
+    /// terrain at all - could only ever log a failure. The engine replays the expected
+    /// first-attempt link errors in its own startup summary, so a reader sees three shader
+    /// errors and no statement that anything compiled, and concludes the shaders are broken.
+    /// That has cost reading time twice now, which is exactly the cost G68 exists to prevent.
+    /// </para>
+    /// <para>
+    /// Asserted structurally rather than by wording, so the sentence can be rewritten freely:
+    /// what must survive is that a success path exists, that it is gated to fire once, and
+    /// that the first provisional attempt still cannot report a failure at full volume.
+    /// </para>
+    /// </summary>
+    static void ShaderLoadReportsSuccessNotOnlyFailure(Check c)
+    {
+        string renderer = File.ReadAllText(Path.Combine(
+            GameAssemblies.RepoRoot, "VintageHorizons", "src", "Render", "LodTerrainRenderer.cs"));
+
+        // Bounded by the next member rather than by a character count. The first version of
+        // this used a 6000-character window and the assertion it needed sat at 6028 - a check
+        // that fails for a reason having nothing to do with what it is checking.
+        int load = renderer.IndexOf("public bool LoadShader()", StringComparison.Ordinal);
+        int end = renderer.IndexOf("void WarnIfIncludeMissing(", StringComparison.Ordinal);
+        c.True(load > 0 && end > load, "the shader load path is identifiable");
+        if (load <= 0 || end <= load) return;
+        string body = renderer.Substring(load, end - load);
+
+        c.True(body.Contains("shaderOk && !reportedShadersOk", StringComparison.Ordinal),
+            "the main shader program reports its success, once, and not only its failure");
+        c.True(body.Contains("shaders ready after", StringComparison.Ordinal),
+            "and the report says so in a line a reader can search for");
+        c.True(body.Contains("reportedShadersOk = true", StringComparison.Ordinal),
+            "the success report is latched so a reload does not repeat it every time");
+
+        // Re-armed on a real failure: a driver that breaks on one reload and recovers on the
+        // next has to say so, or the log's last word on shaders is a stale success.
+        c.True(body.Contains("if (!shaderOk && !ShaderLoadIsProvisional) reportedShadersOk = false;",
+            StringComparison.Ordinal),
+            "a genuine failure re-arms the report so a later recovery is announced");
+
+        // The other half of G68, which was built and must stay: the first attempt runs before
+        // the engine has filled its include table, always fails, and must not shout about it.
+        c.True(renderer.Contains("bool ShaderLoadIsProvisional => shaderLoadAttempts <= 1",
+            StringComparison.Ordinal),
+            "the first shader attempt is still treated as provisional");
+        c.True(body.Contains("if (!shaderOk && !ShaderLoadIsProvisional)\n            capi.Logger.Error",
+                StringComparison.Ordinal)
+            || Regex.IsMatch(body, @"if \(!shaderOk && !ShaderLoadIsProvisional\)\s*capi\.Logger\.Error"),
+            "and the failure is reported at full volume only from the second attempt on");
+
+        // `scripts/check-log.py` treats the failure sentence as fatal by its mere presence, so
+        // the wording of THAT one is load-bearing and is pinned here rather than left to luck.
+        c.True(renderer.Contains("lodterrain shader failed to compile", StringComparison.Ordinal),
+            "the failure sentence the log scanner greps for is unchanged");
+    }
+
     static void ReadinessShadowWiring(Check c)
     {
         string renderDir = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src", "Render");
@@ -895,7 +956,8 @@ public static class StaticAssetChecks
         // result cannot be branched on, whatever a later edit intends.
         c.True(Regex.IsMatch(renderer, @"void MeasureDrawnChunk\(VanillaChunkCell cell"),
             "the empty-chunk question is measured rather than acted on");
-        c.True(Regex.IsMatch(renderer, @"if \(rendered && atOwnershipDecision\) MeasureDrawnChunk\(cell"),
+        c.True(Regex.IsMatch(renderer,
+                @"if \(rendered && atOwnershipDecision\)\s*\{[^}]*GetChunk\(cell\.X, cell\.Y, cell\.Z\)"),
             "the measurement runs only for chunks the engine claims it drew");
         // The chunk lookup takes the client's chunk lock. Doing it for every probe doubles
         // that traffic on the render thread while a world is loading, which is when the
@@ -903,6 +965,27 @@ public static class StaticAssetChecks
         c.True(renderer.Contains("bool atOwnershipDecision = decisionState is VanillaReadinessState.ObservedRendered",
             StringComparison.Ordinal),
             "the chunk lookup happens only where an observation can change ownership");
+        // ONE lookup for the whole decision. Three rules need the chunk - the measurement, the
+        // exact range clause and the geometry rule - and each used to fetch it for itself, so
+        // a single ownership decision could take that lock three times. They share it now, and
+        // the sharing is structural: both consumers take the chunk as a parameter, so neither
+        // can quietly reintroduce a lookup of its own (G45). Counted inside the probe loop
+        // only: the standing diagnostics look chunks up too, and they run when a player asks.
+        int probeLoop = renderer.IndexOf("while (probed < maxProbes)", StringComparison.Ordinal);
+        int probeEnd = renderer.IndexOf("SweepRangeLosses(frameCounter);", StringComparison.Ordinal);
+        c.True(probeLoop > 0 && probeEnd > probeLoop, "the probe loop is identifiable");
+        string probeBody = probeLoop > 0 && probeEnd > probeLoop
+            ? renderer.Substring(probeLoop, probeEnd - probeLoop)
+            : string.Empty;
+        c.Eq(1, CountOccurrences(probeBody, "GetChunk(cell.X, cell.Y, cell.Z)"),
+            "the probe loop takes the client's chunk lock at most once per ownership decision");
+        c.True(Regex.IsMatch(renderer, @"void MeasureDrawnChunk\(VanillaChunkCell cell, IWorldChunk\? chunk"),
+            "the measurement is handed the chunk rather than fetching its own");
+        c.True(Regex.IsMatch(renderer, @"bool VanillaChunkHoldsDrawableGround\(IWorldChunk\? chunk\)"),
+            "the geometry rule is handed the chunk rather than fetching its own");
+
+        ExactDrawRangeWiring(c, renderer, model,
+            File.ReadAllText(Path.Combine(renderDir, "VanillaChunkGeometry.cs")));
         c.False(renderer.Contains("IsVanillaChunkEmpty(cell)) rendered = false", StringComparison.Ordinal),
             "an empty-chunk reading cannot decide ownership");
         c.True(renderer.Contains("ReadinessProbeMaxItemsPerFrame", StringComparison.Ordinal)
@@ -967,6 +1050,158 @@ public static class StaticAssetChecks
             "the near handoff is driven by measured readiness with an explicit fallback flag");
         c.True(renderer.Contains("LodNearHandoff.InnerDiscardRadius(viewDistance)", StringComparison.Ordinal),
             "the established radial constant remains available when readiness is unavailable");
+    }
+
+    /// <summary>
+    /// Structural guarantees for the exact draw-range rule. Every one of these is a property
+    /// no runtime check can see failing: the mod would simply own slightly the wrong ground,
+    /// and the only symptom would be a seam somebody has to be standing at.
+    /// </summary>
+    static void ExactDrawRangeWiring(Check c, string renderer, string model, string geometry)
+    {
+        // Public API, not reflection. The culler is reachable through IRenderAPI, so if this
+        // ever became a private-field read it would be a silent supported-version hazard for
+        // a value that has a supported accessor.
+        c.True(renderer.Contains("capi.Render.DefaultFrustumCuller", StringComparison.Ordinal),
+            "the engine's own culler is read through the supported render API");
+        c.False(renderer.Contains("GetField(\"frustumCuller\"", StringComparison.Ordinal),
+            "and never by reaching into ClientMain for it");
+
+        // The anchor and the distance are the two values this rule gets from somewhere other
+        // than the rest of the renderer, and both differences are deliberate. Pinning them
+        // stops a later tidy-up from "unifying" them with camPos and ApprovedViewDistance,
+        // which would silently reintroduce a third-person offset and a server-capped bound.
+        int capture = renderer.IndexOf("VanillaDrawRangeState CaptureDrawRange()", StringComparison.Ordinal);
+        c.True(capture > 0, "the frame's range inputs are captured in one place");
+        string captureBody = capture > 0
+            ? renderer.Substring(capture, Math.Min(1200, renderer.Length - capture))
+            : string.Empty;
+        c.True(captureBody.Contains("culler.ViewDistanceSq", StringComparison.Ordinal),
+            "the bound is the culler's own view distance, not the server-approved one");
+        c.False(captureBody.Contains("ApprovedViewDistance()", StringComparison.Ordinal),
+            "the server-approved distance does not decide what the engine draws");
+        c.True(captureBody.Contains("capi.World.Player.Entity.Pos", StringComparison.Ordinal),
+            "the anchor is the player's position, which is what the engine measures from");
+        c.False(captureBody.Contains("camPos", StringComparison.Ordinal),
+            "the camera does not decide it: in third person the two are blocks apart");
+
+        // Read once per frame. Reading it per decision would let the player cross a block
+        // boundary mid-batch and settle two halves of one frontier against two anchors.
+        c.Eq(1, CountOccurrences(renderer, "drawRange = CaptureDrawRange();"),
+            "the range inputs are captured exactly once per frame");
+
+        // The fallback is the whole safety story. If the binding, the culler or the switch is
+        // unavailable, every cell must land on 0.3.152's conservative bound rather than on a
+        // guess - so the bounded call has to still exist and still carry the overlap margin.
+        c.True(renderer.Contains("VanillaRenderReadiness.BeyondVanillaDrawRange(\n                            cell.X, cell.Z, camPos.X, camPos.Z, viewDistance, OverlapMarginBlocks)",
+                StringComparison.Ordinal)
+            || Regex.IsMatch(renderer,
+                @"BeyondVanillaDrawRange\(\s*cell\.X, cell\.Z, camPos\.X, camPos\.Z, viewDistance, OverlapMarginBlocks\)"),
+            "an unreadable chunk falls back to the conservative column bound");
+        c.True(renderer.Contains("bool ExactDrawRange { get; set; } = true", StringComparison.Ordinal),
+            "the exact rule is a live switch, so the two seams can be compared in one place");
+
+        // The deadlock, pinned shut. A first sighting commits nothing, so refusing it achieves
+        // nothing - but it leaves the cell Pending, and a Pending cell is not an ownership
+        // decision, so it never reaches the branch that reads the real sphere. The inaccurate
+        // rule then permanently prevents the accurate one from ever running.
+        //
+        // Shipped in 0.3.154 and measured in 0.3.157: at a 64-block vanilla view distance the
+        // bounded gate is `64 - 46` = 18 blocks, and chunks 28 blocks away that the engine was
+        // plainly drawing sat Pending forever. At 32 blocks the gate is zero and no cell can
+        // ever be owned at all. The range block must stay inside the decision guard.
+        c.True(renderer.Contains("if (rendered && ChunkMaskEnabled && atOwnershipDecision)",
+            StringComparison.Ordinal),
+            "the range rule runs only where an observation can change ownership");
+        c.False(Regex.IsMatch(renderer,
+                @"bool exact = ExactDrawRange && atOwnershipDecision"),
+            "and the exact branch is not separately gated on it, which is what created the deadlock");
+
+        // The counter every probe reads first, and the one the all-signals report omitted while
+        // two sessions were spent reasoning about which gate had refused a chunk.
+        c.True(geometry.Contains("drawn={drawn}", StringComparison.Ordinal),
+            "the all-signals report prints the drawn counter that IsChunkRendered reads");
+
+        // Fast loss, cautious gain. The sweep may only ever withdraw ownership: granting from
+        // stored state would hand ground to vanilla without re-confirming the mesh, the hide
+        // flag or the culler, which are the other three terms of the engine's predicate.
+        int sweep = renderer.IndexOf("void SweepRangeLosses(long frameCounter)", StringComparison.Ordinal);
+        c.True(sweep > 0, "the per-frame range sweep exists");
+        string sweepBody = sweep > 0
+            ? renderer.Substring(sweep, Math.Min(1800, renderer.Length - sweep))
+            : string.Empty;
+        c.True(sweepBody.Contains("rendered: false", StringComparison.Ordinal),
+            "the sweep only ever proposes loss");
+        c.False(sweepBody.Contains("rendered: true", StringComparison.Ordinal),
+            "the sweep never grants ownership from stored state");
+        c.True(sweepBody.Contains("ResolvePublication(publication, accepted: true)", StringComparison.Ordinal),
+            "sweep losses go through the same atomic publication handshake as probe losses");
+        c.True(sweepBody.Contains("drawRange.DiffersFrom(lastSweptDrawRange)", StringComparison.Ordinal),
+            "the sweep runs only when one of the engine's quantised inputs actually moved");
+
+        // Whole-set, never cursored. A cursored revalidation that fails to reach ground the
+        // camera moved away from is exactly G39, and it left the mask hiding cached terrain
+        // nothing else drew.
+        c.False(sweepBody.Contains("cursor", StringComparison.Ordinal),
+            "the sweep covers the whole committed set rather than a moving slice of it");
+
+        // The ring is mirrored state, so a slot changing hands has to forget it - the same
+        // shape of bug as G44, with the sphere as the payload instead of the ownership bit.
+        int clearSlot = model.IndexOf("void ClearSlot(int slot)", StringComparison.Ordinal);
+        c.True(clearSlot > 0, "the tracker funnels every wipe through one method");
+        string clearBody = clearSlot > 0
+            ? model.Substring(clearSlot, Math.Min(2400, model.Length - clearSlot))
+            : string.Empty;
+        c.True(clearBody.Contains("Array.Clear(lodMasks, baseIndex, verticalChunks)", StringComparison.Ordinal)
+            && clearBody.Contains("Array.Fill(sphereCentreX, float.NaN, baseIndex, verticalChunks)", StringComparison.Ordinal)
+            && clearBody.Contains("Array.Fill(sphereCentreZ, float.NaN, baseIndex, verticalChunks)", StringComparison.Ordinal),
+            "an evicted ring slot forgets the sphere it was holding");
+
+        // Everything derived from the refused ring has to follow it to zero, or it describes a
+        // boundary that is no longer there. Water is the one that shows.
+        c.True(renderer.Contains("float RefusedOwnershipRingBlocks()", StringComparison.Ordinal),
+            "the refused ring has one definition");
+        int ring = renderer.IndexOf("float RefusedOwnershipRingBlocks()", StringComparison.Ordinal);
+        string ringBody = ring > 0
+            ? renderer.Substring(ring, Math.Min(400, renderer.Length - ring))
+            : string.Empty;
+        // Under the exact rule the ring is the early handover ALONE - the 46 blocks of
+        // sphere-placement slack are what reading the sphere deletes, and the margin covers a
+        // different thing (an unload a probe has not caught up with yet) that reading the
+        // sphere does not answer.
+        c.True(ringBody.Contains("ExactDrawRange && drawRange.Available && VanillaChunkGeometry.Available", StringComparison.Ordinal)
+            && ringBody.Contains("return margin", StringComparison.Ordinal),
+            "the exact rule drops the sphere slack and keeps only the early handover");
+        c.True(ringBody.Contains("VanillaRenderReadiness.SphereCentreSlackBlocks + margin", StringComparison.Ordinal),
+            "and the fallback still carries both");
+        c.True(renderer.Contains("waterFootprintDilation != dilation", StringComparison.Ordinal),
+            "a change to the growth rebuilds the water footprint without waiting for ownership to move");
+
+        // The band's inner offset is the other thing derived from the ring, and the one that
+        // shows immediately: it is how far the blend starts INSIDE the seam a player sees, so
+        // a fixed 46 under the exact rule would start the blend 46 blocks past the seam it
+        // exists to hide.
+        c.True(renderer.Contains("bandInnerBlocks >= 0f ? bandInnerBlocks : RefusedOwnershipRingBlocks()",
+            StringComparison.Ordinal),
+            "the band's inner offset follows the refused ring unless it is pinned");
+        c.True(renderer.Contains("float reach = Math.Max(0f, BandWidthBlocks) + Math.Max(0f, BandInnerBlocks)",
+            StringComparison.Ordinal),
+            "and the seam field's margin is sized from the offset that is actually in force");
+        c.True(renderer.Contains("seamFieldBuiltMarginCells != marginCells", StringComparison.Ordinal),
+            "a changed margin rebuilds the seam field rather than serving distances for the old reach");
+
+        // The derived consumers must not keep their own copy of the arithmetic. Water's growth
+        // had one, and a copy is how a derived quantity keeps describing a boundary after the
+        // boundary has moved.
+        int dilation = renderer.IndexOf("int WaterFootprintDilationChunks()", StringComparison.Ordinal);
+        c.True(dilation > 0, "water's growth has one definition");
+        string dilationBody = dilation > 0
+            ? renderer.Substring(dilation, Math.Min(500, renderer.Length - dilation))
+            : string.Empty;
+        c.True(dilationBody.Contains("RefusedOwnershipRingBlocks()", StringComparison.Ordinal),
+            "water's growth is derived from the ring rather than recomputing it");
+        c.False(dilationBody.Contains("SphereCentreSlackBlocks", StringComparison.Ordinal),
+            "and keeps no copy of the slack it used to add up itself");
     }
 
     /// <summary>

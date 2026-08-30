@@ -23,6 +23,7 @@ public static class Program
         ("pure", "radial cache demand", RadialDemandChecks.Run),
         ("pure", "terrain tint readiness", TintReadinessChecks.Run),
         ("pure", "vanilla render readiness", VanillaReadinessChecks.Run),
+        ("fixture", "vanilla draw range", VanillaDrawRangeChecks.Run),
         ("pure", "seam distance field", SeamFieldChecks.Run),
         ("pure", "band shape", BandShapeChecks.Run),
         ("pure", "water footprint", WaterFootprintChecks.Run),

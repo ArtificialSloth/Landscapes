@@ -27,6 +27,265 @@ public static class VanillaReadinessChecks
         MaskForgetsEvictedColumns(c);
         MaskExcludedCellsOwnGroundWithoutATexel(c);
         OwnershipStopsAtTheEnginesDrawRange(c);
+        RecordedSpheresDriveTheLossSweep(c);
+        BandOwnershipIgnoresTheCellsNoMeshOccupies(c);
+    }
+
+    /// <summary>
+    /// The measurement behind `.vhskip why`: whether a section's own geometry band is owned,
+    /// as against whether its whole bedrock-to-sky box is.
+    ///
+    /// <para>
+    /// `Classify` asks the second question, and the answer in play has always been no - the
+    /// whole-mesh skip has never fired in any log. One unowned cell anywhere in the column
+    /// disqualifies the section, and the bottom cells are unownable by construction: solid
+    /// stone with no exposed face holds no mesh, and a chunk nobody has visited was never
+    /// tesselated, so neither can report drawn. The cached mesh does not occupy those cells.
+    /// </para>
+    /// </summary>
+    static void BandOwnershipIgnoresTheCellsNoMeshOccupies(Check c)
+    {
+        const int capacity = 8;
+        const int vertical = 8;
+        var model = new VanillaRenderReadiness(capacity, vertical);
+        model.SetWindow(0, 0, 8, 8);
+
+        // One L0 section covers a 2x2 block of chunk columns. Own every cell of it from Y=3
+        // upward and leave the three deep bands unowned, which is the shape play produces.
+        long key = LodWorld.SectionKey(0, 0, 0);
+        for (int z = 0; z < 2; z++)
+        for (int x = 0; x < 2; x++)
+        for (int y = 3; y < vertical; y++)
+            CommitReady(model, new VanillaChunkCell(x, y, z), frame: 10 + y);
+
+        c.Eq(VanillaSectionOwnership.Mixed, model.Classify(key),
+            "the whole-column rule refuses the section for cells no mesh occupies");
+        c.True(model.AllOwnedInBand(key, 3, vertical - 1),
+            "while the band the mesh actually occupies is completely owned");
+        c.False(model.AllOwnedInBand(key, 0, vertical - 1),
+            "and asking for the whole column agrees with Classify");
+
+        // A hole inside the band is a real disqualification and must still be caught.
+        c.False(model.AllOwnedInBand(key, 2, vertical - 1),
+            "one unowned band below the geometry still refuses when it is asked about");
+
+        var gap = new VanillaChunkCell(1, 5, 1);
+        c.True(model.Observe(gap, rendered: false, 100, out VanillaReadinessPublication loss),
+            "a cell inside the band can be lost");
+        c.True(model.ResolvePublication(loss, accepted: true), "and committed as lost");
+        c.False(model.AllOwnedInBand(key, 3, vertical - 1),
+            "a hole inside the occupied band disqualifies the section");
+
+        // Out-of-window columns answer false rather than being skipped as absent, so the
+        // measurement cannot report ownership over ground nothing is tracking.
+        long outside = LodWorld.SectionKey(0, 100, 100);
+        c.False(model.AllOwnedInBand(outside, 0, vertical - 1),
+            "a section outside the tracked window is never reported owned");
+
+        // A band clamped past the world answers on what exists rather than throwing.
+        c.NoThrow(() => model.AllOwnedInBand(key, -5, vertical + 20),
+            "an out-of-range band is clamped rather than throwing into the render thread");
+        c.False(model.AllOwnedInBand(key, 6, 3), "an inverted band owns nothing");
+
+        HighestSuppressingCellSkipsAir(c);
+        LeavingTheObservedStateReleasesItsQueueSlot(c);
+    }
+
+    /// <summary>
+    /// A cell that stops being ObservedRendered must give up its observation-queue slot.
+    ///
+    /// <para>
+    /// The flag and the ring can disagree, and when they do the flag wins: `QueueObservation`
+    /// refuses to queue a cell that is already marked queued. So a cell whose entry was
+    /// discarded while the flag stayed set is marked queued forever and never enters the
+    /// deferred path again - it reaches ObservedRendered and waits for a sweep to happen past
+    /// it. Nothing incorrect is ever committed, because the two-observation rule is enforced by
+    /// the frame stamp rather than by this flag, which is precisely why it survived: the
+    /// symptom is slower ownership, not wrong ownership.
+    /// </para>
+    /// </summary>
+    static void LeavingTheObservedStateReleasesItsQueueSlot(Check c)
+    {
+        var model = new VanillaRenderReadiness(8, 4);
+        model.SetWindow(0, 0, 8, 8);
+        // SetWindow queues every column the window gained, which here is all of them - and the
+        // candidate ring is exactly cell-sized, so it is left FULL. PromoteObserved breaks out
+        // when the candidate queue is full, so without draining first this measures the queue
+        // depth rather than the flag lifecycle it is written for.
+        DrainQueue(model);
+        var cell = new VanillaChunkCell(2, 1, 2);
+
+        model.Observe(cell, rendered: true, 10, out _);
+        c.Eq(VanillaReadinessState.ObservedRendered, model.State(cell),
+            "a first true observation defers the cell");
+        c.Eq(1, model.PendingObservations, "and takes an observation slot");
+
+        // The engine changes its mind before the second observation - a chunk unloads, the
+        // culler turns it off, the range rule refuses it. The cell drops back to Pending.
+        model.Observe(cell, rendered: false, 11, out _);
+        c.Eq(VanillaReadinessState.Pending, model.State(cell), "a false observation demotes it");
+
+        // The stale ring entry is discarded rather than treated as a live reservation.
+        model.PromoteObserved(12, 8);
+        c.Eq(0, model.PendingObservations, "the stale observation entry is discarded");
+
+        // The real assertion: the cell can be deferred again. Before the fix this second
+        // observation reached ObservedRendered and was never queued, so nothing promoted it.
+        model.Observe(cell, rendered: true, 20, out _);
+        c.Eq(VanillaReadinessState.ObservedRendered, model.State(cell), "it can be observed again");
+        c.Eq(1, model.PendingObservations, "and it takes a slot again rather than being refused");
+
+        c.Eq(1, model.PromoteObserved(21, 8), "so the deferred path still promotes it");
+        c.Eq(0, model.PendingObservations, "and releases the slot on promotion");
+
+        // Repeated cycles must not leak slots either.
+        for (int cycle = 0; cycle < 20; cycle++)
+        {
+            DrainQueue(model);
+            model.Observe(cell, rendered: true, 30 + cycle * 3, out _);
+            model.Observe(cell, rendered: false, 31 + cycle * 3, out _);
+            model.PromoteObserved(32 + cycle * 3, 8);
+        }
+        DrainQueue(model);
+        c.Eq(0, model.PendingObservations, "twenty oscillations leak no observation slots");
+        model.Observe(cell, rendered: true, 200, out _);
+        c.Eq(1, model.PendingObservations, "and the cell is still able to defer afterwards");
+    }
+
+    /// <summary>
+    /// The top of the band that can actually hide a fragment, which is not the top of the
+    /// owned band. Air cells are owned and excluded from the mask at the same time (G40), so a
+    /// measurement that read ownership alone would report cached geometry as covered while the
+    /// player watches it stand there.
+    /// </summary>
+    static void HighestSuppressingCellSkipsAir(Check c)
+    {
+        var model = new VanillaRenderReadiness(8, 8);
+        model.SetWindow(0, 0, 4, 4);
+        var column = (X: 2, Z: 2);
+
+        c.Eq(-1, model.HighestSuppressingY(column.X, column.Z),
+            "a column with no ownership suppresses nothing");
+
+        // Ground at Y=3, air owned above it - the ordinary shape of a surface column.
+        for (int y = 3; y <= 6; y++)
+            CommitReady(model, new VanillaChunkCell(column.X, y, column.Z), frame: 10 + y);
+        for (int y = 4; y <= 6; y++)
+            model.SetMaskExcluded(new VanillaChunkCell(column.X, y, column.Z), excluded: true);
+
+        c.Eq(3, model.HighestSuppressingY(column.X, column.Z),
+            "the top of the suppressing band is the ground, not the owned air above it");
+
+        // Un-excluding the top cell moves it, which is what proves the exclusion is what the
+        // measurement is reading rather than the ownership.
+        model.SetMaskExcluded(new VanillaChunkCell(column.X, 6, column.Z), excluded: false);
+        c.Eq(6, model.HighestSuppressingY(column.X, column.Z),
+            "a cell that stops being excluded becomes the top of the band");
+
+        c.Eq(-1, model.HighestSuppressingY(99, 99),
+            "a column outside the window suppresses nothing rather than throwing");
+    }
+
+    /// <summary>
+    /// The tracker's half of the exact draw-range rule: it remembers where the engine measures
+    /// each committed chunk from, and hands back the ones the engine has stopped drawing.
+    ///
+    /// <para>
+    /// The point of storing the sphere at all is that the sweep must not need the chunk. A
+    /// sweep that took the client's chunk lock once per committed cell every time the player
+    /// crossed a block boundary would be G45 with a new name, so what is asserted here is that
+    /// the whole loss decision is answerable from tracker state alone.
+    /// </para>
+    /// </summary>
+    static void RecordedSpheresDriveTheLossSweep(Check c)
+    {
+        const int capacity = 8;
+        const int vertical = 4;
+        var model = new VanillaRenderReadiness(capacity, vertical);
+        model.SetWindow(0, 0, 8, 8);
+
+        var near = new VanillaChunkCell(1, 2, 1);
+        var far = new VanillaChunkCell(6, 2, 6);
+        CommitReady(model, near, frame: 10);
+        CommitReady(model, far, frame: 10);
+
+        c.False(model.TryGetDrawSphere(near, out _, out _, out _),
+            "a cell starts with no recorded sphere, so the sweep leaves it to the bounded rule");
+        c.Eq(0, model.CellsWithDrawSphere(), "and none are counted");
+
+        // Centres placed at the middle of each chunk for legibility; the rule does not care.
+        c.True(model.SetDrawSphere(near, 48f, 48f, VanillaDrawRangeState.EverywhereLod),
+            "an active cell records the engine's measurement");
+        c.True(model.SetDrawSphere(far, 208f, 208f, VanillaDrawRangeState.EverywhereLod),
+            "so does its neighbour");
+        c.True(model.TryGetDrawSphere(far, out float centreX, out float centreZ, out int lodMask),
+            "the recorded sphere reads back");
+        c.Eq(208f, centreX, "with its X intact");
+        c.Eq(208f, centreZ, "and its Z");
+        c.Eq(VanillaDrawRangeState.EverywhereLod, lodMask, "and the pool levels it was holding");
+        c.Eq(2, model.CellsWithDrawSphere(), "both committed cells now carry one");
+
+        var losses = new List<VanillaChunkCell>();
+
+        // A 200-block view distance from the origin: the near chunk's centre is 68 blocks out
+        // and stays; the far one is 294 and does not.
+        var range = new VanillaDrawRangeState(0, 0, 200 * 200 + 400, lod0BiasSq: 0f, lod2BiasSq: 0.45);
+        c.Eq(1, model.CollectRangeLosses(range, losses), "exactly the cell past the bound is collected");
+        c.Eq(far, losses[0], "and it is the far one");
+
+        // Nothing is withdrawn by collecting. The caller still has to run the publication
+        // handshake, so a collect that ran and then failed to publish cannot leave the CPU
+        // aggregates and the GPU mask disagreeing about who owns the ground.
+        c.Eq(VanillaReadinessState.VanillaReady, model.State(far),
+            "collecting proposes nothing on its own");
+        c.True(model.Observe(far, rendered: false, 20, out VanillaReadinessPublication loss),
+            "the collected cell proposes loss through the ordinary path");
+        c.True(model.ResolvePublication(loss, accepted: true), "and commits it");
+        c.Eq(VanillaReadinessState.Pending, model.State(far), "the far cell is cache-owned again");
+
+        model.ClearDrawSphere(far);
+        c.False(model.TryGetDrawSphere(far, out _, out _, out _),
+            "a demoted cell forgets its sphere rather than being re-tested from it");
+        c.Eq(0, model.CollectRangeLosses(range, losses),
+            "and is not collected twice");
+
+        // A cell with no recorded sphere is skipped, never demoted. Those cells were decided
+        // by the conservative bound - air, or a chunk holding no mesh - and the sweep has no
+        // business withdrawing ownership it cannot re-derive.
+        var unrecorded = new VanillaChunkCell(7, 3, 7);
+        CommitReady(model, unrecorded, frame: 30);
+        c.Eq(0, model.CollectRangeLosses(range, losses),
+            "a committed cell with no sphere is left alone however far away it is");
+        c.Eq(VanillaReadinessState.VanillaReady, model.State(unrecorded),
+            "and keeps its ownership");
+
+        // An unavailable range state must sweep nothing at all, or a failed culler read would
+        // withdraw ownership from the entire world in one frame.
+        model.SetDrawSphere(unrecorded, 240f, 240f, VanillaDrawRangeState.EverywhereLod);
+        c.Eq(0, model.CollectRangeLosses(default, losses),
+            "an unavailable range state collects nothing");
+        c.Eq(1, model.CollectRangeLosses(range, losses),
+            "while a usable one still finds the same cell");
+
+        // The ring is mirrored state and a slot changing hands has to forget the sphere with
+        // everything else. An arriving column inheriting the departed column's geometry would
+        // be tested against the wrong ground, and near the boundary that decides whether it is
+        // drawn at all - G44 with a different payload.
+        var evicting = new VanillaRenderReadiness(capacity, vertical);
+        evicting.SetWindow(0, 0, 4, 4);
+        var held = new VanillaChunkCell(1, 2, 1);
+        CommitReady(evicting, held, frame: 10);
+        evicting.SetDrawSphere(held, 48f, 48f, VanillaDrawRangeState.EverywhereLod);
+        c.True(evicting.TryGetDrawSphere(held, out _, out _, out _), "the sphere is held before the slide");
+
+        evicting.SetWindow(capacity, capacity, 4, 4);
+        var arriving = new VanillaChunkCell(held.X + capacity, held.Y, held.Z + capacity);
+        c.Eq(VanillaReadinessMask.TexelIndex(held.X, held.Y, held.Z, capacity, vertical),
+            VanillaReadinessMask.TexelIndex(arriving.X, arriving.Y, arriving.Z, capacity, vertical),
+            "the arriving column really does reuse the departed column's slot");
+        c.False(evicting.TryGetDrawSphere(arriving, out _, out _, out _),
+            "and does not inherit the departed column's sphere");
+        c.Eq(0, evicting.CellsWithDrawSphere(), "no measurement survives the slide");
     }
 
     static void CoordinateMapping(Check c)

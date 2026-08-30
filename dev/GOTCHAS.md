@@ -2580,3 +2580,75 @@ remains. Check the arithmetic against the face the threshold actually uses, not 
 distance the constant is named for.
 
 **Found:** 0.3.152, from a one-chunk gap the owner reported at a shoreline.
+
+### G133 - An accurate rule gated on a state the inaccurate rule controls never runs
+
+**Trigger:** applying a cheap approximate rule to items that have not yet reached the state where
+the accurate rule is allowed to run - typically to avoid a lookup the accurate rule needs.
+
+**Trap:** `LodTerrainRenderer` gated the exact draw-range test on `atOwnershipDecision`, because
+reading the engine's bounding sphere needs the chunk and a first sighting had not fetched one.
+Every other probe fell back to `BeyondVanillaDrawRange`, whose threshold is `viewDistance - 46`.
+That is **18 blocks at a 64-block view distance, and zero at 46 or below**. A chunk 28 blocks
+away - meshed, cull-visible, unhidden, well inside the 67 blocks the engine actually draws to -
+was refused, so it stayed `Pending`; a `Pending` cell is not an ownership decision, so it never
+reached the exact rule that would have admitted it. The approximation permanently prevented the
+measurement, and the mod owned almost no ground at exactly the view distances this mod exists for.
+
+It hid well. At a 192-block view distance the same gate is 146 blocks, loose enough that cells get
+through and the exact rule takes over, so the feature looked healthy in the first log and failed
+in the second.
+
+**Do:** make any rule applied before the accurate one a **strict subset** of it, and assert that
+subset relation over a dense sweep rather than reasoning about it. The replacement compares the
+column's nearest face against the widest bound any LOD level draws to: the sphere centre lies
+inside the column, so its distance is at least the nearest-face distance, and everything the early
+gate refuses the exact rule refuses too. `VanillaDrawRangeChecks.TheEarlyGateCanOnlyRefuseWhatThe
+ExactRuleRefuses` holds it.
+
+**Do** use the widest bound, not the view distance. Level 0's clause is
+`distanceSq < lod0BiasSq + 1024`, which with `LodBias` at 1 reaches **further** than level 1's
+`viewDistanceSq` - 71.6 blocks against 67.1 at a 64-block view distance.
+
+**Found:** 0.3.158, from `.vhexact audit` reporting seven uncovered chunks all in state `Pending`,
+the nearest at 28 blocks. Shipped in 0.3.154; the bug was introduced by the fix for G43.
+
+### G134 - A diagnostic that names a signal it does not print
+
+**Trigger:** a report written to show "every signal side by side" so a conclusion can stop being
+guessed at.
+
+**Trap:** `VanillaChunkGeometry.DescribeSignals` documented the drawn counter as the first of its
+signals - it is what `IsChunkRendered` reads, and it is the first gate every probe passes - and
+printed `empty`, `mesh`, `cull`, `hide` and `frustum` without it. Two rounds of a log
+investigation were spent reasoning about which gate had refused a chunk while the only gate named
+in the method's own summary was absent from its output. A second bucket in the same session,
+`refused for range`, was dead code (`&& !ExactDrawRange`, never true) and silently filed every
+such cell under a different reason.
+
+**Do:** assert that a report prints what its summary claims, and that every reason bucket is
+reachable. A reason bucket naming a gate the item never passes through is worse than no bucket,
+because it is believed.
+
+**Do** make the reason reflect the rule that would actually run for that item in its current
+state, not whichever rule is convenient to evaluate from where the report stands.
+
+**Found:** 0.3.158, after the missing counter had already cost two rounds.
+
+### G135 - A per-section aggregate is not a per-column fact
+
+**Trigger:** comparing something measured over a cached section's whole footprint - a height span,
+a bound, an average - against a fact about one chunk column inside it.
+
+**Trap:** an overshoot report compared each section's `LodHeightSpan.MaxY` against the top of each
+covered column's owned band. A section's span is the maximum over its entire footprint: 64 blocks
+at L0 and **4,096 at L6**, so the comparison measured the terrain's slope and reported it as
+cached geometry standing too tall. It also visited every column once per LOD level covering it,
+turning nine columns into 63. The result - "54 of 63 columns overshoot" - was quoted in a handoff
+before the arithmetic was checked against the nine cells the mask actually owned.
+
+**Do:** restrict such a comparison to the finest level, state it as an upper bound, and sanity-
+check its denominator against a number measured elsewhere. Any count that is a clean multiple of
+the LOD level count is a per-level visit, not a population.
+
+**Found:** 0.3.157, when a report claiming 63 columns sat beside telemetry showing nine.

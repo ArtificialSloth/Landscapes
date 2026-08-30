@@ -36,6 +36,28 @@ internal sealed class VanillaRenderReadiness
     readonly byte[] flags;
     readonly int[] observedFrames;
     readonly long[] pendingPublicationTokens;
+
+    /// <summary>
+    /// The engine's own range-cull inputs for each cell, cached at probe time so the per-frame
+    /// loss sweep is pure arithmetic.
+    ///
+    /// <para>
+    /// This is what lets the sweep run every time the player crosses a block boundary without
+    /// reintroducing G45: reading the sphere needs the chunk, taking the chunk needs the
+    /// client's chunk lock, and doing that for every committed cell every frame would be the
+    /// join-time stall all over again. The probe already holds the chunk when it decides
+    /// ownership, so the values are copied out once there and re-tested for free afterwards.
+    /// </para>
+    /// <para>
+    /// NaN means "no sphere recorded", and the sweep skips those cells entirely rather than
+    /// guessing - a cell with no recorded sphere keeps whatever the conservative bound decided
+    /// for it. The values go stale if a chunk re-tesselates into a different shape; the
+    /// once-a-second full revalidation re-probes every committed cell, which bounds that.
+    /// </para>
+    /// </summary>
+    readonly float[] sphereCentreX;
+    readonly float[] sphereCentreZ;
+    readonly byte[] lodMasks;
     readonly VanillaChunkCell[] candidates;
     readonly long[] candidateFrames;
     readonly VanillaChunkCell[] observations;
@@ -69,8 +91,9 @@ internal sealed class VanillaRenderReadiness
     public int ActiveCells => checked(width * depth * verticalChunks);
     public long TrackedArrayBytes =>
         columnTags.LongLength * sizeof(long)
-        + states.LongLength + flags.LongLength
+        + states.LongLength + flags.LongLength + lodMasks.LongLength
         + observedFrames.LongLength * sizeof(int)
+        + (sphereCentreX.LongLength + sphereCentreZ.LongLength) * sizeof(float)
         + pendingPublicationTokens.LongLength * sizeof(long)
         + candidateFrames.LongLength * sizeof(long)
         + (candidates.LongLength + observations.LongLength) * (sizeof(int) * 3L);
@@ -100,6 +123,11 @@ internal sealed class VanillaRenderReadiness
         states = new byte[cells];
         flags = new byte[cells];
         observedFrames = new int[cells];
+        sphereCentreX = new float[cells];
+        sphereCentreZ = new float[cells];
+        Array.Fill(sphereCentreX, float.NaN);
+        Array.Fill(sphereCentreZ, float.NaN);
+        lodMasks = new byte[cells];
         pendingPublicationTokens = new long[cells];
         candidates = new VanillaChunkCell[cells];
         candidateFrames = new long[cells];
@@ -351,10 +379,23 @@ internal sealed class VanillaRenderReadiness
         while (observationCount > 0 && examined++ < maxCells)
         {
             VanillaChunkCell cell = observations[observationHead];
-            if (!TryGetCellIndex(cell, prepareColumn: false, out int index)
+            bool resolved = TryGetCellIndex(cell, prepareColumn: false, out int index);
+            if (!resolved
                 || (flags[index] & ObservationQueuedFlag) == 0
                 || (VanillaReadinessState)states[index] != VanillaReadinessState.ObservedRendered)
             {
+                // Dropping the entry has to drop the flag with it, or the cell is left marked
+                // as queued while sitting in no queue - and `QueueObservation` then refuses to
+                // queue it ever again, silently retiring the deferred-observation path for that
+                // cell for the rest of the session. It reaches ObservedRendered and waits for a
+                // sweep to notice instead. Safety is unaffected (the two-observation rule is
+                // enforced by the frame stamp, not by this flag), which is exactly why it went
+                // unseen: the symptom is slower ownership, not wrong ownership.
+                //
+                // Guarded on the lookup rather than on the index, because an unresolved cell
+                // reports index -1 and clearing a flag at a negative or aliased index would be
+                // a far worse bug than the one being fixed.
+                if (resolved) flags[index] &= unchecked((byte)~ObservationQueuedFlag);
                 PopObservation();
                 continue;
             }
@@ -392,6 +433,10 @@ internal sealed class VanillaRenderReadiness
                 publication = new VanillaReadinessPublication(cell, Ready: false, Token: token);
                 return true;
             }
+            // Leaving ObservedRendered means leaving the observation queue. Clearing the flag
+            // here is the direct statement of that; `PromoteObserved` then discards the stale
+            // ring entry on sight rather than treating the cell as still queued.
+            flags[index] &= unchecked((byte)~ObservationQueuedFlag);
             states[index] = (byte)VanillaReadinessState.Pending;
             return false;
         }
@@ -485,6 +530,201 @@ internal sealed class VanillaRenderReadiness
     public bool IsMaskExcluded(VanillaChunkCell cell) =>
         TryGetCellIndex(cell, prepareColumn: false, out int index)
         && (flags[index] & MaskExcludedFlag) != 0;
+
+    /// <summary>
+    /// Records the engine's range-cull inputs for a cell, read from the chunk the probe is
+    /// already holding. Storing them is not itself an ownership claim - the publication
+    /// handshake still decides that - so it is safe to record before a proposal is accepted.
+    /// </summary>
+    public bool SetDrawSphere(VanillaChunkCell cell, float centreX, float centreZ, int lodMask)
+    {
+        if (!TryGetCellIndex(cell, prepareColumn: false, out int index)) return false;
+        sphereCentreX[index] = centreX;
+        sphereCentreZ[index] = centreZ;
+        lodMasks[index] = (byte)(lodMask & 0xFF);
+        return true;
+    }
+
+    /// <summary>
+    /// Forgets a cell's recorded sphere, so the loss sweep stops re-testing a value nothing
+    /// re-confirms. Called whenever a decision falls back to the conservative bound: a cell
+    /// that lost its mesh must not keep answering from the mesh it used to have.
+    /// </summary>
+    public void ClearDrawSphere(VanillaChunkCell cell)
+    {
+        if (!TryGetCellIndex(cell, prepareColumn: false, out int index)) return;
+        sphereCentreX[index] = float.NaN;
+        sphereCentreZ[index] = float.NaN;
+        lodMasks[index] = 0;
+    }
+
+    public bool TryGetDrawSphere(VanillaChunkCell cell,
+        out float centreX, out float centreZ, out int lodMask)
+    {
+        centreX = centreZ = float.NaN;
+        lodMask = 0;
+        if (!TryGetCellIndex(cell, prepareColumn: false, out int index)) return false;
+        if (float.IsNaN(sphereCentreX[index])) return false;
+        centreX = sphereCentreX[index];
+        centreZ = sphereCentreZ[index];
+        lodMask = lodMasks[index];
+        return lodMask != 0;
+    }
+
+    /// <summary>
+    /// Committed cells the engine's range clause no longer admits, collected in one pass.
+    ///
+    /// <para>
+    /// This is the half of the exact rule that removes <c>OverlapMarginBlocks</c>. That margin
+    /// exists because ownership is withdrawn only when a probe gets round to the cell, and the
+    /// probe cadence is a second - so cached terrain had to take ground back early enough to
+    /// cover a chunk vanilla might drop in the meantime. Range loss does not need a probe: its
+    /// inputs are the stored sphere and the player's block position, so it can be re-decided
+    /// for the whole committed set in the same frame the player moves, and the margin it was
+    /// paying for goes to zero.
+    /// </para>
+    /// <para>
+    /// Whole-set, not cursored, and that is the point of G39: a cursored sweep is exactly how
+    /// ownership survived in ground the camera had moved away from. Nor is it filtered down to
+    /// a plausible ring first - a column-level pre-filter can only reason about the widest of
+    /// the four LOD bounds, and a chunk holding only near-detail geometry is cut off at a much
+    /// nearer one. Every committed cell is examined; the work is a state-byte compare each, and
+    /// the caller only runs it when the engine's own quantised inputs have actually changed.
+    /// </para>
+    /// <para>
+    /// Cells with no recorded sphere are skipped, not demoted. They were decided by the
+    /// conservative bound and remain its business.
+    /// </para>
+    /// </summary>
+    public int CollectRangeLosses(in VanillaDrawRangeState range, List<VanillaChunkCell> into,
+        float marginBlocks = 0f)
+    {
+        ArgumentNullException.ThrowIfNull(into);
+        into.Clear();
+        if (!range.Available || width == 0 || depth == 0) return 0;
+
+        for (int slot = 0; slot < columnTags.Length; slot++)
+        {
+            if (columnTags[slot] == -1L || columnReady[slot] == 0) continue;
+            UnpackColumn(columnTags[slot], out int chunkX, out int chunkZ);
+            if (chunkX < minChunkX || chunkX >= minChunkX + width
+                || chunkZ < minChunkZ || chunkZ >= minChunkZ + depth) continue;
+
+            int baseIndex = slot * verticalChunks;
+            for (int y = 0; y < verticalChunks; y++)
+            {
+                int index = baseIndex + y;
+                if ((VanillaReadinessState)states[index] != VanillaReadinessState.VanillaReady) continue;
+                if ((flags[index] & PublicationPendingFlag) != 0) continue;
+                if (float.IsNaN(sphereCentreX[index]) || lodMasks[index] == 0) continue;
+                if (range.DrawsWithMargin(sphereCentreX[index], sphereCentreZ[index],
+                    lodMasks[index], marginBlocks)) continue;
+                into.Add(new VanillaChunkCell(chunkX, y, chunkZ));
+            }
+        }
+        return into.Count;
+    }
+
+    /// <summary>
+    /// Whether every cell in a section's column footprint is owned, counting only the vertical
+    /// chunk band the caller names.
+    ///
+    /// <para>
+    /// This exists to answer a question <see cref="Classify"/> structurally cannot: it demands
+    /// every vertical chunk from bedrock to sky, and the bottom bands are owned by nothing. A
+    /// chunk of solid stone with no exposed face holds no mesh, and one the player has never
+    /// been near was never tesselated at all, so neither can ever report drawn - and a single
+    /// such cell anywhere in the column stops the whole section qualifying, forever. That is
+    /// why the whole-mesh skip has never fired. The cached mesh does not occupy those bands, so
+    /// asking about them was always the wrong question.
+    /// </para>
+    /// <para>
+    /// A direct scan, not an incremental aggregate. It is a measurement of what a
+    /// geometry-derived rule WOULD classify, run on demand from a diagnostic, so it costs
+    /// whatever it costs; nothing on the render path may call it until that is settled and it
+    /// has an O(1) counterpart. An out-of-window column answers false, which keeps the
+    /// measurement honest rather than optimistic.
+    /// </para>
+    /// </summary>
+    public bool AllOwnedInBand(long sectionKey, int minChunkY, int maxChunkY)
+    {
+        int level = LodWorld.KeyLevel(sectionKey);
+        if (level < 0 || level > LodWorld.MaxLevel) return false;
+        if (minChunkY < 0) minChunkY = 0;
+        if (maxChunkY >= verticalChunks) maxChunkY = verticalChunks - 1;
+        if (minChunkY > maxChunkY) return false;
+
+        int edgeCells = 2 << level;
+        int baseX = LodWorld.KeySx(sectionKey) * edgeCells;
+        int baseZ = LodWorld.KeySz(sectionKey) * edgeCells;
+
+        for (int dz = 0; dz < edgeCells; dz++)
+        for (int dx = 0; dx < edgeCells; dx++)
+        {
+            int chunkX = baseX + dx;
+            int chunkZ = baseZ + dz;
+            if (chunkX < minChunkX || chunkX >= minChunkX + width
+                || chunkZ < minChunkZ || chunkZ >= minChunkZ + depth) return false;
+
+            int slot = ColumnSlot(chunkX, chunkZ);
+            if (columnTags[slot] != PackColumn(chunkX, chunkZ)) return false;
+            int baseIndex = slot * verticalChunks;
+            for (int y = minChunkY; y <= maxChunkY; y++)
+            {
+                if ((VanillaReadinessState)states[baseIndex + y] != VanillaReadinessState.VanillaReady)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// The highest cell in a column that both owns its ground AND is allowed to suppress a
+    /// fragment, or -1 when the column has none.
+    ///
+    /// <para>
+    /// The second condition is the whole point. Air cells are owned - they have to be, or the
+    /// column aggregate collapses (G40) - but they are excluded from the mask, so cached
+    /// geometry standing inside one is never discarded. This returns the top of the band that
+    /// can actually hide something, which is what cached geometry has to stay under to be
+    /// hidden at all.
+    /// </para>
+    /// </summary>
+    public int HighestSuppressingY(int chunkX, int chunkZ)
+    {
+        if (chunkX < minChunkX || chunkX >= minChunkX + width
+            || chunkZ < minChunkZ || chunkZ >= minChunkZ + depth) return -1;
+        int slot = ColumnSlot(chunkX, chunkZ);
+        if (columnTags[slot] != PackColumn(chunkX, chunkZ)) return -1;
+
+        int baseIndex = slot * verticalChunks;
+        for (int y = verticalChunks - 1; y >= 0; y--)
+        {
+            int index = baseIndex + y;
+            if ((VanillaReadinessState)states[index] != VanillaReadinessState.VanillaReady) continue;
+            if ((flags[index] & MaskExcludedFlag) != 0) continue;
+            return y;
+        }
+        return -1;
+    }
+
+    /// <summary>How many committed cells currently carry a recorded sphere, for telemetry.</summary>
+    public int CellsWithDrawSphere()
+    {
+        int found = 0;
+        for (int slot = 0; slot < columnTags.Length; slot++)
+        {
+            if (columnTags[slot] == -1L || columnReady[slot] == 0) continue;
+            int baseIndex = slot * verticalChunks;
+            for (int y = 0; y < verticalChunks; y++)
+            {
+                int index = baseIndex + y;
+                if ((VanillaReadinessState)states[index] != VanillaReadinessState.VanillaReady) continue;
+                if (!float.IsNaN(sphereCentreX[index]) && lodMasks[index] != 0) found++;
+            }
+        }
+        return found;
+    }
 
     public int ReadyCount(long sectionKey)
     {
@@ -1006,6 +1246,13 @@ internal sealed class VanillaRenderReadiness
         Array.Clear(flags, baseIndex, verticalChunks);
         Array.Clear(observedFrames, baseIndex, verticalChunks);
         Array.Clear(pendingPublicationTokens, baseIndex, verticalChunks);
+        // The recorded spheres are ring-addressed like everything else, so a slot changing
+        // hands must forget them too - G44's failure with a different payload. An arriving
+        // column inheriting the departed column's sphere would be tested against the wrong
+        // geometry, and near the boundary that decides whether its ground is drawn at all.
+        Array.Clear(lodMasks, baseIndex, verticalChunks);
+        Array.Fill(sphereCentreX, float.NaN, baseIndex, verticalChunks);
+        Array.Fill(sphereCentreZ, float.NaN, baseIndex, verticalChunks);
     }
 
     void ChangeReadyCounts(VanillaChunkCell cell, int delta)

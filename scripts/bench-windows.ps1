@@ -495,6 +495,7 @@ function Get-ClientReadinessRecord {
         '(?<readyTransitions>\d+) ready/(?<lostTransitions>\d+) lost transitions, ' +
         '(?<errors>\d+) errors, (?<windowChanges>\d+) window changes/(?<resizes>\d+) resizes, ' +
         '(?<fullRevalidations>\d+) full revalidations, ' +
+        'range (?<drawRange>[^,]+), ' +
         '(?<staleCommitted>\d+) stale committed found/(?<countRepairs>\d+) count repairs, ' +
         '(?<emptyChunks>\d+) drawn-but-empty/' +
         '(?<noGeometryChunks>\d+) drawn-without-geometry chunks, ' +

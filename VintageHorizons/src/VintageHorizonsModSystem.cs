@@ -1834,6 +1834,23 @@ public class VintageHorizonsModSystem : ModSystem
     /// own timestamp and stays greppable. Game chat cannot be selected or copied, so
     /// without this every diagnostic has to be read off the screen and retyped.
     /// </summary>
+    /// <summary>
+    /// Writes a report to the client log and hands the same text back for chat.
+    ///
+    /// <para>
+    /// The status line is thousands of characters and the chat window shows the tail of it,
+    /// which cannot be scrolled back or copied out. Until now the only complete copy reached
+    /// the log ONCE, thirty seconds after joining - so every question about steady-state
+    /// behaviour was answered with a snapshot taken while the world was still streaming in,
+    /// including the one that produced this method (G72).
+    /// </para>
+    /// </summary>
+    string LogAndReturn(string label, string report)
+    {
+        LogReportLines(label, report);
+        return report;
+    }
+
     void LogReportLines(string label, string report)
     {
         foreach (string line in report.Split('\n'))
@@ -1845,7 +1862,8 @@ public class VintageHorizonsModSystem : ModSystem
     void RegisterCommands()
     {
         capi.ChatCommands.Create("vhinfo")
-            .WithDescription("VintageHorizons status")
+            .WithDescription("VintageHorizons status. Also written to the client log, which is the only "
+                + "copy long enough to read.")
             .HandleWith(_ => deferringTo != null
                 ? TextCommandResult.Success(
                     $"[VintageHorizons] idle: '{deferringTo}' is installed and switched on, so it is "
@@ -1853,6 +1871,7 @@ public class VintageHorizonsModSystem : ModSystem
                     + "'.vhdefer off' to draw beside it. Either way, restart the game afterwards: "
                     + "this is decided once at startup.")
                 : TextCommandResult.Success(
+                LogAndReturn("status",
                 $"[VintageHorizons] sections: {pipeline.World.Sections.Count} [{pipeline.World.DescribeLevels()}] " +
                 $"({pipeline.CachedSectionsLoaded} from cache), meshes: {renderer.MeshCount}, " +
                 $"drawn: {renderer.LastDrawCount} [{renderer.DescribeDrawnLevels()}] " +
@@ -1877,7 +1896,7 @@ public class VintageHorizonsModSystem : ModSystem
                       $"({pipeline.RemoteOnly.Count} not held locally, {pipeline.ForeignSectionsInstalled} fetched, " +
                       $"{assist.InFlight} in flight, {assist.SectionsRefused} declined)" +
                       (assist.ManifestComplete ? "" : " (manifest still arriving)")
-                    : "")));
+                    : ""))));
 
         // Registered in both states on purpose: the player who most needs this one is the
         // player we are currently idle for.
@@ -2099,16 +2118,24 @@ public class VintageHorizonsModSystem : ModSystem
                             $"[VintageHorizons] step {renderer.BandStepBlocks:0} blocks.");
 
                     case "inner":
+                        if (value is "auto")
+                        {
+                            renderer.BandInnerBlocks = -1f;
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] inner edge follows the overlap: "
+                                + $"{renderer.BandInnerBlocks:0} blocks.");
+                        }
                         if (!float.TryParse(value, out float inner))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] inner edge {renderer.BandInnerBlocks:0} blocks. "
-                                + "Distant terrain deliberately overlaps the last chunk and a half "
-                                + "of the game's own terrain, so the blending starts that far inside "
-                                + "the seam you can see. Raise it if the blending looks like it "
-                                + "starts too far out, lower it if it starts too far in.");
+                                $"[VintageHorizons] inner edge {renderer.BandInnerBlocks:0} blocks"
+                                + (renderer.BandInnerDerived ? " (following the overlap)" : " (pinned)")
+                                + ". Where distant terrain overlaps the game's own, the blending has "
+                                + "to start that far inside the seam you can see. It follows the "
+                                + "overlap on its own, so it is zero while .vhexact is on. Give a "
+                                + "number to pin it, or 'auto' to hand it back.");
                         renderer.BandInnerBlocks = GameMath.Clamp(inner, 0f, 256f);
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] inner edge {renderer.BandInnerBlocks:0} blocks.");
+                            $"[VintageHorizons] inner edge pinned at {renderer.BandInnerBlocks:0} blocks.");
 
                     case "strength":
                         if (!float.TryParse(value, out float strength))
@@ -2397,21 +2424,46 @@ public class VintageHorizonsModSystem : ModSystem
             });
 
         capi.ChatCommands.Create("vhskip")
-            .WithDescription("While the chunk mask is on: allow dropping a cached piece entirely when the game covers all of it. On by default.")
-            .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
+            .WithDescription("While the chunk mask is on: allow dropping a cached piece entirely when the game covers all of it. "
+                + "On by default. 'why' writes to the client log what is stopping it.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"))
             .HandleWith(args =>
             {
                 if (renderer == null)
                     return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
-                if (args.Parsers[0].IsMissing)
-                    return TextCommandResult.Success(
-                        $"[VintageHorizons] whole-piece skipping {(renderer.WholeMeshSkip ? "on" : "off")}. " +
-                        "Off keeps the per-pixel mask working but never drops a whole cached piece.");
 
-                renderer.WholeMeshSkip = (bool)args[0];
-                return TextCommandResult.Success(
-                    $"[VintageHorizons] whole-piece skipping {(renderer.WholeMeshSkip ? "on" : "off")}. " +
-                    "Applies on the next frame.");
+                string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
+                switch (part)
+                {
+                    // "true"/"false"/"1"/"0" as well as on/off: this command took an OptionalBool
+                    // before it grew a 'why', and silently ignoring what used to work would turn
+                    // a comparison toggle into a no-op with a success message.
+                    case "on":
+                    case "off":
+                    case "true":
+                    case "false":
+                    case "1":
+                    case "0":
+                        renderer.WholeMeshSkip = part is "on" or "true" or "1";
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] whole-piece skipping "
+                            + $"{(renderer.WholeMeshSkip ? "on" : "off")}. Applies on the next frame.");
+
+                    // The report that answers "why is nothing being dropped". It is a
+                    // measurement over the pieces resident right now, so it has to be asked
+                    // for while standing where the problem is - and it goes to the log,
+                    // because it is far too long for the chat window to hold (G72).
+                    case "why":
+                        return TextCommandResult.Success(
+                            "[VintageHorizons] " + renderer.LogSectionOwnershipMap());
+
+                    default:
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] whole-piece skipping {(renderer.WholeMeshSkip ? "on" : "off")}, "
+                            + $"{renderer.VanillaOwnedDrawsSkipped} pieces dropped this interval. "
+                            + "Off keeps the per-pixel mask working but never drops a whole cached "
+                            + "piece. '.vhskip why' writes to the client log what is stopping it.");
+                }
             });
 
         capi.ChatCommands.Create("vhbackface")
@@ -2874,6 +2926,57 @@ public class VintageHorizonsModSystem : ModSystem
                 return TextCommandResult.Success(
                     $"[VintageHorizons] geometry rule {(renderer.GeometryOwnershipRule ? "on" : "off")}. " +
                     "The change applies on the next frame; ownership settles over the next second or two.");
+            });
+
+        // Session-only. The two rules produce a visibly different seam, and the only honest
+        // comparison is standing at one and switching, so this has to be live; persisting it
+        // would let a saved setting silently disagree with what the build says it does.
+        capi.ChatCommands.Create("vhexact")
+            .WithDescription("Use the game's own measurement of how far it draws each chunk, "
+                + "instead of a safe estimate. No argument reports it; 'map' writes the "
+                + "measurement to the client log; 'audit' checks the mask against what the game "
+                + "is actually drawing, chunk by chunk. on | off | map | audit.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"))
+            .HandleWith(args =>
+            {
+                if (renderer == null)
+                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+
+                string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
+                switch (part)
+                {
+                    case "on":
+                    case "off":
+                        renderer.ExactDrawRange = part == "on";
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] exact draw range {part}. "
+                            + (part == "on"
+                                ? "Distant terrain now stops exactly where the game's own terrain "
+                                + "starts, instead of overlapping the last two chunks of it."
+                                : "Back to the safe estimate: distant terrain overlaps the last "
+                                + "two chunks of the game's own. Settles over the next second.")
+                            + " " + renderer.DescribeExactRange());
+
+                    case "map":
+                        // The chat window cannot hold this and the owner cannot copy from it,
+                        // so it goes to the log and chat gets the one-line answer (G72).
+                        return TextCommandResult.Success("[VintageHorizons] " + renderer.LogExactRangeMap());
+
+                    // The only report that asks the GAME what it is drawing rather than asking
+                    // the mod what it believes. Everything else here can agree with itself and
+                    // still be wrong about the picture.
+                    case "audit":
+                        return TextCommandResult.Success("[VintageHorizons] " + renderer.LogCoverageAudit());
+
+                    default:
+                        return TextCommandResult.Success(
+                            "[VintageHorizons] " + renderer.DescribeExactRange()
+                            + " On means ownership is decided from the bounding sphere the game "
+                            + "itself measures each chunk by, so distant terrain gives ground back "
+                            + "at the exact chunk the game stops drawing. Off estimates that "
+                            + "boundary and keeps a two-chunk overlap as a hole guard. "
+                            + "'.vhexact map' writes the measurement to the client log.");
+                }
             });
 
         capi.ChatCommands.Create("vhdetail")

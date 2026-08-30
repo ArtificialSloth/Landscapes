@@ -134,6 +134,84 @@ static class VanillaChunkGeometry
     }
 
     /// <summary>
+    /// The inputs the engine's own range cull uses for this chunk: the bounding-sphere centre
+    /// it measures from, and which terrain LOD pools it actually holds drawable, unhidden
+    /// geometry in.
+    ///
+    /// <para>
+    /// One sphere covers the whole chunk. `ChunkRenderer.AddTesselatedChunk` reads
+    /// `tesschunk.boundingSphere` once and hands that same value to every centre and edge part,
+    /// so all of a chunk's pool locations carry an identical `FrustumCullSphere` and only their
+    /// `LodLevel` differs. That is what collapses "will the engine submit any of this chunk's
+    /// meshes" to one point and one small bitmask.
+    /// </para>
+    /// <para>
+    /// The centre is NOT the chunk centre. `TesselatedChunk.SetBounds` builds it as the geometry
+    /// extents midpoint, `positionX + (xMax + xMin) / 2f`, so it sits wherever the blocks in that
+    /// chunk happen to be. Bounding that unknown placement is exactly the 46 blocks of overlap
+    /// this method exists to delete.
+    /// </para>
+    /// <para>
+    /// `Hide` is applied here rather than by the caller because it is part of the same engine
+    /// predicate: a hidden pool location is not submitted, so it must not contribute its level.
+    /// A chunk whose every mesh is hidden reports no levels and is answered as "not drawing",
+    /// which is the same conclusion <see cref="TryIsVanillaDrawing"/> reaches by its own route.
+    /// </para>
+    /// <para>
+    /// Returns false when the answer is unavailable OR when the chunk holds nothing drawable.
+    /// Both are the same instruction to the caller - do not decide ownership from this - and
+    /// keeping them one return value is deliberate: a caller that treated "no mesh" as a
+    /// confident "the engine draws nothing here" would be reinventing 0.3.3 (G40).
+    /// </para>
+    /// </summary>
+    public static bool TryReadDrawBounds(IWorldChunk? chunk,
+        out float centreX, out float centreZ, out int lodMask)
+    {
+        centreX = centreZ = 0f;
+        lodMask = 0;
+        if (chunk is not ClientChunk client || Center == null || Edge == null) return false;
+
+        try
+        {
+            bool found = false;
+            AccumulateDrawBounds(Center(client), ref centreX, ref centreZ, ref lodMask, ref found);
+            AccumulateDrawBounds(Edge(client), ref centreX, ref centreZ, ref lodMask, ref found);
+            return found && lodMask != 0;
+        }
+        catch
+        {
+            lodMask = 0;
+            return false;
+        }
+    }
+
+    static void AccumulateDrawBounds(ModelDataPoolLocation[]? locations,
+        ref float centreX, ref float centreZ, ref int lodMask, ref bool found)
+    {
+        if (locations == null) return;
+        foreach (ModelDataPoolLocation? location in locations)
+        {
+            if (location == null || location.IndicesEnd <= location.IndicesStart) continue;
+            if (location.Hide) continue;
+
+            // Out-of-range levels are dropped rather than clamped. The engine's own switch
+            // answers false for anything it does not recognise, so a pool level added by a
+            // future game version contributes nothing here and the chunk falls back to the
+            // conservative bound instead of being granted ownership on a guess.
+            int level = location.LodLevel;
+            if (level < 0 || level >= VanillaDrawRangeState.LodLevelCount) continue;
+
+            if (!found)
+            {
+                centreX = location.FrustumCullSphere.x;
+                centreZ = location.FrustumCullSphere.z;
+                found = true;
+            }
+            lodMask |= 1 << level;
+        }
+    }
+
+    /// <summary>
     /// Every signal the engine offers about one chunk, printed side by side. Written for
     /// standing at a hole: each of these has at some point been mistaken for "the engine is
     /// drawing here", and the only way to stop guessing which one is lying is to read them
@@ -170,9 +248,26 @@ static class VanillaChunkGeometry
                 }
             }
 
-            return $"signals: empty={(chunk.Empty ? 1 : 0)} mesh={(anyMesh ? 1 : 0)} "
+            // The sphere and the level set are the two inputs to the engine's range clause,
+            // and until 0.3.153 neither appeared in any diagnostic - so a cell that was
+            // range-culled looked identical to one that was not, in the one report written
+            // for standing at a hole. Printed even when the range rule is off, because the
+            // question "where does the engine measure this chunk from" is the same either way.
+            string bounds = TryReadDrawBounds(chunk, out float centreX, out float centreZ, out int lodMask)
+                ? $" sphere={centreX:0.0},{centreZ:0.0} lods={LodMaskText(lodMask)}"
+                : " sphere=none";
+
+            // The drawn counter is the FIRST gate every probe passes through - it is what
+            // `IsChunkRendered` reads - and this report was written to print every signal side
+            // by side and then did not print that one. Two sessions were spent reasoning about
+            // which gate had refused a chunk while the only one named in the summary above was
+            // missing from the output.
+            int drawnCount = DrawnCount(client, out bool drawnKnown);
+            string drawn = drawnKnown ? drawnCount.ToString() : "?";
+
+            return $"signals: drawn={drawn} empty={(chunk.Empty ? 1 : 0)} mesh={(anyMesh ? 1 : 0)} "
                 + $"cull={(client.CullVisible[ClientChunk.bufIndex] ? 1 : 0)} "
-                + $"hide={(anyHidden ? 1 : 0)} frustum={(anyFrustum ? 1 : 0)}";
+                + $"hide={(anyHidden ? 1 : 0)} frustum={(anyFrustum ? 1 : 0)}{bounds}";
         }
         catch (Exception e)
         {
@@ -181,23 +276,88 @@ static class VanillaChunkGeometry
     }
 
     /// <summary>
+    /// `ClientChunk.quantityDrawn`, the counter behind `IsChunkRendered`. Internal like the
+    /// pool arrays, so it is bound the same way and reports unknown rather than guessing.
+    /// It only ever rises (nothing in the engine resets it), which is exactly why it means
+    /// "was tesselated at some point" and not "is being drawn" - G40.
+    /// </summary>
+    static readonly System.Func<ClientChunk, int>? DrawnCounter = BindDrawn();
+
+    static System.Func<ClientChunk, int>? BindDrawn()
+    {
+        try
+        {
+            FieldInfo? info = typeof(ClientChunk).GetField("quantityDrawn",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            if (info == null || info.FieldType != typeof(int)) return null;
+            ParameterExpression chunk = Expression.Parameter(typeof(ClientChunk), "chunk");
+            return Expression.Lambda<System.Func<ClientChunk, int>>(
+                Expression.Field(chunk, info), chunk).Compile();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    static int DrawnCount(ClientChunk chunk, out bool known)
+    {
+        known = false;
+        if (DrawnCounter == null) return 0;
+        try
+        {
+            int value = DrawnCounter(chunk);
+            known = true;
+            return value;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// The LOD pool set as digits, so a report says `lods=1` or `lods=12` rather than a number
+    /// the reader has to decode into bits.
+    /// </summary>
+    public static string LodMaskText(int lodMask)
+    {
+        if (lodMask == 0) return "none";
+        var text = new System.Text.StringBuilder(VanillaDrawRangeState.LodLevelCount);
+        for (int level = 0; level < VanillaDrawRangeState.LodLevelCount; level++)
+            if ((lodMask & (1 << level)) != 0) text.Append((char)('0' + level));
+        return text.ToString();
+    }
+
+    /// <summary>
     /// True when every mesh this chunk holds is flagged not to draw. An absent array is not
     /// evidence either way here; the mesh-presence test above has already answered that.
     /// </summary>
+    /// <remarks>
+    /// Two explicit passes rather than a `foreach` over `new[] { center, edge }`. That array is
+    /// a heap allocation, and this runs once per ownership-decision probe - hundreds of
+    /// thousands of them per reporting interval, on the render thread. It is the kind of cost
+    /// that never appears as a frame spike and shows up only as collections.
+    /// </remarks>
     static bool AllHidden(ModelDataPoolLocation[]? center, ModelDataPoolLocation[]? edge)
     {
         bool sawAny = false;
-        foreach (ModelDataPoolLocation[]? set in new[] { center, edge })
-        {
-            if (set == null) continue;
-            foreach (ModelDataPoolLocation? location in set)
-            {
-                if (location == null || location.IndicesEnd <= location.IndicesStart) continue;
-                sawAny = true;
-                if (!location.Hide) return false;
-            }
-        }
+        if (AnyDrawableUnhidden(center, ref sawAny)) return false;
+        if (AnyDrawableUnhidden(edge, ref sawAny)) return false;
         return sawAny;
+    }
+
+    /// <summary>True as soon as one location in this set holds geometry and is not hidden.</summary>
+    static bool AnyDrawableUnhidden(ModelDataPoolLocation[]? locations, ref bool sawAny)
+    {
+        if (locations == null) return false;
+        foreach (ModelDataPoolLocation? location in locations)
+        {
+            if (location == null || location.IndicesEnd <= location.IndicesStart) continue;
+            sawAny = true;
+            if (!location.Hide) return true;
+        }
+        return false;
     }
 
     /// <summary>

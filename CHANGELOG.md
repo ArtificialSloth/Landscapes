@@ -8,6 +8,43 @@ first.
 
 ## [Unreleased]
 
+## [0.3.160] - 2026-08-30
+
+**Distant terrain now stops exactly where the game's own terrain starts.** It used to overlap the
+last two chunks of it — about 63 blocks at a 256-block view distance — permanently and on purpose.
+
+The game decides whether to draw each chunk by measuring from a point inside that chunk's own
+geometry, not from its centre. The mod could not read that point, so it assumed the worst case:
+the point could be anywhere in the 32-block chunk, therefore stop claiming ground 46 blocks early.
+That guess *was* the overlap. It turns out the point is published by the game, and so is the
+distance it draws to, so the mod now reads both instead of guessing. The remaining 16 blocks are a
+separate, much smaller guard against the game unloading a chunk before the mod notices; `.vhband
+overlap 0` removes it live.
+
+Two smaller errors are fixed along with it. The mod measured from the camera where the game
+measures from the player — several blocks apart in third person — and it used the server's view
+distance where the game uses your own setting.
+
+**Distant terrain reappears the moment the game stops drawing a chunk**, rather than up to a
+second later, because that decision no longer needs to wait for the mod's periodic re-check.
+
+**Fixed: at low view distances the mod claimed almost no ground at all.** With the game's view
+distance at 64, distant terrain was drawn on top of live terrain everywhere except within about 18
+blocks of you; below 46 it could never claim any ground. Ownership measured 53% of what the game
+was drawing before the fix and 100% after, with nothing hidden that the game was not drawing.
+
+**New: `.vhexact audit`** checks the mod against what the game is actually drawing, chunk by
+chunk, and writes the result to the client log — including, for anything it misses, which rule let
+it through. `.vhskip why` explains why whole cached pieces are not being dropped. `.vhexact map`
+shows how much ground the new measurement reclaimed. `.vhinfo` now writes its full body to the
+log, which previously received the complete status **once**, thirty seconds after joining.
+
+**`.vhexact off`** restores the previous behaviour if any of this goes wrong.
+
+The startup log now says when the shaders compiled, instead of only ever saying when they failed.
+The first attempt always fails — the mod loads its shaders before the game has finished collecting
+them — and the log gave no sign that the reload afterwards had worked.
+
 ## [0.3.152] - 2026-08-29
 
 **Distant water now meets the game's own water instead of standing in front of it, and stops at

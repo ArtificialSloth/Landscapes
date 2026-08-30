@@ -2,6 +2,45 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
+## Exact draw-range ownership: what 0.3.160 has not proven
+
+Ownership reads the engine's own bounding sphere and view distance instead of bounding them, and
+`.vhexact audit` measured 100% coverage with zero holes. That is one world, one view distance, one
+camera mode.
+
+- **The water footprint's dilation now derives to zero.** It follows the refused ring, which the
+  exact rule takes from 62 blocks to 16, and G132's arithmetic then rounds the growth to nothing.
+  That is the correct consequence and it has not been seen in play. 0.3.151's chunk-wide dry strip
+  came from exactly this quantity; `.vhwater edge <chunks>` overrides it live.
+- **The band's inner offset moved with the ring**, 46 blocks to 16, and the band was human-tuned
+  against the old value. `.vhband inner <blocks>` pins it, `auto` hands it back.
+- **Third person is untested** and is where it should matter most: the engine measures range from
+  the player and the mod used to measure from the camera, which trail each other by several blocks.
+  That correction is unobservable in first person.
+- **No benchmark.** The range sweep's own counter fell from a 1.899 ms peak to 0.386 ms once the
+  world settled, and probe rate is unchanged at roughly 28,000/s. Neither is a frame-time
+  measurement, and nothing has been benchmarked since 0.3.9.
+- **The stored sphere can go stale** if a chunk retessellates into a different shape, bounded by
+  the 1 Hz revalidation and usually corrected sooner by `ChunkDirty`. Fails toward overlap in one
+  direction and a brief hole in the other; neither observed.
+- **0.3.160's shader-success line has not been seen in a log.**
+
+## Complete columns are unreachable, and two features wait on them
+
+Measured this session and unsolved. Both the whole-mesh skip (`.vhskip`) and the radial handoff
+need a column owned from bedrock to sky, and the underground cells cannot be owned: solid stone
+with no exposed face holds no mesh, and a chunk nobody has visited was never tesselated, so
+neither reports drawn.
+
+- `0 owned draws skipped` in **every log ever recorded**, and `handoff 0 blocks` with `nearest
+  incomplete 0 blocks`, so `.vhmask off` is not a working fallback either.
+- Counting only the band each cached mesh occupies was proposed and **measured worthless before
+  being built**: `.vhskip why` reported 0 of 1248 sections would gain, because the cells the mesh
+  occupies were not owned either. Do not rebuild that without re-running it.
+- 0.3.159 produced the first fully-owned columns this world has recorded - five of eighty-one - by
+  fixing the air/no-sphere threshold. Whether that is enough for an aligned 2x2 block at L0 is
+  unmeasured; `.vhskip why` answers it.
+
 ## Terrain slabs: optional exact-mode verification debt
 
 Surface-only terrain slabs are implemented, human-accepted, and the 0.3.143 default. The former
@@ -43,16 +82,19 @@ Not a defect introduced this session, and the owner accepts the band as it stand
 is not rediscovered a fourth time. Confirmed from a live `.vhband map`: concentric rings, full
 strength to about 190 blocks, fading to nothing at about 310.
 
-Two independent causes, either of which alone produces a circle:
+Two independent causes were recorded. **The first is closed as of 0.3.159**: ownership is no
+longer refused by a radius, so the footprint the band measures from now follows vanilla's own
+chunk edges rather than a disc 62 blocks inside them. The band has not been looked at since, and
+its inner offset moved with the ring (46 blocks to 16), so its shape and placement both want a
+fresh look.
 
-- Ownership is refused by a distance rule (`BeyondVanillaDrawRange`), so the footprint the band
-  measures from is a disc of chunks whose edge sits 62 blocks inside vanilla's real one - not
-  vanilla's loaded footprint, which is what the band's design claims.
+The remaining cause is intrinsic:
+
 - A chamfer distance field's level sets are smooth curves however blocky the seed is, and the
   weights are chosen specifically to stay within 2% of Euclidean.
 
-If it is ever revisited: step the ramp on 32-block chunk edges rather than 8-block cells, and seed
-from vanilla's loaded footprint rather than range-clipped ownership.
+If it is ever revisited: step the ramp on 32-block chunk edges rather than 8-block cells. The
+"seed from vanilla's loaded footprint" half of this note is done.
 
 ## Seam blending and block textures: what is unproven
 

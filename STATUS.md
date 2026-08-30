@@ -2,20 +2,21 @@
 
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
-**Status date:** 2026-08-29
-**Mod version:** `0.3.152`, built, verified, and copy-installed. **Not human-tested:** the owner
-tested 0.3.151 and reported a one-chunk gap between cached and vanilla water, which 0.3.152's
-corrected dilation derivation addresses. The surface-slab behavior was human-tested and accepted
-in 0.3.142 and remains the default. The development line remains 0.3.x
-(`0.2.1` is the public released version; 0.4.0 remains a preserved local rollback artifact from the
-GPU-renderer milestone).
-**Active branch:** `codex/water-seam-transition`, branched from `94cde0e` on
-`codex/terrain-slabs-and-near-water`, itself branched from `a55fc5b` on
-`codex/seam-blending-and-block-textures`, itself branched from `master` at `21da6be` (the accepted
-0.3.127 baseline). The pre-session tree is preserved as
-`codex/checkpoint-pre-water-transition-20260829`. Not pushed.
+**Status date:** 2026-08-30
+**Mod version:** `0.3.160`, built, verified, and copy-installed. **Human-tested at 0.3.159** by
+the coverage audit reading 100% of the chunks the engine is drawing with zero cells hidden that it
+is not - one world, a 64-block vanilla view distance, first person. 0.3.160 is a logging change on
+top and its one new line has not been seen in a log. The surface-slab behavior was human-tested and
+accepted in 0.3.142 and remains the default. Cached water's derived footprint moved as a
+consequence of this session's ownership change and has **not** been looked at in play. The
+development line remains 0.3.x (`0.2.1` is the public released version; 0.4.0 remains a preserved
+local rollback artifact from the GPU-renderer milestone).
+**Active branch:** `codex/exact-vanilla-draw-range`, branched from `14bfe4b` on
+`codex/water-seam-transition`, itself from `94cde0e` on `codex/terrain-slabs-and-near-water`,
+itself from `a55fc5b` on `codex/seam-blending-and-block-textures`, itself from `master` at
+`21da6be` (the accepted 0.3.127 baseline). Not pushed.
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `77` C# files under `VintageHorizons/src`
+**Source files:** `78` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
@@ -497,12 +498,13 @@ effect on the reported tiny or three-to-six-second spikes.
 > after an exact camera-side plane test, before material lookup, tint, warp, seam, fog, and
 > projection; its contribution has not been isolated from the geometry reduction.
 
-> **Overlap and the near field.** Cached terrain takes ground back from vanilla 16 blocks earlier
-> than the geometric slack alone would allow, because vanilla unloads on its own schedule and
-> ownership is only withdrawn once loss is detected; that window left ground nothing was drawing.
-> The 48-block radius that suppressed cached terrain around the camera now defaults to zero, so
-> cached terrain is visible up close when the vanilla view distance is turned down. `.vhband
-> overlap` and `.vhnear` carry both.
+> **Overlap and the near field.** The 46-block sphere-placement slack is **gone as of 0.3.159**:
+> ownership reads the engine's own mesh bounding sphere and its own view distance instead of
+> bounding where that sphere might be, so cached terrain stops at the chunk vanilla stops drawing.
+> Cached terrain still takes ground back 16 blocks early, because vanilla unloads on its own
+> schedule and reading the sphere does not answer that; `.vhband overlap 0` removes it live. The
+> 48-block radius that suppressed cached terrain around the camera still defaults to zero.
+> `.vhexact off` restores the bounded rule wholesale.
 
 Current rendering edits world-anchor cached-terrain noise, remove the near-transition
 geometry sink, and replace the old outer cutoff with ownership the mod can actually prove.
@@ -630,13 +632,24 @@ while the counter still claims it.
   (`.vhgeom`, on by default). Empty and unmeasurable chunks count as drawn, so a wrong
   answer costs the correction rather than uncovering live terrain.
 - A wholly owned cached section may be dropped before drawing (`.vhskip`, on by default).
-- No cell further from the camera than the approved view distance owns anything, air
-  included, because the engine range-culls every terrain mesh per frame regardless of what
-  the chunk reports (0.3.16; counted as `denied beyond view distance`). The threshold is the
-  column's nearest face against `viewDistance - 46`, where 46 rounds up the in-chunk diagonal
-  `32*sqrt(2)`: the engine measures from the mesh's geometry-midpoint sphere centre, which can
-  sit anywhere in the chunk, so anything less leaves a residual stale ring. The cost is cached
-  terrain overlapping the outermost chunk and a half of live vanilla terrain.
+- No cell the engine is not drawing owns anything, air included, because the engine range-culls
+  every terrain mesh per frame regardless of what the chunk reports (0.3.16; counted as
+  `denied beyond view distance`). **Since 0.3.159 that test is the engine's own, not a bound on
+  it**: `VanillaDrawRangeState` transcribes `FrustumCulling.InFrustumAndRange` verbatim - float
+  rounding and all - and evaluates it against the sphere read from the chunk's own pool locations,
+  anchored to `player.Entity.Pos.AsBlockPos` and `culler.ViewDistanceSq` rather than to the camera
+  and the server-approved distance. The 46-block sphere-placement slack is therefore gone; only a
+  16-block early handover remains, covering vanilla unloading a chunk before a probe notices.
+  `.vhexact off` restores the bounded rule.
+- The rule runs only where an observation can change ownership. A first sighting gets one
+  denial - the column's nearest face against the widest bound any LOD level draws to - which is a
+  strict subset of what the exact rule refuses, so it can prune without deciding. Gating the exact
+  rule on ownership state while an approximation refused cells before they reached it is G133, and
+  it capped ownership at `viewDistance - 46` for four releases.
+- Committed cells carry the sphere they were granted on, and a per-frame sweep re-decides the whole
+  committed set from that stored state - no chunk lookup, no lock. It runs only when one of the
+  engine's own quantised inputs moves, so a settled view sweeps zero times. Loss only; gain still
+  goes through the ordinary two-observation path.
 - Air chunks stay owned in the tracker, preserving the column aggregate and the radial
   handoff, and are excluded from the mask texel so they can never suppress a fragment. The
   exclusion is stored per cell, so the wholesale atlas rebuild on every window change honours
@@ -644,11 +657,19 @@ while the counter still claims it.
 - The atlas is rebuilt from committed tracker state once per second and the corrections are
   counted, bounding any mirror desync to one second rather than permanently.
 
-**Diagnostics.** `.vhwhy` searches to the full draw distance and reports every engine signal
-per cell; `.vhholes` sweeps the window for owned cells the engine is not drawing, needing no
-aiming; `.vhpaint` paints hidden fragments red and suspends whole-mesh skipping so nothing
-escapes the paint; `.vhcoarse` explains coarse draws; `.vhgeom` and `.vhskip` isolate the two
-consumers of ownership. `VanillaChunkGeometry` binds `ClientChunk`'s internal mesh pool
+**Diagnostics.** `.vhexact audit` is the only report that asks the GAME what it is drawing rather
+than asking the mod what it believes: it walks the draw radius, evaluates the engine's whole
+predicate per chunk, and counts cells where the engine draws and the mask does not hide, with the
+misses broken out by the rule that let each through. Everything else measures the mod against
+itself and can agree with itself while being wrong about the picture. `.vhexact map` shows how much
+ground the exact rule reclaimed; `.vhskip why` reports why whole cached pieces are not dropped;
+`.vhwhy` searches to the full draw distance and reports every engine signal per cell, including the
+drawn counter, the bounding sphere and the pool levels; `.vhholes` sweeps the window for owned cells
+the engine is not drawing, needing no aiming; `.vhpaint` paints hidden fragments red and suspends
+whole-mesh skipping so nothing escapes the paint; `.vhcoarse` explains coarse draws; `.vhgeom` and
+`.vhskip` isolate the two consumers of ownership. `.vhinfo` and every `why`/`map`/`audit` report
+write to the client log, because the chat window cannot be scrolled back or copied out and the full
+status previously reached the log once, thirty seconds after joining. `VanillaChunkGeometry` binds `ClientChunk`'s internal mesh pool
 arrays by reflection and reports unavailable rather than guessing; the check tier asserts
 every binding, and the public culler fields, against the installed assembly.
 
@@ -1337,7 +1358,16 @@ Detailed tasks and human decisions are in `dev/TODO.md`.
 
 ## 8. Verification evidence
 
-The Session 64 close passes warning-free Release and Debug mod builds, 5,450 fast assertions, and
+The Session 69 close passes a warning-free Release build and **5,885 fast assertions**, including a
+new `vanilla draw range` suite that runs the installed game's own `FrustumCulling` object against
+the mod's transcription of its range clause over roughly half a million points, and asserts that
+the first-sighting gate can only refuse what the exact rule refuses (G133). The session's own
+acceptance evidence is a runtime measurement rather than a screenshot: `.vhexact audit` reported
+23 of 23 drawn chunks covered, zero uncovered and zero cells hidden with nothing drawing, at the
+default overlap margin. That is one world, a 64-block vanilla view distance, first person; cached
+water's derived footprint changed as a consequence and was not looked at.
+
+The Session 64 close passed warning-free Release and Debug mod builds, 5,450 fast assertions, and
 1,585 documentation checks, including 57 focused terrain-wall assertions that install and remove
 the real Harmony hooks in process without launching the game. The 0.3.127 zip has 14 entries, preserves the asset paths,
 contains the licence and no PDB or game dependency, reports the matching manifest version, and is

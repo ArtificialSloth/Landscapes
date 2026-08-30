@@ -263,6 +263,28 @@ public class LodTerrainRenderer : IRenderer
     public long ReadinessMaskResyncs { get; private set; }
 
     /// <summary>
+    /// Ownership decisions taken with the engine's own bounding sphere in hand, against those
+    /// taken from the conservative column bound. Together they say whether the exact rule is
+    /// actually carrying the boundary or is quietly unavailable: if `exact` stays at zero in a
+    /// normal view, the reflection binding or the culler read has failed and the overlap is
+    /// still the old 62 blocks wide, which nothing else on screen would reveal.
+    /// </summary>
+    public long ReadinessExactRangeDecisions { get; private set; }
+    public long ReadinessBoundedRangeDecisions { get; private set; }
+
+    /// <summary>
+    /// Cells demoted by the per-frame range sweep rather than by a probe. This is the number
+    /// that replaces <see cref="OverlapMarginBlocks"/>: each one is ground handed back to the
+    /// cache in the same frame the engine stopped drawing it, which is the work the margin
+    /// used to do in advance and approximately.
+    /// </summary>
+    public long ReadinessRangeSweepLosses { get; private set; }
+    public long ReadinessRangeSweeps { get; private set; }
+
+    /// <summary>Worst observed cost of one range sweep, in milliseconds.</summary>
+    public double ReadinessRangeSweepPeakMs { get; private set; }
+
+    /// <summary>
     /// Whether a chunk the engine claims while holding no mesh may own its cell.
     /// On by default and only meaningful with the chunk mask enabled. Exposed as a
     /// runtime toggle so a hole can be judged both ways in one place without a
@@ -271,6 +293,19 @@ public class LodTerrainRenderer : IRenderer
     /// only a person looking at the band can settle.
     /// </summary>
     public bool GeometryOwnershipRule { get; set; } = true;
+
+    /// <summary>
+    /// Whether ownership uses the engine's own bounding sphere for the range cull, instead of
+    /// bounding where that sphere might be.
+    ///
+    /// <para>
+    /// On is the exact rule and no overlap ring; off is 0.3.152's arithmetic bound and its
+    /// 62-block ring. A live toggle because the two produce a visibly different seam and the
+    /// only way to compare them honestly is to stand at one and switch, and because it is the
+    /// single switch that reverts this whole feature - the sweep below is gated on it too.
+    /// </para>
+    /// </summary>
+    public bool ExactDrawRange { get; set; } = true;
 
     /// <summary>
     /// Whether a wholly owned cached section may be dropped before it is drawn at all.
@@ -399,14 +434,33 @@ public class LodTerrainRenderer : IRenderer
     public float BandStrength { get; set; } = 1f;
 
     /// <summary>
-    /// How far the measured seam sits inside the one a player sees, in blocks. Ownership is
-    /// denied for the outermost chunk and a half of live vanilla terrain, so the field's zero
-    /// is that much short of where vanilla's ground really ends; without the shift the full
-    /// correction lands under live vanilla where nothing can see it. Defaults to the same
-    /// slack the denial itself uses, and is a knob because only looking at the seam can
-    /// settle whether the two agree in practice.
+    /// How far the measured seam sits inside the one a player sees, in blocks.
+    ///
+    /// <para>
+    /// The band measures from the ownership edge and has to correct terrain at the edge a
+    /// PLAYER sees, so it carries whatever gap ownership leaves between the two. That gap is
+    /// the refused ring, so this is derived from it rather than fixed: it was 46 blocks while
+    /// ownership was bounded, and it is zero once the exact rule puts the ownership edge on
+    /// vanilla's real one. A fixed 46 under the exact rule would start the blend 46 blocks
+    /// PAST the seam it exists to hide.
+    /// </para>
+    /// <para>
+    /// Negative means derive. `.vhband inner &lt;blocks&gt;` pins it and `.vhband inner auto`
+    /// gives it back, because only looking at the seam can settle whether the derivation and
+    /// the eye agree.
+    /// </para>
     /// </summary>
-    public float BandInnerBlocks { get; set; } = VanillaRenderReadiness.SphereCentreSlackBlocks;
+    public float BandInnerBlocks
+    {
+        get => bandInnerBlocks >= 0f ? bandInnerBlocks : RefusedOwnershipRingBlocks();
+        set => bandInnerBlocks = value < 0f ? -1f : value;
+    }
+
+    /// <summary>Negative derives from the refused ring; zero or more pins it.</summary>
+    float bandInnerBlocks = -1f;
+
+    /// <summary>Whether the band's inner shift is following the ownership rule or pinned.</summary>
+    public bool BandInnerDerived => bandInnerBlocks < 0f;
 
     /// <summary>
     /// Brightness multiply at full weight. The measured seam is 144.5 luminance on vanilla
@@ -871,6 +925,14 @@ public class LodTerrainRenderer : IRenderer
         ReadinessOwnedWithoutGeometry = 0;
         ReadinessOwnershipDeniedNoGeometry = 0;
         ReadinessOwnershipDeniedBeyondViewDistance = 0;
+        // Per interval like everything else here, so the exact/bounded split describes what
+        // the renderer is doing NOW. A lifetime total would stay dominated by whatever the
+        // first seconds after a join did, which is exactly when the answer is least settled.
+        ReadinessExactRangeDecisions = 0;
+        ReadinessBoundedRangeDecisions = 0;
+        ReadinessRangeSweeps = 0;
+        ReadinessRangeSweepLosses = 0;
+        ReadinessRangeSweepPeakMs = 0;
         ReadinessMaskResyncs = 0;
         ReadinessOwnedWithoutGeometryNearest = -1;
         ReadinessOwnedWithoutGeometryFarthest = -1;
@@ -1008,6 +1070,9 @@ public class LodTerrainRenderer : IRenderer
     bool readinessMaskFailed;
     bool readinessMaskActive;
     long waterFootprintRevision = -1;
+
+    /// <summary>The growth the current water footprint was built with, so a change to it rebuilds.</summary>
+    int waterFootprintDilation = -1;
     long readinessMaskUploadUs;
     VanillaSeamDistanceField? seamField;
     LoadedTexture? seamFieldTexture;
@@ -1021,6 +1086,9 @@ public class LodTerrainRenderer : IRenderer
     int seamFieldWindowMinChunkZ = int.MinValue;
     int seamFieldWindowWidth;
     int seamFieldWindowDepth;
+
+    /// <summary>The margin the live field was built with; -1 until it has been built once.</summary>
+    int seamFieldBuiltMarginCells = -1;
     bool seamFieldCapacityWarned;
 
     // ---- Real vanilla block textures -------------------------------------------------
@@ -1046,6 +1114,20 @@ public class LodTerrainRenderer : IRenderer
     long readinessLastFullRevalidateMs;
     bool readinessAggregateReported;
 
+    /// <summary>
+    /// This frame's copy of the engine's range-cull inputs, and the previous one.
+    ///
+    /// <para>
+    /// Captured before the probe loop so every decision in a frame uses one consistent set,
+    /// and kept so the sweep can tell whether anything it depends on actually moved. Both are
+    /// value types, so this holds no reference into the client.
+    /// </para>
+    /// </summary>
+    VanillaDrawRangeState drawRange;
+    VanillaDrawRangeState lastSweptDrawRange;
+    bool rangeSweepNow = true;
+    readonly List<VanillaChunkCell> rangeLosses = new();
+
     /// <summary>Meshes outside the residency band for one minute get evicted.</summary>
     const long EvictAfterMs = 60_000;
     const int MeshEvictionChecksPerFrame = 4;
@@ -1067,7 +1149,8 @@ public class LodTerrainRenderer : IRenderer
     bool shaderOk;
     bool indirectShaderOk;
     bool packedShaderOk;
-    bool reportedIndirectShaderOk;
+    /// <summary>Whether the one-line "shaders ready" report has been made since the last failure.</summary>
+    bool reportedShadersOk;
     bool reportedPackedShaderOk;
     IShaderProgram? hzbProg;
     bool hzbShaderOk;
@@ -1504,15 +1587,39 @@ public class LodTerrainRenderer : IRenderer
                 + "the expanded regional path remains available");
 
         // Said once, when it actually worked, so the log carries positive evidence rather
-        // than only the absence of a complaint. This line is the answer to "does the
-        // indirect variant compile on this driver at all".
-        if (indirectShaderOk && !reportedIndirectShaderOk)
+        // than only the absence of a complaint.
+        //
+        // G68 asked for this and only half of it was ever built: the indirect variant
+        // reported its success while the MAIN program - the one whose failure means no
+        // distant terrain at all - reported nothing but its failure. A log that can only
+        // complain cannot answer "did this work", and the engine's own startup summary
+        // replays the expected first-attempt link errors seconds later, so a reader sees
+        // three shader errors and no statement that anything compiled. That has now cost
+        // reading time twice, once in session 42 and once today.
+        //
+        // Re-armed on a real failure, so a driver that breaks on one reload and recovers on
+        // the next says so instead of going quiet after its first success.
+        if (!shaderOk && !ShaderLoadIsProvisional) reportedShadersOk = false;
+
+        if (shaderOk && !reportedShadersOk)
         {
-            reportedIndirectShaderOk = true;
+            reportedShadersOk = true;
             capi.Logger.Notification(
-                "[VintageHorizons] the indirect lodterrain variant compiled after {0} "
-                + "attempt(s); batched drawing is available behind .vhgpu on and .vhindirect on",
-                shaderLoadAttempts);
+                "[VintageHorizons] shaders ready after {0} attempt(s): distant terrain {1}, "
+                + "packed path {2}, indirect path {3}, depth pyramid {4}.{5}",
+                shaderLoadAttempts,
+                shaderOk ? "ok" : "FAILED",
+                packedShaderOk ? "ok" : "unavailable",
+                indirectShaderOk ? "ok" : "unavailable",
+                hzbShaderOk ? "ok" : "unavailable",
+                shaderLoadAttempts > 1
+                    // Named here rather than left to be inferred, because the errors it
+                    // explains are logged by the ENGINE, above this line, and look identical
+                    // to a genuine compile failure.
+                    ? " The earlier link errors for lodterrain are expected: the first attempt"
+                        + " runs before the engine has filled its shader include table from mod"
+                        + " assets, and the reload after it is the one that counts."
+                    : string.Empty);
         }
 
         return shaderOk;
@@ -2304,14 +2411,127 @@ public class LodTerrainRenderer : IRenderer
         return Math.Max(0, distance);
     }
 
+    /// <summary>
+    /// Reads the engine's own range-cull inputs for this frame, or returns an unavailable
+    /// state that keeps every caller on the conservative bound.
+    ///
+    /// <para>
+    /// `IRenderAPI.DefaultFrustumCuller` is public API and hands back `ClientMain.frustumCuller`
+    /// itself - the same instance `MeshDataPool.FrustumCull` consults microseconds later in the
+    /// same opaque stage. `ClientMain` fills it in immediately before triggering that stage, so
+    /// a value read from a render callback is this frame's, not last frame's, whatever order
+    /// the callbacks run in. No reflection and no timing assumption.
+    /// </para>
+    /// <para>
+    /// Two inputs are deliberately not the ones this renderer uses elsewhere:
+    /// </para>
+    /// <para>
+    /// The anchor is the PLAYER's block position, because that is what `CalcFrustumEquations`
+    /// is handed. Everything else here measures from `Entity.CameraPos`, which in third person
+    /// trails the player by several blocks - and the engine does not care where the camera is
+    /// when it decides how far it will draw.
+    /// </para>
+    /// <para>
+    /// The distance is the culler's own `ViewDistanceSq`, which `UpdateViewDistance` fills from
+    /// `ClientSettings.ViewDistance` - the CLIENT setting, not the server-approved value
+    /// `ApprovedViewDistance` returns. On a server that caps view distance the two differ, and
+    /// only the client's decides what the engine draws.
+    /// </para>
+    /// </summary>
+    VanillaDrawRangeState CaptureDrawRange()
+    {
+        try
+        {
+            FrustumCulling? culler = capi.Render.DefaultFrustumCuller;
+            if (culler == null || culler.ViewDistanceSq <= 0) return default;
+            EntityPos pos = capi.World.Player.Entity.Pos;
+            // `AsBlockPos` truncates rather than floors. Reproduced rather than corrected:
+            // world coordinates here are non-negative, and matching the engine matters more
+            // than being right about a case that cannot arise.
+            return new VanillaDrawRangeState((int)pos.X, (int)pos.Z,
+                culler.ViewDistanceSq, culler.lod0BiasSq, culler.lod2BiasSq);
+        }
+        catch
+        {
+            return default;
+        }
+    }
+
+    /// <summary>
+    /// Withdraws ownership from every committed cell the engine's range clause has stopped
+    /// admitting, in the frame it stops admitting it.
+    ///
+    /// <para>
+    /// This is the half of the exact rule that lets the overlap margin go to zero. Loss used to
+    /// wait for a probe, and probes come round about once a second, so cached terrain had to
+    /// give ground back early - 16 blocks of guessing at how far the player might travel before
+    /// anyone checked. Nothing here needs a probe: the sphere was recorded when the cell was
+    /// committed and the player's block position is already in hand, so the same decision can
+    /// be re-made for the whole committed set immediately.
+    /// </para>
+    /// <para>
+    /// It runs only when one of the engine's own quantised inputs has changed. That is not a
+    /// budget or a cadence - it is the observation that none of those inputs varies
+    /// continuously: `AsBlockPos` truncates to whole blocks, and the biases come from settings.
+    /// A settled view sweeps zero times; walking sweeps once per block.
+    /// </para>
+    /// <para>
+    /// Loss only. A cell whose range starts admitting it again is left for the ordinary probe
+    /// path, which is the plan's fast-loss/cautious-gain rule: gaining early costs an overlap,
+    /// losing late costs a hole.
+    /// </para>
+    /// </summary>
+    void SweepRangeLosses(long frameCounter)
+    {
+        if (readiness == null || !ExactDrawRange || !ChunkMaskEnabled) return;
+        if (!drawRange.Available) return;
+        if (!rangeSweepNow && !drawRange.DiffersFrom(lastSweptDrawRange)) return;
+
+        rangeSweepNow = false;
+        lastSweptDrawRange = drawRange;
+        ReadinessRangeSweeps++;
+
+        long started = Stopwatch.GetTimestamp();
+        readiness.CollectRangeLosses(drawRange, rangeLosses, OverlapMarginBlocks);
+        foreach (VanillaChunkCell cell in rangeLosses)
+        {
+            // Straight through the ordinary publication handshake, so a sweep-driven loss is
+            // indistinguishable downstream from a probe-driven one and cannot get ahead of the
+            // texture the shader reads.
+            if (!readiness.Observe(cell, rendered: false, frameCounter,
+                out VanillaReadinessPublication publication)) continue;
+            if (!readiness.ResolvePublication(publication, accepted: true)) continue;
+
+            readiness.ClearDrawSphere(cell);
+            readinessMask?.Set(publication.Cell, false);
+            readinessHandoffStale = true;
+            ReadinessLostTransitions++;
+            ReadinessRangeSweepLosses++;
+        }
+
+        double elapsedMs = (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
+        if (elapsedMs > ReadinessRangeSweepPeakMs) ReadinessRangeSweepPeakMs = elapsedMs;
+    }
+
     void UpdateReadinessShadow(float viewDistance)
     {
         if (readinessDisabled) return;
+
+        // Read once per frame, before anything consults it, so every ownership decision and
+        // the sweep all agree about where the player is and how far the engine draws. Reading
+        // it per decision would let the player cross a block boundary halfway through a probe
+        // batch and decide two halves of one frontier against two different anchors.
+        drawRange = CaptureDrawRange();
+
         if (capi.World.Player.Entity.Pos.Dimension != 0)
         {
             readiness?.Clear();
             readinessSeedCursor = readinessBoundaryCursor = readinessInteriorCursor = 0;
             readinessOwnsHandoff = false;
+            // Another dimension's spheres decide nothing here, and the sweep must not compare
+            // this world's player position against them.
+            lastSweptDrawRange = default;
+            rangeSweepNow = true;
             // Ownership belongs to the world it was measured in. Leaving the default
             // dimension must return every cell to the cache rather than keep suppressing
             // terrain with another world's readiness.
@@ -2339,6 +2559,7 @@ public class LodTerrainRenderer : IRenderer
                 readiness.ColumnEvicted = (chunkX, chunkZ) => readinessMask?.ClearColumn(chunkX, chunkZ);
                 readinessSeedCursor = readinessBoundaryCursor = readinessInteriorCursor = 0;
                 readinessHandoffStale = true;
+                rangeSweepNow = true;
                 ReadinessResizes++;
                 if (chunkMaskRequested && !readinessMaskFailed)
                 {
@@ -2375,6 +2596,7 @@ public class LodTerrainRenderer : IRenderer
                 readinessBoundaryCursor = 0;
                 readinessHandoffStale = true;
                 readinessSweepShellNow = true;
+                rangeSweepNow = true;
                 ReadinessWindowChanges++;
                 // Departing columns were cleared inside the tracker; rebuilding is what
                 // keeps a reused ring slot from carrying another place's ownership.
@@ -2479,7 +2701,19 @@ public class LodTerrainRenderer : IRenderer
                 bool atOwnershipDecision = decisionState is VanillaReadinessState.ObservedRendered
                     or VanillaReadinessState.VanillaReady;
 
-                if (rendered && atOwnershipDecision) MeasureDrawnChunk(cell, camPos.X, camPos.Z);
+                // One lookup, three consumers. Each of the rules below used to fetch the
+                // chunk for itself, so an ownership decision could take the client's chunk
+                // lock three times over - the lock G45 is about, at the moment the probe
+                // queue is longest. Fetching once here is what pays for the range rule
+                // needing the chunk at all: it is a net reduction in lock traffic, not an
+                // addition.
+                IWorldChunk? decisionChunk = null;
+                if (rendered && atOwnershipDecision)
+                {
+                    try { decisionChunk = capi.World.BlockAccessor.GetChunk(cell.X, cell.Y, cell.Z); }
+                    catch { decisionChunk = null; }
+                    MeasureDrawnChunk(cell, decisionChunk, camPos.X, camPos.Z);
+                }
 
                 // Beyond the view distance the engine draws nothing here, whatever every
                 // other signal says. It range-culls each terrain pool location per frame
@@ -2490,19 +2724,111 @@ public class LodTerrainRenderer : IRenderer
                 // committed forever, and the mask discards cached terrain there against
                 // nothing - a band at the seam, on the trailing side only, that never heals.
                 //
-                // Air is denied here too, unlike the geometry rule below. Beyond this range
-                // vanilla owns nothing at all, so whole columns must demote together; that
-                // is also what releases the section aggregates the whole-mesh skip reads.
+                // Two rules, not one, and which applies depends on whether the engine's own
+                // measurement is readable for this chunk:
+                //
+                //   exact - the chunk holds drawable meshes, so its bounding sphere and its
+                //           pool levels can be read and the engine's clause evaluated as
+                //           written. No slack, because nothing is being guessed.
+                //
+                //   bound - air, an unmeshed chunk, or an unavailable binding. Falls back to
+                //           the column, which is all there is without a sphere. Note this is
+                //           NOT what 0.3.152 did: it ran the bounded rule on every probe
+                //           including first sightings, and that is what deadlocked ownership
+                //           at small view distances.
+                //
+                // Air is denied by the bound too, unlike the geometry rule below. Beyond this
+                // range vanilla owns nothing at all, so whole columns must demote together;
+                // that is also what releases the section aggregates the whole-mesh skip reads.
                 //
                 // Gated on the mask for the same reason as the geometry rule: the default
                 // radial-handoff path is benchmarked as it stands, and demoting the annulus
                 // would pull its single global radius in for every column.
-                if (rendered && ChunkMaskEnabled
-                    && VanillaRenderReadiness.BeyondVanillaDrawRange(
-                        cell.X, cell.Z, camPos.X, camPos.Z, viewDistance, OverlapMarginBlocks))
+                // Only where an observation can actually change ownership, and that gate is the
+                // whole point rather than an optimisation.
+                //
+                // A first sighting moves a cell from Unknown to ObservedRendered and commits
+                // nothing: no aggregate moves, no texel is written, nothing is suppressed. The
+                // range rule exists to stop OWNERSHIP, so applying it here refuses nothing
+                // useful - and it used to refuse the cell's whole future.
+                //
+                // 0.3.154 through 0.3.157 ran the bounded fallback on first sightings, because
+                // the exact rule needs the chunk and a first sighting had not fetched one. The
+                // bounded threshold is `viewDistance - 46`, and at a 64-block vanilla view
+                // distance that is 18 blocks - so a chunk 28 blocks away, meshed, cull-visible
+                // and well inside the 67 blocks the engine actually draws to, was denied, stayed
+                // Pending, never became an ownership decision, and therefore never got the exact
+                // rule that would have admitted it. A deadlock: the accurate rule was gated on
+                // already being on the path that the inaccurate rule prevented reaching. At a
+                // 32-block view distance the gate is zero and ownership is impossible outright.
+                // `.vhexact audit` measured it: 7 of 15 drawn chunks uncovered, every one of
+                // them Pending, the nearest at 28 blocks.
+                // A first sighting still gets ONE denial, and only one that cannot deadlock:
+                // the column's nearest face against the widest bound any LOD level draws to.
+                // The centre is inside the column so it is at least this far away, which makes
+                // everything refused here a strict subset of what the exact rule refuses - so
+                // no cell is kept out of the ownership path that could have stayed on it.
+                //
+                // Without this, every loaded chunk outside the draw range costs two probes and
+                // an observation slot per cycle instead of one, because it has to reach
+                // ObservedRendered before anything is allowed to turn it away. That is most of
+                // the window at a small view distance.
+                if (rendered && ChunkMaskEnabled && !atOwnershipDecision
+                    && ExactDrawRange && drawRange.Available
+                    && drawRange.ColumnCertainlyNotDrawn(cell.X, cell.Z, OverlapMarginBlocks))
                 {
                     rendered = false;
                     ReadinessOwnershipDeniedBeyondViewDistance++;
+                }
+
+                if (rendered && ChunkMaskEnabled && atOwnershipDecision)
+                {
+                    float centreX = 0f, centreZ = 0f;
+                    int lodMask = 0;
+                    bool exact = ExactDrawRange && drawRange.Available
+                        && VanillaChunkGeometry.TryReadDrawBounds(
+                            decisionChunk, out centreX, out centreZ, out lodMask);
+
+                    bool denied;
+                    if (exact)
+                    {
+                        denied = !drawRange.DrawsWithMargin(
+                            centreX, centreZ, lodMask, OverlapMarginBlocks);
+                        // Recorded whether or not this cell is granted, because the sweep has
+                        // to be able to re-decide it later without the chunk. Cleared when it
+                        // is denied, so a demoted cell cannot be re-tested from a sphere that
+                        // no longer decides anything.
+                        if (denied) readiness.ClearDrawSphere(cell);
+                        else readiness.SetDrawSphere(cell, centreX, centreZ, lodMask);
+                        ReadinessExactRangeDecisions++;
+                    }
+                    else
+                    {
+                        // Air, an unmeshed chunk, or an unavailable binding: there is no sphere
+                        // to read, so the column is all there is to go on.
+                        //
+                        // With the exact rule active that means the column's nearest face
+                        // against the widest bound - the same sound test the first-sighting gate
+                        // uses. `viewDistance - 46` is NOT used here any more: it is 18 blocks at
+                        // a 64-block view distance, so it refused every air cell past half a
+                        // chunk, and air cells are most of a column. That under-reported ownership
+                        // in `ready per Y` badly enough to send this investigation after the wrong
+                        // cause twice. Air can only ever cost accuracy here, never a pixel: an air
+                        // cell is excluded from the mask (G40), so it suppresses nothing whatever
+                        // it owns, and its only consumers are the column aggregate and telemetry.
+                        denied = ExactDrawRange && drawRange.Available
+                            ? drawRange.ColumnCertainlyNotDrawn(cell.X, cell.Z, OverlapMarginBlocks)
+                            : VanillaRenderReadiness.BeyondVanillaDrawRange(
+                                cell.X, cell.Z, camPos.X, camPos.Z, viewDistance, OverlapMarginBlocks);
+                        readiness.ClearDrawSphere(cell);
+                        ReadinessBoundedRangeDecisions++;
+                    }
+
+                    if (denied)
+                    {
+                        rendered = false;
+                        ReadinessOwnershipDeniedBeyondViewDistance++;
+                    }
                 }
 
                 // The confirmed hole: the engine's drawn counter is set once and never
@@ -2519,7 +2845,7 @@ public class LodTerrainRenderer : IRenderer
                 // "nearest incomplete" and "owned draws skipped" from a mask-on run.
                 if (rendered && atOwnershipDecision && ChunkMaskEnabled && GeometryOwnershipRule
                     && VanillaChunkGeometry.Available
-                    && !VanillaChunkHoldsDrawableGround(cell))
+                    && !VanillaChunkHoldsDrawableGround(decisionChunk))
                 {
                     rendered = false;
                     ReadinessOwnershipDeniedNoGeometry++;
@@ -2542,6 +2868,10 @@ public class LodTerrainRenderer : IRenderer
                 if (publication.Ready) ReadinessReadyTransitions++;
                 else ReadinessLostTransitions++;
             }
+
+            // After the probes, so a cell committed this frame is swept with the sphere the
+            // probe just recorded rather than a frame later.
+            SweepRangeLosses(frameCounter);
 
             // Ownership the tracker can actually prove, converted into the radius the
             // fragment shader already understands. Uncertainty anywhere - an unowned
@@ -2576,6 +2906,11 @@ public class LodTerrainRenderer : IRenderer
             readiness = null;
             readinessDisabled = true;
             readinessOwnsHandoff = false;
+            // Everything derived from the exact rule has to fall back with it. Leaving a
+            // usable range state behind would keep the refused ring at zero - and water's
+            // footprint with it - while nothing is measuring anything any more.
+            drawRange = default;
+            lastSweptDrawRange = default;
             DisableReadinessMask();
             if (!readinessFailureReported)
             {
@@ -2693,8 +3028,17 @@ public class LodTerrainRenderer : IRenderer
             // that used to make this report say "engine is drawing this chunk" about ground
             // nothing was drawing: every terrain pool location is range-culled per frame
             // against the view distance, and none of the flags above follow.
-            bool beyondDrawRange = VanillaRenderReadiness.BeyondVanillaDrawRange(
-                cell.X, cell.Z, startX, startZ, viewDistance, OverlapMarginBlocks);
+            //
+            // Answered by whichever rule ownership itself used, never by the conservative
+            // bound alone. The two differ by up to 62 blocks, so quoting the bound while
+            // ownership ran on the measurement would report a hole in every column inside
+            // that ring - a search whose whole job is finding real ones (G72).
+            bool beyondDrawRange = ExactDrawRange && drawRange.Available
+                && VanillaChunkGeometry.TryReadDrawBounds(
+                    vanillaChunk, out float holeCentreX, out float holeCentreZ, out int holeLods)
+                ? !drawRange.DrawsWithMargin(holeCentreX, holeCentreZ, holeLods, OverlapMarginBlocks)
+                : VanillaRenderReadiness.BeyondVanillaDrawRange(
+                    cell.X, cell.Z, startX, startZ, viewDistance, OverlapMarginBlocks);
 
             // Ground can be drawn by any level, so report all of them. A single verdict has
             // twice now been read as evidence when it was describing a different level than
@@ -2801,13 +3145,40 @@ public class LodTerrainRenderer : IRenderer
         // pool location per frame, so a chunk this far out is not drawn however loaded,
         // meshed, unhidden and cull-visible it reports itself to be - which is exactly what
         // this report used to describe as "engine is drawing this chunk".
+        //
+        // Answered by whichever rule ownership itself would use, and the report says which.
+        // The two disagree by up to 62 blocks, so a report that quoted one while ownership
+        // used the other would describe a boundary that is not the one on screen.
         float viewDistance = ApprovedViewDistance();
-        bool beyondDrawRange = VanillaRenderReadiness.BeyondVanillaDrawRange(
-            cell.X, cell.Z, camPos.X, camPos.Z, viewDistance);
+        string rangeDetail;
+        bool beyondDrawRange;
+        if (ExactDrawRange && drawRange.Available
+            && VanillaChunkGeometry.TryReadDrawBounds(
+                vanillaChunk, out float sphereX, out float sphereZ, out int cellLodMask))
+        {
+            beyondDrawRange = !drawRange.DrawsWithMargin(
+                sphereX, sphereZ, cellLodMask, OverlapMarginBlocks);
+            double centreDistance = Math.Sqrt(VanillaDrawRangeState.HorizontalDistanceSq(
+                drawRange.PlayerBlockX, drawRange.PlayerBlockZ, sphereX, sphereZ));
+            rangeDetail = $"measured: the game draws this chunk from a point {centreDistance:0.0} "
+                + $"blocks away and stops at {Math.Sqrt(drawRange.ViewDistanceSq):0}, "
+                + $"less a {OverlapMarginBlocks:0}-block early handover "
+                + $"(pools {VanillaChunkGeometry.LodMaskText(cellLodMask)})";
+        }
+        else
+        {
+            beyondDrawRange = VanillaRenderReadiness.BeyondVanillaDrawRange(
+                cell.X, cell.Z, camPos.X, camPos.Z, viewDistance, OverlapMarginBlocks);
+            double faceDistance = VanillaRenderReadiness.ColumnDistanceBlocksFrom(
+                cell.X, cell.Z, camPos.X, camPos.Z);
+            rangeDetail = $"estimated: nearest face {faceDistance:0.0} blocks against a "
+                + $"{Math.Max(0f, viewDistance - VanillaRenderReadiness.SphereCentreSlackBlocks - Math.Max(0f, OverlapMarginBlocks)):0}-block "
+                + "limit, because this chunk holds no readable mesh";
+        }
         string vanillaHolds = vanillaChunk == null ? "chunk not loaded"
             : vanillaChunk.Empty ? "chunk is empty (air)"
             : beyondDrawRange
-                ? $"chunk is beyond the {viewDistance:0}-block draw range, so the engine range-culls it"
+                ? $"chunk is beyond the draw range, so the engine range-culls it -- {rangeDetail}"
             : !geometryKnown ? "engine draw state unavailable"
             : drawingNow ? "engine is drawing this chunk"
             : "engine is NOT drawing this chunk";
@@ -2829,7 +3200,11 @@ public class LodTerrainRenderer : IRenderer
             + (suppressed && !beyondDrawRange && renderedNow && vanillaChunk is { Empty: false }
                     && geometryKnown && !holdsGeometry
                 ? " -- NOTHING DRAWS THIS: suppressed cache, and the engine claims the chunk without holding terrain"
-                : "");
+                : "")
+            // Printed for every cell, not only the ones that fail. The question this report is
+            // asked at a seam is "why does the boundary sit here", and the range clause is the
+            // one term whose answer is a number rather than a flag.
+            + $"; range {rangeDetail}";
     }
 
     /// <summary>
@@ -2874,11 +3249,47 @@ public class LodTerrainRenderer : IRenderer
     {
         if (waterEdgeChunks >= 0) return waterEdgeChunks;
 
-        float ring = VanillaRenderReadiness.SphereCentreSlackBlocks
-            + Math.Max(0f, OverlapMarginBlocks);
+        float ring = RefusedOwnershipRingBlocks();
         float remaining = ring - VanillaReadinessMask.ChunkBlocks;
         return Math.Clamp(
             (int)Math.Ceiling(Math.Max(0f, remaining) / VanillaReadinessMask.ChunkBlocks), 0, 8);
+    }
+
+    /// <summary>
+    /// How far inside vanilla's real edge ground ownership currently stops, in blocks.
+    ///
+    /// <para>
+    /// Under the exact rule this is the early handover ALONE - 16 blocks at the defaults,
+    /// against 62 before - because the 46 blocks of sphere-placement slack are what reading
+    /// the sphere removes. The margin itself stays: it covers a different thing, which is
+    /// vanilla unloading a chunk that is still inside its draw range. Neither the sphere nor
+    /// the player position can see an unload coming, so that one is still bounded by how
+    /// quickly a probe gets back to the cell - about a second - and the early handover is
+    /// what covers the gap. `.vhband overlap 0` takes it away live for anyone who wants the
+    /// boundary exact and will accept the risk.
+    /// </para>
+    /// <para>
+    /// Everything derived from the ring has to follow it, or the derivation describes a
+    /// boundary that is no longer there. Water is the one that shows: its footprint is the
+    /// ground one grown by whatever the ring refused, so leaving the growth at a chunk while
+    /// ground reaches vanilla's true edge would put cached water a chunk INSIDE vanilla's own -
+    /// the flat sheet standing in live terrain that 0.3.152 removed. At a 16-block ring the
+    /// growth derives to zero, which is the correct answer and not a coincidence: the refusal
+    /// measures to the nearest face, so the outermost owned chunk already reaches a full chunk
+    /// past the threshold (G132).
+    /// </para>
+    /// <para>
+    /// The three conditions are exactly what the exact path needs to be reachable at all: the
+    /// switch, the engine's culler, and the mesh binding. A chunk can still fall back
+    /// individually - air, or no mesh - but those hold no water for the footprint to be wrong
+    /// about.
+    /// </para>
+    /// </summary>
+    float RefusedOwnershipRingBlocks()
+    {
+        float margin = Math.Max(0f, OverlapMarginBlocks);
+        if (ExactDrawRange && drawRange.Available && VanillaChunkGeometry.Available) return margin;
+        return VanillaRenderReadiness.SphereCentreSlackBlocks + margin;
     }
 
     void PublishReadinessMask()
@@ -2889,12 +3300,21 @@ public class LodTerrainRenderer : IRenderer
         // ownership has moved and before the atlas is uploaded. Keyed on the mask's revision
         // rather than on Dirty: upload clears Dirty, and a rebuild that ran after the upload
         // would sit in the buffer unseen until something else happened to dirty it.
-        if (readiness != null && waterFootprintRevision != readinessMask.Revision)
+        //
+        // The dilation itself is the second trigger, and it needs its own: it changes when the
+        // refused ring changes - `.vhexact`, `.vhband overlap`, `.vhwater edge`, or the exact
+        // path becoming unavailable - and none of those touches ownership, so a revision-only
+        // gate would leave water on the old growth until something unrelated moved the mask
+        // (G66: a switch that changes how the renderer decides must invalidate what it decided).
+        int dilation = WaterFootprintDilationChunks();
+        if (readiness != null
+            && (waterFootprintRevision != readinessMask.Revision || waterFootprintDilation != dilation))
         {
             readinessMask.RebuildWaterFootprint(
                 readiness.ActiveMinChunkX, readiness.ActiveMinChunkZ,
-                readiness.ActiveWidth, readiness.ActiveDepth, WaterFootprintDilationChunks());
+                readiness.ActiveWidth, readiness.ActiveDepth, dilation);
             waterFootprintRevision = readinessMask.Revision;
+            waterFootprintDilation = dilation;
         }
 
         if (!readinessMask.Dirty && readinessMaskActive) return;
@@ -3066,10 +3486,18 @@ public class LodTerrainRenderer : IRenderer
 
             // A moved window rebuilds on the spot. The ring hands a reused slot to different
             // world coordinates, so anything else would address another place's distance.
+            //
+            // A changed margin does too, and it needs saying separately: the margin follows
+            // the band's inner offset, which follows the refused ring, which `.vhexact` moves
+            // by 46 blocks in one step. The capacity above only reacts when that crosses a
+            // power of two, so without this the field would keep serving distances built for
+            // a reach it no longer has - a switch that changed how the renderer decides
+            // without invalidating what it decided (G66).
             bool windowMoved = seamFieldWindowMinChunkX != readiness.ActiveMinChunkX
                 || seamFieldWindowMinChunkZ != readiness.ActiveMinChunkZ
                 || seamFieldWindowWidth != readiness.ActiveWidth
-                || seamFieldWindowDepth != readiness.ActiveDepth;
+                || seamFieldWindowDepth != readiness.ActiveDepth
+                || seamFieldBuiltMarginCells != marginCells;
             long now = capi.ElapsedMilliseconds;
             bool ownershipMoved = seamFieldBuiltRevision != readinessMask.Revision;
 
@@ -3088,6 +3516,7 @@ public class LodTerrainRenderer : IRenderer
                 seamFieldWindowMinChunkZ = readiness.ActiveMinChunkZ;
                 seamFieldWindowWidth = readiness.ActiveWidth;
                 seamFieldWindowDepth = readiness.ActiveDepth;
+                seamFieldBuiltMarginCells = marginCells;
             }
 
             if (!seamField.Dirty && seamFieldActive) return;
@@ -3389,11 +3818,10 @@ public class LodTerrainRenderer : IRenderer
     /// it. An unmeasurable chunk qualifies, so a game update can only cost the fix, never
     /// open the cache over live terrain.
     /// </summary>
-    bool VanillaChunkHoldsDrawableGround(VanillaChunkCell cell)
+    bool VanillaChunkHoldsDrawableGround(IWorldChunk? chunk)
     {
         try
         {
-            IWorldChunk? chunk = capi.World.BlockAccessor.GetChunk(cell.X, cell.Y, cell.Z);
             if (chunk == null) return true;
             return !VanillaChunkGeometry.TryIsVanillaDrawing(chunk, out bool drawing) || drawing;
         }
@@ -3403,11 +3831,10 @@ public class LodTerrainRenderer : IRenderer
         }
     }
 
-    void MeasureDrawnChunk(VanillaChunkCell cell, double cameraX, double cameraZ)
+    void MeasureDrawnChunk(VanillaChunkCell cell, IWorldChunk? chunk, double cameraX, double cameraZ)
     {
         try
         {
-            IWorldChunk? chunk = capi.World.BlockAccessor.GetChunk(cell.X, cell.Y, cell.Z);
             if (chunk == null) return;
 
             if (chunk.Empty)
@@ -3500,6 +3927,7 @@ public class LodTerrainRenderer : IRenderer
             + $"{ReadinessReadyTransitions} ready/{ReadinessLostTransitions} lost transitions, "
             + $"{ReadinessProbeErrors} errors, {ReadinessWindowChanges} window changes/{ReadinessResizes} resizes, "
             + $"{ReadinessFullRevalidations} full revalidations, "
+            + $"range {ExactRangeState()}, "
             + $"{ReadinessStaleCommittedFound} stale committed found/{ReadinessAggregateRepairs} count repairs, "
             + $"{ReadinessEmptyChunksSeen} drawn-but-empty/{ReadinessDrawnWithoutGeometry} drawn-without-geometry chunks, "
             + $"owned without geometry {ReadinessOwnedWithoutGeometry} at {ReadinessOwnedWithoutGeometryNearest:0}-{ReadinessOwnedWithoutGeometryFarthest:0} blocks per Y {readinessNoGeometryText}, {ReadinessOwnershipDeniedNoGeometry} ownership denied no-geometry/{ReadinessOwnershipDeniedBeyondViewDistance} denied beyond view distance/{ReadinessMaskResyncs} mask resyncs, "
@@ -3528,6 +3956,497 @@ public class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
+    /// How much ground the exact rule is actually taking back, measured on the running client
+    /// and written to the log.
+    ///
+    /// <para>
+    /// This exists because the change it reports on is invisible from inside the game. Both
+    /// rules draw terrain everywhere; they differ only in how far cached terrain keeps drawing
+    /// on top of vanilla's, and a seam that overlaps by two chunks and one that does not look
+    /// like the same seam from anywhere except a spot the player has to find. The map prints
+    /// the disagreement directly: which columns the old bound would have refused and the
+    /// engine's own measurement grants.
+    /// </para>
+    /// <para>
+    /// Read entirely from tracker state - the recorded spheres and the committed cells - so it
+    /// takes no chunk lock however large the window is, and reports what ownership actually
+    /// did rather than what a fresh probe would say now.
+    /// </para>
+    /// </summary>
+    public string LogExactRangeMap()
+    {
+        if (readiness == null) return "no readiness tracker: " + ExactRangeState();
+
+        float viewDistance = ApprovedViewDistance();
+        double exactEdge = drawRange.Available
+            ? Math.Sqrt(drawRange.ViewDistanceSq) - Math.Max(0f, OverlapMarginBlocks)
+            : 0;
+        double boundedEdge = Math.Max(0f, viewDistance
+            - VanillaRenderReadiness.SphereCentreSlackBlocks - Math.Max(0f, OverlapMarginBlocks));
+
+        int camChunkX = VanillaRenderReadiness.ChunkCoordinate(camPos.X);
+        int camChunkZ = VanillaRenderReadiness.ChunkCoordinate(camPos.Z);
+        int stride = Math.Max(1, readiness.ActiveWidth / 96);
+
+        int reclaimed = 0, measured = 0, bounded = 0, ownedColumns = 0;
+        double nearestReclaimed = double.MaxValue, farthestReclaimed = 0;
+
+        var map = new StringBuilder();
+        for (int z = 0; z < readiness.ActiveDepth; z += stride)
+        {
+            map.Append('\n').Append("    ");
+            for (int x = 0; x < readiness.ActiveWidth; x += stride)
+            {
+                int chunkX = readiness.ActiveMinChunkX + x;
+                int chunkZ = readiness.ActiveMinChunkZ + z;
+                if (chunkX == camChunkX && chunkZ == camChunkZ) { map.Append('+'); continue; }
+
+                bool owned = false, hasSphere = false;
+                for (int y = 0; y < readiness.VerticalChunks; y++)
+                {
+                    var cell = new VanillaChunkCell(chunkX, y, chunkZ);
+                    if (readiness.State(cell) != VanillaReadinessState.VanillaReady) continue;
+                    owned = true;
+                    if (readiness.TryGetDrawSphere(cell, out _, out _, out _)) { hasSphere = true; break; }
+                }
+
+                if (!owned) { map.Append('.'); continue; }
+                ownedColumns++;
+
+                bool boundWouldDeny = VanillaRenderReadiness.BeyondVanillaDrawRange(
+                    chunkX, chunkZ, camPos.X, camPos.Z, viewDistance, OverlapMarginBlocks);
+
+                if (hasSphere && boundWouldDeny)
+                {
+                    // The whole point: ground the old rule handed back to cached terrain and
+                    // the engine's own measurement says vanilla is still drawing.
+                    reclaimed++;
+                    double distance = VanillaRenderReadiness.ColumnDistanceBlocksFrom(
+                        chunkX, chunkZ, camPos.X, camPos.Z);
+                    if (distance < nearestReclaimed) nearestReclaimed = distance;
+                    if (distance > farthestReclaimed) farthestReclaimed = distance;
+                    map.Append('X');
+                }
+                else if (hasSphere) { measured++; map.Append('#'); }
+                else { bounded++; map.Append('B'); }
+            }
+        }
+
+        string reclaimedRing = reclaimed == 0
+            ? "none"
+            : $"{nearestReclaimed:0}-{farthestReclaimed:0} blocks out";
+
+        var report = new StringBuilder();
+        report.Append("[VintageHorizons] draw-range ownership map: ")
+            .Append(readiness.ActiveWidth).Append('x').Append(readiness.ActiveDepth)
+            .Append(" chunk columns, ").Append(ownedColumns).Append(" owned (")
+            .Append(measured).Append(" by the engine's own sphere, ")
+            .Append(bounded).Append(" by the conservative bound, ")
+            .Append(reclaimed).Append(" reclaimed from the old overlap ring at ")
+            .Append(reclaimedRing).Append("). ")
+            .Append("The old rule stopped ownership at ").Append($"{boundedEdge:0}")
+            .Append(" blocks; the engine actually draws to ").Append($"{exactEdge:0}")
+            .Append(" blocks, a ring ").Append($"{Math.Max(0, exactEdge - boundedEdge):0}")
+            .Append(" blocks wide. '#' measured, 'X' reclaimed, 'B' bounded, '.' not owned, ")
+            .Append("'+' the camera's own column.")
+            .Append(map);
+
+        capi.Logger.Notification(report.ToString());
+        return $"draw-range map written to the client log: {measured} columns owned by the engine's "
+            + $"own measurement, {reclaimed} reclaimed from the overlap ring ({reclaimedRing}), "
+            + $"{bounded} still on the conservative bound. " + ExactRangeState();
+    }
+
+    /// <summary>
+    /// Why cached meshes are not being dropped before they are drawn, measured over the
+    /// sections actually resident right now and written to the log.
+    ///
+    /// <para>
+    /// The whole-mesh skip fires when a section is classified vanilla-owned, and it has never
+    /// fired - not once, in any log. The classification asks whether every 32-block cell in the
+    /// section's box is owned, bedrock to sky, and the bottom of that box is owned by nothing:
+    /// solid stone with no exposed face holds no mesh, and chunks the player has never been
+    /// near were never tesselated, so neither reports drawn. One such cell anywhere in the
+    /// column disqualifies the section permanently.
+    /// </para>
+    /// <para>
+    /// The cached mesh does not occupy those cells. So this reports both answers side by side:
+    /// what the current rule classifies, and what a rule counting only the vertical band the
+    /// mesh actually occupies WOULD classify. The gap between the two columns is exactly the
+    /// value of making that change, measured before building it rather than argued for.
+    /// </para>
+    /// </summary>
+    public string LogSectionOwnershipMap()
+    {
+        if (readiness == null) return "no readiness tracker";
+        if (!readinessMaskActive) return "the ownership mask is not live, so nothing can be skipped yet";
+
+        int total = 0, cacheOnly = 0, mixed = 0, vanillaOnly = 0, noSpan = 0, bandOwned = 0;
+        var gainedByLevel = new int[LodWorld.MaxLevel + 1];
+        var totalByLevel = new int[LodWorld.MaxLevel + 1];
+
+        foreach (KeyValuePair<long, LodLiveMeshStats> entry in liveMeshStats)
+        {
+            long key = entry.Key;
+            int level = LodWorld.KeyLevel(key);
+            if (level < 0 || level > LodWorld.MaxLevel) continue;
+            total++;
+            totalByLevel[level]++;
+
+            VanillaSectionOwnership current = readiness.Classify(key);
+            switch (current)
+            {
+                case VanillaSectionOwnership.CacheOnly: cacheOnly++; break;
+                case VanillaSectionOwnership.Mixed: mixed++; break;
+                default: vanillaOnly++; break;
+            }
+
+            LodHeightSpan span = entry.Value.Heights.Either;
+            if (!span.HasGeometry) { noSpan++; continue; }
+
+            int minChunkY = (int)Math.Floor(span.MinY / VanillaReadinessMask.ChunkBlocks);
+            int maxChunkY = (int)Math.Floor(span.MaxY / VanillaReadinessMask.ChunkBlocks);
+            if (!readiness.AllOwnedInBand(key, minChunkY, maxChunkY)) continue;
+
+            bandOwned++;
+            if (current != VanillaSectionOwnership.VanillaOnly) gainedByLevel[level]++;
+        }
+
+        int gained = 0;
+        var perLevel = new StringBuilder();
+        for (int level = 0; level <= LodWorld.MaxLevel; level++)
+        {
+            gained += gainedByLevel[level];
+            if (totalByLevel[level] == 0) continue;
+            if (perLevel.Length > 0) perLevel.Append(' ');
+            perLevel.Append('L').Append(level).Append(' ')
+                .Append(gainedByLevel[level]).Append('/').Append(totalByLevel[level]);
+        }
+
+        string verdict = total == 0
+            ? "no cached meshes are resident, so there is nothing to classify."
+            : gained == 0
+                ? "counting only the occupied band would change NOTHING - the cells the cached "
+                    + "mesh does occupy are not owned either, so the vertical box is not what is "
+                    + "blocking the skip. Look at ownership itself, not at the classification."
+                : $"counting only the occupied band would let {gained} of {total} resident "
+                    + $"sections be dropped before drawing, where {vanillaOnly} qualify today.";
+
+        string overshoot = DescribeGeometryOvershoot();
+
+        var report = new StringBuilder();
+        report.Append("[VintageHorizons] section ownership: ").Append(total)
+            .Append(" resident cached meshes -- ").Append(cacheOnly).Append(" cache-only/")
+            .Append(mixed).Append(" mixed/").Append(vanillaOnly)
+            .Append(" vanilla-owned under the current whole-column rule; ")
+            .Append(bandOwned).Append(" have every cell owned across the vertical band their own ")
+            .Append("geometry occupies (").Append(noSpan).Append(" have no measured span). ")
+            .Append(verdict);
+        if (perLevel.Length > 0) report.Append(" Gained per level: ").Append(perLevel).Append('.');
+        report.Append(' ').Append(overshoot);
+
+        capi.Logger.Notification(report.ToString());
+        return $"section ownership written to the client log: {vanillaOnly} of {total} resident "
+            + $"sections qualify today, {bandOwned} would qualify counting only the band their "
+            + $"geometry occupies ({gained} newly).";
+    }
+
+    /// <summary>
+    /// The mask against the engine's own answer, one cell at a time. The audit that says
+    /// whether ownership is under-covering, and for every cell it misses, why.
+    ///
+    /// <para>
+    /// Every other report here measures the mod against itself: what the tracker believes, what
+    /// it published, what it would classify. None of them can see the failure the player
+    /// actually reports, which is cached terrain drawn on top of terrain the engine is drawing
+    /// right now - because that is a disagreement between the mask and the ENGINE, and nothing
+    /// was asking the engine. This walks the tracked window, evaluates the engine's whole
+    /// predicate per cell, and counts the cells where the two disagree.
+    /// </para>
+    /// <para>
+    /// The direction that matters is UNCOVERED: the engine is drawing this chunk and the mask
+    /// does not hide cached terrain there. Every one of those is visible overlap. The reasons
+    /// are broken out because they want completely different fixes - a cell still Pending is a
+    /// latency problem, a cell refused for range is an arithmetic one, and an air cell is a
+    /// deliberate rule (G40) that no amount of extra ownership will change.
+    /// </para>
+    /// <para>
+    /// One chunk lookup per cell, so this takes the client's chunk lock several hundred times
+    /// (G45). It is a command, run while standing at the problem, and must never be called from
+    /// the frame path.
+    /// </para>
+    /// </summary>
+    public string LogCoverageAudit()
+    {
+        if (readiness == null) return "no readiness tracker";
+        if (!readinessMaskActive || readinessMask == null)
+            return "the ownership mask is not live, so there is nothing to audit";
+        // Without the culler there is no range clause, so every cell would fall out of the loop
+        // before being counted and the report would say "the engine is drawing 0 chunks" - which
+        // reads as a healthy world rather than as a broken measurement.
+        if (!drawRange.Available)
+            return "the engine's culler could not be read, so what it is drawing is unknown; "
+                + ExactRangeState();
+
+        int cells = 0, engineDraws = 0, covered = 0;
+        int missAir = 0, missPending = 0, missRange = 0, missGeometry = 0, missOther = 0;
+        int overOwned = 0;
+        double nearestMiss = -1;
+        string nearestMissText = "none";
+
+        // Bounded to the columns the engine could possibly be drawing, plus a chunk of margin,
+        // rather than the whole tracked window. The window is sized from the view distance plus
+        // guard chunks and grows as its square, so at a 256-block view distance an unbounded
+        // audit is fourteen thousand chunk lookups - each taking the client's chunk lock (G45) -
+        // for an answer that is entirely decided inside the draw radius. This keeps the cost
+        // roughly constant instead of quartic in the view distance.
+        int reachChunks = (int)Math.Ceiling(
+            (drawRange.Available ? drawRange.WidestDrawBoundBlocks() : ApprovedViewDistance())
+            / VanillaReadinessMask.ChunkBlocks) + 1;
+        int camChunkX = VanillaRenderReadiness.ChunkCoordinate(camPos.X);
+        int camChunkZ = VanillaRenderReadiness.ChunkCoordinate(camPos.Z);
+
+        int minX = Math.Max(readiness.ActiveMinChunkX, camChunkX - reachChunks);
+        int minZ = Math.Max(readiness.ActiveMinChunkZ, camChunkZ - reachChunks);
+        int maxX = Math.Min(readiness.ActiveMinChunkX + readiness.ActiveWidth - 1, camChunkX + reachChunks);
+        int maxZ = Math.Min(readiness.ActiveMinChunkZ + readiness.ActiveDepth - 1, camChunkZ + reachChunks);
+
+        for (int z = minZ; z <= maxZ; z++)
+        for (int x = minX; x <= maxX; x++)
+        for (int y = 0; y < readiness.VerticalChunks; y++)
+        {
+            var cell = new VanillaChunkCell(x, y, z);
+            cells++;
+
+            IWorldChunk? chunk;
+            try { chunk = capi.World.BlockAccessor.GetChunk(cell.X, cell.Y, cell.Z); }
+            catch { continue; }
+            if (chunk == null || chunk.Empty) continue;
+
+            // The engine's own predicate, in full: it holds unhidden mesh, the ray culler
+            // reached it, and the range clause admits it. Anything short of all three and the
+            // engine submits nothing, so cached terrain there is not an overlap.
+            if (!VanillaChunkGeometry.TryIsVanillaDrawing(chunk, out bool drawing) || !drawing) continue;
+            if (!VanillaChunkGeometry.TryReadDrawBounds(chunk, out float cx, out float cz, out int lods))
+                continue;
+            if (!drawRange.Available) continue;
+            if (!drawRange.DrawsWithMargin(cx, cz, lods, OverlapMarginBlocks)) continue;
+
+            engineDraws++;
+            if (readinessMask.IsReady(cell)) { covered++; continue; }
+
+            // Uncovered. Which rule let it through?
+            VanillaReadinessState state = readiness.State(cell);
+            if (state == VanillaReadinessState.VanillaReady && readiness.IsMaskExcluded(cell)) missAir++;
+            else if (state != VanillaReadinessState.VanillaReady)
+            {
+                if (!VanillaChunkHoldsDrawableGround(chunk)) missGeometry++;
+                // The gate that would ACTUALLY run for this cell, in its current state - not
+                // whichever one is convenient to evaluate. Two earlier versions of this line got
+                // it wrong in opposite directions: the first was dead code that filed everything
+                // under "not committed yet", and the second asked the bounded rule about cells
+                // the bounded rule no longer decides. A reason bucket that names a gate the cell
+                // never passes through is worse than no bucket, because it is believed.
+                else if (ExactDrawRange && drawRange.Available
+                    && drawRange.ColumnCertainlyNotDrawn(cell.X, cell.Z, OverlapMarginBlocks))
+                    missRange++;
+                else if (!ExactDrawRange && VanillaRenderReadiness.BeyondVanillaDrawRange(
+                    cell.X, cell.Z, camPos.X, camPos.Z, ApprovedViewDistance(), OverlapMarginBlocks))
+                    missRange++;
+                else missPending++;
+            }
+            else missOther++;
+
+            double distance = VanillaRenderReadiness.ColumnDistanceBlocksFrom(
+                cell.X, cell.Z, camPos.X, camPos.Z);
+            if (nearestMiss < 0 || distance < nearestMiss)
+            {
+                nearestMiss = distance;
+                nearestMissText = $"chunk {cell.X},{cell.Y},{cell.Z} at {distance:0} blocks "
+                    + $"(we say {state}{(state == VanillaReadinessState.VanillaReady && readiness.IsMaskExcluded(cell) ? ", air-excluded" : "")}) "
+                    + $"| {VanillaChunkGeometry.DescribeSignals(chunk)}";
+            }
+        }
+
+        // The other direction, which is a hole rather than an overlap: we hide cached terrain
+        // where the engine is drawing nothing. Counted from the mask outward so a stale texel
+        // cannot hide behind the uncovered count.
+        // The over-owned pass keeps the FULL window: a stale texel that nothing draws is a hole,
+        // and the place it is most likely to survive is exactly the ground the camera moved away
+        // from - outside the radius the pass above bounds itself to.
+        for (int z = 0; z < readiness.ActiveDepth; z++)
+        for (int x = 0; x < readiness.ActiveWidth; x++)
+        for (int y = 0; y < readiness.VerticalChunks; y++)
+        {
+            var cell = new VanillaChunkCell(
+                readiness.ActiveMinChunkX + x, y, readiness.ActiveMinChunkZ + z);
+            if (!readinessMask.IsReady(cell)) continue;
+            IWorldChunk? chunk;
+            try { chunk = capi.World.BlockAccessor.GetChunk(cell.X, cell.Y, cell.Z); }
+            catch { continue; }
+            bool draws = chunk is { Empty: false }
+                && VanillaChunkGeometry.TryIsVanillaDrawing(chunk, out bool d) && d
+                && VanillaChunkGeometry.TryReadDrawBounds(chunk, out float sx, out float sz, out int sl)
+                && drawRange.Available
+                && drawRange.DrawsWithMargin(sx, sz, sl, OverlapMarginBlocks);
+            if (!draws) overOwned++;
+        }
+
+        int uncovered = engineDraws - covered;
+        double coverage = engineDraws == 0 ? 0 : 100.0 * covered / engineDraws;
+
+        var report = new StringBuilder();
+        report.Append("[VintageHorizons] coverage audit: of ").Append(cells)
+            .Append(" cells inside the draw radius the engine is drawing ").Append(engineDraws)
+            .Append("; the mask covers ").Append(covered).Append(" of them (")
+            .Append($"{coverage:0}").Append("%), leaving ").Append(uncovered)
+            .Append(" chunks where the engine draws and cached terrain is NOT hidden. ")
+            .Append("Reasons: ").Append(missAir).Append(" air-excluded/")
+            .Append(missPending).Append(" not committed yet/")
+            .Append(missRange).Append(" refused for range/")
+            .Append(missGeometry).Append(" refused for no geometry/")
+            .Append(missOther).Append(" other. ")
+            .Append(overOwned).Append(" cells are hidden where the engine draws nothing (holes). ")
+            .Append("Nearest uncovered: ").Append(nearestMissText);
+
+        capi.Logger.Notification(report.ToString());
+        return $"coverage audit written to the client log: the engine draws {engineDraws} chunks, "
+            + $"the mask covers {covered} ({coverage:0}%), {uncovered} uncovered "
+            + $"({missAir} air/{missPending} uncommitted/{missGeometry} no-geometry), "
+            + $"{overOwned} hidden with nothing drawing.";
+    }
+
+    /// <summary>
+    /// How much cached geometry stands ABOVE the highest cell that is allowed to hide it, in
+    /// columns vanilla is drawing.
+    ///
+    /// <para>
+    /// This separates the two remaining explanations for cached terrain visibly overlapping the
+    /// game's own, and they want opposite fixes. Either the mask is not owning the ground
+    /// (ownership is too sparse, and the answer is more ownership), or it owns the ground and
+    /// the cached surface simply sticks up past it into the air cell above - which is excluded
+    /// from the mask on purpose, because cached terrain overshoots the real surface and
+    /// suppressing air shears the top off the horizon (G40). The second is a deliberate trade
+    /// and no amount of extra ownership touches it.
+    /// </para>
+    /// <para>
+    /// Measured per section against the top of its own footprint's suppressing band, so a
+    /// column vanilla is not drawing at all contributes nothing either way.
+    /// </para>
+    /// </summary>
+    string DescribeGeometryOvershoot()
+    {
+        if (readiness == null) return string.Empty;
+
+        int overColumns = 0, coveredColumns = 0, sectionsOvershooting = 0;
+        int worstBands = 0;
+        double worstDistance = -1;
+
+        foreach (KeyValuePair<long, LodLiveMeshStats> entry in liveMeshStats)
+        {
+            LodHeightSpan span = entry.Value.Heights.Either;
+            if (!span.HasGeometry) continue;
+
+            long key = entry.Key;
+            int level = LodWorld.KeyLevel(key);
+            if (level < 0 || level > LodWorld.MaxLevel) continue;
+
+            // L0 only, and the first version of this without that line reported 63 columns
+            // where 9 exist - every column counted once per level that covers it, seven times
+            // over. Worse than the arithmetic: a coarse section's height span is the maximum
+            // over its whole footprint, four thousand blocks across at L6, so comparing it to
+            // one column's ground measures the terrain's slope and calls it overshoot. Only the
+            // finest level is narrow enough for the comparison to mean anything, and even at 64
+            // blocks it is an upper bound rather than a measurement.
+            if (level != 0) continue;
+
+            int edgeCells = 2 << level;
+            int baseX = LodWorld.KeySx(key) * edgeCells;
+            int baseZ = LodWorld.KeySz(key) * edgeCells;
+            int topGeometryY = (int)Math.Floor(span.MaxY / VanillaReadinessMask.ChunkBlocks);
+            bool sectionOvershoots = false;
+
+            for (int dz = 0; dz < edgeCells; dz++)
+            for (int dx = 0; dx < edgeCells; dx++)
+            {
+                int chunkX = baseX + dx;
+                int chunkZ = baseZ + dz;
+                int suppressingTop = readiness.HighestSuppressingY(chunkX, chunkZ);
+                // A column vanilla is not drawing has nothing to overlap, so it is neither a
+                // covered column nor an overshoot - counting it either way would make a scene
+                // with no ownership look like a scene full of overshoot.
+                if (suppressingTop < 0) continue;
+
+                coveredColumns++;
+                if (topGeometryY <= suppressingTop) continue;
+
+                overColumns++;
+                sectionOvershoots = true;
+                int bands = topGeometryY - suppressingTop;
+                if (bands > worstBands) worstBands = bands;
+                double distance = VanillaRenderReadiness.ColumnDistanceBlocksFrom(
+                    chunkX, chunkZ, camPos.X, camPos.Z);
+                if (worstDistance < 0 || distance < worstDistance) worstDistance = distance;
+            }
+
+            if (sectionOvershoots) sectionsOvershooting++;
+        }
+
+        if (coveredColumns == 0)
+        {
+            return "Overshoot: nothing to measure - not one column under a cached mesh has a cell "
+                + "that is allowed to hide anything, so every overlap you can see is missing "
+                + "ownership rather than cached terrain standing too tall.";
+        }
+
+        return $"Overshoot (L0 only, upper bound): {overColumns} of {coveredColumns} columns that "
+            + $"vanilla owns carry cached geometry ABOVE the highest cell allowed to hide it, across "
+            + $"{sectionsOvershooting} sections, worst {worstBands} cell(s) over, nearest at "
+            + $"{worstDistance:0} blocks. "
+            + (overColumns == 0
+                ? "So where vanilla owns the ground, the cached surface stays under it: any overlap "
+                    + "you can see is in columns vanilla does not own."
+                : "That geometry sits in air cells, which are excluded from the mask on purpose "
+                    + "(G40), so it is drawn whatever ownership says.");
+    }
+
+    /// <summary>
+    /// The exact draw-range rule in one clause of the periodic line.
+    ///
+    /// <para>
+    /// The figure that matters is the exact/bounded split. Nothing on screen distinguishes
+    /// "the sphere is being read" from "the sphere could not be read and every cell fell back
+    /// to the 62-block ring" - both draw terrain, one just overlaps more - so if this rule
+    /// ever goes quietly unavailable, this clause is the only place it shows.
+    /// </para>
+    /// </summary>
+    public string DescribeExactRange() => "draw range: " + ExactRangeState();
+
+    /// <summary>
+    /// Deliberately comma-free. `scripts/bench-windows.ps1` parses the readiness line clause by
+    /// clause on commas, and a comma inside one clause silently ends the parse there - so every
+    /// separator here is a slash and the player position is written `x/z`. A static check holds
+    /// the runner's pattern against this line, and it fails on exactly that mistake.
+    /// </summary>
+    string ExactRangeState()
+    {
+        if (!ExactDrawRange) return $"bounded by request (ring {RefusedOwnershipRingBlocks():0} blocks)";
+        if (!VanillaChunkGeometry.Available)
+            return $"BOUNDED - mesh binding unavailable (ring {RefusedOwnershipRingBlocks():0} blocks)";
+        if (!drawRange.Available)
+            return $"BOUNDED - engine culler unreadable (ring {RefusedOwnershipRingBlocks():0} blocks)";
+
+        long decisions = ReadinessExactRangeDecisions + ReadinessBoundedRangeDecisions;
+        double exactShare = decisions == 0 ? 0 : 100.0 * ReadinessExactRangeDecisions / decisions;
+        double bound = Math.Sqrt(drawRange.ViewDistanceSq) - Math.Max(0f, OverlapMarginBlocks);
+        return $"exact to {bound:0} blocks from {drawRange.PlayerBlockX}/{drawRange.PlayerBlockZ}"
+            + $" -- {ReadinessExactRangeDecisions} exact/{ReadinessBoundedRangeDecisions} bounded"
+            + $" ({exactShare:0}% exact)/{readiness?.CellsWithDrawSphere() ?? 0} cells measured/"
+            + $"{ReadinessRangeSweeps} sweeps/{ReadinessRangeSweepLosses} losses/"
+            + $"peak {ReadinessRangeSweepPeakMs:0.000} ms";
+    }
+
+    /// <summary>
     /// The blend band in one clause of the periodic line, and the body of `.vhband`.
     /// Build and upload cost are included because "nearly free" is this design's claim and
     /// an unmeasured claim is not one.
@@ -3539,7 +4458,7 @@ public class LodTerrainRenderer : IRenderer
         if (seamField == null || !seamFieldActive) return "pending";
 
         return $"{BandWidthBlocks:0}-block reach/{BandStepBlocks:0}-block steps/"
-            + $"inner {BandInnerBlocks:0}/strength {BandStrength:0.00}/"
+            + $"inner {BandInnerBlocks:0} {(BandInnerDerived ? "derived" : "pinned")}/strength {BandStrength:0.00}/"
             + $"speckle {BandSpeckle:0.00}/darken {BandDarken:0.00}/saturate {BandSaturate:0.00}/"
             + $"sink {BandSinkVoxels}-16ths/overlap +{OverlapMarginBlocks:0}/"
             + $"{seamField.WidthCells}x{seamField.DepthCells} cells in {seamField.Capacity}/"
@@ -3630,11 +4549,19 @@ public class LodTerrainRenderer : IRenderer
                 .Append(readiness.ActiveWidth).Append('x').Append(readiness.ActiveDepth)
                 .Append(" chunk columns (").Append(readiness.ActiveWidth * 32)
                 .Append(" blocks across), ").Append(readinessMask.ReadyTexels)
-                .Append(" cells owned. Ownership is denied past ")
-                .Append($"{Math.Max(0f, ApprovedViewDistance() - VanillaRenderReadiness.SphereCentreSlackBlocks - Math.Max(0f, OverlapMarginBlocks)):0}")
-                .Append(" blocks by the draw-range rule, so the band's inner edge is that ")
-                .Append("boundary and not vanilla's real chunk footprint. 'O' owned, '.' not. ")
-                .Append("'+' is the camera's own column.");
+                .Append(" cells owned. ")
+                // Which boundary the footprint below actually has, because the band is
+                // measured from it and the two rules put it up to 62 blocks apart. Reading
+                // this map against the wrong one is how the band's circularity was
+                // mis-attributed twice.
+                .Append(RefusedOwnershipRingBlocks() <= 0f
+                    ? "Ownership follows vanilla's own chunk footprint exactly (.vhexact on), "
+                        + "so this IS where vanilla's terrain ends. "
+                    : $"Ownership is denied past "
+                        + $"{Math.Max(0f, ApprovedViewDistance() - RefusedOwnershipRingBlocks()):0}"
+                        + " blocks by the draw-range rule, so the band's inner edge is that "
+                        + "boundary and not vanilla's real chunk footprint. ")
+                .Append("'O' owned, '.' not. '+' is the camera's own column.");
             int camChunkX = VanillaRenderReadiness.ChunkCoordinate(camPos.X);
             int camChunkZ = VanillaRenderReadiness.ChunkCoordinate(camPos.Z);
             for (int z = 0; z < readiness.ActiveDepth; z += chunkStride)
