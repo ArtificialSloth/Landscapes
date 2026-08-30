@@ -93,7 +93,7 @@ public static class Fixtures
     /// </summary>
     public static MeshJob Job(LodSection self, long key = 0, SectionSnapshot?[]? neighbors = null,
         byte assumedCoveredSides = 0, int halfBlockLevels = 1,
-        bool surfaceHalfBlocksOnly = true) =>
+        bool surfaceHalfBlocksOnly = true, bool cutoutBlocksCover = false) =>
         new()
         {
             Key = key,
@@ -102,5 +102,6 @@ public static class Fixtures
             AssumedCoveredSides = assumedCoveredSides,
             HalfBlockLevels = halfBlockLevels,
             SurfaceHalfBlocksOnly = surfaceHalfBlocksOnly,
+            CutoutBlocksCover = cutoutBlocksCover,
         };
 }

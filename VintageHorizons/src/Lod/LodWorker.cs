@@ -136,6 +136,21 @@ public class MeshJob
     public int HalfBlockLevels;
 
     /// <summary>
+    /// Whether a block the GAME draws see-through - a crop, tall grass, a vine - may still
+    /// hide the faces around it here. False is correct and is the default; true restores the
+    /// behaviour before 0.3.163 for comparison.
+    ///
+    /// Carried on the job for the same reason the cave reach and the slab levels are: a
+    /// switch flipped mid-flight must not build one half of the world by one rule and the
+    /// other half by another.
+    ///
+    /// The cost is geometry - a top face under every crop and a wall between neighbouring
+    /// ones - and all of it is sealed inside solid ground except at the vanilla seam, which
+    /// is the one place it is needed. See <see cref="LodPaletteEntry.FlagCutout"/>.
+    /// </summary>
+    public bool CutoutBlocksCover;
+
+    /// <summary>
     /// Apply half-block detail only to the highest solid run in each column. Water and
     /// thin cover do not disqualify the ground beneath them. This preserves outdoor terrain
     /// slabs while declining the much larger geometry cost of distant cave and overhang

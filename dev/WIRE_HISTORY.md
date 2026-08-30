@@ -41,6 +41,14 @@ stored byte is a cache of a derived value rather than the authority. A flag bit 
 test - one an old reader would act on, or one that cannot be re-derived from the block registry -
 requires a format bump and a ledger row.
 
+`0.3.163` began writing flag bit 4 (`FlagCutout`, a block the game draws see-through and that
+therefore covers nothing) under the same two grounds, both re-checked: no shipped reader tests
+bit 4, and the bit is derived from `Block.AllSidesOpaque` under a Plant material guard, so
+`LodStore.Reclassify` recomputes it on every load and an existing cache gains it with no
+re-exploration. Bit 4 was previously described as free; it once held a tint class, superseded by
+the persisted-nothing `TintSlot`, and no shipped format ever wrote it with that meaning. The
+remaining free bits are 32, 64 and 128.
+
 ## Database schema-meaning ledger
 
 | Schema | Released | Meaning |

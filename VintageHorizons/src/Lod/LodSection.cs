@@ -45,8 +45,21 @@ public struct LodPaletteEntry
     /// </summary>
     public const byte FlagHalf = 2;
 
-    // Bit 4 is free: it held a tint class, now superseded by TintSlot. Quarter-block
-    // resolution, if it is ever wanted, belongs there beside FlagHalf.
+    /// <summary>
+    /// The game does not draw this block as a solid cube, so it hides nothing beside it -
+    /// a crop, tall grass, a berry bush, a vine. The LOD still draws it as a cube, because
+    /// that is what makes a meadow read as a meadow at distance, but it must not be treated
+    /// as COVER: vanilla's own block data says <c>sideopaque: {all: false}</c>, and claiming
+    /// an occlusion the game does not provide is what opens a hole at the seam. The block
+    /// beside a crop keeps its wall and the soil under one keeps its top face.
+    ///
+    /// Distinct from <see cref="FlagThin"/>, which also changes how the block is DRAWN. This
+    /// one changes only what it covers.
+    ///
+    /// Derived from the live Block, never trusted from storage - see LodStore.Reclassify,
+    /// which is why an existing cache gains this with no re-exploration.
+    /// </summary>
+    public const byte FlagCutout = 4;
 
     /// <summary>
     /// Not terrain at all (fire, meta markers): dropped at capture so it never becomes

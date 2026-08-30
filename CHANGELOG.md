@@ -8,6 +8,47 @@ first.
 
 ## [Unreleased]
 
+**`.vhband overlap` now defaults to 0.** It was 16 blocks, and it was there because 16 blocks
+closed a hole in play - the hole 0.3.162 and 0.3.163 fixed at source. With the real causes gone the
+margin buys nothing and costs a permanently doubled band where both terrains draw. Raise it if
+ground ever goes missing at the seam again, and treat that as a symptom rather than a fix.
+
+This is source only. No artifact carries it yet, so in 0.3.163 the setting still starts at 16 and
+the chat command is still how to reach 0.
+
+## [0.3.163] - 2026-08-30
+
+**No more holes at the seam.** Where distant terrain meets the game's own, small pieces of wall
+were missing and you could see the sky through them. Two separate causes, both fixed.
+
+The first was arithmetic. Every pixel of distant terrain asks "is the game already drawing this
+32-block chunk?" and works out which chunk it is in by dividing its own position. That is right
+for a pixel inside a block and undefined for one standing exactly on the line between two — and a
+wall is always exactly on that line. Walls facing east or south were charged to the chunk next
+door, so a wall on the mod's side of the seam was hidden as the game's work while the game drew
+nothing there. Only ever on the west and north sides of you, which is what identified it.
+
+The second was crops. The game draws a crop, tall grass, a berry bush or a vine as a see-through
+tuft — its own block data says so — while distant terrain draws them as solid cubes, on purpose,
+because a field of flat mats reads as a green sheet from far away. That solid cube was allowed to
+hide things: the soil's top face under it, and the wall between two of them. Inside distant
+terrain that is correct and free. At the seam the game draws its see-through version instead, and
+those two hidden faces became a window straight through the terrain. Crops, tall grass, berry
+bushes, vines and mushrooms all stop hiding what is behind them. Your existing cache gets this
+immediately; nothing needs re-exploring.
+
+**New: `.vhcutout`** puts the old crop behaviour back and reports the live vertex total, so the
+cost can be weighed against the picture. Measured against a real cache: +2.2% to +4.4% geometry
+over four samples and **no additional draw calls**. New `cutoutfield` harness in the checks
+project measures it offline.
+
+Known and unchanged: at the seam a tree can be drawn with the game's real leaves on top and the
+mod's blocky version below. The game decides per 32-block cube and measures distance from wherever
+the blocks in each cube sit, so the cube holding a canopy and the cube holding the trunk can fall
+on opposite sides of that decision. Both halves are drawn by whoever is entitled to draw them.
+Making it consistent costs back most of the overlap 0.3.160 removed; `.vhexact off` shows that
+trade.
+
 ## [0.3.160] - 2026-08-30
 
 **Distant terrain now stops exactly where the game's own terrain starts.** It used to overlap the

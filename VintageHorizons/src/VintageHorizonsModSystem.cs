@@ -2184,10 +2184,11 @@ public class VintageHorizonsModSystem : ModSystem
                         if (!float.TryParse(value, out float overlap))
                             return TextCommandResult.Success(
                                 $"[VintageHorizons] overlap +{renderer.OverlapMarginBlocks:0} blocks. "
-                                + "How early distant terrain takes back ground from the game's own, "
-                                + "on top of the margin that already exists. This is the hole guard: "
-                                + "raise it if ground goes missing when the game unloads chunks, "
-                                + "lower it if the two terrains overlap more than they need to.");
+                                + "How early distant terrain takes back ground from the game's own. "
+                                + "Zero by default since 0.3.163: it used to be 16, to hide a hole "
+                                + "at the seam that turned out to have two other causes, both now "
+                                + "fixed. Raise it if ground ever goes missing where the two meet - "
+                                + "and say so, because that means something else is wrong.");
                         renderer.OverlapMarginBlocks = GameMath.Clamp(overlap, 0f, 256f);
                         return TextCommandResult.Success(
                             $"[VintageHorizons] overlap +{renderer.OverlapMarginBlocks:0} blocks. "
@@ -2761,6 +2762,39 @@ public class VintageHorizonsModSystem : ModSystem
                     + "out here, which puts the steps they removed back. What to watch for is the "
                     + "far ground looking chunkier than the ground at your feet, and whether the "
                     + "vertex total above is worth the difference.");
+            });
+
+        // A geometry cost with no picture attached, so it needs a switch that reports the
+        // vertex total the same way .vhslabs does. The fix is invisible except at the seam it
+        // exists for; the cost is not, and only a paired reading can weigh them.
+        capi.ChatCommands.Create("vhcutout")
+            .WithDescription("Let crops, tall grass and vines hide the terrain behind them again. "
+                + "Off by default, which is correct. Changing it rebuilds distant terrain.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
+            .HandleWith(args =>
+            {
+                if (renderer == null)
+                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+
+                if (args.Parsers[0].IsMissing)
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] plants hiding what is behind them: "
+                        + $"{(renderer.CutoutBlocksCover ? "ON - the old behaviour" : "off - correct")} "
+                        + $"| live geometry {renderer.LiveOpaqueVertices:n0} opaque vertices over "
+                        + $"{renderer.MeshCount} meshes. The game draws a crop as a see-through "
+                        + "tuft, so a crop hides nothing; distant terrain draws it as a solid "
+                        + "block, and letting that block hide its neighbours opened a hole you "
+                        + "could see the sky through where the two terrains meet. Read the vertex "
+                        + "total on each setting after the rebuild settles - that is the whole "
+                        + "cost, and it buys a seam with no holes in it.");
+
+                renderer.CutoutBlocksCover = (bool)args[0];
+                int queued = renderer.RemeshAll();
+                return TextCommandResult.Success(
+                    $"[VintageHorizons] plants hiding what is behind them: "
+                    + $"{(renderer.CutoutBlocksCover ? "ON - the old behaviour" : "off - correct")}. "
+                    + $"Rebuilding {queued} distant sections - give it a few seconds, then read "
+                    + ".vhcutout again for the vertex total.");
             });
 
         // The live toggle the aggregate bound was funded with. Unlike the retired staging

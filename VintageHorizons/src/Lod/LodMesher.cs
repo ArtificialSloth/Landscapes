@@ -195,6 +195,9 @@ public static class LodMesher
         // vertical detail buys nothing and the extra walls it needs are not free.
         bool half = level < job.HalfBlockLevels;
         bool surfaceHalfOnly = job.SurfaceHalfBlocksOnly;
+        // Whether a block the game draws see-through may still act as cover here. Off is the
+        // fix; on is the established behaviour, kept switchable because the cost is geometry.
+        bool cutoutsCover = job.CutoutBlocksCover;
 
         var opaque = opaqueBuffers ??= new Buffers(pack: true);
         var water = waterBuffers ??= new Buffers(pack: false);
@@ -245,6 +248,7 @@ public static class LodMesher
                     bool topCovered = r > 0
                         && BottomHalf(runs[r - 1]) == yTop
                         && !IsThinRun(self, runs[r - 1])
+                        && !IsCutoutRun(self, runs[r - 1], cutoutsCover)
                         && IsTranslucentRun(self, runs[r - 1]) == isTranslucent;
                     // YBottom is carried for thin cover only, which is the one face that
                     // reads it (it sits a quarter block above its own base). A surface
@@ -256,6 +260,7 @@ public static class LodMesher
                     bool bottomCovered = r < runs.Length - 1
                         && TopHalf(self, runs, r + 1, half, surfaceHalfOnly) == yBottom
                         && !IsThinRun(self, runs[r + 1])
+                        && !IsCutoutRun(self, runs[r + 1], cutoutsCover)
                         && IsTranslucentRun(self, runs[r + 1]) == isTranslucent;
                     if (!bottomCovered && yBottom > 2 && !isTranslucent)
                     {
@@ -265,13 +270,17 @@ public static class LodMesher
 
                     bool solidCoverOnly = !isTranslucent;
                     CollectSide(vf, job, self, cave, W, cx, cz, cx - 1, cz,
-                        yTop, yBottom, pid, isTranslucent, solidCoverOnly, half, surfaceHalfOnly);
+                        yTop, yBottom, pid, isTranslucent, solidCoverOnly, half, surfaceHalfOnly,
+                        cutoutsCover);
                     CollectSide(vf, job, self, cave, E, cx, cz, cx + 1, cz,
-                        yTop, yBottom, pid, isTranslucent, solidCoverOnly, half, surfaceHalfOnly);
+                        yTop, yBottom, pid, isTranslucent, solidCoverOnly, half, surfaceHalfOnly,
+                        cutoutsCover);
                     CollectSide(vf, job, self, cave, N, cx, cz, cx, cz - 1,
-                        yTop, yBottom, pid, isTranslucent, solidCoverOnly, half, surfaceHalfOnly);
+                        yTop, yBottom, pid, isTranslucent, solidCoverOnly, half, surfaceHalfOnly,
+                        cutoutsCover);
                     CollectSide(vf, job, self, cave, S, cx, cz, cx, cz + 1,
-                        yTop, yBottom, pid, isTranslucent, solidCoverOnly, half, surfaceHalfOnly);
+                        yTop, yBottom, pid, isTranslucent, solidCoverOnly, half, surfaceHalfOnly,
+                        cutoutsCover);
                 }
             }
         }
@@ -549,6 +558,26 @@ public static class LodMesher
         (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagThin) != 0;
 
     /// <summary>
+    /// A run this mesher draws as a solid cube that the GAME draws as a see-through cutout -
+    /// a crop, tall grass, a vine (<see cref="LodPaletteEntry.FlagCutout"/>). It covers
+    /// nothing, for the same reason a mat covers nothing.
+    ///
+    /// The difference only shows at the vanilla seam, and it shows as a hole. Inside our own
+    /// terrain a crop cube really does hide the soil's top face and its neighbour's wall, so
+    /// dropping them was correct and free. Where the game draws instead of us, the game's
+    /// crop is a transparent tuft, and those two dropped faces become a window through the
+    /// hollow shell of the cached terrain and out to the sky. Reported in play at a seam
+    /// running through a flax field.
+    ///
+    /// The cost is walls between neighbouring crops and a top face under each one, all of it
+    /// sealed inside solid geometry and invisible everywhere except the seam that needs it.
+    /// That is why it is a switch: see MeshJob.CutoutBlocksCover and `.vhcutout`.
+    /// </summary>
+    static bool IsCutoutRun(SectionSnapshot s, ulong run, bool cutoutsCover) =>
+        !cutoutsCover
+        && (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagCutout) != 0;
+
+    /// <summary>
     /// The block only fills the lower half of its cell (a terrain slab, a shallow snow
     /// layer). The flag is a property of the palette entry, so a run of them shortens once,
     /// at its top: two slabs cannot actually stack without air between them, and a run that
@@ -621,7 +650,7 @@ public static class LodMesher
     static void CollectSide(List<VFace> vf, MeshJob job, SectionSnapshot self,
         LodCaveCull.Prepared cave, int dir, int cx, int cz, int ncx, int ncz,
         int yTop, int yBottom, int pid, bool isTranslucent, bool solidCoverOnly, bool half,
-        bool surfaceHalfOnly)
+        bool surfaceHalfOnly, bool cutoutsCover)
     {
         var (nb, ncol) = NeighborColumn(job, self, ncx, ncz);
 
@@ -654,7 +683,7 @@ public static class LodMesher
         {
             CollectSideWithCaveCoverage(vf, cave, neighborRuns, nb!, dir, fix, along,
                 ncx, ncz, yTop, yBottom, pid, isTranslucent, solidCoverOnly, half,
-                surfaceHalfOnly);
+                surfaceHalfOnly, cutoutsCover);
             return;
         }
 
@@ -665,6 +694,7 @@ public static class LodMesher
             // A mat never covers anything; beyond that, solid faces are only culled by
             // solid neighbours so terrain stays visible through water.
             if (IsThinRun(nb!, neighborRuns[i])) continue;
+            if (IsCutoutRun(nb!, neighborRuns[i], cutoutsCover)) continue;
             if (solidCoverOnly && IsTranslucentRun(nb!, neighborRuns[i])) continue;
 
             int nTop = TopHalf(nb!, neighborRuns, i, half, surfaceHalfOnly);
@@ -694,7 +724,7 @@ public static class LodMesher
     static void CollectSideWithCaveCoverage(List<VFace> vf, LodCaveCull.Prepared cave,
         Span<ulong> neighborRuns, SectionSnapshot neighbor, int dir, short fix, short along,
         int ncx, int ncz, int yTop, int yBottom, int pid, bool isTranslucent,
-        bool solidCoverOnly, bool half, bool surfaceHalfOnly)
+        bool solidCoverOnly, bool half, bool surfaceHalfOnly, bool cutoutsCover)
     {
         // yTop/yBottom arrive in half blocks; the cave classification is per whole block,
         // so the walk stays on whole cells and each cell reports how much of itself it
@@ -726,6 +756,7 @@ public static class LodMesher
                 ulong run = neighborRuns[runAt];
                 if (LodSection.RunYTop(run) > y && LodSection.RunYBottom(run) <= y
                     && !IsThinRun(neighbor, run)
+                    && !IsCutoutRun(neighbor, run, cutoutsCover)
                     && (!solidCoverOnly || !IsTranslucentRun(neighbor, run)))
                 {
                     coverTop = half && IsHalfRun(neighbor, run)

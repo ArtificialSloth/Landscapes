@@ -328,6 +328,44 @@ layout(location = 3) out vec4 outGPosition;
 #include skycolor.fsh
 #include underwatereffects.fsh
 
+// Slack around a chunk plane, in blocks. A wall lies exactly IN the plane between two
+// ownership cells, and hardware interpolation of an attribute that is constant across the
+// quad is not promised to reproduce it to the last bit - a value one ULP light of 32.0
+// floors to the chunk below. Anything inside this counts as lying in the plane. It is far
+// under the quarter-block thin-cover mat, the shortest surface this shader draws, so no
+// ordinary face can be mistaken for a boundary.
+const float MASK_PLANE_SLACK = 0.03125;
+
+// Signed distance from a section-local coordinate to the nearest chunk plane, in blocks.
+float maskPlaneOffset(float localBlocks)
+{
+    return localBlocks - 32.0 * floor(localBlocks / 32.0 + 0.5);
+}
+
+// Whether vanilla owns one ownership cell, for the band this fragment belongs to.
+//
+// Every address outside the tracked window, or above or below the world, answers no, so an
+// unknown cell falls through to normal cached drawing: the mask can only take ground away
+// from the cache where vanilla has proven it draws there.
+bool vanillaOwnsCell(int cellX, int cellY, int cellZ, int ownershipBand)
+{
+    if (cellY < 0 || cellY >= maskVerticalChunks) return false;
+    if (cellX < maskMinX || cellX >= maskMinX + maskWidth) return false;
+    if (cellZ < maskMinZ || cellZ >= maskMinZ + maskDepth) return false;
+
+    int wrap = maskCapacity - 1;
+    ivec2 maskTexel = ivec2(cellX & wrap, (cellZ & wrap) + cellY * maskCapacity);
+    // Red is the GROUND footprint, green is water's own. They differ by a whole
+    // number of chunks: ground keeps drawing through the ring ownership refuses, as a
+    // hole guard, and water does not need that guard - a missing river is local and
+    // obvious, while cached water standing inside live terrain is not. Both edges fall
+    // on chunk boundaries because the green channel is a chunk-wise dilation of the
+    // red one, never a distance from the camera.
+    vec4 ownership = texelFetch(readinessMask, maskTexel, 0);
+    if ((ownershipBand == 1 ? ownership.g : ownership.r) > 0.5) return true;
+    return false;
+}
+
 void main()
 {
     // Which blend band this fragment is in: 0 opaque, 1 water, 2 thin cover. Needed before
@@ -347,9 +385,30 @@ void main()
     // water near rule needs the same address: both must be an integer section origin plus a
     // section-local offset, never a summed world coordinate, or a fragment at a chunk edge
     // rounds onto its neighbour at large world coordinates.
-    int cellX = maskSectionOriginX + int(floor(sectionLocal.x / 32.0));
+    //
+    // A WALL DOES NOT SIT INSIDE A CELL. It sits in the plane between two of them, and
+    // floor() cannot say which one holds the block it belongs to. The mesher emits each wall
+    // at its own block's face, so a west wall lands on that block's near edge and an east
+    // wall lands on its FAR edge - and an east wall standing on a chunk boundary is therefore
+    // drawn at the next chunk's origin, where floor() charges it to that neighbour. Where the
+    // neighbour was owned and the wall's own chunk was not, the wall was discarded and vanilla
+    // drew nothing in its place: a missing vertical face at the seam, on the -X and -Z sides
+    // only, because on the other two the mis-charged face points away and is back-face culled
+    // anyway. The plane is recorded here; the ownership test below asks every candidate.
+    float planeOffsetX = maskPlaneOffset(sectionLocal.x);
+    float planeOffsetZ = maskPlaneOffset(sectionLocal.z);
+    int edgeX = abs(planeOffsetX) < MASK_PLANE_SLACK ? 1 : 0;
+    int edgeZ = abs(planeOffsetZ) < MASK_PLANE_SLACK ? 1 : 0;
+    // Snapped onto the plane before the divide, so a last-bit interpolation difference
+    // cannot decide which PAIR of cells is asked. Off a plane this is the same floor as
+    // before, to the bit.
+    int cellX = maskSectionOriginX + int(floor((sectionLocal.x - planeOffsetX * float(edgeX)) / 32.0));
+    // Y needs no second candidate. A top face is drawn at its block's ceiling, so it charges
+    // to the cell ABOVE the block - and an air cell is never marked owned (G40), so that error
+    // can only ever leave cached ground drawn, which is the safe direction. A floor face and
+    // every wall fragment away from a ceiling already address their own cell.
     int cellY = int(floor(sectionLocal.y / 32.0));
-    int cellZ = maskSectionOriginZ + int(floor(sectionLocal.z / 32.0));
+    int cellZ = maskSectionOriginZ + int(floor((sectionLocal.z - planeOffsetZ * float(edgeZ)) / 32.0));
 
     // Cached water immediately around the camera, by CHUNK rather than by distance, so its
     // boundary runs along chunk edges instead of drawing a circle. Off at zero.
@@ -379,36 +438,43 @@ void main()
     // water at distance, and the answer will be a better ownership signal, never a radius.
     if (maskEnabled == 1)
     {
-        if (cellY >= 0 && cellY < maskVerticalChunks
-            && cellX >= maskMinX && cellX < maskMinX + maskWidth
-            && cellZ >= maskMinZ && cellZ < maskMinZ + maskDepth)
+        // EVERY cell that could hold the block behind this fragment has to say yes before
+        // anything is hidden. One cell for an ordinary surface, which is the only lookup the
+        // overwhelming majority of fragments pay; two for a wall lying in a chunk plane; four
+        // on the line where two such walls meet at a chunk corner. If any candidate is not
+        // owned then the block may be that one, vanilla may be drawing nothing there, and
+        // hiding the face would remove the only geometry covering that ground.
+        //
+        // Conservative on purpose, and the conservatism is cheap: the extra candidate can
+        // only keep a cached wall drawn one chunk further in than before, over ground vanilla
+        // is drawing too, which is overlap. The other direction is a hole, and overlap
+        // outranks holes.
+        bool owned = vanillaOwnsCell(cellX, cellY, cellZ, ownershipBand);
+        if (owned && edgeX == 1) owned = vanillaOwnsCell(cellX - 1, cellY, cellZ, ownershipBand);
+        if (owned && edgeZ == 1) owned = vanillaOwnsCell(cellX, cellY, cellZ - 1, ownershipBand);
+        if (owned && edgeX == 1 && edgeZ == 1)
         {
-            int wrap = maskCapacity - 1;
-            ivec2 maskTexel = ivec2(cellX & wrap, (cellZ & wrap) + cellY * maskCapacity);
-            // Red is the GROUND footprint, green is water's own. They differ by a whole
-            // number of chunks: ground keeps drawing through the ring ownership refuses, as a
-            // hole guard, and water does not need that guard - a missing river is local and
-            // obvious, while cached water standing inside live terrain is not. Both edges fall
-            // on chunk boundaries because the green channel is a chunk-wise dilation of the
-            // red one, never a distance from the camera.
-            vec4 ownership = texelFetch(readinessMask, maskTexel, 0);
-            if ((ownershipBand == 1 ? ownership.g : ownership.r) > 0.5)
+            owned = vanillaOwnsCell(cellX - 1, cellY, cellZ - 1, ownershipBand);
+        }
+
+        if (owned)
+        {
+            // Debug mode paints instead of discarding, which turns an ambiguous gap
+            // into a yes/no question: red means the mask hid this pixel, and a gap
+            // that stays empty in this mode was never the mask's doing.
+            if (maskDebug == 1)
             {
-                // Debug mode paints instead of discarding, which turns an ambiguous gap
-                // into a yes/no question: red means the mask hid this pixel, and a gap
-                // that stays empty in this mode was never the mask's doing.
-                if (maskDebug == 1)
-                {
-                    // MAGENTA, not red. The band's shape view paints red too, and a red
-                    // region in a screenshot could not be attributed to either one.
-                    outColor = vec4(1.0, 0.0, 1.0, 1.0);
-                    outGlow = vec4(0.0);
-                    outGNormal = vec4(0.0);
-                    outGPosition = vec4(0.0);
-                    return;
-                }
-                discard;
+                // MAGENTA, not red. The band's shape view paints red too, and a red
+                // region in a screenshot could not be attributed to either one.
+                outColor = vec4(1.0, 0.0, 1.0, 1.0);
+                outGlow = vec4(0.0);
+#if SSAOLEVEL > 0
+                outGNormal = vec4(0.0);
+                outGPosition = vec4(0.0);
+#endif
+                return;
             }
+            discard;
         }
     }
 

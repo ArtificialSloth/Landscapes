@@ -9,11 +9,14 @@ Ownership reads the engine's own bounding sphere and view distance instead of bo
 camera mode.
 
 - **The water footprint's dilation now derives to zero.** It follows the refused ring, which the
-  exact rule takes from 62 blocks to 16, and G132's arithmetic then rounds the growth to nothing.
-  That is the correct consequence and it has not been seen in play. 0.3.151's chunk-wide dry strip
-  came from exactly this quantity; `.vhwater edge <chunks>` overrides it live.
-- **The band's inner offset moved with the ring**, 46 blocks to 16, and the band was human-tuned
-  against the old value. `.vhband inner <blocks>` pins it, `auto` hands it back.
+  exact rule took from 62 blocks to 16 and Session 70's overlap default takes to zero, so G132's
+  arithmetic rounds the growth to nothing either way. That is the correct consequence and it has
+  not been seen in play. 0.3.151's chunk-wide dry strip came from exactly this quantity;
+  `.vhwater edge <chunks>` overrides it live.
+- **The band's inner offset moved with the ring**, 46 blocks to 16 and now to zero, and the band
+  was human-tuned against the first of those. `.vhband inner <blocks>` pins it, `auto` hands it
+  back. The owner has been running at a zero ring by hand since before Session 70 without
+  reporting the band, so this is stale-looking rather than unobserved.
 - **Third person is untested** and is where it should matter most: the engine measures range from
   the player and the mod used to measure from the camera, which trail each other by several blocks.
   That correction is unobservable in first person.
@@ -24,6 +27,47 @@ camera mode.
   the 1 Hz revalidation and usually corrected sooner by `ChunkDirty`. Fails toward overlap in one
   direction and a brief hole in the other; neither observed.
 - **0.3.160's shader-success line has not been seen in a log.**
+
+## Seam holes: what Session 70 has not proven
+
+Both causes are fixed and `.vhband overlap` defaults to 0 on the strength of it. 0.3.162 is
+human-tested and was reported as excellent; 0.3.163 is not.
+
+- **0.3.163 is not human-tested.** The flax-field hole is the acceptance case: stand at a seam
+  running through a crop field and look for sky through the plants.
+- **The crop coverage rule costs 2.2-4.4% geometry and has no frame-time measurement.** Draw
+  clusters do not move in any of four offline samples, which is the number that usually decides,
+  but nothing has been benchmarked. `.vhcutout on` is the A/B and reports the live vertex total.
+  The +4.37% sample is roughly double the median with no cause established; four samples is a
+  small n (G98).
+- **Leaves carry G137's defect and are excluded on cost.** Source inspection only - no seam hole
+  on a tree has been observed. Including them would put a wall between every pair of leaves in
+  every canopy, so it needs its own `cutoutfield --families` measurement before anyone tries it.
+- **The blend band's own address carries G136's off-by-one** at 8-block granularity, so a wall on
+  an 8-block plane takes its neighbour's band weight. Left alone as colour-only and not verified
+  as harmless in play. Fixing it means choosing what a distance field should answer at a boundary,
+  which is a look decision, not arithmetic.
+- **`OverlapMarginBlocks = 0` is source-only.** The owner directed no new artifact for a default
+  change, so the installed 0.3.163 zip still starts at 16 and `.vhband overlap 0` is still needed
+  in that build. The next packaged artifact carries the new default.
+- **No shader this session was compile-verified offline.** There is no GLSL validator in the
+  toolchain; 0.3.162 loading in game is the only proof, and 0.3.163 has not been run.
+
+## Half-vanilla trees at the seam: investigated, accepted, not fixed
+
+Reported in Session 70 and closed as correct behaviour rather than a defect. Recorded so it is not
+rediscovered.
+
+Ownership is decided per 32-block cell against that cell's OWN bounding sphere, whose centre
+`TesselatedChunk` places at the geometry extents midpoint - so a cell holding only a tree canopy
+and the cell holding the trunk beneath it can have centres up to `32 * sqrt(2)` apart and fall on
+opposite sides of the engine's range test. Vanilla genuinely draws the canopy and genuinely does
+not draw the trunk; the mask reads both correctly and the cache fills in the rest.
+
+The only safe correction is to deny a column whose cells disagree, which reinstates most of the
+46-block sphere slack the exact rule exists to remove, concentrated on exactly the sparse-geometry
+columns that produce trees. `.vhexact off` already demonstrates that trade in one command, at the
+cost of the full ring. Do not rebuild it as a new rule without a product decision first.
 
 ## Complete columns are unreachable, and two features wait on them
 
@@ -108,9 +152,12 @@ Shipped and human-tested through 0.3.139, but several things were never measured
 - **Near-field suppression now defaults to zero.** The artefact it guarded against - coarse cached
   geometry at arm's length in cells vanilla never proves, typically underground - has not been
   re-tested. `.vhnear 48` restores it.
-- **The unload-hole fix is a mitigation.** Taking ground back 16 blocks earlier closed the reported
-  symptom; whether loss detection itself is too slow was never established. `.vhholes` is the
-  diagnostic if it recurs.
+- ~~**The unload-hole fix is a mitigation.**~~ **Answered in Session 70 and closed.** It was
+  never about unload timing. The 16-block margin was burying two seam defects - a wall charged to
+  the wrong ownership cell (G136) and a crop cube claiming an occlusion vanilla does not provide
+  (G137) - and with both fixed the margin defaults to zero. `.vhholes` remains the diagnostic if a
+  hole recurs, but a hole that only `.vhband overlap` closes is now evidence of a third cause
+  rather than of loss latency.
 - **46 blocks resolve no texture and 241 keep per-position colour.** Neither figure has been checked
   against what ground it actually covers.
 - **Grass keeps the established olive tone.** The distant colour pipeline blends soil and grass by

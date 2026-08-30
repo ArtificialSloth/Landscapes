@@ -300,7 +300,8 @@ public class LodTerrainRenderer : IRenderer
     ///
     /// <para>
     /// On is the exact rule and no overlap ring; off is 0.3.152's arithmetic bound and its
-    /// 62-block ring. A live toggle because the two produce a visibly different seam and the
+    /// 46-block sphere-slack ring, plus whatever overlap is set. A live toggle because the two
+    /// produce a visibly different seam and the
     /// only way to compare them honestly is to stand at one and switch, and because it is the
     /// single switch that reverts this whole feature - the sweep below is gated on it too.
     /// </para>
@@ -549,17 +550,29 @@ public class LodTerrainRenderer : IRenderer
 
     /// <summary>
     /// Extra overlap between cached and live vanilla terrain, in blocks, beyond the
-    /// geometric slack the ownership denial already applies. Vanilla unloads chunks on its
-    /// own schedule and ownership is only withdrawn once loss is detected, so a column can
-    /// stop drawing before cached terrain is allowed back over it - the owner found ground
-    /// that stayed missing until he moved. Handing columns back early costs a wider band
-    /// where both draw, which is what the sink is for.
+    /// geometric slack the ownership denial already applies. Handing columns back early
+    /// costs a wider band where both draw, which is what the sink is for.
     ///
-    /// 16 blocks, half a chunk, is the owner's measured value: it closed the hole in play and
-    /// 32 overlapped more than the hole needed. Not a derived number - the distance at which
-    /// vanilla lets a chunk go is the engine's business, not ours - so it stays a knob.
+    /// ZERO since 0.3.163, and the history is the point. This was 16 blocks because 16
+    /// blocks closed a hole in play, and the reasoning attached to it - that vanilla unloads
+    /// chunks on its own schedule and ownership is withdrawn only once loss is detected - was
+    /// never established; `dev/TODO.md` carried it as "a mitigation" for six releases. It was
+    /// a mitigation for two defects that had nothing to do with unload timing, and half a
+    /// chunk of overlap happened to be wide enough to bury both:
+    ///
+    /// - the fragment shader charged a wall standing IN a chunk plane to the cell on the far
+    ///   side of that plane, so a wall on the cache side of the seam was hidden as vanilla's
+    ///   work while vanilla drew nothing there (0.3.162, G136);
+    /// - the mesher let a crop cube hide the soil's top face and its neighbour's wall, an
+    ///   occlusion the game does not provide for a block it draws see-through (0.3.163, G137).
+    ///
+    /// With both fixed the margin buys nothing and costs a permanently doubled band, so the
+    /// default is what the owner had already been running by hand. It stays a knob because
+    /// the distance at which vanilla lets a chunk go is the engine's business, not ours: if a
+    /// hole appears at the seam, raising this is the first thing to try and the fact that it
+    /// helps is evidence about where to look, not a fix.
     /// </summary>
-    public float OverlapMarginBlocks { get; set; } = 16f;
+    public float OverlapMarginBlocks { get; set; }
 
     /// <summary>
     /// Paint the band's weight instead of correcting with it, so its shape can be judged from
@@ -726,6 +739,23 @@ public class LodTerrainRenderer : IRenderer
     /// cave and overhang slabs use the established full-block LOD approximation.
     /// </summary>
     public bool SurfaceHalfBlocksOnly { get; set; } = true;
+
+    /// <summary>
+    /// Whether a block the GAME draws see-through - a crop, tall grass, a berry bush, a vine -
+    /// may hide the faces around it in the cached mesh.
+    ///
+    /// Off, which is correct. The cached mesh draws these as solid cubes so a meadow still
+    /// reads as a meadow, but the game draws them as transparent tufts, so letting one act as
+    /// cover claims an occlusion the game does not provide. At the vanilla seam the game draws
+    /// where we do not, and the two faces we dropped - the soil's top under a crop and the wall
+    /// between two of them - become a window through the hollow cached terrain to the sky.
+    /// Reported in play at a seam through a flax field.
+    ///
+    /// On restores the behaviour before 0.3.163. The cost of the fix is geometry that is
+    /// invisible everywhere except that seam, so this exists to A/B the frame rate rather than
+    /// the picture. Changing it re-meshes every resident section. See `.vhcutout`.
+    /// </summary>
+    public bool CutoutBlocksCover { get; set; }
 
     int caveCullReach = LodCaveCull.DefaultReach;
 
@@ -2159,6 +2189,7 @@ public class LodTerrainRenderer : IRenderer
                 CaveCullReach = CaveCulling ? caveCullReach : 0,
                 HalfBlockLevels = halfBlockLevels,
                 SurfaceHalfBlocksOnly = SurfaceHalfBlocksOnly,
+                CutoutBlocksCover = CutoutBlocksCover,
             });
         }
 
@@ -3230,10 +3261,14 @@ public class LodTerrainRenderer : IRenderer
     /// The derived growth, and the subtraction in it is the whole point.
     ///
     /// Ownership is refused for <c>SphereCentreSlackBlocks</c> plus
-    /// <see cref="OverlapMarginBlocks"/> - 62 blocks at the defaults - so cached ground keeps
-    /// covering chunks the engine may already have dropped. The obvious reading is that water
-    /// must grow back all 62 blocks, two chunks, and that is what 0.3.151 did. It overshot by
-    /// exactly one chunk, measured in play as a chunk-wide strip with no water in it at all.
+    /// <see cref="OverlapMarginBlocks"/> - 62 blocks when this was written, and ZERO at
+    /// today's defaults, because the exact rule removed the slack and 0.3.163 took the margin
+    /// to nothing - so cached ground keeps covering chunks the engine may already have
+    /// dropped. The worked example below is the 62-block case it was derived from; the
+    /// arithmetic is what matters, not the number it was first run on. The obvious reading is
+    /// that water must grow back all 62 blocks, two chunks, and that is what 0.3.151 did. It
+    /// overshot by exactly one chunk, measured in play as a chunk-wide strip with no water in
+    /// it at all.
     ///
     /// The reason is which FACE the refusal measures from. It compares the column's NEAREST
     /// face against the threshold, so the outermost column that still owns anything has its
@@ -3259,14 +3294,17 @@ public class LodTerrainRenderer : IRenderer
     /// How far inside vanilla's real edge ground ownership currently stops, in blocks.
     ///
     /// <para>
-    /// Under the exact rule this is the early handover ALONE - 16 blocks at the defaults,
-    /// against 62 before - because the 46 blocks of sphere-placement slack are what reading
-    /// the sphere removes. The margin itself stays: it covers a different thing, which is
-    /// vanilla unloading a chunk that is still inside its draw range. Neither the sphere nor
-    /// the player position can see an unload coming, so that one is still bounded by how
-    /// quickly a probe gets back to the cell - about a second - and the early handover is
-    /// what covers the gap. `.vhband overlap 0` takes it away live for anyone who wants the
-    /// boundary exact and will accept the risk.
+    /// Under the exact rule this is the early handover ALONE - because the 46 blocks of
+    /// sphere-placement slack are what reading the sphere removes - and since 0.3.163 that
+    /// handover is ZERO, so the ring is zero and ownership reaches vanilla's true edge.
+    ///
+    /// The handover was 16 blocks and was believed to cover vanilla unloading a chunk that is
+    /// still inside its draw range, which neither the sphere nor the player position can see
+    /// coming. It was never shown to be covering that. What it was actually covering were two
+    /// defects in the seam itself, both since fixed (G136, G137), and with those gone it buys
+    /// nothing and costs a permanently doubled band. `.vhband overlap <blocks>` puts it back
+    /// live, and if a hole ever returns at the seam, that it helps is a clue about where to
+    /// look rather than the answer.
     /// </para>
     /// <para>
     /// Everything derived from the ring has to follow it, or the derivation describes a
@@ -4416,7 +4454,7 @@ public class LodTerrainRenderer : IRenderer
     /// <para>
     /// The figure that matters is the exact/bounded split. Nothing on screen distinguishes
     /// "the sphere is being read" from "the sphere could not be read and every cell fell back
-    /// to the 62-block ring" - both draw terrain, one just overlaps more - so if this rule
+    /// to the sphere-slack ring" - both draw terrain, one just overlaps more - so if this rule
     /// ever goes quietly unavailable, this clause is the only place it shows.
     /// </para>
     /// </summary>

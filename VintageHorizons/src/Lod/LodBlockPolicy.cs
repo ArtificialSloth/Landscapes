@@ -35,13 +35,39 @@ public static class LodBlockPolicy
             return LodPaletteEntry.FlagSkip;
         }
 
+        byte flags = 0;
+
         // Terrain that only fills the bottom half of its cell. Runs are stored in whole
         // blocks, so this is the only place the difference can be recorded, and the mesher
         // lowers the surface by half a block wherever it is set.
-        if (IsBottomHalfBlock(block)) return LodPaletteEntry.FlagHalf;
+        if (IsBottomHalfBlock(block)) flags |= LodPaletteEntry.FlagHalf;
 
-        return 0;
+        // Drawn as a cube, but it covers nothing. See IsSeeThroughPlant.
+        if (IsSeeThroughPlant(block)) flags |= LodPaletteEntry.FlagCutout;
+
+        return flags;
     }
+
+    /// <summary>
+    /// A plant the game draws as a see-through cutout rather than a solid cube: a crop, tall
+    /// grass, a berry bush, a vine, a mushroom.
+    ///
+    /// Read from the engine's own occlusion answer, not from a list of names.
+    /// <c>Block.AllSidesOpaque</c> is the property vanilla's own tesselator consults to decide
+    /// whether a block hides the face next to it, and every one of these declares
+    /// <c>sideopaque: {all: false}</c> in its block data. The LOD goes on drawing them as
+    /// cubes - that is what keeps a meadow from flattening - but a cube that claims an
+    /// occlusion the game does not provide opens a hole wherever the game draws instead of us,
+    /// which is the vanilla seam. See LodMesher's coverage rules.
+    ///
+    /// The Plant guard is the same one thin cover uses, and it is doing real work: leaves,
+    /// glass, fences, stairs and chiselled blocks are all non-opaque too, and freeing every
+    /// one of them from covering would put a wall between every pair of leaves in every
+    /// canopy. Leaves have the same defect at the seam and are deliberately left for a
+    /// measurement of their own.
+    /// </summary>
+    static bool IsSeeThroughPlant(Block block) =>
+        block.BlockMaterial == EnumBlockMaterial.Plant && !block.AllSidesOpaque;
 
     /// <summary>
     /// A block whose solid part is the lower half of its cell: a full 1x1 footprint,

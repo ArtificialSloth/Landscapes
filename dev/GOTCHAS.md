@@ -2652,3 +2652,75 @@ check its denominator against a number measured elsewhere. Any count that is a c
 the LOD level count is a per-level visit, not a population.
 
 **Found:** 0.3.157, when a report claiming 63 columns sat beside telemetry showing nine.
+
+### G136 - A face lying IN a cell boundary belongs to neither cell until you say which
+
+**Trigger:** deciding which ownership cell, chunk, region or tile a rendered fragment falls in by
+dividing its own position, when the geometry includes axis-aligned faces.
+
+**Trap:** `floor(position / 32)` is right for a fragment inside a block and undefined for one on
+the boundary between two. A mesher emits each wall at its own block's face - the near edge going
+west or north, the FAR edge going east or south - so an east-facing wall standing on a chunk plane
+is drawn at the next chunk's origin and floors into that neighbour. The ownership mask then judged
+it by a cell that does not contain its block. Where the neighbour was owned and the wall's own
+chunk was not, the wall was discarded as vanilla's work while vanilla drew nothing there: a
+missing vertical face at the seam, on the -X and -Z sides only, because on the other two the
+mis-charged face points away and is back-face culled anyway.
+
+The asymmetry is the fingerprint. Nothing else in the renderer treats +X differently from -X, so
+"the holes are always on the same two sides of me" identified this in one turn after four
+sessions of hole-hunting had not.
+
+**Do not** fix it by biasing the address a fixed direction. A uniform inward nudge is exactly
+correct for east, south and top faces and exactly wrong for west, north and bottom ones - it moves
+the hole to the opposite seam rather than closing it.
+
+**Do:** treat the boundary as ambiguous and ask every cell that could hold the block behind the
+fragment, hiding it only when they all agree. One lookup for an ordinary surface, two for a wall
+in a plane, four on a chunk corner. It is conservative in the safe direction - the extra candidate
+can only keep cached geometry drawn over ground vanilla is drawing too - and it removes a second
+hazard for free: a constant attribute is not promised to interpolate to the last bit, so which
+side of the plane a wall floored onto was a coin flip the hardware owned.
+
+**Do** expect a shader-parity check to be blind to this. `VanillaReadinessChecks` asserts "an
+exact 32-block boundary enters the next chunk" and the shader agrees with it; both share the wrong
+assumption about which cell a face on the boundary belongs to, which is G97 with the reference
+implementation on the CPU side.
+
+**Found:** 0.3.162, from a player report of missing vertical faces after `.vhband overlap 0`
+removed the margin that had been burying it since 0.3.139.
+
+### G137 - Drawing a block as a cube does not entitle it to occlude like one
+
+**Trigger:** an LOD, impostor or proxy that substitutes a simplified solid for geometry the real
+renderer draws as a cutout, and then uses that solid in its own visibility or face-culling rules.
+
+**Trap:** the cache draws a crop, tall grass or a vine as an opaque cube, deliberately, because a
+meadow of flat mats reads as a green sheet at distance. The mesher then let that cube act as
+COVER, dropping the soil's top face beneath it and the wall between two of them. Inside cached
+terrain both drops are correct and cost nothing anyone can see. At the vanilla seam the game draws
+in place of the cache, its crop is a transparent tuft, and those two dropped faces become a window
+through the hollow cached shell and out to the sky. Reported in play as holes in a flax field.
+
+Vanilla's own block data says so outright: `crop.json` carries `sideopaque: {all: false}` and
+`renderpass: "OpaqueNoCull"`. The engine never claimed these blocks occlude; the cache invented it.
+
+**Do:** read the engine's own answer - `Block.AllSidesOpaque` - rather than matching block codes.
+The shipping thin-cover rule is a list of three name prefixes (`flower`, `fern`, `tallfern`) and
+is blind to everything else; a palette scan of one real world found crops 4,855 palette entries,
+tall grass 7,294, vines 3,841, berry bushes 2,617 and mushrooms 986, every one of them stored as a
+solid cube. Keep the material guard: leaves, glass, fences and stairs are all non-opaque too, and
+freeing every one of them from covering would put a wall between every pair of leaves in every
+canopy.
+
+**Do** measure the coverage change by face orientation before quoting it, per G127. Meshing 120
+real cache sections twice with the shipping mesher measured +2.2% to +4.4% opaque geometry over
+four samples, landing on walls (+2.9%) with tops nearly free (+0.6%), and **no change at all in
+draw clusters** - which is the number that decides whether a geometry increase is affordable.
+
+**Do** expect the cost to be pure waste everywhere except the seam. That is not an argument
+against it; it is the argument for putting it behind a switch (`.vhcutout`) so the frame rate can
+be weighed against a picture the numbers cannot show.
+
+**Found:** 0.3.163, from a player standing at a seam through a flax field, after G136 had already
+removed the other half of the same symptom.

@@ -21,6 +21,7 @@ public static class MesherChecks
         WaterIsASeparatePass(c);
         ThinMats(c);
         CoverageRules(c);
+        CutoutsCoverNothing(c);
         Frontier(c);
         UnloadedNeighbourIsNotTheFrontier(c);
         HeightBounds(c);
@@ -855,6 +856,106 @@ public static class MesherChecks
         ulong[] run = { LodSection.PackRun(0, yTop, yBottom) };
         for (int col = 0; col < Fixtures.Total; col++) s.SetColumn(col, run);
         return s;
+    }
+
+    /// <summary>
+    /// A block the GAME draws see-through covers nothing here, even though the LOD draws it
+    /// as a solid cube.
+    ///
+    /// This is the rule that closes the flax-field hole. Inside our own terrain a crop cube
+    /// really does hide the soil's top face and its neighbour's wall, so dropping them was
+    /// correct and cost nothing anyone could see. At the vanilla seam the game draws in place
+    /// of the cached mesh, its crop is a transparent tuft, and those two dropped faces become
+    /// a window through the hollow cached terrain and out to the sky.
+    ///
+    /// Both directions are pinned: the faces appear with the shipping rule, they are still
+    /// dropped under the comparison switch, and an ordinary solid block on top is unaffected
+    /// by the switch at all - which is what says the rule reaches cutouts and nothing else.
+    /// </summary>
+    static void CutoutsCoverNothing(Check c)
+    {
+        LodSection field = TwoColumnsWithCapOnTop(LodPaletteEntry.FlagCutout);
+
+        MeshResult covering = LodMesher.BuildMesh(Fixtures.Job(field, cutoutBlocksCover: true));
+        MeshResult exposed = LodMesher.BuildMesh(Fixtures.Job(field, cutoutBlocksCover: false));
+
+        c.Eq(0, HorizontalQuadsAt(covering.Xyz, 10f),
+            "a crop that counts as cover hides the soil's top face, as it always did");
+        c.Eq(1, HorizontalQuadsAt(exposed.Xyz, 10f),
+            "a crop that covers nothing leaves the soil its lid, merged across both columns");
+        c.True(Quads(exposed.VertexCount) > Quads(covering.VertexCount),
+            "and the fix costs geometry rather than saving it");
+
+        // The wall between the two crops, which is the other half of the hole: it faces the
+        // seam, its neighbour is drawn by the game as a tuft, and nothing else would cover it.
+        //
+        // Counted as a DIFFERENCE. Both crops also wall off the empty columns around them, and
+        // those outward walls greedy-merge in pairs, so an absolute count here would be
+        // pinning the merge rather than the coverage rule.
+        c.Eq(2, WallQuadsSpanning(exposed.Xyz, 10f, 11f)
+                - WallQuadsSpanning(covering.Xyz, 10f, 11f),
+            "and exposes exactly the two walls the crops were hiding from each other");
+
+        // The control. A solid block on top is not a cutout, so the switch must not move it -
+        // otherwise this is a rule about run stacking rather than about what a block is.
+        LodSection stone = TwoColumnsWithCapOnTop(flags: 0);
+        MeshResult stoneCovering = LodMesher.BuildMesh(Fixtures.Job(stone, cutoutBlocksCover: true));
+        MeshResult stoneExposed = LodMesher.BuildMesh(Fixtures.Job(stone, cutoutBlocksCover: false));
+        c.Eq(stoneCovering.VertexCount, stoneExposed.VertexCount,
+            "an ordinary block on top is unaffected by the switch");
+        c.Eq(0, HorizontalQuadsAt(stoneExposed.Xyz, 10f),
+            "and still hides the face beneath it, because it really does cover it");
+    }
+
+    /// <summary>Two adjacent captured columns: ground y0-10, one capping block y10-11.</summary>
+    static LodSection TwoColumnsWithCapOnTop(byte flags)
+    {
+        var s = new LodSection();
+        int ground = s.FindOrAddPaletteEntry(blockId: 1, color: 0x00607080, flags: 0);
+        int cap = s.FindOrAddPaletteEntry(blockId: 2, color: 0x0020C040, flags: flags);
+        // Runs are stored top-down.
+        ulong[] column = { LodSection.PackRun(cap, 11, 10), LodSection.PackRun(ground, 10, 0) };
+        s.SetColumn(LodSection.ColumnIndex(5, 5), column);
+        s.SetColumn(LodSection.ColumnIndex(6, 5), column);
+        return s;
+    }
+
+    /// <summary>Quads whose four corners all sit on one horizontal plane at <paramref name="y"/>.</summary>
+    static int HorizontalQuadsAt(float[]? xyz, float y)
+    {
+        if (xyz == null) return 0;
+        int found = 0;
+        for (int v = 0; v + 12 <= xyz.Length; v += 12)
+        {
+            bool level = true;
+            for (int corner = 0; corner < 4; corner++)
+            {
+                if (Math.Abs(xyz[v + corner * 3 + 1] - y) < 0.0001f) continue;
+                level = false;
+                break;
+            }
+            if (level) found++;
+        }
+        return found;
+    }
+
+    /// <summary>Vertical quads reaching from <paramref name="low"/> exactly to <paramref name="high"/>.</summary>
+    static int WallQuadsSpanning(float[]? xyz, float low, float high)
+    {
+        if (xyz == null) return 0;
+        int found = 0;
+        for (int v = 0; v + 12 <= xyz.Length; v += 12)
+        {
+            float min = float.PositiveInfinity, max = float.NegativeInfinity;
+            for (int corner = 0; corner < 4; corner++)
+            {
+                float cy = xyz[v + corner * 3 + 1];
+                min = Math.Min(min, cy);
+                max = Math.Max(max, cy);
+            }
+            if (Math.Abs(min - low) < 0.0001f && Math.Abs(max - high) < 0.0001f) found++;
+        }
+        return found;
     }
 
     static int Quads(int vertexCount) => vertexCount / 4;

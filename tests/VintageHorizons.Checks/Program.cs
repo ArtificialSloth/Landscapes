@@ -97,6 +97,12 @@ public static class Program
             return SlabField.Run(args);
         }
 
+        // And again: it reports what it costs to stop a crop hiding the terrain behind it.
+        if (string.Equals(only, "cutoutfield", StringComparison.OrdinalIgnoreCase))
+        {
+            return CutoutField.Run(args);
+        }
+
         Console.WriteLine();
         Console.WriteLine("  VintageHorizons fast checks");
         Console.WriteLine("  game: " + GameAssemblies.GamePath);

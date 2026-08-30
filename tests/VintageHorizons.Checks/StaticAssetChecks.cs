@@ -1229,11 +1229,37 @@ public static class StaticAssetChecks
         // Ownership must come from an integer section origin plus a small local offset. A
         // summed world coordinate is not exact in float32: at 512k blocks a fragment 0.03
         // blocks below a chunk edge rounds onto the next chunk and takes its ownership.
-        c.True(fragment.Contains("maskSectionOriginX + int(floor(sectionLocal.x", StringComparison.Ordinal)
-            && fragment.Contains("maskSectionOriginZ + int(floor(sectionLocal.z", StringComparison.Ordinal),
+        c.True(fragment.Contains("maskSectionOriginX + int(floor((sectionLocal.x", StringComparison.Ordinal)
+            && fragment.Contains("maskSectionOriginZ + int(floor((sectionLocal.z", StringComparison.Ordinal),
             "ownership addressing uses an integer section origin plus the section-local offset");
         c.False(fragment.Contains("floor(terrainPos.x / 32.0)", StringComparison.Ordinal),
             "ownership is never derived from a summed world coordinate");
+
+        // A wall is emitted IN the plane between two ownership cells, at its own block's
+        // face - the near edge going west or north, the FAR edge going east or south. So an
+        // east wall standing on a chunk boundary is drawn at the next chunk's origin, and a
+        // plain floor() charges it to a neighbour that may not hold its block at all. Where
+        // that neighbour was owned and the wall's own chunk was not, the wall was discarded
+        // and vanilla drew nothing in its place. Asking every candidate is what closes it,
+        // and nothing at runtime can catch a regression here: the picture simply loses a
+        // face, on two of the four sides of the seam, wherever the ground steps down across
+        // one particular plane.
+        c.True(fragment.Contains("float maskPlaneOffset(float localBlocks)", StringComparison.Ordinal)
+            && fragment.Contains("return localBlocks - 32.0 * floor(localBlocks / 32.0 + 0.5);", StringComparison.Ordinal),
+            "the shader measures how far a fragment is from the nearest chunk plane");
+        c.True(fragment.Contains("int edgeX = abs(planeOffsetX) < MASK_PLANE_SLACK ? 1 : 0;", StringComparison.Ordinal)
+            && fragment.Contains("int edgeZ = abs(planeOffsetZ) < MASK_PLANE_SLACK ? 1 : 0;", StringComparison.Ordinal),
+            "and records that a fragment lying in one has two candidate cells, not one");
+        c.True(fragment.Contains("if (owned && edgeX == 1) owned = vanillaOwnsCell(cellX - 1, cellY, cellZ, ownershipBand);", StringComparison.Ordinal)
+            && fragment.Contains("if (owned && edgeZ == 1) owned = vanillaOwnsCell(cellX, cellY, cellZ - 1, ownershipBand);", StringComparison.Ordinal),
+            "a face in a chunk plane is hidden only when BOTH cells that could hold its block are owned");
+        c.True(fragment.Contains("owned = vanillaOwnsCell(cellX - 1, cellY, cellZ - 1, ownershipBand);", StringComparison.Ordinal),
+            "and the chunk-corner line asks the fourth candidate too");
+        // The slack absorbs interpolation slop at a plane and nothing else. Larger than a
+        // quarter block would swallow the thin-cover mat, the shortest surface drawn here,
+        // and start treating ordinary faces as boundaries.
+        c.True(fragment.Contains("const float MASK_PLANE_SLACK = 0.03125;", StringComparison.Ordinal),
+            "the plane slack stays far below the shortest surface the mesher emits");
         // Two scalars, and never the Vec2i overload: that one reaches glUniform2f, which an
         // integer uniform rejects outright, so the origin never leaves the CPU. G42.
         // Matched against the source with its whitespace collapsed, so wrapping the call

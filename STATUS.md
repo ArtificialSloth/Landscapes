@@ -3,14 +3,16 @@
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
 **Status date:** 2026-08-30
-**Mod version:** `0.3.160`, built, verified, and copy-installed. **Human-tested at 0.3.159** by
-the coverage audit reading 100% of the chunks the engine is drawing with zero cells hidden that it
-is not - one world, a 64-block vanilla view distance, first person. 0.3.160 is a logging change on
-top and its one new line has not been seen in a log. The surface-slab behavior was human-tested and
-accepted in 0.3.142 and remains the default. Cached water's derived footprint moved as a
-consequence of this session's ownership change and has **not** been looked at in play. The
-development line remains 0.3.x (`0.2.1` is the public released version; 0.4.0 remains a preserved
-local rollback artifact from the GPU-renderer milestone).
+**Mod version:** `0.3.163`, built, verified, and copy-installed. **Human-tested at 0.3.162**,
+which the owner reported as excellent: the missing vertical faces at the vanilla seam are gone.
+0.3.163 adds the crop-coverage half of the same fix and has **not** been looked at in play; its
+acceptance case is a seam running through a crop field. Source now carries `.vhband overlap`
+defaulting to 0, which is **not** in any packaged artifact - the owner directed no new version for
+a default change, so the installed 0.3.163 still starts at 16 and the chat command is still how to
+reach 0 in that build. The surface-slab behavior was human-tested and accepted in 0.3.142 and
+remains the default. Cached water's derived footprint moved again with the overlap default and has
+**not** been looked at in play. The development line remains 0.3.x (`0.2.1` is the public released
+version; 0.4.0 remains a preserved local rollback artifact from the GPU-renderer milestone).
 **Active branch:** `codex/exact-vanilla-draw-range`, branched from `14bfe4b` on
 `codex/water-seam-transition`, itself from `94cde0e` on `codex/terrain-slabs-and-near-water`,
 itself from `a55fc5b` on `codex/seam-blending-and-block-textures`, itself from `master` at
@@ -498,13 +500,50 @@ effect on the reported tiny or three-to-six-second spikes.
 > after an exact camera-side plane test, before material lookup, tint, warp, seam, fog, and
 > projection; its contribution has not been isolated from the geometry reduction.
 
-> **Overlap and the near field.** The 46-block sphere-placement slack is **gone as of 0.3.159**:
-> ownership reads the engine's own mesh bounding sphere and its own view distance instead of
-> bounding where that sphere might be, so cached terrain stops at the chunk vanilla stops drawing.
-> Cached terrain still takes ground back 16 blocks early, because vanilla unloads on its own
-> schedule and reading the sphere does not answer that; `.vhband overlap 0` removes it live. The
-> 48-block radius that suppressed cached terrain around the camera still defaults to zero.
-> `.vhexact off` restores the bounded rule wholesale.
+> **Overlap and the near field.** There is **no overlap left**. The 46-block sphere-placement
+> slack went in 0.3.159, when ownership began reading the engine's own mesh bounding sphere and
+> view distance instead of bounding where that sphere might be. The remaining 16-block early
+> handover went in Session 70: it was never established as covering vanilla's unload schedule, and
+> it turned out to be burying two seam defects that are now fixed at source (G136, G137). Cached
+> terrain therefore stops exactly at the chunk vanilla stops drawing. `.vhband overlap <blocks>`
+> puts a margin back live, and if a hole ever returns at the seam, the fact that it helps is a clue
+> about where to look rather than a fix. The 48-block radius that suppressed cached terrain around
+> the camera still defaults to zero. `.vhexact off` restores the bounded rule wholesale.
+
+> **The vanilla seam, as of Session 70.** Two independent defects made small holes at the boundary,
+> both open to the sky, and both were hidden by the overlap margin until the owner set it to zero.
+>
+> The ownership shader charged a wall standing **in** a chunk plane to the cell on the far side of
+> it: the mesher emits an east or south wall at its block's far edge, `floor(x / 32)` puts that on
+> the neighbour, and where the neighbour was owned and the wall's own chunk was not, the wall was
+> discarded while vanilla drew nothing there. Visible on the -X and -Z seams only, because on the
+> other two the mis-charged face points away and is back-face culled. Fixed by treating a
+> coordinate within 1/32 block of a chunk plane as ambiguous and hiding a fragment only when every
+> cell that could hold its block agrees - one texture lookup for an ordinary surface, two for a
+> wall in a plane, four on a chunk corner. One shared file, so all three render paths get it
+> (G136).
+>
+> The mesher let a crop cube act as cover, dropping the soil's top face beneath it and the wall
+> between two of them. Both drops are correct inside cached terrain and invisible; at the seam
+> vanilla draws its own crop as a transparent tuft and they became a window through the hollow
+> cached shell. Cube-drawn plants now cover nothing, classified from `Block.AllSidesOpaque` under
+> the existing Plant material guard rather than from a list of block names - vanilla's own
+> `crop.json` carries `sideopaque: {all: false}`. `FlagCutout` takes free flag bit 4 with no blob
+> format bump, and is re-derived on load, so an existing cache gains it with no re-exploration
+> (G137).
+>
+> Priced offline with the new `cutoutfield` harness, meshing 120 real cache sections twice with
+> the shipping mesher: **+2.19%, +2.29%, +2.57% and +4.37%** opaque geometry over four samples,
+> landing on walls (+2.85%) with tops nearly free (+0.62%), and **draw clusters unchanged at
+> +0.00% in every sample**. `.vhcutout on` restores the old behaviour and reports the live vertex
+> total for an in-game A/B; no frame-time measurement exists.
+>
+> **Not a defect, investigated and accepted:** a tree at the seam can be drawn with vanilla's real
+> leaves on top and cached geometry below. Ownership is decided per 32-block cell against that
+> cell's own bounding sphere, whose centre is the geometry extents midpoint, so a canopy cell and
+> the trunk cell beneath it can sit `32 * sqrt(2)` apart and fall either side of the engine's range
+> test. Vanilla genuinely draws one and genuinely does not draw the other. The only safe correction
+> reinstates most of the slack the exact rule exists to remove; `.vhexact off` shows that trade.
 
 Current rendering edits world-anchor cached-terrain noise, remove the near-transition
 geometry sink, and replace the old outer cutoff with ownership the mod can actually prove.
