@@ -40,6 +40,7 @@ public static class Program
         ("pure", "hzb field harness", HzbFieldChecks.Run),
         ("pure", "tick allowances", AllowanceChecks.Run),
         ("pure", "drain budgets", DrainBudgetChecks.Run),
+        ("pure", "texture slot backfill", TextureSlotBackfillChecks.Run),
         ("fixture", "persistence acknowledgements", PersistenceChecks.Run),
         ("pure", "far distance", FarDistanceChecks.Run),
         ("pure", "benchmark routes", BenchRouteChecks.Run),

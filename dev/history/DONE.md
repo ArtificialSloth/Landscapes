@@ -2,6 +2,23 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-08-31 - Blend-toggle lifecycle findings corrected in 0.3.166
+
+- Live capture and cache/foreign reclassification now share a master-gated texture-slot resolver.
+  Turning off therefore stops CPU atlas work as well as rendering, and plain mesh snapshots omit
+  the texture-slot array.
+- Turning on incrementally repairs resident L0 palettes under a 256-entry/about-1 ms tick allowance;
+  textured publication waits until the repair is complete while newly arriving sections resolve
+  directly.
+- Mesh jobs/results carry world epochs and cross-world results are rejected before touching
+  in-flight or dirty bookkeeping. World leave clears queued mesh work, block-slot registration,
+  cached texture means and renderer table/failure state.
+- GPU block-table refresh is replace-then-swap. Failure preserves the previous valid table for old
+  slot-bearing meshes and advances texture-mode identity so incompatible queued work cannot publish.
+- Release built with zero warnings/errors; the complete fast tier passed 5,957 assertions. The
+  verified 14-entry 0.3.166 private test artifact was copy-installed with SHA-256
+  `7B9CAD84F76229A4252109B188CC32AE787E5FAF9ED624F1C59C570F08A17C94`.
+
 ## 2026-08-29 - Surface slabs retained the landscape without the geometry cliff
 
 - **The regression was geometry, not draw calls.** On 120 real level-0 sections, exact half-height

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
@@ -35,6 +36,107 @@ public delegate int LodStableColorResolver(Block block);
 /// </summary>
 public delegate ushort LodTextureSlotResolver(Block block);
 
+/// <summary>
+/// Bounded owning-thread repair for resident palettes created while block textures were off.
+/// New capture/load work resolves slots directly once the feature is enabled; this queue covers
+/// only the sections that were already resident at that transition.
+/// </summary>
+public sealed class LodTextureSlotBackfill
+{
+    readonly Queue<long> pending = new();
+    long currentKey;
+    int nextPaletteIndex;
+    bool hasCurrent;
+
+    public bool Complete { get; private set; } = true;
+    public int PendingSections => pending.Count + (hasCurrent ? 1 : 0);
+
+    public void Begin(IEnumerable<long> keys)
+    {
+        pending.Clear();
+        foreach (long key in keys) pending.Enqueue(key);
+        currentKey = 0;
+        nextPaletteIndex = 0;
+        hasCurrent = false;
+        Complete = pending.Count == 0;
+    }
+
+    public void Cancel()
+    {
+        pending.Clear();
+        currentKey = 0;
+        nextPaletteIndex = 0;
+        hasCurrent = false;
+        Complete = true;
+    }
+
+    /// <summary>
+    /// Resolve at most <paramref name="maxEntries"/> palette entries and stop at an entry
+    /// boundary after the elapsed allowance. One first entry always progresses.
+    /// </summary>
+    public int Pump(IReadOnlyDictionary<long, LodSection> sections,
+        System.Func<int, ushort> resolve, int maxEntries, double maxMilliseconds)
+    {
+        ArgumentNullException.ThrowIfNull(sections);
+        ArgumentNullException.ThrowIfNull(resolve);
+        if (maxEntries <= 0) throw new ArgumentOutOfRangeException(nameof(maxEntries));
+
+        if (Complete) return 0;
+        long started = Stopwatch.GetTimestamp();
+        int examined = 0;
+
+        while (examined < maxEntries)
+        {
+            if (!hasCurrent)
+            {
+                if (!pending.TryDequeue(out currentKey))
+                {
+                    Complete = true;
+                    break;
+                }
+                nextPaletteIndex = 0;
+                hasCurrent = true;
+            }
+
+            if (!sections.TryGetValue(currentKey, out LodSection? section))
+            {
+                hasCurrent = false;
+                continue;
+            }
+
+            if (nextPaletteIndex >= section.Palette.Count)
+            {
+                hasCurrent = false;
+                continue;
+            }
+
+            LodPaletteEntry entry = section.Palette[nextPaletteIndex];
+            if (entry.BlockId > 0 && entry.TextureSlot == 0)
+            {
+                entry.TextureSlot = resolve(entry.BlockId);
+                section.Palette[nextPaletteIndex] = entry;
+            }
+            nextPaletteIndex++;
+            examined++;
+
+            if (examined > 0 && maxMilliseconds >= 0
+                && (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency
+                    >= maxMilliseconds)
+            {
+                break;
+            }
+        }
+
+        if (hasCurrent && sections.TryGetValue(currentKey, out LodSection? current)
+            && nextPaletteIndex >= current.Palette.Count)
+        {
+            hasCurrent = false;
+        }
+        if (!hasCurrent && pending.Count == 0) Complete = true;
+        return examined;
+    }
+}
+
 public enum LodForeignQueueOutcome
 {
     Queued,
@@ -67,6 +169,8 @@ public class LodPipeline
     const int PersistenceSnapshotsPerTick = 1;
     const long PersistenceCheckpointIntervalMs = 30_000;
     const int MaxWorkerCaptureBacklog = 24;
+    const int TextureSlotBackfillEntriesPerTick = 256;
+    const double TextureSlotBackfillMaxMillisecondsPerTick = 1.0;
     const int ChunkSize = GlobalConstants.ChunkSize;
 
     /// <summary>
@@ -87,6 +191,11 @@ public class LodPipeline
     /// <summary>Section-independent colour for a block; the server has no atlas and leaves it 0.</summary>
     readonly LodStableColorResolver stableColorFor;
     readonly LodTextureSlotResolver textureSlotFor;
+    readonly LodTextureSlotBackfill textureSlotBackfill = new();
+
+    public bool TextureSlotsEnabled { get; private set; }
+    public bool TextureSlotsPrepared => TextureSlotsEnabled && textureSlotBackfill.Complete;
+    public int PendingTextureSlotBackfillSections => textureSlotBackfill.PendingSections;
 
     public LodWorld World { get; }
     public LodWorker Worker { get; }
@@ -181,7 +290,7 @@ public class LodPipeline
 
     public LodPipeline(ICoreAPI api, ILogger logger, LodPaletteDescriber describePalette,
         LodTintSlotResolver? tintSlotFor = null, LodStableColorResolver? stableColorFor = null,
-        LodTextureSlotResolver? textureSlotFor = null)
+        LodTextureSlotResolver? textureSlotFor = null, bool textureSlotsEnabled = true)
     {
         this.api = api;
         this.logger = logger;
@@ -189,10 +298,36 @@ public class LodPipeline
         this.tintSlotFor = tintSlotFor ?? (_ => 0);
         this.stableColorFor = stableColorFor ?? (_ => 0);
         this.textureSlotFor = textureSlotFor ?? (_ => 0);
+        TextureSlotsEnabled = textureSlotsEnabled;
         World = new LodWorld();
         Worker = new LodWorker();
         Remote = new LodRemoteKeySet(World);
     }
+
+    /// <summary>
+    /// Change whether palette work may resolve block textures. Enabling starts a bounded
+    /// resident-L0 backfill; capture and cache loads arriving afterward resolve directly.
+    /// </summary>
+    public int SetTextureSlotsEnabled(bool enabled)
+    {
+        if (TextureSlotsEnabled == enabled) return textureSlotBackfill.PendingSections;
+
+        TextureSlotsEnabled = enabled;
+        if (!enabled)
+        {
+            textureSlotBackfill.Cancel();
+            return 0;
+        }
+
+        textureSlotBackfill.Begin(World.Sections.Keys.Where(key => LodWorld.KeyLevel(key) == 0));
+        return textureSlotBackfill.PendingSections;
+    }
+
+    ushort ResolveTextureSlot(Block? block) =>
+        TextureSlotsEnabled && block != null ? textureSlotFor(block) : (ushort)0;
+
+    ushort ResolveTextureSlot(int blockId) =>
+        ResolveTextureSlot(blockId > 0 ? api.World.GetBlock(blockId) : null);
 
     public void ResetStorageStats()
     {
@@ -278,6 +413,7 @@ public class LodPipeline
     public void Open(string subdir, string suffix = "")
     {
         worldEpoch++;
+        textureSlotBackfill.Cancel();
         string worldKey = api.World.SavegameIdentifier;
         if (string.IsNullOrEmpty(worldKey)) worldKey = "seed-" + api.World.Seed;
         worldKey = Regex.Replace(worldKey, "[^A-Za-z0-9_-]", "_");
@@ -301,7 +437,7 @@ public class LodPipeline
             return block == null
                 ? ((byte)0, (byte)0, 0, (ushort)0)
                 : (LodBlockPolicy.FlagsFor(block), tintSlotFor(block), stableColorFor(block),
-                    textureSlotFor(block));
+                    ResolveTextureSlot(block));
         };
         // In integrated singleplayer both pipelines share one process and therefore one
         // environment. The guarded crash hook belongs to the client cache only; a server
@@ -425,6 +561,12 @@ public class LodPipeline
         phaseStart = LodPhaseCost.Start(TrackPhaseAllocations);
         ApplyCaptureResults();
         CaptureApplyCost.Add(phaseStart);
+
+        if (TextureSlotsEnabled && !textureSlotBackfill.Complete)
+        {
+            textureSlotBackfill.Pump(World.Sections, ResolveTextureSlot,
+                TextureSlotBackfillEntriesPerTick, TextureSlotBackfillMaxMillisecondsPerTick);
+        }
 
         phaseStart = LodPhaseCost.Start(TrackPhaseAllocations);
         ApplyMipResults();
@@ -749,7 +891,8 @@ public class LodPipeline
         Block block = api.World.Blocks[blockId];
         (int x, int y, int z) = CaptureBlockPos(sectionKey, col, run);
         (int color, byte tintSlot) = describePalette(blockId, x, y, z);
-        return section.FindOrAddPaletteEntry(blockId, color, LodBlockPolicy.FlagsFor(block), tintSlot);
+        return section.FindOrAddPaletteEntry(blockId, color, LodBlockPolicy.FlagsFor(block),
+            tintSlot, ResolveTextureSlot(block));
     }
 
     // ---- Persistence ----
@@ -964,7 +1107,9 @@ public class LodPipeline
         // Results for the world we are leaving must not be applied to the next one.
         // Both queues, or a result held back for a reload would cross worlds.
         Worker.ClearCaptureResults();
+        Worker.ClearMeshWork();
         Worker.ClearMipWork();
+        textureSlotBackfill.Cancel();
         deferredCaptures.Clear();
         World.Clear();
         CachedSectionsLoaded = 0;

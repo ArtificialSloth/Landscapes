@@ -77,7 +77,10 @@ state.
 
 ### Mesh workers
 
-Mesh workers receive immutable section snapshots. They build CPU vertex/index arrays only. They never call OpenGL or mutate `LodWorld`.
+Mesh workers receive immutable section snapshots. They build CPU vertex/index arrays only. They
+never call OpenGL or mutate `LodWorld`. Jobs/results carry both the pipeline world epoch and the
+renderer texture-mode revision; publication rejects either stale identity before touching
+new-world in-flight or dirty bookkeeping.
 
 ### Mip worker
 
@@ -208,6 +211,13 @@ staging arrays and publishes the completed low/high tables atomically. Mesh sche
 section's exact dirty obligation while any tint slot in its palette is unpublished, so geometry is
 not first revealed with identity-white tint and recoloured later. Untinted sections do not wait,
 and existing parent coverage remains live during a refined replacement's appearance preparation.
+
+The saved blend-pipeline master controls both seam resources and packed-L0 block textures. Off
+gates owning-thread atlas resolution and omits texture-slot arrays from immutable mesh snapshots;
+live L0 meshes move through the ordinary bounded remesh path to plain colour. On repairs resident
+L0 palettes incrementally before textured publication resumes. The block lookup table is uploaded
+to a replacement GPU object and swapped only on success, while a previous table remains available
+until old slot-bearing meshes retire. World teardown clears both registry and GPU table state.
 
 Visibility state is fail-open and remains independent from residency and persistence. A
 projection change or profile-specific camera threshold advances a scene epoch, and results

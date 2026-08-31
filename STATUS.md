@@ -3,16 +3,17 @@
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
 **Status date:** 2026-08-31
-**Mod version:** `0.3.165`, built, verified, packaged, and copy-installed; **not human-tested**.
+**Mod version:** `0.3.166`, built, verified, packaged, and copy-installed; **not human-tested**.
 0.3.164 corrects Forest Floor LOD tops by using the explicit up texture and the right half of its
 two-tile TopSoil overlay. It is also the first artifact carrying the zero overlap default after
 0.3.162/0.3.163 fixed the holes that the old margin hid. 0.3.165 adds a saved `.vhconfig` and
-`.vhblend` master switch for seam blending and packed-L0 block textures, with bounded live remesh
-and in-flight texture-mode rejection. A source review found five issues that are documented and
-deferred: fresh captures lack texture slots; mesh results lack world epochs; block texture state is
-not reset between worlds; off retains CPU texture preparation; and table-refresh failure can stop
-serving old slot-bearing meshes too early. The full fast tier passes 5,933 assertions. No game run
-or performance benchmark supports the new visual or performance behavior. The development line
+`.vhblend` master switch for seam blending and packed-L0 block textures. 0.3.166 corrects all five
+findings from its source review: live palette slots and bounded off-to-on repair, CPU preparation
+gated while off, mesh world epochs, world-scoped texture state, and atomic table refresh preserving
+the last valid table for old meshes. A later placed-block trace found one separate open bug: an
+interior recapture can install new runs and retrieve their texture slot but skip mesh/save/mip
+invalidation because a zero edge mask is mistaken for no change. The full fast tier passes 5,957
+assertions. No game run or performance benchmark supports the new visual or performance behavior. The development line
 remains 0.3.x (`0.2.1` is the public released version; 0.4.0 remains a preserved local rollback
 artifact from the GPU-renderer milestone).
 **Active branch:** `codex/exact-vanilla-draw-range`, branched from `14bfe4b` on
@@ -424,9 +425,12 @@ effect on the reported tiny or three-to-six-second spikes.
 > **0.3.165 adds a saved master switch** in `.vhconfig` and as `.vhblend on|off`. Off immediately
 > disables the seam field and atlas sampling, then bounded-remeshes live L0 and retains the block
 > table until old textured meshes drain. Ownership masking and the constant 1/16-block sink remain
-> active by design. Session 71's source review found five deferred lifecycle/acceptance issues;
-> `dev/TODO.md` is authoritative for that open work. The switch is not yet runtime-accepted and no
-> performance benefit has been measured.
+> active by design. **0.3.166 completes Session 71's five lifecycle corrections:** live capture
+> assigns slots, off omits CPU texture preparation and snapshot payloads, on repairs resident L0
+> palettes incrementally, mesh results cannot cross worlds, and table refresh preserves a valid
+> predecessor until dependent meshes retire. The switch is not yet runtime-accepted and no
+> performance benefit has been measured. The separate placed-block invalidation defect is open in
+> `dev/TODO.md` and G138.
 
 > **Water at the transition.** Rebuilt through 0.3.144-0.3.152. Three facts now hold, and the
 > first is what makes the other two safe.
@@ -1406,11 +1410,19 @@ Detailed tasks and human decisions are in `dev/TODO.md`.
 
 ## 8. Verification evidence
 
+The Session 72 close passes a warning-free Release build and **5,957 fast assertions**. Focused
+coverage exercises bounded resident texture-slot repair, off-mode snapshot omission, and propagation
+of texture/world identities; static integration checks pin world teardown and atomic table refresh.
+The 14-entry 0.3.166 archive preserves asset paths, contains no PDB or game dependency, reports
+matching manifest/assembly versions, and was copy-installed with identical SHA-256
+`7B9CAD84F76229A4252109B188CC32AE787E5FAF9ED624F1C59C570F08A17C94`. No game was launched. The
+placed-block invalidation defect is source-proven only and remains open in `dev/TODO.md`.
+
 The Session 71 source close passes **5,933 fast assertions** and `git diff --check`. The installed
 1.22.5 Forest Floor block definition and its 64x32 overlay asset support the selected top/right-half
 mapping. The toggle's configuration, job-local texture-mode selection and source wiring are covered,
 but there is no in-game visual transition, OpenGL failure-path exercise, world-change reproduction,
-or performance benchmark. Five source-review findings remain open in `dev/TODO.md`.
+or performance benchmark. Its five source-review findings were corrected in Session 72.
 
 The Session 69 close passes a warning-free Release build and **5,885 fast assertions**, including a
 new `vanilla draw range` suite that runs the installed game's own `FrustumCulling` object against

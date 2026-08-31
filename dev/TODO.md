@@ -143,26 +143,32 @@ If it is ever revisited: step the ramp on 32-block chunk edges rather than 8-blo
 ## Seam blending, block textures and the master toggle: what is open
 
 The base pipeline shipped and was human-tested through 0.3.139. Forest Floor's top-texture fix in
-0.3.164 and the saved master switch in 0.3.165 are source/check verified only.
+0.3.164, the saved master switch in 0.3.165, and the lifecycle corrections in 0.3.166 are
+source/check verified only. The five findings from the 0.3.165 review are complete and recorded in
+`dev/history/DONE.md` and Session 72.
 
-### Deferred after the 0.3.165 correctness review
+### Placed-block recapture invalidation is open
 
-- **Populate texture slots during live capture.** `RegisterPaletteEntry` currently omits the
-  resolver used by cache reclassification, so fresh sections retain slot zero. The eventual fix
-  must also backfill resident palettes before the rare off-to-on remesh.
-- **Carry world identity through mesh work.** Mesh jobs/results need the pipeline world epoch, and
-  cross-world results must be dropped before they remove a new-world in-flight marker or add a
-  stale dirty key. A one-time queue drain cannot stop a job already owned by a worker.
-- **Reset the block-texture registry and GPU table between worlds.** The registry's existing
-  `Clear()` contract is not called, and the table can remain live while the master is enabled.
-- **Make off gate CPU preparation as well as GPU use.** Cached palette classification still
-  resolves textures and every snapshot still copies texture-slot arrays. Measure the residual
-  shader branch separately before claiming an exact baseline restoration.
-- **Preserve the last valid table across refresh failure.** Upload a replacement and swap only on
-  success, or retain/rebind the previous table until all live slot-bearing meshes have drained.
-- **Acceptance after those fixes:** exercise startup-off, on-to-off, off-to-on, rapid double
-  toggles, a world change with workers busy, table-refresh failure, and Forest Floor in game. Run a
-  controlled performance comparison before describing the switch's benefit quantitatively.
+- **Interior changes can skip all publication.** `LodSection.ReplaceColumns` returns an edge mask;
+  zero means either “changed, but no section edge was touched” or “nothing changed.”
+  `ApplyOneCaptureResult` currently calls `World.MarkChanged` only for a nonzero mask. Most block
+  placements in an established 64x64 L0 section therefore update resident runs and can retrieve a
+  texture slot, yet fail to dirty the existing mesh, persistent row or mip chain. Once vanilla
+  relinquishes the area, stale cached geometry may remain. A later edge-touching mutation can
+  incidentally publish the accumulated RAM state; leaving first can lose it.
+- **Required correction:** return changed/not-changed separately from the edge mask. Every content
+  change must call `MarkChanged(key, touchedEdges)`, including `EdgeNone`; only neighbour fan-out
+  should depend on the mask. Add focused coverage proving an interior recapture dirties the section,
+  save and mip without dirtying neighbours, while a byte-identical recapture dirties nothing.
+- **Acceptance after correction:** place and remove a visually distinct solid block well inside an
+  established L0 section, leave vanilla range, and confirm the textured L0 mesh updates and survives
+  a world reload. Repeat once with blending off to confirm the averaged-colour fallback updates.
+
+### Blend-toggle acceptance still open
+
+- Exercise startup-off, on-to-off, off-to-on, rapid double toggles, a world change with workers busy,
+  table-refresh failure, and Forest Floor in game. Run a controlled performance comparison before
+  describing the switch's benefit quantitatively.
 
 ### Earlier verification debt
 

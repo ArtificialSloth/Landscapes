@@ -28,18 +28,20 @@ public class SectionSnapshot
     public Span<ulong> ColumnRuns(int col) =>
         Runs.AsSpan(ColumnStart[col], ColumnStart[col + 1] - ColumnStart[col]);
 
-    public static SectionSnapshot Of(LodSection s)
+    public static SectionSnapshot Of(LodSection s, bool includeTextureSlots = true)
     {
         var colors = new int[s.Palette.Count];
         var flags = new byte[s.Palette.Count];
         var slots = new byte[s.Palette.Count];
-        var textureSlots = new ushort[s.Palette.Count];
+        var textureSlots = includeTextureSlots
+            ? new ushort[s.Palette.Count]
+            : Array.Empty<ushort>();
         for (int i = 0; i < s.Palette.Count; i++)
         {
             colors[i] = s.Palette[i].Color;
             flags[i] = s.Palette[i].Flags;
             slots[i] = s.Palette[i].TintSlot;
-            textureSlots[i] = s.Palette[i].TextureSlot;
+            if (includeTextureSlots) textureSlots[i] = s.Palette[i].TextureSlot;
         }
         return new SectionSnapshot
         {
@@ -53,9 +55,10 @@ public class SectionSnapshot
         };
     }
 
-    public static long EstimateRetainedBytes(LodSection s) => EstimateRetainedBytes(
+    public static long EstimateRetainedBytes(LodSection s, bool includeTextureSlots = true) => EstimateRetainedBytes(
         s.Runs.LongLength, s.ColumnStart.LongLength, s.Captured.LongLength,
-        s.Palette.Count, s.Palette.Count, s.Palette.Count, s.Palette.Count);
+        s.Palette.Count, s.Palette.Count, s.Palette.Count,
+        includeTextureSlots ? s.Palette.Count : 0);
 
     static long EstimateRetainedBytes(long runs, long columnStarts, long captured,
         long paletteColors, long paletteFlags, long paletteTintSlots, long paletteTextureSlots)
@@ -97,6 +100,13 @@ public class CaptureResult
 
 public class MeshJob
 {
+    /// <summary>
+    /// World identity captured before this immutable snapshot leaves the render thread.
+    /// Queue clearing cannot stop a job already owned by a worker, so publication must reject
+    /// a result whose epoch no longer matches before it touches any new-world bookkeeping.
+    /// </summary>
+    public long WorldEpoch;
+
     public long Key;
     public required SectionSnapshot Self;
     public required SectionSnapshot?[] Neighbors; // W, E, N, S, NW, NE, SW, SE
@@ -175,6 +185,9 @@ public class MeshJob
 
 public class MeshResult
 {
+    /// <summary>The originating job's world identity; see <see cref="MeshJob.WorldEpoch"/>.</summary>
+    public long WorldEpoch;
+
     public long Key;
     public required float[] Xyz;
     public required byte[] Rgba;
@@ -382,6 +395,16 @@ public class LodWorker : IDisposable
     }
 
     public void ClearCaptureResults() => captureResults.Clear();
+
+    /// <summary>
+    /// Drop queued/results from the world being closed. A job already executing may still
+    /// publish later; its world epoch makes the next world reject it.
+    /// </summary>
+    public void ClearMeshWork()
+    {
+        meshJobs.Clear();
+        MeshResults.Clear();
+    }
 
     /// <summary>
     /// Drop queued/results from the world being closed. A job already executing may

@@ -154,6 +154,7 @@ public static class LodMesher
         {
             MeshResult plain = BuildMesh(new MeshJob
             {
+                WorldEpoch = job.WorldEpoch,
                 Key = job.Key,
                 Self = job.Self,
                 Neighbors = job.Neighbors,
@@ -307,6 +308,7 @@ public static class LodMesher
 
         return new MeshResult
         {
+            WorldEpoch = job.WorldEpoch,
             Key = job.Key,
             Xyz = opaque.Xyz.ToArray(),
             Rgba = opaque.Rgba.ToArray(),
@@ -876,6 +878,7 @@ public static class LodMesher
     /// </summary>
     static int TextureSlotFor(SectionSnapshot self, int pid, int step, bool emitTextureSlots) =>
         emitTextureSlots && step == 1 && !IsTranslucent(self.PaletteFlags[pid])
+            && (uint)pid < (uint)self.PaletteTextureSlots.Length
             ? self.PaletteTextureSlots[pid]
             : 0;
 

@@ -754,6 +754,12 @@ public static class StaticAssetChecks
     /// </summary>
     static void BlockTextureWiring(Check c, string vertex, string fragment, string renderer)
     {
+        string root = GameAssemblies.RepoRoot;
+        string pipeline = File.ReadAllText(Path.Combine(root, "VintageHorizons", "src", "Lod",
+            "LodPipeline.cs"));
+        string modSystem = File.ReadAllText(Path.Combine(root, "VintageHorizons", "src",
+            "VintageHorizonsModSystem.cs"));
+
         c.True(vertex.Contains("uniform sampler2D blockTable", StringComparison.Ordinal),
             "the vertex stage declares the block table it reads a textured quad's colour from");
         c.True(vertex.Contains("(vhGeometry & 0x80000000u) != 0u", StringComparison.Ordinal),
@@ -795,18 +801,44 @@ public static class StaticAssetChecks
 
         // Emission is an immutable job fact gated on the table reaching the GPU. The matching
         // revision check prevents a job queued before a live toggle from publishing afterward.
-        c.True(renderer.Contains("EmitTextureSlots = textureSlotsReady", StringComparison.Ordinal),
+        c.True(renderer.Contains("EmitTextureSlots = includeTextureSlots", StringComparison.Ordinal),
             "each mesh job snapshots whether texture slots are ready");
         c.True(renderer.Contains("TextureModeRevision = textureModeRevision", StringComparison.Ordinal),
             "each mesh job snapshots the texture-mode identity");
         c.True(renderer.Contains("result.TextureModeRevision != textureModeRevision",
                 StringComparison.Ordinal),
             "a result from the old side of the blend toggle is rejected");
+        c.True(renderer.Contains("WorldEpoch = currentWorldEpoch()", StringComparison.Ordinal)
+            && renderer.Contains("result.WorldEpoch != currentEpoch", StringComparison.Ordinal),
+            "mesh work carries world identity and stale-world results are rejected");
         c.True(renderer.Contains("LodWorld.KeyLevel(key) != 0", StringComparison.Ordinal),
             "the toggle remesh is restricted to L0, where texture slots can exist");
         c.True(renderer.Contains("liveTexturedMeshes > 0", StringComparison.Ordinal)
             && renderer.Contains("DisposeBlockTableTexture();", StringComparison.Ordinal),
             "the block table survives the transition and is released after the last textured mesh");
+        c.True(renderer.Contains("replacementTexture = GL.GenTexture()", StringComparison.Ordinal)
+            && renderer.Contains("blockTableTexture = replacementTexture", StringComparison.Ordinal)
+            && renderer.Contains("blockTexturesLive = blockTableTexture != 0 && blockTexturesLive",
+                StringComparison.Ordinal),
+            "a failed table refresh preserves the previous live table until its meshes retire");
+
+        c.True(pipeline.Contains("tintSlot, ResolveTextureSlot(block)", StringComparison.Ordinal)
+            && pipeline.Contains("TextureSlotsEnabled && block != null", StringComparison.Ordinal),
+            "live palette registration resolves slots only while the pipeline is enabled");
+        c.True(renderer.Contains("SectionSnapshot.Of(section, includeTextureSlots)",
+                StringComparison.Ordinal)
+            && renderer.Contains("EstimateRetainedBytes(section, includeTextureSlots)",
+                StringComparison.Ordinal),
+            "the renderer omits the texture-slot snapshot array while the pipeline is off");
+        c.True(modSystem.Contains("textureSlotsEnabled: config.BlendPipeline", StringComparison.Ordinal)
+            && modSystem.Contains("pipeline.SetTextureSlotsEnabled", StringComparison.Ordinal)
+            && modSystem.Contains("renderer.TextureSlotSourceReady = pipeline.TextureSlotsPrepared",
+                StringComparison.Ordinal),
+            "the saved master switch gates palette work and delays textured publication until ready");
+        c.True(modSystem.Contains("renderer.ResetBlockTextureStateForWorld();", StringComparison.Ordinal)
+            && modSystem.Contains("blockTextures.Clear();", StringComparison.Ordinal)
+            && pipeline.Contains("Worker.ClearMeshWork();", StringComparison.Ordinal),
+            "world leave clears queued mesh work, render-table state, and the block-slot registry");
     }
 
     /// <summary>

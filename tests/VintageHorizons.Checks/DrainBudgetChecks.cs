@@ -65,6 +65,17 @@ public static class DrainBudgetChecks
         c.Eq(expectedSnapshot, SectionSnapshot.Of(section).EstimatedRetainedBytes,
             "pre-snapshot and completed-snapshot estimates agree");
 
+        long expectedPlainSnapshot = expectedSnapshot
+            - section.Palette.Count * sizeof(ushort);
+        SectionSnapshot plainSnapshot = SectionSnapshot.Of(section, includeTextureSlots: false);
+        c.Eq(expectedPlainSnapshot,
+            SectionSnapshot.EstimateRetainedBytes(section, includeTextureSlots: false),
+            "an off-pipeline snapshot estimate excludes the texture-slot array");
+        c.Eq(0, plainSnapshot.PaletteTextureSlots.Length,
+            "an off-pipeline snapshot does not copy derived texture slots");
+        c.Eq(expectedPlainSnapshot, plainSnapshot.EstimatedRetainedBytes,
+            "the off-pipeline estimate matches the completed snapshot");
+
         var meshResult = new MeshResult
         {
             Xyz = Array.Empty<float>(),

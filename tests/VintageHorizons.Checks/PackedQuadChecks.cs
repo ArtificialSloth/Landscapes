@@ -136,9 +136,9 @@ public static class PackedQuadChecks
     {
         LodSection section = IsolatedRun(10, 4, textureSlot: 517);
         MeshResult plain = LodMesher.BuildMesh(Fixtures.Job(
-            section, emitTextureSlots: false, textureModeRevision: 11));
+            section, emitTextureSlots: false, textureModeRevision: 11, worldEpoch: 21));
         MeshResult textured = LodMesher.BuildMesh(Fixtures.Job(
-            section, emitTextureSlots: true, textureModeRevision: 12));
+            section, emitTextureSlots: true, textureModeRevision: 12, worldEpoch: 22));
         MeshResult coarse = LodMesher.BuildMesh(Fixtures.Job(
             section, LodWorld.SectionKey(1, 0, 0),
             emitTextureSlots: true, textureModeRevision: 13));
@@ -148,6 +148,8 @@ public static class PackedQuadChecks
         c.False(coarse.HasTextureSlots, "coarse LOD never receives one block's texture slot");
         c.Eq(11L, plain.TextureModeRevision, "the plain result carries its toggle identity");
         c.Eq(12L, textured.TextureModeRevision, "the textured result carries its toggle identity");
+        c.Eq(21L, plain.WorldEpoch, "the plain result carries its world identity");
+        c.Eq(22L, textured.WorldEpoch, "the textured result carries its world identity");
 
         for (int quad = 0; quad < textured.PackedOpaqueQuadCount; quad++)
         {

@@ -8,11 +8,23 @@ first.
 
 ## [Unreleased]
 
-**Deferred correctness work after reviewing 0.3.165:** freshly captured terrain does not yet gain
-L0 texture slots; mesh results and the texture registry/table are not fully isolated between
-worlds; the off path retains CPU-side texture preparation; and a failed table refresh does not
-preserve the last valid table for old textured meshes. These findings are documented only and no
-fix is included yet.
+**Known placed-block refresh defect:** a newly placed block in the interior of an established L0
+section is recaptured and can receive its texture slot, but the zero neighbour-edge mask is
+currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
+remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
+
+## [0.3.166] - 2026-08-31
+
+**Completed blend-pipeline lifecycle correction.** Fresh captures now assign L0 texture slots.
+Turning the saved blend switch off also stops CPU texture resolution and omits texture-slot arrays
+from worker snapshots; turning it on repairs resident L0 palettes incrementally before textured
+meshes can publish. Mesh work carries world identity, and world changes clear queued work, block
+slots and GPU texture-table state.
+
+Block-table refresh now uploads a replacement and swaps only after success. A failed refresh keeps
+the previous valid table available for already-published textured meshes until their bounded plain-
+colour remesh completes. Built, verified, packaged and copy-installed; not human-tested or
+benchmarked.
 
 ## [0.3.165] - 2026-08-31
 

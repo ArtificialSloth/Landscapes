@@ -182,7 +182,8 @@ public class VintageHorizonsModSystem : ModSystem
             // INSTEAD of its colour, in the same field, so the table has to hand the colour
             // back wherever the texture is not shown.
             block => (ushort)blockTextures.SlotFor(
-                block, block.EntityClass != null ? 0 : StableColorOf(block)));
+                block, block.EntityClass != null ? 0 : StableColorOf(block)),
+            textureSlotsEnabled: config.BlendPipeline);
         pipeline.TrackPhaseAllocations = allocationTelemetryEnabled;
 
         // Repairs a cache written while a block lookup was poisoned, which saved sections
@@ -197,6 +198,7 @@ public class VintageHorizonsModSystem : ModSystem
             AutoUnpause = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOUNPAUSE") == "1",
             TrackPhaseAllocations = allocationTelemetryEnabled,
             FarViewDistanceCap = config.FarViewDistanceCap,
+            TextureSlotSourceReady = pipeline.TextureSlotsPrepared,
             BlendPipelineEnabled = config.BlendPipeline,
             OpaqueBackfaceCulling =
                 Environment.GetEnvironmentVariable("VINTAGEHORIZONS_BACKFACE_CULLING") != "0",
@@ -392,6 +394,7 @@ public class VintageHorizonsModSystem : ModSystem
 
         phaseStart = LodPhaseCost.Start(allocationTelemetryEnabled);
         pipeline.Tick();
+        renderer.TextureSlotSourceReady = pipeline.TextureSlotsPrepared;
         pipelineTickCost.Add(phaseStart);
 
         phaseStart = LodPhaseCost.Start(allocationTelemetryEnabled);
@@ -1277,6 +1280,7 @@ public class VintageHorizonsModSystem : ModSystem
             unknownTextureColor == 0 ? " (zero: magenta-block salvage disabled)" : "");
         renderer.ApplyZFar();
         pipeline.Open("ModData/vintagehorizons");
+        renderer.TextureSlotSourceReady = pipeline.TextureSlotsPrepared;
         joinClock.Restart();
         joinStallReported = false;
         nextMilestone = 0;
@@ -1851,8 +1855,10 @@ public class VintageHorizonsModSystem : ModSystem
         localOfferSectionsAccepted = 0;
         localOfferSectionsInstalled = 0;
         pipeline.Close();
-        while (pipeline.Worker.MeshResults.TryDequeue(out _)) { }
         renderer.ClearMeshes();
+        renderer.ResetBlockTextureStateForWorld();
+        blockTextures.Clear();
+        textureMeans.Clear();
     }
 
     /// <summary>
@@ -1997,7 +2003,7 @@ public class VintageHorizonsModSystem : ModSystem
 
                 bool enabled = (bool)args[0];
                 config.BlendPipeline = enabled;
-                if (deferringTo == null) renderer.BlendPipelineEnabled = enabled;
+                if (deferringTo == null) ApplyBlendPipeline(enabled);
                 SaveConfig();
                 return TextCommandResult.Success("[VintageHorizons] "
                     + (deferringTo == null
@@ -3106,10 +3112,30 @@ public class VintageHorizonsModSystem : ModSystem
         {
             LodWorld.SetLevelThresholds(normalized);
             renderer.FarViewDistanceCap = farViewDistanceCap;
-            renderer.BlendPipelineEnabled = blendPipeline;
+            ApplyBlendPipeline(blendPipeline);
         }
 
         SaveConfig();
+    }
+
+    /// <summary>
+    /// Keep the owner-thread palette source and render-side packed-quad interpretation in
+    /// lockstep. Turning on may require a bounded resident-palette repair before textured
+    /// jobs are safe to publish; turning off immediately stops producing texture slots.
+    /// </summary>
+    void ApplyBlendPipeline(bool enabled)
+    {
+        if (!enabled)
+        {
+            renderer.BlendPipelineEnabled = false;
+            pipeline.SetTextureSlotsEnabled(false);
+            renderer.TextureSlotSourceReady = false;
+            return;
+        }
+
+        pipeline.SetTextureSlotsEnabled(true);
+        renderer.TextureSlotSourceReady = pipeline.TextureSlotsPrepared;
+        renderer.BlendPipelineEnabled = true;
     }
 
     /// <summary>Writes every setting: a partial write would silently reset the others.</summary>

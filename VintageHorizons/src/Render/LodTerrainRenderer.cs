@@ -418,6 +418,22 @@ public class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
+    /// Whether every resident L0 palette that predates an off-to-on transition has had its
+    /// derived texture slot restored. False keeps mesh emission plain while the owning-thread
+    /// pipeline performs its bounded backfill.
+    /// </summary>
+    public bool TextureSlotSourceReady
+    {
+        get => textureSlotSourceReady;
+        set
+        {
+            if (textureSlotSourceReady == value) return;
+            textureSlotSourceReady = value;
+            if (!value) SetTextureSlotEmission(false);
+        }
+    }
+
+    /// <summary>
     /// Wear vanilla's colouring at the seam and relax outward, so the eye has no single line
     /// to find. Measured offline at the seam, cached ground is about 8% brighter than vanilla
     /// and loses the green cast, with red and blue moving nearly twice as far as green - a
@@ -1145,6 +1161,7 @@ public class LodTerrainRenderer : IRenderer
     bool blockTableFailed;
     bool blockTexturesLive;
     bool blendPipelineEnabled = true;
+    bool textureSlotSourceReady = true;
     bool textureSlotsReady;
     long textureModeRevision = 1;
     int liveTexturedMeshes;
@@ -2088,6 +2105,8 @@ public class LodTerrainRenderer : IRenderer
     {
         if (world.RenderDirty.Count == 0 || worker.PendingMeshes >= maxWorkerMeshBacklog) return;
 
+        bool includeTextureSlots = textureSlotsReady;
+
         // Two budgets. Starting a background reload costs this thread almost nothing
         // (enqueue a key), whereas building a mesh snapshot is real work, so charging a
         // reload against the mesh budget throttled join fill-in badly: every section
@@ -2135,7 +2154,7 @@ public class LodTerrainRenderer : IRenderer
             // measured at roughly half the saving. The corners are read for light only and
             // are never asked whether a side is covered.
             var neighborSections = new LodSection?[8];
-            long estimatedBytes = SectionSnapshot.EstimateRetainedBytes(section);
+            long estimatedBytes = SectionSnapshot.EstimateRetainedBytes(section, includeTextureSlots);
 
             // A neighbour that is absent from RAM is NOT automatically the edge of
             // explored space. HasDataSet is the question the mesher actually wants
@@ -2156,7 +2175,7 @@ public class LodTerrainRenderer : IRenderer
                 {
                     neighborSections[d] = nb;
                     estimatedBytes = SectionSnapshot.SaturatingAdd(
-                        estimatedBytes, SectionSnapshot.EstimateRetainedBytes(nb));
+                        estimatedBytes, SectionSnapshot.EstimateRetainedBytes(nb, includeTextureSlots));
                 }
                 else if (world.HasDataSet.Contains(nk) && !world.LoadFailed.Contains(nk))
                 {
@@ -2173,7 +2192,7 @@ public class LodTerrainRenderer : IRenderer
                 if (!world.Sections.TryGetValue(ck, out LodSection? corner)) continue;
                 neighborSections[d] = corner;
                 estimatedBytes = SectionSnapshot.SaturatingAdd(
-                    estimatedBytes, SectionSnapshot.EstimateRetainedBytes(corner));
+                    estimatedBytes, SectionSnapshot.EstimateRetainedBytes(corner, includeTextureSlots));
             }
 
             // TryTake transferred the exact dirty obligation to us. If this frame has
@@ -2188,15 +2207,17 @@ public class LodTerrainRenderer : IRenderer
             var neighbors = new SectionSnapshot?[neighborSections.Length];
             for (int d = 0; d < neighborSections.Length; d++)
             {
-                if (neighborSections[d] != null) neighbors[d] = SectionSnapshot.Of(neighborSections[d]!);
+                if (neighborSections[d] != null)
+                    neighbors[d] = SectionSnapshot.Of(neighborSections[d]!, includeTextureSlots);
             }
 
             meshBudget--;
             meshJobInFlight.Add(best);
             worker.EnqueueMesh(new MeshJob
             {
+                WorldEpoch = currentWorldEpoch(),
                 Key = best,
-                Self = SectionSnapshot.Of(section),
+                Self = SectionSnapshot.Of(section, includeTextureSlots),
                 Neighbors = neighbors,
                 EstimatedRetainedBytes = estimatedBytes,
                 ReadyAtMilliseconds = Environment.TickCount64,
@@ -2205,7 +2226,7 @@ public class LodTerrainRenderer : IRenderer
                 HalfBlockLevels = halfBlockLevels,
                 SurfaceHalfBlocksOnly = SurfaceHalfBlocksOnly,
                 CutoutBlocksCover = CutoutBlocksCover,
-                EmitTextureSlots = textureSlotsReady,
+                EmitTextureSlots = includeTextureSlots,
                 TextureModeRevision = textureModeRevision,
             });
         }
@@ -2256,6 +2277,9 @@ public class LodTerrainRenderer : IRenderer
             && uploadBudget.TryStart(waiting.EstimatedUploadBytes)
             && worker.MeshResults.TryDequeue(out MeshResult? result))
         {
+            long currentEpoch = currentWorldEpoch();
+            if (result.WorldEpoch != currentEpoch) continue;
+
             meshJobInFlight.Remove(result.Key);
 
             // The blend master switch changes what word two of an L0 packed quad means.
@@ -3446,7 +3470,7 @@ public class LodTerrainRenderer : IRenderer
             queued = SetTextureSlotEmission(false);
             MaybeReleaseBlockTextureTable();
         }
-        else if (BlockTextureTableCurrent)
+        else if (textureSlotSourceReady && BlockTextureTableCurrent)
         {
             queued = SetTextureSlotEmission(true);
         }
@@ -3462,6 +3486,10 @@ public class LodTerrainRenderer : IRenderer
     {
         if (blendPipelineEnabled)
         {
+            if (blockTableFailed)
+                return "on (saved): seam blending is enabled; L0 textures failed for this session.";
+            if (!textureSlotSourceReady)
+                return "on (saved): seam blending is enabled; resident L0 texture slots are being prepared.";
             return "on (saved): seam blending and L0 block textures are enabled"
                 + (textureSlotsReady ? "." : "; L0 textures are waiting for their GPU table.");
         }
@@ -3494,7 +3522,8 @@ public class LodTerrainRenderer : IRenderer
 
     void MaybeReleaseBlockTextureTable()
     {
-        if (blendPipelineEnabled || textureSlotsReady || liveTexturedMeshes > 0) return;
+        if (textureSlotsReady || liveTexturedMeshes > 0) return;
+        if (blendPipelineEnabled && !blockTableFailed) return;
         DisposeBlockTableTexture();
     }
 
@@ -3525,6 +3554,11 @@ public class LodTerrainRenderer : IRenderer
             MaybeReleaseBlockTextureTable();
             return;
         }
+        if (!textureSlotSourceReady)
+        {
+            SetTextureSlotEmission(false);
+            return;
+        }
         if (blockTextures == null || blockTableFailed) return;
         if (BlockTextureTableCurrent)
         {
@@ -3532,15 +3566,9 @@ public class LodTerrainRenderer : IRenderer
             return;
         }
 
+        int replacementTexture = 0;
         try
         {
-            if (blockTableTexture == 0)
-            {
-                blockTableTexture = GL.GenTexture();
-                if (blockTableTexture == 0)
-                    throw new InvalidOperationException("block texture table was not created.");
-            }
-
             // Four rows per slot: the atlas rectangle, the averaged colour the quad no longer
             // carries, the mean to normalise by, and the grass-style overlay's rectangle.
             // Float, because an atlas rectangle in eight bits would land a fragment on the
@@ -3560,7 +3588,13 @@ public class LodTerrainRenderer : IRenderer
                 }
             }
 
-            GL.BindTexture(TextureTarget.Texture2D, blockTableTexture);
+            replacementTexture = GL.GenTexture();
+            if (replacementTexture == 0)
+                throw new InvalidOperationException("block texture table was not created.");
+
+            // Upload to a new object. Re-defining the live texture in place makes a failed
+            // refresh destroy the only table old slot-bearing meshes can still read.
+            GL.BindTexture(TextureTarget.Texture2D, replacementTexture);
             GL.TexParameter(TextureTarget.Texture2D,
                 TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
             GL.TexParameter(TextureTarget.Texture2D,
@@ -3574,15 +3608,35 @@ public class LodTerrainRenderer : IRenderer
                 PixelFormat.Rgba, PixelType.Float, pixels);
             GL.BindTexture(TextureTarget.Texture2D, 0);
 
+            int retiredTexture = blockTableTexture;
+            blockTableTexture = replacementTexture;
+            replacementTexture = 0;
             blockTableVersion = blockTextures.Version;
             blockTexturesLive = true;
+            if (retiredTexture != 0)
+            {
+                try { GL.DeleteTexture(retiredTexture); }
+                catch { /* the replacement is already live; retirement is best effort */ }
+            }
             SetTextureSlotEmission(true);
         }
         catch (Exception e)
         {
+            try { GL.BindTexture(TextureTarget.Texture2D, 0); }
+            catch { /* preserve the original failure */ }
+            if (replacementTexture != 0)
+            {
+                try { GL.DeleteTexture(replacementTexture); }
+                catch { /* preserve the original failure */ }
+            }
+
             blockTableFailed = true;
-            blockTexturesLive = false;
+            // Keep a previous successful table live for already-published textured meshes.
+            // The revision flip below prevents any queued result carrying newer slots from
+            // publishing, and the table retires once the old live count reaches zero.
+            blockTexturesLive = blockTableTexture != 0 && blockTexturesLive;
             SetTextureSlotEmission(false);
+            MaybeReleaseBlockTextureTable();
             capi.Logger.Warning(
                 "[VintageHorizons] block textures disabled for this session; distant ground "
                 + "keeps its averaged colours: {0}", e.Message);
@@ -7429,6 +7483,20 @@ public class LodTerrainRenderer : IRenderer
     public void ClearMeshes()
     {
         renderPaths.Clear(currentWorldEpoch());
+    }
+
+    /// <summary>
+    /// Retire block-texture GPU state at a world boundary. The registry is cleared by the
+    /// owning mod system; this resets render-side failure/version state so the next world
+    /// receives a fresh upload attempt.
+    /// </summary>
+    public void ResetBlockTextureStateForWorld()
+    {
+        textureSlotSourceReady = false;
+        SetTextureSlotEmission(false);
+        DisposeBlockTableTexture();
+        blockTableVersion = -1;
+        blockTableFailed = false;
     }
 
     void ClearMeshesLegacy(long worldEpoch)

@@ -2724,3 +2724,24 @@ be weighed against a picture the numbers cannot show.
 
 **Found:** 0.3.163, from a player standing at a seam through a flax field, after G136 had already
 removed the other half of the same symptom.
+
+### G138 - A zero edge mask does not mean no content changed
+
+**Trigger:** returning which neighbours a mutation affects as a bitmask, especially when zero is
+also used as the no-op result.
+
+**Trap:** `LodSection.ReplaceColumns` returns the section edges touched by changed columns. An
+interior block placement correctly produces `EdgeNone`: the section changed, but no neighbour can
+see it. `ApplyOneCaptureResult` treated that zero as “nothing changed” and skipped `MarkChanged`,
+so the new runs and palette could enter resident RAM without dirtying the L0 mesh, persistent row
+or mip obligation. Texture registration could succeed while the terrain later shown outside
+vanilla range remained stale. A later edge mutation could accidentally publish the accumulated
+RAM state, hiding the failure during ordinary play.
+
+**Do:** carry content change and affected edges as separate values. Advance the section's content
+and persistence revisions for every real mutation, including `EdgeNone`; use the mask only to
+decide which neighbouring meshes also become stale. Assert both halves: an interior change dirties
+the section/save/mip but no neighbour, and a byte-identical replacement dirties nothing.
+
+**Found:** source-traced after 0.3.166 while answering how newly placed blocks receive L0 textures.
+The texture lookup path was correct; the independent invalidation path was not. Open in TODO.
