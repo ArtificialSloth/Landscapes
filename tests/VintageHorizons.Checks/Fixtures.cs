@@ -68,11 +68,13 @@ public static class Fixtures
         var colors = new int[s.Palette.Count];
         var flags = new byte[s.Palette.Count];
         var slots = new byte[s.Palette.Count];
+        var textureSlots = new ushort[s.Palette.Count];
         for (int i = 0; i < s.Palette.Count; i++)
         {
             colors[i] = s.Palette[i].Color;
             flags[i] = s.Palette[i].Flags;
             slots[i] = s.Palette[i].TintSlot;
+            textureSlots[i] = s.Palette[i].TextureSlot;
         }
         return new SectionSnapshot
         {
@@ -82,7 +84,7 @@ public static class Fixtures
             PaletteColors = colors,
             PaletteFlags = flags,
             PaletteTintSlots = slots,
-            PaletteTextureSlots = new ushort[slots.Length],
+            PaletteTextureSlots = textureSlots,
         };
     }
 
@@ -93,7 +95,8 @@ public static class Fixtures
     /// </summary>
     public static MeshJob Job(LodSection self, long key = 0, SectionSnapshot?[]? neighbors = null,
         byte assumedCoveredSides = 0, int halfBlockLevels = 1,
-        bool surfaceHalfBlocksOnly = true, bool cutoutBlocksCover = false) =>
+        bool surfaceHalfBlocksOnly = true, bool cutoutBlocksCover = false,
+        bool emitTextureSlots = false, long textureModeRevision = 0) =>
         new()
         {
             Key = key,
@@ -103,5 +106,7 @@ public static class Fixtures
             HalfBlockLevels = halfBlockLevels,
             SurfaceHalfBlocksOnly = surfaceHalfBlocksOnly,
             CutoutBlocksCover = cutoutBlocksCover,
+            EmitTextureSlots = emitTextureSlots,
+            TextureModeRevision = textureModeRevision,
         };
 }

@@ -55,6 +55,7 @@ public static class LodMesher
         public readonly List<uint> Packed = new(3072);
         public readonly LodPackedClusterBuilder? ClusteredPacked;
         public readonly bool Pack;
+        public bool HasTextureSlots;
 
         public Buffers(bool pack)
         {
@@ -77,6 +78,7 @@ public static class LodMesher
             Indices.Clear();
             Packed.Clear();
             ClusteredPacked?.Clear();
+            HasTextureSlots = false;
             MinY = float.PositiveInfinity;
             MaxY = float.NegativeInfinity;
         }
@@ -157,6 +159,11 @@ public static class LodMesher
                 Neighbors = job.Neighbors,
                 AssumedCoveredSides = job.AssumedCoveredSides,
                 CaveCullReach = 0,
+                HalfBlockLevels = job.HalfBlockLevels,
+                SurfaceHalfBlocksOnly = job.SurfaceHalfBlocksOnly,
+                CutoutBlocksCover = job.CutoutBlocksCover,
+                EmitTextureSlots = job.EmitTextureSlots,
+                TextureModeRevision = job.TextureModeRevision,
             });
             Interlocked.Add(ref AuditVerticesWithout, plain.VertexCount);
             Interlocked.Increment(ref AuditSections);
@@ -287,8 +294,8 @@ public static class LodMesher
 
         // ---- Phase 2: greedy-merge and emit ----
 
-        EmitHorizontalGreedy(hf, self, opaque, water, step);
-        EmitVerticalMerged(vf, self, opaque, water, step);
+        EmitHorizontalGreedy(hf, self, opaque, water, step, job.EmitTextureSlots);
+        EmitVerticalMerged(vf, self, opaque, water, step, job.EmitTextureSlots);
         opaque.ClusteredPacked!.Finish(
             out uint[] clusteredPackedQuads,
             out LodPackedCluster[] packedClusters);
@@ -308,6 +315,8 @@ public static class LodMesher
             IndexCount = opaque.Indices.Count,
             PackedOpaqueQuads = opaque.Packed.ToArray(),
             PackedOpaqueQuadCount = opaque.Packed.Count / LodPackedQuadFormat.WordsPerQuad,
+            HasTextureSlots = opaque.HasTextureSlots,
+            TextureModeRevision = job.TextureModeRevision,
             ClusteredPackedOpaqueQuads = clusteredPackedQuads,
             PackedOpaqueClusters = packedClusters,
             WaterXyz = water.Xyz.Count > 0 ? water.Xyz.ToArray() : null,
@@ -326,7 +335,8 @@ public static class LodMesher
     [ThreadStatic] static int[]? planeGrid;
     [ThreadStatic] static int planeGridStamp;
 
-    static void EmitHorizontalGreedy(List<HFace> faces, SectionSnapshot self, Buffers opaque, Buffers water, int step)
+    static void EmitHorizontalGreedy(List<HFace> faces, SectionSnapshot self, Buffers opaque,
+        Buffers water, int step, bool emitTextureSlots)
     {
         if (faces.Count == 0) return;
         int gs = LodSection.GridSize;
@@ -385,7 +395,7 @@ public static class LodMesher
             Buffers buf = first.Water ? water : opaque;
             int color = self.PaletteColors[first.Pid];
             byte alpha = AlphaFor(self.PaletteFlags[first.Pid], self.PaletteTintSlots[first.Pid]);
-            int textureSlot = TextureSlotFor(self, first.Pid, step);
+            int textureSlot = TextureSlotFor(self, first.Pid, step, emitTextureSlots);
 
             for (int i = start; i < end; i++)
             {
@@ -455,7 +465,8 @@ public static class LodMesher
 
     // ---- Vertical faces: merge along the strip axis ----
 
-    static void EmitVerticalMerged(List<VFace> faces, SectionSnapshot self, Buffers opaque, Buffers water, int step)
+    static void EmitVerticalMerged(List<VFace> faces, SectionSnapshot self, Buffers opaque,
+        Buffers water, int step, bool emitTextureSlots)
     {
         if (faces.Count == 0) return;
 
@@ -494,7 +505,7 @@ public static class LodMesher
             Buffers buf = seg.Water ? water : opaque;
             int color = self.PaletteColors[seg.Pid];
             byte alpha = AlphaFor(self.PaletteFlags[seg.Pid], self.PaletteTintSlots[seg.Pid]);
-            int textureSlot = TextureSlotFor(self, seg.Pid, step);
+            int textureSlot = TextureSlotFor(self, seg.Pid, step, emitTextureSlots);
 
             // W/E walls run along Z at fixed X; N/S walls run along X at fixed Z.
             bool xWall = seg.Dir is W or E;
@@ -827,6 +838,7 @@ public static class LodMesher
 
         if (buf.Pack)
         {
+            if (textureSlot > 0) buf.HasTextureSlots = true;
             float minX = Math.Min(Math.Min(x0, x1), Math.Min(x2, x3));
             float maxX = Math.Max(Math.Max(x0, x1), Math.Max(x2, x3));
             float minY = Math.Min(Math.Min(y0, y1), Math.Min(y2, y3));
@@ -862,21 +874,10 @@ public static class LodMesher
     ///
     /// Solid land only. Water and thin cover draw translucent and were never the complaint.
     /// </summary>
-    static int TextureSlotFor(SectionSnapshot self, int pid, int step) =>
-        EmitTextureSlots && step == 1 && !IsTranslucent(self.PaletteFlags[pid])
+    static int TextureSlotFor(SectionSnapshot self, int pid, int step, bool emitTextureSlots) =>
+        emitTextureSlots && step == 1 && !IsTranslucent(self.PaletteFlags[pid])
             ? self.PaletteTextureSlots[pid]
             : 0;
-
-    /// <summary>
-    /// Whether meshes may carry block texture slots instead of colours.
-    ///
-    /// A textured quad puts its slot in the field the colour would occupy, so a mesh built
-    /// with this on and drawn by a shader that does not understand the flag renders the slot
-    /// number as a colour - near-black ground. The renderer turns it on only once it has both
-    /// the block table and a shader that reads the flag, which keeps every intermediate state
-    /// of this work shippable. Set on the main thread before any mesh job is queued.
-    /// </summary>
-    public static bool EmitTextureSlots;
 
     static void AddVert(Buffers buf, int color, byte alpha, float x, float y, float z)
     {

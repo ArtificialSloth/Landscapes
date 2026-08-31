@@ -9,7 +9,9 @@ public static class PackedQuadChecks
         AllFacesMatchExpandedMesh(c);
         LevelsAndCoordinateLimits(c);
         TextureSlotSharesTheColourWord(c);
+        TextureSlotEmissionFollowsTheJob(c);
         TableColourMatchesTheVertexByteOrder(c);
+        TopSoilOverlayUsesTheRightHalf(c);
         MaterialPayloadsAndDegenerates(c);
         Rejections(c);
     }
@@ -126,6 +128,40 @@ public static class PackedQuadChecks
     }
 
     /// <summary>
+    /// The player-facing blend switch crosses a worker boundary. Each queued job therefore
+    /// owns the format choice and its identity; a process-wide flag could flip while a worker
+    /// was half way through a section and produce a mixed mesh.
+    /// </summary>
+    static void TextureSlotEmissionFollowsTheJob(Check c)
+    {
+        LodSection section = IsolatedRun(10, 4, textureSlot: 517);
+        MeshResult plain = LodMesher.BuildMesh(Fixtures.Job(
+            section, emitTextureSlots: false, textureModeRevision: 11));
+        MeshResult textured = LodMesher.BuildMesh(Fixtures.Job(
+            section, emitTextureSlots: true, textureModeRevision: 12));
+        MeshResult coarse = LodMesher.BuildMesh(Fixtures.Job(
+            section, LodWorld.SectionKey(1, 0, 0),
+            emitTextureSlots: true, textureModeRevision: 13));
+
+        c.False(plain.HasTextureSlots, "an off job emits ordinary RGB packed quads");
+        c.True(textured.HasTextureSlots, "an on L0 job emits block-texture slots");
+        c.False(coarse.HasTextureSlots, "coarse LOD never receives one block's texture slot");
+        c.Eq(11L, plain.TextureModeRevision, "the plain result carries its toggle identity");
+        c.Eq(12L, textured.TextureModeRevision, "the textured result carries its toggle identity");
+
+        for (int quad = 0; quad < textured.PackedOpaqueQuadCount; quad++)
+        {
+            int word = quad * LodPackedQuadFormat.WordsPerQuad;
+            c.False(LodPackedQuadFormat.IsTextured(plain.PackedOpaqueQuads[word]),
+                "every quad in the off mesh retains RGB");
+            c.True(LodPackedQuadFormat.IsTextured(textured.PackedOpaqueQuads[word]),
+                "every solid L0 quad in the on mesh carries a slot");
+            c.Eq(517, LodPackedQuadFormat.TextureSlot(textured.PackedOpaqueQuads[word + 2]),
+                "the job-selected slot survives emission");
+        }
+    }
+
+    /// <summary>
     /// A textured quad's colour comes out of the block table rather than out of its vertex,
     /// so the table must split a stored colour exactly the way the vertex path reads one.
     ///
@@ -151,6 +187,34 @@ public static class PackedQuadChecks
             "the packed word's middle byte is the same channel the table calls green");
         c.Eq((uint)(blue * 255f), (words[2] >> 16) & 0xFFu,
             "the packed word's high byte is the same channel the table calls blue");
+    }
+
+    /// <summary>
+    /// TopSoil packs two logical tiles into one atlas rectangle: the side fringe on the left
+    /// and the top overlay on the right. Forest floor has no separate `particletop`, so this
+    /// is the path that prevents its side texture from being painted across the LOD top.
+    /// </summary>
+    static void TopSoilOverlayUsesTheRightHalf(Check c)
+    {
+        var full = new Vintagestory.API.Client.TextureAtlasPosition
+        {
+            atlasTextureId = 17,
+            atlasNumber = 3,
+            x1 = 0.20f,
+            y1 = 0.30f,
+            x2 = 0.60f,
+            y2 = 0.70f,
+        };
+
+        Vintagestory.API.Client.TextureAtlasPosition top =
+            LodBlockTextureRegistry.RightHalf(full);
+        c.Eq(0.40f, top.x1, "the top overlay starts at the strip midpoint");
+        c.Eq(0.60f, top.x2, "the top overlay retains the strip's right edge");
+        c.Eq(full.y1, top.y1, "the top overlay retains the vertical origin");
+        c.Eq(full.y2, top.y2, "the top overlay retains the vertical edge");
+        c.Eq(full.atlasTextureId, top.atlasTextureId, "the sub-rectangle stays on its atlas");
+        c.Eq(full.atlasNumber, top.atlasNumber, "the sub-rectangle stays on its atlas page");
+        c.Eq(0.20f, full.x1, "the engine-owned full rectangle is not mutated");
     }
 
     static void MaterialPayloadsAndDegenerates(Check c)
@@ -213,10 +277,10 @@ public static class PackedQuadChecks
         }
     }
 
-    static LodSection IsolatedRun(int yTop, int yBottom)
+    static LodSection IsolatedRun(int yTop, int yBottom, ushort textureSlot = 0)
     {
         var section = new LodSection();
-        section.FindOrAddPaletteEntry(1, 0x00332211, 0, 63);
+        section.FindOrAddPaletteEntry(1, 0x00332211, 0, 63, textureSlot);
         section.SetColumn(LodSection.ColumnIndex(5, 7),
             new[] { LodSection.PackRun(0, yTop, yBottom) });
         return section;

@@ -8,13 +8,33 @@ first.
 
 ## [Unreleased]
 
-**`.vhband overlap` now defaults to 0.** It was 16 blocks, and it was there because 16 blocks
-closed a hole in play - the hole 0.3.162 and 0.3.163 fixed at source. With the real causes gone the
-margin buys nothing and costs a permanently doubled band where both terrains draw. Raise it if
-ground ever goes missing at the seam again, and treat that as a symptom rather than a fix.
+**Deferred correctness work after reviewing 0.3.165:** freshly captured terrain does not yet gain
+L0 texture slots; mesh results and the texture registry/table are not fully isolated between
+worlds; the off path retains CPU-side texture preparation; and a failed table refresh does not
+preserve the last valid table for old textured meshes. These findings are documented only and no
+fix is included yet.
 
-This is source only. No artifact carries it yet, so in 0.3.163 the setting still starts at 16 and
-the chat command is still how to reach 0.
+## [0.3.165] - 2026-08-31
+
+**New saved blend-pipeline master switch.** `.vhconfig` now includes “Seam blending and L0 block
+textures”, and `.vhblend on|off` controls the same setting. Turning it off immediately stops seam
+field and atlas sampling, then reuses the ordinary bounded scheduler to remesh live L0 terrain to
+plain averaged colours. The texture table remains until every old slot-bearing mesh is replaced;
+worker jobs carry a texture-mode revision so work from the other side of a live toggle is rejected.
+
+Ownership masking and the constant depth-fighting sink remain active because they prevent holes
+and overlap flicker rather than changing the terrain's appearance. Built, verified, packaged and
+copy-installed; not human-tested or benchmarked.
+
+## [0.3.164] - 2026-08-31
+
+**Forest Floor now uses its top textures on LOD blocks.** Its base comes from the block's explicit
+`up` texture rather than the generic side-colour texture, and its combined TopSoil overlay uses the
+right-hand top tile rather than stretching the left-hand side fringe across the top face.
+
+This is also the first packaged artifact in which `.vhband overlap` defaults to 0 after 0.3.162 and
+0.3.163 fixed the two holes that the former 16-block margin was hiding. Built, verified, packaged
+and copy-installed; not human-tested.
 
 ## [0.3.163] - 2026-08-30
 

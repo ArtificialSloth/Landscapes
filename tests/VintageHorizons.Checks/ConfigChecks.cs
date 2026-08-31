@@ -216,6 +216,8 @@ public static class ConfigChecks
         // The settings the mod has always shipped, checked alongside so a new field cannot
         // quietly change one of them.
         c.True(config.ChunkMask, "the chunk mask stays on by default");
+        c.True(config.BlendPipeline,
+            "seam blending and L0 textures stay on for a fresh install");
         c.False(config.IgnoreOtherLodMods, "and deferring to another LOD mod stays the default");
     }
 }

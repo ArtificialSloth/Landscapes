@@ -222,6 +222,21 @@ public sealed class LodBlockTextureRegistry
         ((storedColor >> 8) & 0xFF) / 255f,
         ((storedColor >> 16) & 0xFF) / 255f);
 
+    /// <summary>
+    /// The top tile inside Vintage Story's two-wide TopSoil overlay rectangle.
+    ///
+    /// The engine maps sides through the left half and moves one tile right for an upward
+    /// normal. Return a copy because atlas positions belong to the engine and are shared by
+    /// every renderer that uses that texture.
+    /// </summary>
+    public static TextureAtlasPosition RightHalf(TextureAtlasPosition position)
+    {
+        ArgumentNullException.ThrowIfNull(position);
+        TextureAtlasPosition half = position.Clone();
+        half.x1 = (position.x1 + position.x2) * 0.5f;
+        return half;
+    }
+
     public string Describe() =>
         $"{SlotCount}/{MaxSlots} textured blocks on atlas {atlasTextureId}, "
         + $"{OverlaysAccepted} grass overlays ({OverlaysOtherPage} on another page), refused "

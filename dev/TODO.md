@@ -140,9 +140,31 @@ The remaining cause is intrinsic:
 If it is ever revisited: step the ramp on 32-block chunk edges rather than 8-block cells. The
 "seed from vanilla's loaded footprint" half of this note is done.
 
-## Seam blending and block textures: what is unproven
+## Seam blending, block textures and the master toggle: what is open
 
-Shipped and human-tested through 0.3.139, but several things were never measured or exercised.
+The base pipeline shipped and was human-tested through 0.3.139. Forest Floor's top-texture fix in
+0.3.164 and the saved master switch in 0.3.165 are source/check verified only.
+
+### Deferred after the 0.3.165 correctness review
+
+- **Populate texture slots during live capture.** `RegisterPaletteEntry` currently omits the
+  resolver used by cache reclassification, so fresh sections retain slot zero. The eventual fix
+  must also backfill resident palettes before the rare off-to-on remesh.
+- **Carry world identity through mesh work.** Mesh jobs/results need the pipeline world epoch, and
+  cross-world results must be dropped before they remove a new-world in-flight marker or add a
+  stale dirty key. A one-time queue drain cannot stop a job already owned by a worker.
+- **Reset the block-texture registry and GPU table between worlds.** The registry's existing
+  `Clear()` contract is not called, and the table can remain live while the master is enabled.
+- **Make off gate CPU preparation as well as GPU use.** Cached palette classification still
+  resolves textures and every snapshot still copies texture-slot arrays. Measure the residual
+  shader branch separately before claiming an exact baseline restoration.
+- **Preserve the last valid table across refresh failure.** Upload a replacement and swap only on
+  success, or retain/rebind the previous table until all live slot-bearing meshes have drained.
+- **Acceptance after those fixes:** exercise startup-off, on-to-off, off-to-on, rapid double
+  toggles, a world change with workers busy, table-refresh failure, and Forest Floor in game. Run a
+  controlled performance comparison before describing the switch's benefit quantitatively.
+
+### Earlier verification debt
 
 - **No benchmark was run.** The band costs one texture fetch inside it plus a bounded field rebuild;
   block textures add a fetch on textured fragments and a mip-level computation. Both are expected to

@@ -10,9 +10,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     const int MaxDrawDistance = 32768;
     const int DrawDistanceStep = 512;
 
-    readonly Action<int[], int> save;
+    readonly Action<int[], int, bool> save;
     readonly int[] pendingThresholds;
     int pendingFarCap;
+    bool pendingBlendPipeline;
     LodThresholdScaleElement scale = null!;
 
     public override string DebugName => "vintagehorizons-config";
@@ -20,20 +21,21 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     public override bool PrefersUngrabbedMouse => true;
 
     public VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
-        int farCap, Action<int[], int> save) : base(capi)
+        int farCap, bool blendPipeline, Action<int[], int, bool> save) : base(capi)
     {
         this.save = save;
         pendingThresholds = LodWorld.NormalizeLevelThresholds(
             thresholds, LodWorld.DefaultLevelThresholds[0]);
         pendingFarCap = Math.Clamp(farCap <= 0 ? MaxDrawDistance : farCap,
             MinDrawDistance, MaxDrawDistance);
+        pendingBlendPipeline = blendPipeline;
         ComposeDialog();
     }
 
     void ComposeDialog()
     {
         const double width = 760;
-        const double height = 440;
+        const double height = 510;
         ElementBounds dialogBounds = ElementBounds.Fixed(0, 0, width, height)
             .WithAlignment(EnumDialogArea.CenterMiddle);
 
@@ -73,18 +75,27 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddDynamicText(DrawDistanceLabel(), CairoFont.WhiteSmallText(),
             ElementBounds.Fixed(605, 306, 120, 24), "draw-distance-label");
 
+        composer.AddStaticText("Seam blending and L0 block textures",
+            CairoFont.WhiteMediumText(), ElementBounds.Fixed(30, 350, 600, 28));
+        composer.AddSwitch(OnBlendPipelineChanged,
+            ElementBounds.Fixed(682, 347, 32, 32), "blend-pipeline");
+        composer.AddStaticText(
+            "Turning this off remeshes nearby cached terrain once, removing its texture lookups.",
+            CairoFont.WhiteSmallText(), ElementBounds.Fixed(30, 380, 680, 24));
+
         composer.AddButton("Defaults", OnDefaults,
-            ElementBounds.Fixed(30, 376, 135, 38), EnumButtonStyle.Normal, "defaults");
+            ElementBounds.Fixed(30, 446, 135, 38), EnumButtonStyle.Normal, "defaults");
         composer.AddButton("Cancel", OnCancel,
-            ElementBounds.Fixed(455, 376, 120, 38), EnumButtonStyle.Normal, "cancel");
+            ElementBounds.Fixed(455, 446, 120, 38), EnumButtonStyle.Normal, "cancel");
         composer.AddButton("Save", OnSave,
-            ElementBounds.Fixed(590, 376, 135, 38), EnumButtonStyle.Normal, "save");
+            ElementBounds.Fixed(590, 446, 135, 38), EnumButtonStyle.Normal, "save");
 
         SingleComposer = composer.EndChildElements().Compose();
 
         GuiElementSlider drawSlider = SingleComposer.GetSlider("draw-distance");
         drawSlider.SetValues(pendingFarCap, MinDrawDistance, MaxDrawDistance, DrawDistanceStep, " blocks");
         drawSlider.ShowTextWhenResting = false;
+        SingleComposer.GetSwitch("blend-pipeline").On = pendingBlendPipeline;
     }
 
     void OnThresholdChanged(int index, int value)
@@ -108,10 +119,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         return true;
     }
 
+    void OnBlendPipelineChanged(bool enabled) => pendingBlendPipeline = enabled;
+
     bool OnDefaults()
     {
         Array.Copy(LodWorld.DefaultLevelThresholds, pendingThresholds, pendingThresholds.Length);
         pendingFarCap = MaxDrawDistance;
+        pendingBlendPipeline = true;
         scale.SetValues(pendingThresholds);
 
         for (int i = 0; i < pendingThresholds.Length; i++)
@@ -123,12 +137,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             .SetValues(pendingFarCap, MinDrawDistance, MaxDrawDistance, DrawDistanceStep, " blocks");
         SingleComposer.GetDynamicText("draw-distance-label")
             .SetNewText(DrawDistanceLabel(), false, true, false);
+        SingleComposer.GetSwitch("blend-pipeline").On = pendingBlendPipeline;
         return true;
     }
 
     bool OnSave()
     {
-        save(scale.GetValues(), pendingFarCap);
+        save(scale.GetValues(), pendingFarCap, pendingBlendPipeline);
         TryClose();
         return true;
     }

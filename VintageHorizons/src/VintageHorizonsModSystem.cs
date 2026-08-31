@@ -29,6 +29,13 @@ public class VintageHorizonsConfig
     public bool ChunkMask = true;
 
     /// <summary>
+    /// Optional visual handoff pipeline: seam colour blending plus real block textures in
+    /// packed L0 terrain. Off keeps the ownership handoff, but remeshes L0 back to its plain
+    /// averaged-colour representation so the texture-table fetch disappears too.
+    /// </summary>
+    public bool BlendPipeline = true;
+
+    /// <summary>
     /// Draw even when another LOD mod is installed and switched on. The escape hatch for
     /// the mods whose own switch we cannot read; see <see cref="OtherLodMods"/>. Read at
     /// startup only, because turning the mod on mid-session is not something the startup
@@ -190,6 +197,7 @@ public class VintageHorizonsModSystem : ModSystem
             AutoUnpause = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOUNPAUSE") == "1",
             TrackPhaseAllocations = allocationTelemetryEnabled,
             FarViewDistanceCap = config.FarViewDistanceCap,
+            BlendPipelineEnabled = config.BlendPipeline,
             OpaqueBackfaceCulling =
                 Environment.GetEnvironmentVariable("VINTAGEHORIZONS_BACKFACE_CULLING") != "0",
             OpaqueFrontToBack =
@@ -867,25 +875,28 @@ public class VintageHorizonsModSystem : ModSystem
         // per-pixel alpha - the same arithmetic the colour already uses. Without the overlay
         // the shader draws correctly coloured ground wearing dirt's pattern, which close up
         // reads as dirt.
-        // The TOP grass, not the side fringe. `specialSecondTexture` is the overlay the engine
-        // uses down a block's sides: measured off the game's own normal.png, it is fully opaque
-        // for eight rows and then half-transparent for the remaining twenty-four, which is a
-        // grass edge hanging over dirt. Painted flat onto a top face it draws every block half
-        // grass and half dirt - exactly what the owner reported twice. The game keeps a
-        // separate fully-opaque texture for the top, and the block names it under this key.
+        // The TOP overlay, not the side fringe. Most grassy soil names a separate fully-opaque
+        // `particletop` texture. Forest floor does not: its specialSecondTexture is one 2:1
+        // strip with the side in the left half and the top in the right. Vanilla's
+        // TopsoilTesselator supplies only the left-half UVs, then chunktopsoil.fsh shifts one
+        // tile right when normal.y is 1. Sampling the whole strip as one LOD tile painted the
+        // proper side fringe across every forest-floor top.
         TextureAtlasPosition? overlayPosition = null;
         TextureMean composite = mean;
         if (block.RenderPass == EnumChunkRenderPass.TopSoil
             && block.Textures != null
-            && TryTopGrassTexture(block, out CompositeTexture? overlay))
+            && TryTopSoilOverlay(block, out CompositeTexture? overlay, out bool rightHalf))
         {
             int overlayId = overlay?.Baked?.TextureSubId ?? -1;
             if (IsUsableAtlasTexture(overlayId))
             {
-                TextureMean grass = MeanOf(overlay, overlayId);
+                TextureMean grass = MeanOf(overlay, overlayId, rightHalf);
                 if (grass.Coverage > 0f)
                 {
-                    overlayPosition = capi.BlockTextureAtlas.Positions[overlayId];
+                    TextureAtlasPosition fullPosition = capi.BlockTextureAtlas.Positions[overlayId];
+                    overlayPosition = rightHalf
+                        ? LodBlockTextureRegistry.RightHalf(fullPosition)
+                        : fullPosition;
                     // Offered, not imposed: the registry refuses an overlay on another atlas
                     // page, and normalising by a composite the shader never samples is what
                     // turned grassy ground pale.
@@ -903,24 +914,31 @@ public class VintageHorizonsModSystem : ModSystem
     }
 
     /// <summary>
-    /// The grass texture that belongs on a block's TOP face.
+    /// The overlay texture region that belongs on a TopSoil block's TOP face.
     ///
     /// `particletop` is where the game names it - the same fully-opaque texture it throws as
-    /// particles when you walk on grass. `specialSecondTexture` is the fallback and is the
-    /// SIDE fringe, so it is only worth taking when a block names nothing better; on a top
-    /// face it draws grass over one half and bare soil under the other.
+    /// particles when you walk on grass. When that is absent, `specialSecondTexture` follows
+    /// the engine's TopSoil convention: side and top occupy the left and right halves of one
+    /// atlas rectangle. Forest floor takes this fallback.
     /// </summary>
-    static bool TryTopGrassTexture(Block block, out CompositeTexture? texture)
+    static bool TryTopSoilOverlay(
+        Block block, out CompositeTexture? texture, out bool rightHalf)
     {
-        foreach (string name in TopGrassTextureNames)
+        if (block.Textures!.TryGetValue("particletop", out texture) && texture?.Baked != null)
         {
-            if (block.Textures!.TryGetValue(name, out texture) && texture?.Baked != null) return true;
+            rightHalf = false;
+            return true;
+        }
+        if (block.Textures.TryGetValue("specialSecondTexture", out texture)
+            && texture?.Baked != null)
+        {
+            rightHalf = true;
+            return true;
         }
         texture = null;
+        rightHalf = false;
         return false;
     }
-
-    static readonly string[] TopGrassTextureNames = { "particletop", "specialSecondTexture" };
 
     /// <summary>
     /// Face names to try for the up face, in order. Ground seen from above is nearly all top
@@ -990,18 +1008,18 @@ public class VintageHorizonsModSystem : ModSystem
     /// </summary>
     readonly record struct TextureMean(float R, float G, float B, float Coverage);
 
-    readonly Dictionary<AssetLocation, TextureMean> textureMeans = new();
+    readonly Dictionary<(AssetLocation Location, bool RightHalf), TextureMean> textureMeans = new();
 
-    TextureMean MeanOf(CompositeTexture? tex, int atlasSubId)
+    TextureMean MeanOf(CompositeTexture? tex, int atlasSubId, bool rightHalf = false)
     {
         AssetLocation? loc = tex?.Base?.Clone().WithPathPrefixOnce("textures/").WithPathAppendixOnce(".png");
-        if (loc != null && textureMeans.TryGetValue(loc, out TextureMean cached)) return cached;
+        if (loc != null && textureMeans.TryGetValue((loc, rightHalf), out TextureMean cached)) return cached;
 
-        TextureMean mean = loc != null && TryReadTextureMean(loc, out TextureMean read)
+        TextureMean mean = loc != null && TryReadTextureMean(loc, rightHalf, out TextureMean read)
             ? read
             : AtlasMean(atlasSubId);
 
-        if (loc != null) textureMeans[loc] = mean;
+        if (loc != null) textureMeans[(loc, rightHalf)] = mean;
         return mean;
     }
 
@@ -1012,7 +1030,7 @@ public class VintageHorizonsModSystem : ModSystem
         return new TextureMean(c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF, ((c >> 24) & 0xFF) / 255f);
     }
 
-    bool TryReadTextureMean(AssetLocation loc, out TextureMean mean)
+    bool TryReadTextureMean(AssetLocation loc, bool rightHalf, out TextureMean mean)
     {
         mean = default;
         try
@@ -1030,16 +1048,24 @@ public class VintageHorizonsModSystem : ModSystem
             // colour by it below is a weighting and not a second application of it.
             int[] argb = bmp.Pixels;
             if (argb == null || argb.Length == 0) return false;
-            long pixels = argb.Length;
+            int width = bmp.Width;
+            int height = bmp.Height;
+            if (width <= 0 || height <= 0 || argb.Length != width * height) return false;
+            int firstX = rightHalf ? width / 2 : 0;
+            long pixels = (long)(width - firstX) * height;
 
             double r = 0, g = 0, b = 0, alpha = 0;
-            foreach (int p in argb)
+            for (int y = 0; y < height; y++)
             {
-                double aPixel = ((p >> 24) & 0xFF) / 255.0;
-                r += ((p >> 16) & 0xFF) * aPixel;
-                g += ((p >> 8) & 0xFF) * aPixel;
-                b += (p & 0xFF) * aPixel;
-                alpha += aPixel;
+                for (int x = firstX; x < width; x++)
+                {
+                    int p = argb[y * width + x];
+                    double aPixel = ((p >> 24) & 0xFF) / 255.0;
+                    r += ((p >> 16) & 0xFF) * aPixel;
+                    g += ((p >> 8) & 0xFF) * aPixel;
+                    b += (p & 0xFF) * aPixel;
+                    alpha += aPixel;
+                }
             }
 
             if (alpha <= 0) return false;
@@ -1929,7 +1955,7 @@ public class VintageHorizonsModSystem : ModSystem
         // Available even while deferring, because these are persisted player settings;
         // they will apply normally after the competing renderer is switched off.
         capi.ChatCommands.Create("vhconfig")
-            .WithDescription("Open the Vintage Horizons detail and draw-distance settings")
+            .WithDescription("Open the Vintage Horizons detail, draw-distance and blending settings")
             .HandleWith(_ =>
             {
                 if (configDialog?.IsOpened() == true)
@@ -1943,11 +1969,43 @@ public class VintageHorizonsModSystem : ModSystem
                     ? LodWorld.GetLevelThresholds()
                     : LodWorld.NormalizeLevelThresholds(config.LodThresholds, config.DetailDistance);
                 int farCap = deferringTo == null ? renderer.FarViewDistanceCap : config.FarViewDistanceCap;
-                configDialog = new VintageHorizonsConfigDialog(capi, thresholds, farCap, ApplyGuiConfig);
+                bool blendPipeline = deferringTo == null
+                    ? renderer.BlendPipelineEnabled
+                    : config.BlendPipeline;
+                configDialog = new VintageHorizonsConfigDialog(
+                    capi, thresholds, farCap, blendPipeline, ApplyGuiConfig);
 
                 return configDialog.TryOpen()
                     ? TextCommandResult.Success("[VintageHorizons] configuration window opened.")
                     : TextCommandResult.Success("[VintageHorizons] configuration window could not open right now.");
+            });
+
+        capi.ChatCommands.Create("vhblend")
+            .WithDescription("Turn seam blending and L0 block textures off or on. Saved; also available in .vhconfig.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
+            .HandleWith(args =>
+            {
+                if (args.Parsers[0].IsMissing)
+                {
+                    return TextCommandResult.Success("[VintageHorizons] "
+                        + (deferringTo == null
+                            ? renderer.DescribeBlendPipeline()
+                            : config.BlendPipeline
+                                ? "blending on (saved; applies when Vintage Horizons is active)."
+                                : "blending off (saved; applies when Vintage Horizons is active)."));
+                }
+
+                bool enabled = (bool)args[0];
+                config.BlendPipeline = enabled;
+                if (deferringTo == null) renderer.BlendPipelineEnabled = enabled;
+                SaveConfig();
+                return TextCommandResult.Success("[VintageHorizons] "
+                    + (deferringTo == null
+                        ? renderer.DescribeBlendPipeline()
+                        : $"blending {(enabled ? "on" : "off")} (saved; applies when Vintage Horizons is active).")
+                    + (!enabled && deferringTo == null
+                        ? " Live L0 terrain will finish changing over the next few seconds."
+                        : ""));
             });
 
         // The remaining commands drive the renderer, which does not exist when we are
@@ -3036,17 +3094,19 @@ public class VintageHorizonsModSystem : ModSystem
             });
     }
 
-    void ApplyGuiConfig(int[] thresholds, int farViewDistanceCap)
+    void ApplyGuiConfig(int[] thresholds, int farViewDistanceCap, bool blendPipeline)
     {
         int[] normalized = LodWorld.NormalizeLevelThresholds(thresholds, config.DetailDistance);
         config.LodThresholds = normalized;
         config.DetailDistance = normalized[0];
         config.FarViewDistanceCap = farViewDistanceCap;
+        config.BlendPipeline = blendPipeline;
 
         if (deferringTo == null)
         {
             LodWorld.SetLevelThresholds(normalized);
             renderer.FarViewDistanceCap = farViewDistanceCap;
+            renderer.BlendPipelineEnabled = blendPipeline;
         }
 
         SaveConfig();
@@ -3065,6 +3125,7 @@ public class VintageHorizonsModSystem : ModSystem
             // The request, never the effective state: a mask that failed this session
             // reports itself disabled, and writing that would turn it off permanently.
             config.ChunkMask = renderer.ChunkMaskRequested;
+            config.BlendPipeline = renderer.BlendPipelineEnabled;
 
             // The requested state, never the effective one, for the same reason the mask
             // uses the request: a path that refused to start this session reports itself

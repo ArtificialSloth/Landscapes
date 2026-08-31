@@ -104,6 +104,20 @@ public class MeshJob
     public long ReadyAtMilliseconds;
 
     /// <summary>
+    /// Whether this immutable job may replace an L0 packed quad's colour with a block-texture
+    /// slot. This belongs to the job, never a process-wide static: changing the saved blend
+    /// setting while workers are busy must not change the format half way through a mesh.
+    /// </summary>
+    public bool EmitTextureSlots;
+
+    /// <summary>
+    /// Renderer-owned identity for <see cref="EmitTextureSlots"/>. A result built for an old
+    /// setting is discarded and re-queued instead of being published after the player has
+    /// crossed the toggle boundary.
+    /// </summary>
+    public long TextureModeRevision;
+
+    /// <summary>
     /// Bit per side (W, E, N, S) whose neighbour section holds captured data we have
     /// simply not loaded into RAM yet. Those sides are NOT the frontier and must not be
     /// walled off; see LodMesher.CollectSide. The renderer re-meshes the section when
@@ -172,6 +186,12 @@ public class MeshResult
     // the expanded arrays until the packed path has passed its visual/performance gates.
     public uint[] PackedOpaqueQuads = Array.Empty<uint>();
     public int PackedOpaqueQuadCount;
+
+    /// <summary>Whether any packed opaque quad stores a texture slot instead of RGB.</summary>
+    public bool HasTextureSlots;
+
+    /// <summary>The originating job's texture-mode identity, used for stale-result rejection.</summary>
+    public long TextureModeRevision;
 
     // Phase 8 comparison stream. Quads are split at a 4x4 section grid and stored
     // contiguously per populated cell; the accepted whole-section stream above remains

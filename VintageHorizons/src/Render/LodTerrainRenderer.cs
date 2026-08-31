@@ -407,6 +407,17 @@ public class LodTerrainRenderer : IRenderer
     public bool MaskDebugPaint { get; set; }
 
     /// <summary>
+    /// Saved master switch for the optional seam-colour and L0 block-texture pipeline.
+    /// Ownership masking and the constant overlap sink are deliberately outside this switch:
+    /// they prevent holes and depth fighting rather than blending the two renderers' look.
+    /// </summary>
+    public bool BlendPipelineEnabled
+    {
+        get => blendPipelineEnabled;
+        set => SetBlendPipelineEnabled(value);
+    }
+
+    /// <summary>
     /// Wear vanilla's colouring at the seam and relax outward, so the eye has no single line
     /// to find. Measured offline at the seam, cached ground is about 8% brighter than vanilla
     /// and loses the green cast, with red and blue moving nearly twice as far as green - a
@@ -997,7 +1008,7 @@ public class LodTerrainRenderer : IRenderer
 
     readonly record struct LodLiveMeshStats(
         int OpaqueVertices, int OpaqueIndices, int WaterVertices, int WaterIndices,
-        LodSectionHeights Heights)
+        LodSectionHeights Heights, bool HasTextureSlots)
     {
         public long Bytes => OpaqueVertices * 16L + OpaqueIndices * sizeof(int)
             + WaterVertices * 16L + WaterIndices * sizeof(int);
@@ -1133,6 +1144,10 @@ public class LodTerrainRenderer : IRenderer
     int blockTableVersion = -1;
     bool blockTableFailed;
     bool blockTexturesLive;
+    bool blendPipelineEnabled = true;
+    bool textureSlotsReady;
+    long textureModeRevision = 1;
+    int liveTexturedMeshes;
     float readinessHandoffDistance;
     bool readinessOwnsHandoff;
     float readinessOwnedRadius;
@@ -2190,6 +2205,8 @@ public class LodTerrainRenderer : IRenderer
                 HalfBlockLevels = halfBlockLevels,
                 SurfaceHalfBlocksOnly = SurfaceHalfBlocksOnly,
                 CutoutBlocksCover = CutoutBlocksCover,
+                EmitTextureSlots = textureSlotsReady,
+                TextureModeRevision = textureModeRevision,
             });
         }
 
@@ -2241,6 +2258,16 @@ public class LodTerrainRenderer : IRenderer
         {
             meshJobInFlight.Remove(result.Key);
 
+            // The blend master switch changes what word two of an L0 packed quad means.
+            // Never publish work built for the other interpretation after the switch: put
+            // the exact section obligation back and let the ordinary bounded scheduler
+            // snapshot it again under the current identity.
+            if (result.TextureModeRevision != textureModeRevision)
+            {
+                world.RenderDirty.Add(result.Key);
+                continue;
+            }
+
             MeshRef? newOpaque = null;
             MeshRef? newWater = null;
             try
@@ -2283,7 +2310,8 @@ public class LodTerrainRenderer : IRenderer
                     result.Xyz, result.Rgba, result.Indices,
                     result.PackedOpaqueQuads, result.PackedOpaqueQuadCount,
                     result.ClusteredPackedOpaqueQuads, result.PackedOpaqueClusters),
-                result.Heights);
+                result.Heights,
+                result.HasTextureSlots);
         }
 
         MeshUploadItems += uploadBudget.Items;
@@ -2346,7 +2374,8 @@ public class LodTerrainRenderer : IRenderer
             Math.Max(0, publication.OpaqueIndices),
             Math.Max(0, publication.WaterVertices),
             Math.Max(0, publication.WaterIndices),
-            publication.Heights);
+            publication.Heights,
+            publication.HasTextureSlots);
         if (stats.OpaqueIndices == 0 && stats.WaterIndices == 0) return;
 
         liveMeshStats[key] = stats;
@@ -2359,6 +2388,9 @@ public class LodTerrainRenderer : IRenderer
         LiveWaterVertices += stats.WaterVertices;
         LiveWaterIndices += stats.WaterIndices;
         LiveGpuMeshBytes += stats.Bytes;
+        if (stats.HasTextureSlots) liveTexturedMeshes++;
+
+        MaybeReleaseBlockTextureTable();
     }
 
     void RemoveLiveMeshStats(long key)
@@ -2370,6 +2402,9 @@ public class LodTerrainRenderer : IRenderer
         LiveWaterVertices -= stats.WaterVertices;
         LiveWaterIndices -= stats.WaterIndices;
         LiveGpuMeshBytes -= stats.Bytes;
+        if (stats.HasTextureSlots) liveTexturedMeshes--;
+
+        MaybeReleaseBlockTextureTable();
     }
 
     void ReplaceMeshRefs(long key, MeshRef? newOpaque, MeshRef? newWater)
@@ -3393,22 +3428,109 @@ public class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
-    /// Uploads the block texture table when it has grown, and turns block textures on once
-    /// the table is actually on the GPU.
+    /// Changes the saved master blend setting. The seam resource can disappear immediately;
+    /// packed L0 geometry cannot, because an already-published textured quad needs the table
+    /// even when atlas sampling is off in the fragment shader. Those sections are replayed
+    /// through the ordinary bounded remesh path, and the table is released after the final
+    /// textured live mesh has been replaced.
+    /// </summary>
+    public int SetBlendPipelineEnabled(bool enabled)
+    {
+        if (blendPipelineEnabled == enabled) return 0;
+
+        blendPipelineEnabled = enabled;
+        int queued = 0;
+        if (!enabled)
+        {
+            ReleaseBlendField();
+            queued = SetTextureSlotEmission(false);
+            MaybeReleaseBlockTextureTable();
+        }
+        else if (BlockTextureTableCurrent)
+        {
+            queued = SetTextureSlotEmission(true);
+        }
+
+        capi.Logger.Notification(
+            "[VintageHorizons] seam blending and L0 textures {0}; {1} live L0 section(s) "
+            + "queued for bounded re-meshing.", enabled ? "on" : "off", queued);
+        return queued;
+    }
+
+    /// <summary>The saved request, plus any short-lived off transition still being remeshed.</summary>
+    public string DescribeBlendPipeline()
+    {
+        if (blendPipelineEnabled)
+        {
+            return "on (saved): seam blending and L0 block textures are enabled"
+                + (textureSlotsReady ? "." : "; L0 textures are waiting for their GPU table.");
+        }
+
+        return liveTexturedMeshes > 0
+            ? $"off (saved): {liveTexturedMeshes} textured L0 mesh(es) are still being replaced; "
+                + "atlas sampling is already off."
+            : "off (saved): seam blending and L0 block textures are fully disabled.";
+    }
+
+    bool BlockTextureTableCurrent => blockTexturesLive && blockTableTexture != 0
+        && blockTextures != null && blockTableVersion == blockTextures.Version;
+
+    int SetTextureSlotEmission(bool enabled)
+    {
+        if (textureSlotsReady == enabled) return 0;
+
+        textureSlotsReady = enabled;
+        unchecked { textureModeRevision++; }
+
+        int queued = 0;
+        foreach (long key in sectionMeshes.Keys)
+        {
+            if (LodWorld.KeyLevel(key) != 0) continue;
+            world.RenderDirty.Add(key);
+            queued++;
+        }
+        return queued;
+    }
+
+    void MaybeReleaseBlockTextureTable()
+    {
+        if (blendPipelineEnabled || textureSlotsReady || liveTexturedMeshes > 0) return;
+        DisposeBlockTableTexture();
+    }
+
+    void ReleaseBlendField()
+    {
+        seamField = null;
+        seamFieldBuiltRevision = -1;
+        seamFieldBuiltMarginCells = -1;
+        DisposeSeamFieldTexture();
+    }
+
+    /// <summary>
+    /// Uploads the block texture table when it has grown, and turns texture-slot mesh
+    /// emission on only once the table is actually on the GPU.
     ///
     /// Ordering is the whole point of doing this at the top of the frame: a textured quad
     /// carries a block slot INSTEAD of its colour, so a slot the table does not yet describe
     /// would draw as black ground. Slots are handed out on the game tick as sections resolve;
     /// uploading before any draw means every slot a mesh can be carrying is already here.
     ///
-    /// It also gates <see cref="LodMesher.EmitTextureSlots"/>. Until the first successful
-    /// upload no mesh carries a slot at all, so every failure path here is simply the terrain
-    /// that was drawn before this feature existed.
+    /// Until the first successful upload no mesh job carries a slot at all, so every failure
+    /// path here is simply the terrain that was drawn before this feature existed.
     /// </summary>
     void PublishBlockTextureTable()
     {
+        if (!blendPipelineEnabled)
+        {
+            MaybeReleaseBlockTextureTable();
+            return;
+        }
         if (blockTextures == null || blockTableFailed) return;
-        if (blockTableVersion == blockTextures.Version && blockTexturesLive) return;
+        if (BlockTextureTableCurrent)
+        {
+            SetTextureSlotEmission(true);
+            return;
+        }
 
         try
         {
@@ -3454,13 +3576,13 @@ public class LodTerrainRenderer : IRenderer
 
             blockTableVersion = blockTextures.Version;
             blockTexturesLive = true;
-            LodMesher.EmitTextureSlots = true;
+            SetTextureSlotEmission(true);
         }
         catch (Exception e)
         {
             blockTableFailed = true;
             blockTexturesLive = false;
-            LodMesher.EmitTextureSlots = false;
+            SetTextureSlotEmission(false);
             capi.Logger.Warning(
                 "[VintageHorizons] block textures disabled for this session; distant ground "
                 + "keeps its averaged colours: {0}", e.Message);
@@ -3487,7 +3609,8 @@ public class LodTerrainRenderer : IRenderer
     void PublishSeamField()
     {
         if (seamFieldFailed) return;
-        if (!BandEnabled || !readinessMaskActive || readinessMask == null || readiness == null)
+        if (!blendPipelineEnabled || !BandEnabled
+            || !readinessMaskActive || readinessMask == null || readiness == null)
         {
             seamFieldActive = false;
             return;
@@ -4491,6 +4614,7 @@ public class LodTerrainRenderer : IRenderer
     /// </summary>
     string BandState()
     {
+        if (!blendPipelineEnabled) return "master off";
         if (!BandEnabled) return "off";
         if (seamFieldFailed) return "failed";
         if (seamField == null || !seamFieldActive) return "pending";
@@ -4512,6 +4636,7 @@ public class LodTerrainRenderer : IRenderer
     /// </summary>
     string BlockTextureState()
     {
+        if (!blendPipelineEnabled) return "master off";
         if (!BlockTexturesEnabled) return "off";
         if (blockTextures == null) return "unavailable";
         if (blockTableFailed) return "failed";
@@ -5001,7 +5126,7 @@ public class LodTerrainRenderer : IRenderer
         // overlap, and it applies whenever cached terrain draws.
         prog.Uniform("bandSinkBlocks", Math.Max(0, BandSinkVoxels) / 16f);
 
-        bool bandOwnsPixels = maskOwnsPixels && seamFieldActive
+        bool bandOwnsPixels = blendPipelineEnabled && maskOwnsPixels && seamFieldActive
             && seamField != null && seamFieldTexture != null;
         prog.Uniform("bandEnabled", bandOwnsPixels ? 1 : 0);
         prog.Uniform("bandDebug", BandDebugPaint ? 1 : 0);
@@ -5032,7 +5157,7 @@ public class LodTerrainRenderer : IRenderer
         if (blockTexturesLive && blockTableTexture != 0)
             prog.BindTexture2D("blockTable", blockTableTexture, 8);
 
-        bool blockTexturesOn = blockTexturesLive && blockTextures != null
+        bool blockTexturesOn = blendPipelineEnabled && blockTexturesLive && blockTextures != null
             && blockTextures.AtlasTextureId > 0 && BlockTexturesEnabled;
         prog.Uniform("blockTextureEnabled", blockTexturesOn ? 1 : 0);
         if (blockTexturesOn)
@@ -5676,7 +5801,8 @@ public class LodTerrainRenderer : IRenderer
             target.BindTexture2D("seamField", seamFieldTexture.TextureId, 7);
         if (blockTexturesLive && blockTableTexture != 0)
             target.BindTexture2D("blockTable", blockTableTexture, 8);
-        if (blockTexturesLive && blockTextures != null && blockTextures.AtlasTextureId > 0
+        if (blendPipelineEnabled && blockTexturesLive
+            && blockTextures != null && blockTextures.AtlasTextureId > 0
             && BlockTexturesEnabled)
         {
             target.BindTexture2D("blockAtlas", blockTextures.AtlasTextureId, 9);
@@ -7312,6 +7438,8 @@ public class LodTerrainRenderer : IRenderer
         sectionMeshes.Clear();
         waterMeshes.Clear();
         liveMeshStats.Clear();
+        liveTexturedMeshes = 0;
+        MaybeReleaseBlockTextureTable();
         subtreeHeights.Clear();
         LiveOpaqueVertices = LiveOpaqueIndices = 0;
         LiveWaterVertices = LiveWaterIndices = 0;

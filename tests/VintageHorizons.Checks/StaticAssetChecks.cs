@@ -793,12 +793,20 @@ public static class StaticAssetChecks
         c.True(renderer.Contains("if (blockTexturesLive && blockTableTexture != 0)", StringComparison.Ordinal),
             "the table is bound independently of whether textures are switched on");
 
-        // Emission is gated on the table actually reaching the GPU, which is what keeps every
-        // intermediate state of this work shippable.
-        c.True(renderer.Contains("LodMesher.EmitTextureSlots = true", StringComparison.Ordinal),
-            "slots are emitted only after a successful table upload");
-        c.True(renderer.Contains("LodMesher.EmitTextureSlots = false", StringComparison.Ordinal),
-            "a failed table upload stops emission");
+        // Emission is an immutable job fact gated on the table reaching the GPU. The matching
+        // revision check prevents a job queued before a live toggle from publishing afterward.
+        c.True(renderer.Contains("EmitTextureSlots = textureSlotsReady", StringComparison.Ordinal),
+            "each mesh job snapshots whether texture slots are ready");
+        c.True(renderer.Contains("TextureModeRevision = textureModeRevision", StringComparison.Ordinal),
+            "each mesh job snapshots the texture-mode identity");
+        c.True(renderer.Contains("result.TextureModeRevision != textureModeRevision",
+                StringComparison.Ordinal),
+            "a result from the old side of the blend toggle is rejected");
+        c.True(renderer.Contains("LodWorld.KeyLevel(key) != 0", StringComparison.Ordinal),
+            "the toggle remesh is restricted to L0, where texture slots can exist");
+        c.True(renderer.Contains("liveTexturedMeshes > 0", StringComparison.Ordinal)
+            && renderer.Contains("DisposeBlockTableTexture();", StringComparison.Ordinal),
+            "the block table survives the transition and is released after the last textured mesh");
     }
 
     /// <summary>
@@ -1556,6 +1564,15 @@ public static class StaticAssetChecks
             "the cached draw-distance slider stops at 32,768 in 512-block increments");
         c.True(dialog.Contains("ToString(\"N0\", CultureInfo.InvariantCulture)", StringComparison.Ordinal),
             "the config window displays full block values instead of abbreviated thousands");
+        c.True(dialog.Contains("AddSwitch(OnBlendPipelineChanged", StringComparison.Ordinal)
+            && dialog.Contains("Seam blending and L0 block textures", StringComparison.Ordinal),
+            "the config window exposes the saved blend-pipeline switch");
+        c.True(mod.Contains("public bool BlendPipeline = true", StringComparison.Ordinal)
+            && mod.Contains("config.BlendPipeline = renderer.BlendPipelineEnabled",
+                StringComparison.Ordinal),
+            "the blend choice defaults on and is persisted from the renderer request");
+        c.True(mod.Contains("ChatCommands.Create(\"vhblend\")", StringComparison.Ordinal),
+            "the same saved master switch is available as a simple command");
     }
 
     /// <summary>

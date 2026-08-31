@@ -2,17 +2,19 @@
 
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
-**Status date:** 2026-08-30
-**Mod version:** `0.3.163`, built, verified, and copy-installed. **Human-tested at 0.3.162**,
-which the owner reported as excellent: the missing vertical faces at the vanilla seam are gone.
-0.3.163 adds the crop-coverage half of the same fix and has **not** been looked at in play; its
-acceptance case is a seam running through a crop field. Source now carries `.vhband overlap`
-defaulting to 0, which is **not** in any packaged artifact - the owner directed no new version for
-a default change, so the installed 0.3.163 still starts at 16 and the chat command is still how to
-reach 0 in that build. The surface-slab behavior was human-tested and accepted in 0.3.142 and
-remains the default. Cached water's derived footprint moved again with the overlap default and has
-**not** been looked at in play. The development line remains 0.3.x (`0.2.1` is the public released
-version; 0.4.0 remains a preserved local rollback artifact from the GPU-renderer milestone).
+**Status date:** 2026-08-31
+**Mod version:** `0.3.165`, built, verified, packaged, and copy-installed; **not human-tested**.
+0.3.164 corrects Forest Floor LOD tops by using the explicit up texture and the right half of its
+two-tile TopSoil overlay. It is also the first artifact carrying the zero overlap default after
+0.3.162/0.3.163 fixed the holes that the old margin hid. 0.3.165 adds a saved `.vhconfig` and
+`.vhblend` master switch for seam blending and packed-L0 block textures, with bounded live remesh
+and in-flight texture-mode rejection. A source review found five issues that are documented and
+deferred: fresh captures lack texture slots; mesh results lack world epochs; block texture state is
+not reset between worlds; off retains CPU texture preparation; and table-refresh failure can stop
+serving old slot-bearing meshes too early. The full fast tier passes 5,933 assertions. No game run
+or performance benchmark supports the new visual or performance behavior. The development line
+remains 0.3.x (`0.2.1` is the public released version; 0.4.0 remains a preserved local rollback
+artifact from the GPU-renderer milestone).
 **Active branch:** `codex/exact-vanilla-draw-range`, branched from `14bfe4b` on
 `codex/water-seam-transition`, itself from `94cde0e` on `codex/terrain-slabs-and-near-water`,
 itself from `a55fc5b` on `codex/seam-blending-and-block-textures`, itself from `master` at
@@ -418,6 +420,13 @@ effect on the reported tiny or three-to-six-second spikes.
 > **Only the packed render path draws block textures.** The legacy and non-packed indirect paths are
 > unchanged. `.vhtexture` reports how many blocks resolved a texture, how many grass overlays landed,
 > and why the rest were refused.
+>
+> **0.3.165 adds a saved master switch** in `.vhconfig` and as `.vhblend on|off`. Off immediately
+> disables the seam field and atlas sampling, then bounded-remeshes live L0 and retains the block
+> table until old textured meshes drain. Ownership masking and the constant 1/16-block sink remain
+> active by design. Session 71's source review found five deferred lifecycle/acceptance issues;
+> `dev/TODO.md` is authoritative for that open work. The switch is not yet runtime-accepted and no
+> performance benefit has been measured.
 
 > **Water at the transition.** Rebuilt through 0.3.144-0.3.152. Three facts now hold, and the
 > first is what makes the other two safe.
@@ -1396,6 +1405,12 @@ is still one sample.
 Detailed tasks and human decisions are in `dev/TODO.md`.
 
 ## 8. Verification evidence
+
+The Session 71 source close passes **5,933 fast assertions** and `git diff --check`. The installed
+1.22.5 Forest Floor block definition and its 64x32 overlay asset support the selected top/right-half
+mapping. The toggle's configuration, job-local texture-mode selection and source wiring are covered,
+but there is no in-game visual transition, OpenGL failure-path exercise, world-change reproduction,
+or performance benchmark. Five source-review findings remain open in `dev/TODO.md`.
 
 The Session 69 close passes a warning-free Release build and **5,885 fast assertions**, including a
 new `vanilla draw range` suite that runs the installed game's own `FrustumCulling` object against
