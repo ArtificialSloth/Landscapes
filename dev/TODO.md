@@ -2,6 +2,53 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
+## Distant terrain colour: three causes fixed, one open and planned
+
+0.3.169 and 0.3.170 are human-tested and accepted ("nearly perfect"). What is left is one measured
+cause plus verification debt.
+
+- **Fix 3 is open and planned: the seasonal tint is sampled from one place.** The tint table holds
+  one colour per slot, sampled on a 64-position lattice 56 blocks across, centred on the PLAYER,
+  and every cached surface out to the horizon is multiplied by it. Two consequences, one local and
+  one global. Locally the lattice reads about 22% high in blue, measured by `.vhtint` on the
+  owner's test patch: blue runs 0.078..0.220 across that window while the true value at the block
+  is 0.125, near the bottom of a range spanning nearly 3x, so red and green barely move and blue
+  takes all of it. **Which half of the lattice does that is not established** - it averages the
+  season map's per-block row, which is correct and is why it exists (G47), and the climate, which
+  is not - and the two readings call for opposite fixes. Globally, distant terrain in another
+  biome wears the player's climate, which no one has judged in play because the seam is the only
+  place the two can be compared. The plan's Phase 0 is the cheap measurement that separates them;
+  do not build before it runs. See `dev/plans/PLAN_DISTANT_TINT_SAMPLING.md`.
+- **A further ~6% of the blue is the low sample's height, not the lattice.** `tintsLow` is taken at
+  sea level rather than at the terrain's own height, and the ground on the test patch is 8 blocks
+  above it. Cheap to correct and it belongs with the plan rather than ahead of it, because the
+  two-height table may not survive the redesign.
+- **The seasonal blend weight is still unquantified, and `.vhtint` cannot settle it.** The
+  long-standing hypothesis below - that `ApplyColorMapOnRgba` and `colormap.vsh` compute the
+  climate/season weight differently - remains open. Both the mod's tint and `.vhtint`'s C line go
+  through `ApplyColorMapOnRgba`, so comparing them cancels the error rather than exposing it. C
+  matched the screenshot's back-solved vanilla tint closely at one position, which is encouraging
+  and is not a general result. Settling it needs the shader's own weight computed independently
+  and compared against the CPU call at a known temperature and rainfall.
+- **0.3.170 changed the stored colour of every non-TopSoil block in the game.** Stone and grassy
+  soil were measured; nothing else was. Any block whose thirty-pixel sample happened to be badly
+  unrepresentative moves further than gravel's 8%. The tell would be one block type looking wrong
+  rather than a general shift.
+- **0.3.171's 0.08 speckle default has not been seen rendering.** The owner directed it from the
+  0.3.170 state.
+- **The 4% residual on gravel is unattributed.** Ambient occlusion, shadow-map filtering and the
+  atlas mip chain are the candidates. A screenshot cannot separate them, and it is below the level
+  worth chasing unless something else makes it matter.
+- **Sparse grass is drawn with the full-grass pattern near the seam.** `TryTopSoilOverlay` prefers
+  `particletop`, which for `soil-*` is always `normal-top` regardless of coverage, where vanilla
+  draws the right tile of the coverage-specific `specialSecondTexture`. The arithmetic cancels -
+  `vhBlockMean` is the mean of whatever is actually sampled - so this costs pattern accuracy and
+  not colour. Only visible inside the blend band.
+- **`soil-low-normal` is stored as flat grey (134,134,134) in about 300 of the owner's cached
+  sections**, against 1,064 correctly coloured, found while scanning the live cache. Probably left
+  by an older build; load-time reclassification should have corrected them by now, which is itself
+  worth confirming before investigating. The tell would be flat grey patches where grass belongs.
+
 ## Exact draw-range ownership: what 0.3.160 has not proven
 
 Ownership reads the engine's own bounding sphere and view distance instead of bounding them, and
@@ -545,7 +592,7 @@ Human-reported and still open:
   separately, and no one has checked whether flat ground now reads too bright at dawn against
   its own surroundings rather than against vanilla.
 
-- **If the colour is still off at a fixed time of day, this is the remaining candidate.** The mod takes
+- **The seasonal blend weight (still open; see the colour section at the top of this file).** The mod takes
   its tint from `ApplyColorMapOnRgba`; terrain is actually drawn through `calcColorMapUvs` in
   `colormap.vsh`, and the two compute the climate/season blend weight differently. The C#
   version's `Math.Max(0, 128 - temp) / 512` and `Math.Max(0, temp - 130) / 200` are INTEGER

@@ -13,6 +13,54 @@ section is recaptured and can receive its texture slot, but the zero neighbour-e
 currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
 remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
 
+## [0.3.171] - 2026-08-31
+
+**Seam speckle defaults to 0.08**, down from 0.15, at owner direction. The higher value was tuned
+when cached ground was 24% too bright with colours drawn from a thirty-pixel sample, and the extra
+per-block variation was partly disguising a colour mismatch that is now fixed at source. Not seen
+rendering.
+
+## [0.3.170] - 2026-08-31
+
+**Distant ground takes its colour from the texture's own average.** The engine's answer for "what
+colour is this block" returns one of thirty pixels the atlas kept, so averaging draws converged on
+the thirty rather than on the texture - granite gravel settled 8% high in red and green and 4% low
+in blue, which read as a warm, bright cast on distant stone. The exact average was already being
+computed for the same texture to normalise the block-texture pattern and is now the source for
+both, so the colour and the mean the shader divides by cannot drift apart. Blocks whose texture
+cannot be named keep the sampled value; grass-covered ground is unchanged, having used the exact
+average already. Existing caches correct themselves on load. Human-tested and accepted.
+
+## [0.3.169] - 2026-08-31
+
+**Cached terrain is no longer 24% too bright.** The lighting derivation shipped in 0.3.51 treated
+sky light as full strength; the engine multiplies terrain by the sun light level baked into every
+vertex, and sky-exposed ground carries the world's `sunBrightness` of 22, which is 0.808 as the
+shader reads it. Applies at every hour on every cached surface. `.vhlight sun off` restores the
+old brightness for comparison, beside the four switches from 0.3.51.
+
+**Grass-covered ground no longer shows a third too much bare dirt.** The grass overlay is two
+tiles wide - the side fringe on the left, the top face on the right - and the top face is drawn
+from the right tile alone. The colour path averaged both, and because the fringe is mostly
+transparent the coverage came out around a third low: 0.687 for full grass where the top tile is
+1.000. Coverage decides how much untinted soil shows through, and since the seasonal tint carries
+almost no blue, that soil was where nearly all the blue in distant grass came from. Existing
+caches correct themselves on load, with hand-placed chiselled blocks keeping their own colours.
+Human-tested and accepted.
+
+## [0.3.168] - 2026-08-31
+
+**Fixed `.vhtint` breaking the chat panel.** Chat text is parsed as markup and the report contained
+an arrow written with a `>`, which reads as a closing tag with nothing open. Because the scrollback
+is re-parsed on every redraw it kept erroring until the message scrolled away.
+
+## [0.3.167] - 2026-08-31
+
+**Added `.vhtint`.** Takes one block's distant colour apart: the stored colour, how much of it the
+live tint is not allowed to touch, the two-height tint table, and what the shader ends up
+multiplying by against the game's own colour-map answer for the same block. Aim at a block, stand
+on one, or name one. Written to the client log.
+
 ## [0.3.166] - 2026-08-31
 
 **Completed blend-pipeline lifecycle correction.** Fresh captures now assign L0 texture slots.

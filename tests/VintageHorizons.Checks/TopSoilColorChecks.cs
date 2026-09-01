@@ -1,3 +1,5 @@
+using Vintagestory.API.Client;
+
 namespace VintageHorizons.Checks;
 
 /// <summary>
@@ -16,6 +18,7 @@ public static class TopSoilColorChecks
         TheDilutedTintReproducesVanillasShader(c);
         FullCoverageIsTheOrdinaryCase(c);
         Degenerate(c);
+        TheTopTileIsTakenFromATwoTileStripAndNothingElse(c);
     }
 
     /// <summary>
@@ -82,4 +85,50 @@ public static class TopSoilColorChecks
             c.True(share >= 0f && share <= 1f, $"share stays in 0..1 for soil={soil} grass={grass} a={a}");
         }
     }
+
+    /// <summary>
+    /// Which half of the grass overlay counts.
+    ///
+    /// `specialSecondTexture` is two tiles wide, the side fringe on the left and the top on
+    /// the right, and `chunktopsoil.fsh` shifts one tile right for an upward normal. The
+    /// colour path averaged BOTH halves, and the fringe is mostly transparent, so the
+    /// coverage came out around a third low - 0.687 for full grass where the top tile is
+    /// 1.000. Coverage decides how much untinted dirt shows through, the seasonal tint has
+    /// almost no blue in it, and that untinted dirt is therefore where nearly all the blue
+    /// in distant grass was coming from. Measured against the owner's own cache: it stored
+    /// soil-medium-normal as 128,120,98 where the top tile alone gives 152,154,127.
+    ///
+    /// The rule has to be asked rather than assumed, because taking the right half of a
+    /// texture that is NOT a strip reads a neighbouring block's tile out of the atlas.
+    /// </summary>
+    static void TheTopTileIsTakenFromATwoTileStripAndNothingElse(Check c)
+    {
+        c.True(VintageHorizonsModSystem.IsTwoTileStrip(Rect(0.5f, 0.25f)),
+            "a two-tile strip takes its top tile");
+        c.True(!VintageHorizonsModSystem.IsTwoTileStrip(Rect(0.25f, 0.25f)),
+            "a square texture is used whole");
+        c.True(!VintageHorizonsModSystem.IsTwoTileStrip(Rect(0.25f, 0.5f)),
+            "a tall texture is used whole");
+
+        // Padding trims the rectangle, so the ratio is never exactly two; the rule has to
+        // survive that without letting a square through.
+        c.True(VintageHorizonsModSystem.IsTwoTileStrip(Rect(0.4980f, 0.2500f)),
+            "a strip trimmed by atlas padding still takes its top tile");
+        c.True(!VintageHorizonsModSystem.IsTwoTileStrip(Rect(0.2480f, 0.2500f)),
+            "a square trimmed by atlas padding still does not");
+
+        // The arithmetic the split feeds, on the real measured numbers: full grass over
+        // fertmedium soil. The whole strip is what the mod used to read, the top tile is
+        // what vanilla draws.
+        const float soil = 82.6f, grass = 151.9f;
+        c.True(LodTopSoil.UntintedShare(soil, 148.2f, 0.687f) > 0.19f,
+            "the whole strip leaves a fifth of the block untinted");
+        c.Eq(0f, LodTopSoil.UntintedShare(soil, grass, 1f),
+            "the top tile alone leaves none of it untinted");
+    }
+
+    /// <summary>An atlas rectangle of a given UV size at a fixed corner. The atlas is square,
+    /// so the two axes are the same scale and the ratio is meaningful.</summary>
+    static TextureAtlasPosition Rect(float width, float height) =>
+        new() { x1 = 0.1f, y1 = 0.1f, x2 = 0.1f + width, y2 = 0.1f + height };
 }

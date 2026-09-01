@@ -252,6 +252,26 @@ uniform vec3 rgbaAmbientIn;
 // nothing at dusk. Also declared and uploaded by fogandlight.fsh.
 uniform int lightDayBoost;
 
+// Vanilla's baked SUN LIGHT LEVEL, and the largest single error this shader has carried.
+//
+// applyLight multiplies by `lightColor.a`, the sun light level baked into every terrain
+// vertex. The derivation that produced the ambient term below read the LOD case as "full
+// sky light" and cancelled that factor as if it were 1. It is not: `bMax` renormalisation
+// cancels the ambient colour's own mean, not the sun level, so the level survives and
+// multiplies the pixel. Open sky is not level 31 either - it is the world's `sunBrightness`,
+// 22 in the base game, which is 0.806 on the engine's ramp and 206/255 = 0.808 once the
+// engine has quantised it into the vertex byte the shader actually reads.
+//
+// So every cached surface was 1/0.808 = 1.24x too bright, at every hour, on every block.
+// Measured on a flat two-block test patch at the seam: cached granite gravel came out 1.39x
+// vanilla's, of which 1.07x was the stored colour and the remaining 1.29x was this.
+//
+// Uploaded as 1.0 when `.vhlight sun` is off, which is exactly the old behaviour and costs
+// no branch. Only the vanilla-ambient path takes it: the sunColor fallback beside it is the
+// pre-0.3.51 model kept for comparison, and scaling that would make it a third thing that
+// was never either.
+uniform float sunLightLevel;
+
 // 1 mixes the far dissolve band toward the sky the engine actually draws. Every engine
 // shader that calls getSkyColorAt passes SkyDaylight, not DayLightStrength; the two
 // differ by a factor of 1.25 and by a night floor, so the band this shader fades terrain
@@ -694,13 +714,14 @@ void main()
     }
 
     // Vanilla's light term, derived by reading applyLight in fogandlight.vsh for the
-    // case a LOD section is in: full sky light, no baked block light, no glow. Every
-    // scale factor there cancels except the contrast constant, leaving the pixel
-    // multiplied by 1.05 * ambientColor. The ambient colour already carries the sunset
-    // hue, the night blue, and the scene-brightness dimming, so nothing here has to
-    // re-derive any of them.
+    // case a LOD section is in: sky light, no baked block light, no glow. Every scale
+    // factor there cancels except the contrast constant and the sun light level, leaving
+    // the pixel multiplied by 1.05 * lightColor.a * ambientColor. The ambient colour
+    // already carries the sunset hue, the night blue, and the scene-brightness dimming,
+    // so nothing here has to re-derive any of them; sunLightLevel is the sun level, and
+    // the comment on it says why treating it as 1 was worth 24% brightness everywhere.
     vec3 light = lightAmbientColor == 1
-        ? 1.05 * rgbaAmbientIn
+        ? 1.05 * sunLightLevel * rgbaAmbientIn
         : clamp(sunColor * dayLight, 0.02, 1.0);
     if (lightDayBoost == 1) light *= 1.0 + max(0.0, shadowIntensity * 2.0 - 1.66) / 1.5;
 

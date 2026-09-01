@@ -514,8 +514,15 @@ public class LodTerrainRenderer : IRenderer
     /// Not a texture lookup: cached meshes carry a colour per corner and no block identity to
     /// look one up with. This reproduces the statistics instead, one random value per world
     /// block, which is also all the eye can resolve at this range.
+    ///
+    /// 0.15 down to 0.08 on the owner's call, 2026-08-31, after the three colour corrections
+    /// of 0.3.169 and 0.3.170 landed. It was carrying more than its own share: with cached
+    /// ground 24% too bright and its stored colours drawn from a thirty-pixel sample, extra
+    /// per-block variation was helping to disguise a mismatch that is now fixed at source.
+    /// Once the colour itself is right, the same amount of speckle reads as noise rather
+    /// than as texture.
     /// </summary>
-    public float BandSpeckle { get; set; } = 0.15f;
+    public float BandSpeckle { get; set; } = 0.08f;
 
     /// <summary>
     /// How close to the camera cached terrain stops being drawn, in blocks, while the mask is
@@ -664,6 +671,43 @@ public class LodTerrainRenderer : IRenderer
     /// looking right, so it has its own switch. `.vhlight boost off` to compare.
     /// </summary>
     public bool LightDayBoost { get; set; } = true;
+
+    /// <summary>
+    /// Multiply by the sun light level vanilla's terrain carries, instead of treating sky
+    /// light as 1. This is the largest of the lighting corrections and the only one that is
+    /// a flat factor at every hour.
+    ///
+    /// `applyLight` multiplies by `lightColor.a`, the sun level baked into the terrain
+    /// vertex. The 0.3.51 derivation read the LOD case as "full sky light" and cancelled
+    /// that factor: `bMax` renormalisation cancels the ambient colour's own mean, not the
+    /// sun level, so the level survives into the pixel. Sky-exposed ground is not level 31
+    /// either - it is `IWorldAccessor.SunBrightness`, 22 in the base game, which the
+    /// engine's own ramp puts at 0.806.
+    ///
+    /// Every cached surface was therefore 1.24x too bright. Measured against a flat
+    /// two-block test patch at the seam on 2026-08-31: cached granite gravel read 1.39x
+    /// vanilla's, 1.07x of which was the stored colour, leaving 1.29x for this.
+    /// `.vhlight sun off` restores the old brightness for comparison.
+    /// </summary>
+    public bool LightSunLevel { get; set; } = true;
+
+    /// <summary>
+    /// The sun light level a sky-exposed vanilla terrain vertex carries, as the shader sees
+    /// it. Read from the world rather than assumed: a server may replace either the ramp or
+    /// the brightness, and both are public.
+    ///
+    /// Quantised the way the engine quantises it. The float in `SunLightLevels` is not what
+    /// reaches the shader - `ColorUtil.LightUtil` bakes it into the vertex's alpha byte
+    /// first, so level 22 arrives as 206/255 rather than 0.806. Matching the rounding costs
+    /// nothing and keeps this exact instead of nearly right.
+    /// </summary>
+    float SunLightLevel()
+    {
+        float[]? levels = capi.World.SunLightLevels;
+        if (levels == null || levels.Length == 0) return 1f;
+        float level = levels[GameMath.Clamp(capi.World.SunBrightness, 0, levels.Length - 1)];
+        return GameMath.Clamp(MathF.Round(level * 255f) / 255f, 0f, 1f);
+    }
 
     /// <summary>
     /// Fade the far edge of the cache toward the sky the engine actually draws. Every engine
@@ -5160,6 +5204,9 @@ public class LodTerrainRenderer : IRenderer
         // fogandlight.fsh, and the engine's own Use() uploads both to any program that
         // does. Only the ambient colour has no such carrier.
         prog.Uniform("rgbaAmbientIn", capi.Ambient.BlendedAmbientColor);
+        // 1 is exactly what the shader assumed before this correction, so the switch needs
+        // no branch of its own on the GPU side.
+        prog.Uniform("sunLightLevel", LightSunLevel ? SunLightLevel() : 1f);
         prog.Uniform("lightSkyDayLight", LightSkyDayLight ? 1 : 0);
         prog.Uniform("skyDayLight", SkyDayLight());
         if (maskOwnsPixels && readiness != null && readinessMaskTexture != null)

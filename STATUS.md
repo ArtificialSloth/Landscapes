@@ -3,16 +3,35 @@
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
 **Status date:** 2026-08-31
-**Mod version:** `0.3.166`, built, verified, packaged, and copy-installed; **not human-tested**.
-0.3.164 corrects Forest Floor LOD tops by using the explicit up texture and the right half of its
-two-tile TopSoil overlay. It is also the first artifact carrying the zero overlap default after
-0.3.162/0.3.163 fixed the holes that the old margin hid. 0.3.165 adds a saved `.vhconfig` and
-`.vhblend` master switch for seam blending and packed-L0 block textures. 0.3.166 corrects all five
-findings from its source review: live palette slots and bounded off-to-on repair, CPU preparation
-gated while off, mesh world epochs, world-scoped texture state, and atomic table refresh preserving
-the last valid table for old meshes. A later placed-block trace found one separate open bug: an
+**Mod version:** `0.3.171`, built, verified, packaged, and copy-installed; **not seen rendering**.
+0.3.169 and 0.3.170 are **human-tested and accepted** and carry the substance of this line.
+
+Three independent causes of the distant-terrain colour mismatch were measured on a flat two-block
+test patch the owner built for it - grassy soil and granite gravel, cached above and vanilla below,
+seam speckle off - and fixed. 0.3.169 applies the sun light level `applyLight` multiplies by, which
+0.3.51's derivation had cancelled in error and which had left every cached surface 24% too bright
+at every hour; and takes the grass overlay's top tile rather than the whole two-tile strip, which
+had understated coverage by about a third and put roughly twice vanilla's blue into all distant
+grass. 0.3.170 takes a block's stored colour from its texture's own average instead of the engine's
+thirty-pixel sample. 0.3.171 lowers the seam speckle default to 0.08 at owner direction, the 0.15
+having been tuned when the ground was still too bright. Existing caches correct themselves on load
+throughout; no schema bump was needed.
+
+One measured cause remains and is planned rather than fixed: the seasonal tint is one colour per
+slot, sampled on a 56-block lattice centred on the player and then applied to every cached surface
+in the world. Local blue reads about 22% high, and distant terrain wears the player's climate
+rather than its own - the second has never been judged in play, because the seam is the only place
+the two terrains can be compared. Which half of the lattice causes the 22% is deliberately left
+open: it averages both the season map's per-block row, which is correct, and the climate, which is
+not, and the two readings call for opposite fixes. See `dev/plans/PLAN_DISTANT_TINT_SAMPLING.md`,
+whose Phase 0 is the measurement that separates them, and the colour section of `dev/TODO.md`.
+`.vhtint` shipped in 0.3.167 to take this apart and is what eliminated two of its three suspects.
+
+Carried forward from 0.3.164-0.3.166: Forest Floor LOD tops corrected, the zero overlap default
+after 0.3.162/0.3.163 fixed the holes the old margin hid, the saved `.vhconfig`/`.vhblend` master
+switch, and the five blend-pipeline lifecycle corrections. One open bug remains from that line: an
 interior recapture can install new runs and retrieve their texture slot but skip mesh/save/mip
-invalidation because a zero edge mask is mistaken for no change. The full fast tier passes 5,957
+invalidation because a zero edge mask is mistaken for no change. The full fast tier passes 5,964
 assertions. No game run or performance benchmark supports the new visual or performance behavior. The development line
 remains 0.3.x (`0.2.1` is the public released version; 0.4.0 remains a preserved local rollback
 artifact from the GPU-renderer milestone).
@@ -803,6 +822,21 @@ vanilla's own blend exactly for `soil-low-normal` at midsummer - rgb(80.5, 88.1,
 side - where 0.3.20 gave rgb(86.5, 89.2, 29.8) and 0.3.19 gave rgb(61.7, 86.3, 7.1). The
 owner has seen 0.3.20 and called it better but not perfect; 0.3.21 is unseen.
 
+Since 0.3.169 those two layers are measured over the **top tile** of the overlay rather than the
+whole of it. `specialSecondTexture` is two tiles wide - the side fringe on the left, the top face
+on the right - and `chunktopsoil.fsh` shifts one tile right for an upward normal, so a top face is
+drawn from the right tile alone. Averaging both understated coverage by about a third: 0.687 for
+full grass where the top tile is 1.000, 0.537 against 0.843 sparse, 0.400 against 0.720 very
+sparse. Coverage decides the untinted-dirt share, the seasonal tint carries almost no blue, and
+that share was therefore where nearly all the blue in distant grass came from - measured at 1.9x
+vanilla's blue at the seam. Proved against the owner's live cache rather than by inspection: the
+whole-strip formula reproduces `soil-low-normal` 133,128,107, `soil-medium-normal` 128,120,98 and
+`forestfloor-7` 131,124,102 to the byte, and the top-tile formula reproduces none of them.
+`IsTwoTileStrip` derives the split from the atlas rectangle's aspect rather than assuming it, and
+is shared with the block-texture path, which had taken the right half since 0.3.164 while the
+colour path was never updated. Existing caches correct themselves on load. **Human-tested on
+2026-08-31**, reported as a large improvement.
+
 Since 0.3.22 cached ground follows vanilla's own rule that an up-facing surface never darkens
 as the sun drops - `getBrightnessFromNormal` floors at `normal.y * 0.95`, and the liquid
 shader does not shade by normal at all - instead of the mod's `0.55 + 0.45 * sunAngle`, which
@@ -817,9 +851,12 @@ takes the same floor and was not judged separately. See G50.
 Since 0.3.51 the rest of vanilla's terrain lighting is copied too, and this is what closed
 the long-standing report that cached ground matched vanilla in daylight and drifted
 further away through the day. Reducing vanilla's `applyLight` for the case a LOD section
-is always in - full sky light, no baked block light, no glow - every scale factor cancels
-against its `bMax` renormalisation except the contrast constant, so vanilla's terrain is
-simply `albedo * 1.05 * Ambient.BlendedAmbientColor * nb`. The mod had used
+is always in - sky light, no baked block light, no glow - leaves vanilla's terrain as
+`albedo * 1.05 * lightColor.a * Ambient.BlendedAmbientColor * nb`. **0.3.51 dropped the
+`lightColor.a` term**, having read the reduction as though the `bMax` renormalisation
+cancelled it; it cancels the ambient colour's own mean instead, and the sun level survives.
+That is corrected in 0.3.169 below and was worth 24% brightness everywhere for four
+sessions. The rest of 0.3.51 stands. The mod had used
 `SunColor * DayLightStrength`. The difference is not brightness but hue: `calcSunColor`
 builds the ambient from the calendar's `ReflectColor`, which is explicitly floored at a
 blue `nightColor` of `(0, 0.063, 0.133)` once the sun is down, while `SunColor` has no
@@ -847,6 +884,33 @@ attenuated above 1,000 blocks over sea level, rather than plain `DayLightStrengt
 `internal`, so the renderer reconstructs it from public inputs. About 20% too dim through
 dusk and 60% too bright on a moonlit night before the correction, identical in full
 daylight. Behind `.vhlight sky`; **not yet human-tested**.
+
+Since 0.3.169 the sun light level is applied, which is the fifth term and the largest.
+`applyLight` multiplies terrain by `lightColor.a`, the level baked into every vertex, and
+sky-exposed ground carries the world's `sunBrightness` - 22 in the base game, which
+`sunLightLevels` puts at 0.806 and the engine quantises into the vertex byte as 206/255.
+Confirmed by invoking `ColorUtil.LightUtil.ToRgba(22, 0)` offline. Read from
+`IWorldAccessor.SunLightLevels` and `SunBrightness` rather than assumed, so a server that
+replaces either is followed. Behind `.vhlight sun`, which uploads 1.0 when off and is
+therefore exactly the pre-0.3.169 brightness. Applied on the vanilla-ambient path only; the
+`SunColor * DayLightStrength` fallback beside it is the pre-0.3.51 model kept for comparison.
+
+**Measured on a flat two-block test patch at the seam**, cached above and vanilla below, with
+seam speckle switched off: cached granite gravel read 1.389/1.397/1.248 of vanilla's in shader
+space, of which 1.074x was the stored colour and 1.29x the light path against a predicted
+1.238x, leaving about 4% unattributed and hue-neutral. **Human-tested on 2026-08-31** together
+with the grass-coverage correction below.
+
+Since 0.3.170 a block's stored colour is the alpha-weighted average of its own texture rather
+than the engine's thirty-pixel sample. `GetColorWithoutTint` answers with `GetRandomColor`,
+which returns one of thirty pixels the atlas kept out of 1,024, so averaging draws converges on
+the thirty and not on the texture: granite gravel settled at 143,133,105 against a true
+131.5,123.2,109.1. The exact average was already being computed for the same texture to
+normalise the block-texture pattern, and both now come from it - which also removes a drift
+risk, since the shader draws `colour * (texel / mean)`. A block whose colour texture cannot be
+named keeps the sampled value, because the fallback there is a four-pixel atlas estimate.
+Grass-covered ground is unchanged, having used the exact average since 0.3.21.
+**Human-tested on 2026-08-31**, reported as nearly perfect.
 
 Since 0.3.23 a cached section edge is walled off only where the CACHE has no data beyond
 it, rather than wherever the neighbouring section is absent from RAM. The two had diverged

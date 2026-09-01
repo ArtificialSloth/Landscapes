@@ -2745,3 +2745,93 @@ the section/save/mip but no neighbour, and a byte-identical replacement dirties 
 
 **Found:** source-traced after 0.3.166 while answering how newly placed blocks receive L0 textures.
 The texture lookup path was correct; the independent invalidation path was not. Open in TODO.
+
+### G139 - A derivation that cancels a factor must show the factor cancelling
+
+**Trigger:** reducing an engine shader's arithmetic to a constant for the special case your own
+shader is always in, and then asserting the reduced form in a check.
+
+**Trap:** `applyLight` multiplies terrain by `lightColor.a`, the sun light level baked into the
+vertex. 0.3.51 reduced it for the LOD case as "full sky light, every scale factor cancels except
+the contrast constant" and shipped `1.05 * rgbaAmbientIn`. Two errors compounded. The `bMax`
+renormalisation cancels the ambient colour's own MEAN, not the sun level, so the level survives and
+multiplies the pixel. And sky-exposed ground is not level 31: it is the world's `sunBrightness`,
+22 in the base game, which the engine's ramp puts at 0.806 and quantises into the vertex byte as
+206/255. Cached terrain was 1.24x too bright at every hour, on every block, for four sessions -
+and because the error is a flat factor it never moved with the time of day, which is what the
+lighting work of 0.3.51 was looking for.
+
+The static check was worse than useless: it asserted `1.05 * rgbaAmbientIn` verbatim, having been
+written from the same reduction, so it agreed with the bug and would have blocked the fix.
+
+**Do:** write the surviving factors out per term rather than declaring that they cancel, and keep
+the engine's own expression beside yours in the comment. Derive any check of a reduced form from
+the engine source, not from the reduction - a check that shares the derivation's premise cannot
+detect the derivation's error. `IWorldAccessor.SunLightLevels` and `SunBrightness` are both public;
+read them rather than assuming a level.
+
+**Found:** measured on a flat two-block test patch at the seam in Session 73, then confirmed by
+invoking `ColorUtil.LightUtil.ToRgba(22, 0)` offline through a reflection probe. Fixed in 0.3.169
+behind `.vhlight sun`.
+
+### G140 - Two tiles in one atlas rectangle, and only one of them is the top
+
+**Trigger:** averaging a texture the engine addresses by tile, especially a TopSoil
+`specialSecondTexture`.
+
+**Trap:** that overlay is two tiles wide - side fringe on the left, top face on the right - and
+`chunktopsoil.fsh` shifts one tile right when the normal points up. `TryTopSoilColor` averaged the
+whole strip. The visible symptom was not the colour it returned but the COVERAGE: the fringe is
+mostly transparent, so full grass measured 0.687 where the top tile alone is 1.000, sparse 0.537
+against 0.843, very sparse 0.400 against 0.720. Coverage decides how much untinted soil shows
+through the overlay, and the seasonal tint carries almost no blue, so believing a third of every
+grassy block was bare dirt put roughly twice vanilla's blue into all distant grass.
+
+The same file already knew: `ResolveBlockTexture` had taken the right half since Session 71. One
+texture, two code paths, two independent decisions about it, and only one of them updated.
+
+**Do:** derive tile-ness from the atlas rectangle's aspect rather than assuming it - taking the
+right half of a texture that is not a strip reads a neighbouring block's tile - and make the
+decision once, shared by every path that reads that texture. Check the answer against stored cache
+colours rather than against the code: the wrong formula reproduced three real stored colours to
+the byte, which is what identified it.
+
+**Found:** Session 73, from the owner's own cache. Fixed in 0.3.169. See also G49, which found the
+compositing itself, and G50 for the four-pixel coverage error beneath it.
+
+### G141 - Thirty sampled pixels is not a texture's average
+
+**Trigger:** using `Block.GetColorWithoutTint` or `BlockTextureAtlas.GetRandomColor` as the colour
+a block should read as from far away.
+
+**Trap:** `GetRandomColor` returns one of thirty pixels the atlas kept, and those thirty are
+themselves a handful out of 1,024. Averaging many draws converges on the thirty, not on the
+texture, and the two differ: granite gravel settles at 143,133,105 where the file's true average is
+131.5,123.2,109.1 - about 8% high in red and green and 4% low in blue, which reads as a warm,
+bright cast on distant stone. Averaging harder cannot fix it; the sample is biased, not noisy.
+
+**Do:** read the texture. `TryReadTextureMean` already does this for the block-texture pattern
+normaliser, so the exact average usually exists already. Prefer it for the colour too, because the
+shader draws `colour * (texel / mean)` and a colour and a mean derived by different methods drift
+apart - which is the same failure G140 records. Keep the sampled value where the texture cannot be
+named: the fallback is a four-pixel atlas estimate, which is worse than the thirty.
+
+**Found:** Session 73, as the residual after G139 and G140 were fixed. Corrected in 0.3.170. See
+G48 for the channel-order trap on the same two functions.
+
+### G142 - Chat text is markup, and a bare angle bracket wedges the panel
+
+**Trigger:** writing a diagnostic report to chat with `TextCommandResult.Success`.
+
+**Trap:** the client parses chat text as VTML. `.vhtint` wrote an arrow as `->`; a bare `>` is a
+closing tag with nothing open, so it errored, mis-nested the client's own `<font>` tag after it,
+and - because the scrollback is re-parsed on every redraw - kept erroring several times a second
+until the message scrolled away. The command itself had worked and its report was in the log
+already; the symptom was "the command returns nothing and then chat stops working."
+
+**Do:** keep `<` and `>` out of any string that reaches chat. Prefer a separator that is not
+markup, and strip the brackets from the chat copy on the way out so a later edit cannot reintroduce
+it. Send the report to the log unmodified: the log is the copy that has to stay readable, and it is
+not parsed.
+
+**Found:** Session 73, on the owner's first use of 0.3.167. Fixed in 0.3.168.

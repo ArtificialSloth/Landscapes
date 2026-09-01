@@ -884,10 +884,15 @@ public static class StaticAssetChecks
         c.True(fragment.Contains("clamp(normal.y, 0.0, 1.0) * 0.95", StringComparison.Ordinal),
             "the up-facing floor is vanilla's");
 
-        // fogandlight.vsh applyLight, reduced for full sky light and no block light: every
-        // scale cancels against the bMax renormalisation except the contrast constant.
-        c.True(fragment.Contains("1.05 * rgbaAmbientIn", StringComparison.Ordinal),
-            "the light colour is vanilla's ambient times its contrast constant");
+        // fogandlight.vsh applyLight, reduced for sky light and no block light. The
+        // reduction this check used to encode dropped the sun light level as though it
+        // cancelled: it does not. bMax renormalisation cancels the ambient colour's own
+        // mean, and `lightColor.a` survives it, so vanilla's terrain is
+        // `1.05 * lightColor.a * ambientColor`. Reading that factor as 1 made every cached
+        // surface 1.24x too bright at every hour; the assertion is spelled out here because
+        // a check that agrees with the bug is worse than no check.
+        c.True(fragment.Contains("1.05 * sunLightLevel * rgbaAmbientIn", StringComparison.Ordinal),
+            "the light colour is vanilla's ambient times its contrast constant and the sun light level");
 
         // fogandlight.fsh applyFogAndShadowFromBrightness, verbatim.
         c.True(fragment.Contains("1.0 + max(0.0, shadowIntensity * 2.0 - 1.66) / 1.5",

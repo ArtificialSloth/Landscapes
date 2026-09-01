@@ -184,6 +184,28 @@ public class LodTintRegistry
     }
 
     /// <summary>
+    /// The slot this block would use if one is already registered, or <see cref="SlotNone"/>.
+    /// Registers nothing: a diagnostic must not create a slot, because a new slot forces an
+    /// off-cadence refresh and withholds every mesh that uses it until the table republishes.
+    /// </summary>
+    public int PeekSlot(Block? block, LodUntintedShare share)
+    {
+        if (block == null) return SlotNone;
+
+        string? climate = block.ClimateColorMapResolved != null ? block.ClimateColorMap : null;
+        string? season = block.SeasonColorMapResolved != null ? block.SeasonColorMap : null;
+
+        if (climate == null && season == null)
+        {
+            return block.BlockMaterial == EnumBlockMaterial.Plant && PlantTintFallback != null
+                ? PeekSlot(PlantTintFallback, LodUntintedShare.None)
+                : SlotNone;
+        }
+
+        return slotByMaps.TryGetValue((climate, season, share.Bucket), out int slot) ? slot : SlotNone;
+    }
+
+    /// <summary>
     /// Recompute every slot's colour for the current season and climate, by applying the
     /// game's own maps to white at the given position.
     /// </summary>
@@ -281,12 +303,36 @@ public class LodTintRegistry
     static void Sample(IClientWorldAccessor world, Block block, int x, int y, int z, float[] into,
         int slot, LodUntintedShare share)
     {
+        TintSpread grid = SampleGrid(world, block, x, y, z);
+
+        // Dilute by the share the tint must not touch, so a slot registered from
+        // grass-covered soil reproduces vanilla's top-soil shader: the bare dirt that
+        // shows through the overlay stays the colour it already is.
+        into[slot * 4 + 0] = LodTopSoil.Dilute(share.R, grid.R);
+        into[slot * 4 + 1] = LodTopSoil.Dilute(share.G, grid.G);
+        into[slot * 4 + 2] = LodTopSoil.Dilute(share.B, grid.B);
+        into[slot * 4 + 3] = 1f;
+    }
+
+    /// <summary>
+    /// One lattice average, undiluted, with the range it collapsed. The renderer uses only
+    /// the average; the range is what <see cref="Describe"/> reports, and it is carried here
+    /// rather than measured separately so the diagnostic cannot describe a sampler the
+    /// renderer is not using.
+    /// </summary>
+    public readonly record struct TintSpread(
+        float R, float G, float B,
+        float MinR, float MaxR, float MinG, float MaxG, float MinB, float MaxB);
+
+    static TintSpread SampleGrid(IClientWorldAccessor world, Block block, int x, int y, int z)
+    {
         // Clamped to the map: GetClimate answers 0 - freezing and bone dry - for a position
         // off the edge of the world, and one such sample drags the whole average with it.
         int maxX = world.BlockAccessor.MapSizeX - 1;
         int maxZ = world.BlockAccessor.MapSizeZ - 1;
 
         int r = 0, g = 0, b = 0;
+        int minR = 255, maxR = 0, minG = 255, maxG = 0, minB = 255, maxB = 0;
         for (int i = 0; i < SampleGridSide; i++)
         {
             int sx = GameMath.Clamp(x + (i - SampleGridSide / 2) * SampleGridStride, 0, maxX);
@@ -304,20 +350,116 @@ public class LodTintRegistry
                 // the trap here: ApplyColorMapOnRgba flips red and blue by default, so red
                 // arrives at bits 16-23. Reading red out of the low byte swapped R and B
                 // and turned every grass tint teal.
-                r += (rgba >> 16) & 0xFF;
-                g += (rgba >> 8) & 0xFF;
-                b += rgba & 0xFF;
+                int pr = (rgba >> 16) & 0xFF, pg = (rgba >> 8) & 0xFF, pb = rgba & 0xFF;
+                r += pr; g += pg; b += pb;
+                if (pr < minR) minR = pr; if (pr > maxR) maxR = pr;
+                if (pg < minG) minG = pg; if (pg > maxG) maxG = pg;
+                if (pb < minB) minB = pb; if (pb > maxB) maxB = pb;
             }
         }
 
         const float scale = SampleGridSide * SampleGridSide * 255f;
-
-        // Dilute by the share the tint must not touch, so a slot registered from
-        // grass-covered soil reproduces vanilla's top-soil shader: the bare dirt that
-        // shows through the overlay stays the colour it already is.
-        into[slot * 4 + 0] = LodTopSoil.Dilute(share.R, r / scale);
-        into[slot * 4 + 1] = LodTopSoil.Dilute(share.G, g / scale);
-        into[slot * 4 + 2] = LodTopSoil.Dilute(share.B, b / scale);
-        into[slot * 4 + 3] = 1f;
+        return new TintSpread(r / scale, g / scale, b / scale,
+            minR / 255f, maxR / 255f, minG / 255f, maxG / 255f, minB / 255f, maxB / 255f);
     }
+
+    /// <summary>
+    /// The game's own colour-map answer for one exact block, with no averaging and no
+    /// dilution. This is the reference the slot is supposed to reproduce.
+    ///
+    /// It is the CPU path, not the terrain shader: `colormap.vsh` derives the same two map
+    /// coordinates itself and adds per-block value noise on both axes. The two agree on what
+    /// the maps say at a position, so a gap between this and the slot is the mod's own doing,
+    /// but a small difference against what a screenshot measures is expected and is not
+    /// evidence on its own.
+    /// </summary>
+    static (float R, float G, float B) SamplePoint(
+        IClientWorldAccessor world, Block block, int x, int y, int z)
+    {
+        int rgba = world.ApplyColorMapOnRgba(
+            block.ClimateColorMapResolved, block.SeasonColorMapResolved,
+            unchecked((int)0xFFFFFFFF), x, y, z);
+        return (((rgba >> 16) & 0xFF) / 255f, ((rgba >> 8) & 0xFF) / 255f, (rgba & 0xFF) / 255f);
+    }
+
+    /// <summary>
+    /// Take one slot apart, for `.vhtint`.
+    ///
+    /// Three things separate the colour a cached surface is multiplied by from the colour the
+    /// game would multiply the same block by, and each has its own line here so a reading can
+    /// say which one is responsible rather than only that they disagree:
+    ///
+    /// - the slot's untinted share is whichever block claimed the 1/8 bucket first, and may
+    ///   not be this block's own;
+    /// - the tint is averaged over a 56-block lattice and all sixteen season-map rows, where
+    ///   the game reads one exact position;
+    /// - the table holds two heights and the shader interpolates between them linearly, where
+    ///   the game's own seasonal weight falls off on a curve that is nothing like a line.
+    ///
+    /// Every value is reported undiluted unless the line says otherwise, because the stored
+    /// table is already diluted and comparing a diluted number against the game's undiluted
+    /// one would blame the sampler for the share.
+    /// </summary>
+    public IEnumerable<string> Describe(
+        IClientWorldAccessor world, Block block, int slot, LodUntintedShare blockShare,
+        int x, int y, int z)
+    {
+        if (slot <= SlotNone || slot >= representative.Count)
+        {
+            yield return $"{block.Code} has no live tint slot: it is drawn with its stored colour "
+                + "exactly as captured. Nothing here applies to it.";
+            yield break;
+        }
+
+        Block claimant = representative[slot] ?? block;
+        LodUntintedShare slotShare = untintedShare[slot];
+
+        yield return $"{block.Code} at {x},{y},{z} | sea level {world.SeaLevel} | "
+            + $"slot {slot} of {representative.Count - 1} ({readySlotCount - 1} published)";
+        yield return $"  maps: climate {block.ClimateColorMap ?? "none"}, "
+            + $"season {block.SeasonColorMap ?? "none"}, share bucket {blockShare.Bucket}";
+        yield return $"  slot claimed by {claimant.Code}"
+            + (claimant.Code == block.Code ? " (this block)" : " (A DIFFERENT BLOCK)");
+        yield return $"  untinted share: this block {Fmt(blockShare.R, blockShare.G, blockShare.B)}, "
+            + $"slot carries {Fmt(slotShare.R, slotShare.G, slotShare.B)}";
+
+        // What the shader will actually multiply by at this height, and the same value with
+        // the slot's share taken back out so it can be compared with the game's answer.
+        float blend = Math.Clamp((y - SampleYLow) / Math.Max(1f, SampleYHigh - SampleYLow), 0f, 1f);
+        (float dr, float dg, float db) = (
+            Lerp(tintsLow[slot * 4 + 0], tintsHigh[slot * 4 + 0], blend),
+            Lerp(tintsLow[slot * 4 + 1], tintsHigh[slot * 4 + 1], blend),
+            Lerp(tintsLow[slot * 4 + 2], tintsHigh[slot * 4 + 2], blend));
+
+        yield return $"  table: low y={SampleYLow:0} {Fmt(tintsLow[slot * 4], tintsLow[slot * 4 + 1], tintsLow[slot * 4 + 2])}"
+            + $" | high y={SampleYHigh:0} {Fmt(tintsHigh[slot * 4], tintsHigh[slot * 4 + 1], tintsHigh[slot * 4 + 2])}"
+            + "   (both diluted)";
+        // No angle brackets anywhere in this report. The client parses chat text as markup, so
+        // a bare '>' reads as a closing tag with nothing open; it errors, and because the chat
+        // scrollback is re-parsed on every redraw it keeps erroring until the message scrolls
+        // away. An arrow written as '->' cost the whole panel.
+        yield return $"  A shader uses here: blend {blend:0.000} | diluted {Fmt(dr, dg, db)} "
+            + $"| undiluted {Fmt(Undilute(slotShare.R, dr), Undilute(slotShare.G, dg), Undilute(slotShare.B, db))}";
+
+        // The two stages between A and the game's own answer, measured separately: the same
+        // lattice re-run at THIS height removes the two-height interpolation from the picture,
+        // so what is left between it and C is the averaging alone.
+        TintSpread here = SampleGrid(world, block, x, y, z);
+        (float pr, float pg, float pb) = SamplePoint(world, block, x, y, z);
+
+        yield return $"  B lattice average at this height: {Fmt(here.R, here.G, here.B)}   "
+            + "(A vs B is the two-height interpolation)";
+        yield return $"  C game's own answer, this exact block: {Fmt(pr, pg, pb)}   "
+            + "(B vs C is the 56-block lattice and the season rows)";
+        yield return $"  lattice spread at this height: R {here.MinR:0.000}..{here.MaxR:0.000} "
+            + $"G {here.MinG:0.000}..{here.MaxG:0.000} B {here.MinB:0.000}..{here.MaxB:0.000}";
+    }
+
+    static float Lerp(float a, float b, float t) => a + (b - a) * t;
+
+    /// <summary>The tint a diluted table entry was built from. Guarded: a share of 1 keeps nothing.</summary>
+    static float Undilute(float share, float diluted) =>
+        share >= 0.999f ? 1f : (diluted - share) / (1f - share);
+
+    static string Fmt(float r, float g, float b) => $"R{r:0.000} G{g:0.000} B{b:0.000}";
 }

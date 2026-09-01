@@ -757,6 +757,34 @@ public class VintageHorizonsModSystem : ModSystem
                 | (int)(r / StableColorSamples);
         }
 
+        // Read the texture instead of sampling it, wherever the block's own colour texture
+        // stood. The engine's answer above is `BlockTextureAtlas.GetRandomColor`, which
+        // returns one of THIRTY pixels the atlas kept, and those thirty are themselves a
+        // handful out of a thousand: averaging draws converges on the thirty, not on the
+        // texture. Measured on granite gravel it settles at 143,133,105 where the file's
+        // true average is 131,123,109 - about 8% high in red and green and 4% low in blue,
+        // which reads as a warm, bright cast on distant stone next to the game's own.
+        //
+        // The exact average was already being computed for this same texture. It went to
+        // the pattern normaliser and never to the colour, which is also why taking it here
+        // is the safer of the two: the shader draws `colour * (texel / mean)`, so a colour
+        // and a mean derived by different methods drift apart, and now they cannot. An
+        // unreadable texture falls back to the atlas estimate for both, so the pair stays
+        // consistent either way.
+        //
+        // Only where the placeholder test below does NOT fire. That test compares the
+        // sampled value against the atlas's own average of unknown.png, so replacing the
+        // value it inspects would change what counts as a missing texture.
+        // The texture has to be one this can name a file for. Without one, MeanOf answers
+        // with the atlas's four-pixel estimate, and four pixels is a worse average than the
+        // thirty already sampled above - so that case keeps what it had.
+        CompositeTexture? colorTexture = TextureFor(block, block.TextureSubIdForBlockColor);
+        if (colorTexture != null && !IsPlaceholderColor(block, color))
+        {
+            TextureMean exact = MeanOf(colorTexture, block.TextureSubIdForBlockColor);
+            if (exact.Coverage > 0f) color = PackMean(exact);
+        }
+
         color = RepairPlaceholder(block, color, fallback: LodPaletteRepair.UnknownBlockColor);
         stableColorByBlockId[block.BlockId] = color;
         return color;
@@ -765,6 +793,11 @@ public class VintageHorizonsModSystem : ModSystem
     /// <summary>
     /// Thirty is how many random pixels the atlas actually holds per texture, so this
     /// samples each of them about twice. Paid once per block id per session.
+    ///
+    /// This no longer decides the colour - the texture's own average does - but it still
+    /// decides whether the block HAS a colour, which is what the placeholder test reads.
+    /// A single draw would not do: the placeholder is a checkerboard, so one random pixel
+    /// of it is never its average.
     /// </summary>
     const int StableColorSamples = 64;
 
@@ -893,11 +926,15 @@ public class VintageHorizonsModSystem : ModSystem
             int overlayId = overlay?.Baked?.TextureSubId ?? -1;
             if (IsUsableAtlasTexture(overlayId))
             {
-                TextureMean grass = MeanOf(overlay, overlayId, rightHalf);
+                // One decision drives both the rectangle the shader samples and the mean it
+                // normalises by. Deriving it twice is how the colour path and this one came
+                // to disagree about the same texture in the first place.
+                TextureAtlasPosition fullPosition = capi.BlockTextureAtlas.Positions[overlayId];
+                bool topTile = rightHalf && IsTwoTileStrip(fullPosition);
+                TextureMean grass = MeanOf(overlay, overlayId, topTile);
                 if (grass.Coverage > 0f)
                 {
-                    TextureAtlasPosition fullPosition = capi.BlockTextureAtlas.Positions[overlayId];
-                    overlayPosition = rightHalf
+                    overlayPosition = topTile
                         ? LodBlockTextureRegistry.RightHalf(fullPosition)
                         : fullPosition;
                     // Offered, not imposed: the registry refuses an overlay on another atlas
@@ -924,6 +961,22 @@ public class VintageHorizonsModSystem : ModSystem
     /// the engine's TopSoil convention: side and top occupy the left and right halves of one
     /// atlas rectangle. Forest floor takes this fallback.
     /// </summary>
+    /// <summary>
+    /// Whether an atlas rectangle holds vanilla's two-tile TopSoil strip: the side fringe in
+    /// the left half, the top face in the right.
+    ///
+    /// Asked rather than assumed, because taking the right half of a texture that is not a
+    /// strip would read a neighbouring block's tile. The engine's own rule is the same test
+    /// by implication - `chunktopsoil.fsh` shifts the top face one tile right, which is only
+    /// meaningful when there is a second tile to shift into.
+    ///
+    /// Compared in atlas UV, which is why this is a ratio and not a pixel count; the block
+    /// atlas is square, so the two axes are the same scale. 1.5 rather than 2.0 leaves room
+    /// for a rectangle trimmed by padding without letting a square texture through.
+    /// </summary>
+    internal static bool IsTwoTileStrip(TextureAtlasPosition position) =>
+        position.x2 - position.x1 >= (position.y2 - position.y1) * 1.5f;
+
     static bool TryTopSoilOverlay(
         Block block, out CompositeTexture? texture, out bool rightHalf)
     {
@@ -968,7 +1021,27 @@ public class VintageHorizonsModSystem : ModSystem
 
         TextureMean soil = MeanOf(TextureFor(block, block.TextureSubIdForBlockColor),
             block.TextureSubIdForBlockColor);
-        TextureMean grass = MeanOf(overlay, overlayId);
+
+        // The TOP tile, not the whole strip. `specialSecondTexture` is two tiles wide - the
+        // side fringe on the left, the top on the right - and `chunktopsoil.fsh` shifts one
+        // tile right for an upward normal, so a top face is drawn entirely from the right
+        // half. This averaged both halves, and the fringe is mostly transparent, so the
+        // COVERAGE came out far too low: 0.687 for full grass where the top tile is 1.000,
+        // 0.537 against 0.843 for sparse, 0.400 against 0.720 for very sparse.
+        //
+        // Coverage is what decides how much bare dirt shows through, and that dirt is the
+        // share the seasonal tint must not touch. So the mod believed roughly a third of
+        // every fully grassy block was untinted brown when none of it is, and since the
+        // seasonal tint carries almost no blue, that untinted third is where nearly all the
+        // blue in distant grass was coming from. Measured on the owner's own cache before
+        // this change: soil-medium-normal stored 128,120,98 against a true 152,154,127, and
+        // grass at the seam carried 1.9x vanilla's blue.
+        //
+        // The registered tint slot follows from the share, and both are re-derived from the
+        // live block when a cached section loads, so an existing cache corrects itself
+        // without re-exploring anything.
+        bool topTile = IsTwoTileStrip(capi.BlockTextureAtlas.Positions[overlayId]);
+        TextureMean grass = MeanOf(overlay, overlayId, topTile);
         if (grass.Coverage <= 0f) return false;
 
         float a = grass.Coverage;
@@ -1092,17 +1165,23 @@ public class VintageHorizonsModSystem : ModSystem
     /// fall back to another of the block's own textures, and to the caller's stand-in if
     /// the block has none - wrong-but-plausible beats a placeholder or a hole in the world.
     /// </summary>
-    int RepairPlaceholder(Block block, int color, int fallback)
-    {
-        if (!IsUsableAtlasTexture(block.TextureSubIdForBlockColor)
-            // Guarded on non-zero: if the atlas never populated AvgColor we would be
-            // comparing against 0 and "fixing" every legitimately black block.
-            || (unknownTextureColor != 0 && color == unknownTextureColor))
-        {
-            color = ColorFromAnyTexture(block, fallback);
-        }
-        return color;
-    }
+    int RepairPlaceholder(Block block, int color, int fallback) =>
+        IsPlaceholderColor(block, color) ? ColorFromAnyTexture(block, fallback) : color;
+
+    /// <summary>
+    /// Whether a block's colour texture is the absence of a colour rather than a colour:
+    /// no texture assigned, or one that resolved to the missing-texture placeholder.
+    ///
+    /// Named once because two callers have to agree about it. The repair above acts on it,
+    /// and <see cref="StableColorOf"/> reads it to decide whether it may replace the sampled
+    /// colour with the texture's exact average - which it must not do first, because this
+    /// test inspects the sampled value.
+    /// </summary>
+    bool IsPlaceholderColor(Block block, int color) =>
+        !IsUsableAtlasTexture(block.TextureSubIdForBlockColor)
+        // Guarded on non-zero: if the atlas never populated AvgColor we would be
+        // comparing against 0 and "fixing" every legitimately black block.
+        || (unknownTextureColor != 0 && color == unknownTextureColor);
 
     /// <summary>Average colour of unknown.png (near-white, not magenta - measured).</summary>
     int unknownTextureColor;
@@ -2092,6 +2171,66 @@ public class VintageHorizonsModSystem : ModSystem
                     camera.X, camera.Y, camera.Z, look.X, look.Y, look.Z, range));
             });
 
+        capi.ChatCommands.Create("vhtint")
+            .WithDescription("Take one block's distant colour apart: the stored colour, how much of "
+                + "it the live tint is not allowed to touch, and the tint itself against the game's "
+                + "own answer for the same block. Aim at a block, or name one, or stand on it. "
+                + "Written to the client log, which is the only copy long enough to read.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("blockCode"))
+            .HandleWith(args =>
+            {
+                // Aim first, feet second. A player comparing cached ground against the game's
+                // own is looking at the seam, so the block under the crosshair is the one they
+                // mean; standing on it is the fallback for ground too far to select.
+                BlockPos? at = capi.World.Player.CurrentBlockSelection?.Position;
+                if (at == null)
+                {
+                    var feet = capi.World.Player.Entity.Pos;
+                    at = new BlockPos((int)feet.X, (int)feet.Y - 1, (int)feet.Z);
+                }
+                Block? block = capi.World.BlockAccessor.GetBlock(at);
+
+                if (!args.Parsers[0].IsMissing)
+                {
+                    string code = (string)args[0];
+                    Block? named = capi.World.GetBlock(new AssetLocation(code));
+                    if (named == null || named.BlockId <= 0)
+                        return TextCommandResult.Error(
+                            $"[VintageHorizons] no block called '{code}'. Give a full code such as "
+                            + "soil-medium-normal, or leave it off and aim at one.");
+                    // The named block is described where the player is standing: climate and
+                    // season are functions of position, so it has to be asked somewhere.
+                    block = named;
+                }
+
+                if (block == null || block.BlockId <= 0)
+                    return TextCommandResult.Error("[VintageHorizons] no block there to describe.");
+
+                bool topSoil = TryTopSoilColor(block, out int composite, out LodUntintedShare share);
+                int slot = tints.PeekSlot(block, topSoil ? share : LodUntintedShare.None);
+                int stored = StableColorOf(block);
+                (float sr, float sg, float sb) = LodBlockTextureRegistry.Channels(stored);
+
+                var lines = new List<string>
+                {
+                    $"stored colour R{(int)(sr * 255)} G{(int)(sg * 255)} B{(int)(sb * 255)}"
+                    + (topSoil
+                        ? $" (grass-over-soil composite {composite & 0xFF},{(composite >> 8) & 0xFF},"
+                          + $"{(composite >> 16) & 0xFF})"
+                        : " (no grass overlay)"),
+                };
+                lines.AddRange(tints.Describe(
+                    capi.World, block, slot, topSoil ? share : LodUntintedShare.None, at.X, at.Y, at.Z));
+
+                // The log gets the report as written; the chat copy gets its angle brackets
+                // taken out first. Chat text is markup, an unmatched bracket wedges the panel
+                // for as long as the message stays in the scrollback, and a diagnostic that
+                // breaks the window you read it in is worse than no diagnostic.
+                string report = LogAndReturn("tint", string.Join('\n', lines));
+                return TextCommandResult.Success(
+                    "[VintageHorizons] " + report.Replace('<', '(').Replace('>', ')'));
+            });
+
         capi.ChatCommands.Create("vhpaint")
             .WithDescription("Paint the terrain the mask is hiding bright red instead of hiding it. Diagnostic.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
@@ -2379,13 +2518,13 @@ public class VintageHorizonsModSystem : ModSystem
                     "as before. Worth comparing at dawn or dusk, not at midday.");
             });
 
-        // Four separate switches rather than one, because the point of shipping them is
+        // Separate switches rather than one, because the point of shipping them is
         // that a single dusk-to-night sweep can attribute what it sees. Reading both
         // shaders settles what vanilla computes; it cannot settle whether copying it onto
         // terrain kilometres away looks right, and only the owner flipping these while
         // watching can.
         capi.ChatCommands.Create("vhlight")
-            .WithDescription("Match cached terrain lighting to the game's. moondir | ramp | ambient | boost | sky | all, on or off. All on by default.")
+            .WithDescription("Match cached terrain lighting to the game's. sun | moondir | ramp | ambient | boost | sky | all, on or off. All on by default.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
                       capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
@@ -2394,6 +2533,7 @@ public class VintageHorizonsModSystem : ModSystem
                     return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
 
                 string DescribeLight() =>
+                    $"sun {(renderer.LightSunLevel ? "on" : "off")}, " +
                     $"moondir {(renderer.LightMoonDirection ? "on" : "off")}, " +
                     $"ramp {(renderer.LightVanillaRamp ? "on" : "off")}, " +
                     $"ambient {(renderer.LightAmbientColor ? "on" : "off")}, " +
@@ -2405,13 +2545,18 @@ public class VintageHorizonsModSystem : ModSystem
 
                 if (args.Parsers[1].IsMissing)
                     return TextCommandResult.Error(
-                        "[VintageHorizons] use: .vhlight moondir | ramp | ambient | boost | sky | all, then on or off.");
+                        "[VintageHorizons] use: .vhlight sun | moondir | ramp | ambient | boost | sky | all, then on or off.");
 
                 string part = ((string)args[0]).ToLowerInvariant();
                 bool on = (bool)args[1];
                 string note;
                 switch (part)
                 {
+                    case "sun":
+                        renderer.LightSunLevel = on;
+                        note = "Multiply by the sun light level the game bakes into its own terrain. " +
+                               "The biggest one: off is 24% brighter at every hour, on every block.";
+                        break;
                     case "moondir":
                         renderer.LightMoonDirection = on;
                         note = "Shade by the game's light vector, which follows the moon at night. " +
@@ -2438,6 +2583,7 @@ public class VintageHorizonsModSystem : ModSystem
                                "draws. Look at the horizon band, not the ground.";
                         break;
                     case "all":
+                        renderer.LightSunLevel = on;
                         renderer.LightMoonDirection = on;
                         renderer.LightVanillaRamp = on;
                         renderer.LightAmbientColor = on;
@@ -2447,7 +2593,7 @@ public class VintageHorizonsModSystem : ModSystem
                         break;
                     default:
                         return TextCommandResult.Error(
-                            "[VintageHorizons] use: .vhlight moondir | ramp | ambient | boost | sky | all, then on or off.");
+                            "[VintageHorizons] use: .vhlight sun | moondir | ramp | ambient | boost | sky | all, then on or off.");
                 }
 
                 return TextCommandResult.Success($"[VintageHorizons] lighting: {DescribeLight()}. {note}");
