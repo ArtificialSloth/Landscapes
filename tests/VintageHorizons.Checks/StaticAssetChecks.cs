@@ -341,6 +341,19 @@ public static class StaticAssetChecks
                 $"the indirect vertex body reads {name} from attribute {location}");
         }
 
+        // The tint ramp is a texture whose addressing exists in two languages. The C# side is
+        // pinned in SeasonWeightChecks; this is the GLSL half. Slot on X and height step on Y,
+        // fetched rather than filtered - hardware filtering would blend along X and mix one
+        // block's tint into its neighbour's, which is silent and looks like a colour bug.
+        c.True(vertex.Contains("uniform sampler2D tintRamp;", StringComparison.Ordinal),
+            "the vertex body reads the tint ramp as a texture, not a uniform array");
+        c.True(vertex.Contains("texelFetch(tintRamp, ivec2(slot, rampStep), 0)", StringComparison.Ordinal)
+            && vertex.Contains("texelFetch(tintRamp, ivec2(slot, rampStep + 1), 0)", StringComparison.Ordinal),
+            "the tint ramp is indexed slot-on-X, step-on-Y, and fetched at two adjacent steps");
+        foreach (string gone in new[] { "tintsLow", "tintsHigh", "tintYLow", "tintYHigh" })
+            c.True(!vertex.Contains(gone, StringComparison.Ordinal),
+                $"the replaced two-height tint uniform {gone} is gone from the vertex body");
+
         c.True(vertex.Contains("flat out float vhColumnBlocks;", StringComparison.Ordinal)
             && fragment.Contains("flat in float vhColumnBlocks;", StringComparison.Ordinal),
             "the column size is handed to the fragment stage as a flat varying");

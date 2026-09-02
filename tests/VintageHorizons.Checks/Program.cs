@@ -55,6 +55,7 @@ public static class Program
         ("pure", "cave span graph", CaveSpanChecks.Run),
         ("fixture", "block policy", PolicyChecks.Run),
         ("pure", "top soil colour", TopSoilColorChecks.Run),
+        ("pure", "season blend weight", SeasonWeightChecks.Run),
         ("pure", "remote keys", RemoteKeyChecks.Run),
         ("pure", "chunk generation", GenerateChecks.Run),
         ("fixture", "server assist", ServerAssistChecks.Run),

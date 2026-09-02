@@ -2,6 +2,37 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
+## Seasonal tint: IN PROGRESS, uncommitted, one owner-reported regression open
+
+Session 74. Branch `codex/seasonal-tint-blend-weight`, 0.3.172-0.3.176, **nothing committed**.
+Read `dev/sessions/SESSION_74.md` and `dev/plans/PLAN_DISTANT_TINT_SAMPLING.md` before touching
+this. Accepted by the owner on 0.3.175: distant high terrain now matches vanilla's seasonal colour,
+checked against vanilla's own rendering at the same spots.
+
+- **THE BLEND BAND IS A REGRESSION AND IS THE PRIORITY.** Owner on 0.3.175: ordinary distant
+  terrain looks great, the band is "dramatically" worse and "way off from the proper colours". Not
+  explained. 0.3.176 fixes a season-pixel recovery bug that may or may not cover it. If it does
+  not, suspect in order: the tint ramp is bound to **texture unit 10** and nothing has verified
+  that unit is free of the engine's own samplers in the included stages - G130 is exactly this
+  defect, and the band is the path that also samples `seamField` (7) and `blockAtlas` (9); then,
+  that band terrain now sees a genuinely height-varying tint where it used to see a nearly
+  constant one.
+- **Distant colour disappeared in some areas** on 0.3.175 and returned elsewhere. Cause found -
+  the season pixel was recovered by differencing 8-bit channels and failed for whole slots at once,
+  after which the ramp blended against a stale one. Fixed in 0.3.176, **unverified**.
+- **`.vhtint`'s B line still uses the old per-position correction**, so its "A vs B" and
+  "B vs C'" labels no longer describe what the ramp does. Misleading; fix before relying on them.
+- **No shader is compile-verified offline.** 0.3.174 rewrote the vertex stage's tint lookup on all
+  three render paths. It draws, so it compiles, but nothing offline can say so.
+- **Slot sharing: 38% excess blue on `soil-medium-verysparse`**, which drew with
+  `forestfloor-5`'s untinted share. Slots are keyed on the share rounded to eighths and 18 of 64
+  are in use, so a finer key has room. Independent of the ramp; not started.
+- **Two traps are recorded in the session and not yet promoted to GOTCHAS**: a correction cannot be
+  delivered by a mechanism that does not carry its independent variable, and differencing 8-bit
+  channels to recover a blend factor fails where the inputs agree.
+- **`DocCheck` fails on version drift.** STATUS, CHANGELOG and the source-file count are behind;
+  the documentation ritual has not been run for Session 74.
+
 ## Distant terrain colour: three causes fixed, one open and planned
 
 0.3.169 and 0.3.170 are human-tested and accepted ("nearly perfect"). What is left is one measured

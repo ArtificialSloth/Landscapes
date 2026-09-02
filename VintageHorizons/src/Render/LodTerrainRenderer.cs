@@ -692,6 +692,22 @@ public class LodTerrainRenderer : IRenderer
     public bool LightSunLevel { get; set; } = true;
 
     /// <summary>
+    /// Rebalance the engine's climate/season blend to the one the terrain shader draws, and
+    /// resample immediately rather than waiting out the 30-second cadence so the switch can be
+    /// judged in place. See <see cref="LodSeasonWeight"/> for the difference being corrected.
+    /// </summary>
+    public bool SeasonWeightCorrection
+    {
+        get => tints.SeasonWeightCorrection;
+        set
+        {
+            if (tints.SeasonWeightCorrection == value) return;
+            tints.SeasonWeightCorrection = value;
+            seasonalStateInitialized = false;
+        }
+    }
+
+    /// <summary>
     /// The sun light level a sky-exposed vanilla terrain vertex carries, as the shader sees
     /// it. Read from the world rather than assumed: a server may replace either the ramp or
     /// the brightness, and both are public.
@@ -1945,7 +1961,7 @@ public class LodTerrainRenderer : IRenderer
                 SeasonalRefreshIntervalMs)) return;
 
             seasonalRefreshActive = true;
-            seasonalRefreshSlot = 1;
+            seasonalRefreshSlot = LodTintRegistry.SampledHeights;   // skip slot 0, the identity
             seasonalRefreshX = (int)camPos.X;
             seasonalRefreshZ = (int)camPos.Z;
             tints.BeginRefresh(capi.World);
@@ -1954,9 +1970,15 @@ public class LodTerrainRenderer : IRenderer
 
         // Game climate and colour-map APIs are owning-thread state. Keep them here, but
         // spread the calls over frames and publish only after the whole table is ready.
-        if (seasonalRefreshSlot < tints.SlotCount)
+        //
+        // One unit is one slot at one sampled height, not a whole slot: the ramp reads the
+        // colour maps at seventeen heights where the old two-height table read them at two, and
+        // doing a slot's worth in one frame would be an order of magnitude more colour-map calls
+        // per frame than before. Per unit the cost is what the old per-slot step was, and the
+        // whole table still republishes inside the cadence.
+        if (seasonalRefreshSlot < tints.RefreshUnitCount)
         {
-            tints.RefreshSlot(capi.World, seasonalRefreshX, seasonalRefreshZ,
+            tints.RefreshUnit(capi.World, seasonalRefreshX, seasonalRefreshZ,
                 seasonalRefreshSlot++);
             return;
         }
@@ -5270,18 +5292,33 @@ public class LodTerrainRenderer : IRenderer
             prog.BindTexture2D("blockAtlas", blockTextures!.AtlasTextureId, 9);
         }
 
-        // Uniforms persist in the program between Use() calls, so re-upload only when
-        // the table actually changed (every ~240 frames) rather than every frame.
-        if (uploadedTintVersion != tints.Version)
-        {
-            uploadedTintVersion = tints.Version;
-            prog.Uniforms4("tintsLow", LodTintRegistry.MaxSlots, tints.TintsLow);
-            prog.Uniforms4("tintsHigh", LodTintRegistry.MaxSlots, tints.TintsHigh);
-            prog.Uniform("tintYLow", tints.SampleYLow);
-            prog.Uniform("tintYHigh", tints.SampleYHigh);
-        }
+        // The ramp is a texture, not a uniform array: 64 slots x 96 height steps would be
+        // 6,144 vec4. Re-uploaded only when the table actually changed rather than every frame.
+        if (uploadedTintVersion != tints.Version) UploadTintRamp();
+        if (tintRampTexture != null) prog.BindTexture2D("tintRamp", tintRampTexture.TextureId, 10);
+        prog.Uniform("tintRampOriginY", tints.RampOriginY);
+        prog.Uniform("tintRampInvStep", 1f / LodTintRegistry.RampStepBlocks);
+        prog.Uniform("tintRampSteps", LodTintRegistry.RampSteps);
         prog.Uniform("snowLineY", snowLineY);
     }
+
+    /// <summary>
+    /// Publish the tint ramp to the GPU. Nearest filtering in both axes on purpose: the height
+    /// axis is interpolated by hand in the vertex shader, because hardware filtering would blend
+    /// across the SLOT axis as well and silently mix one block's tint into another's.
+    /// </summary>
+    void UploadTintRamp()
+    {
+        LoadedTexture texture = tintRampTexture
+            ?? new LoadedTexture(capi, 0, LodTintRegistry.RampWidth, LodTintRegistry.RampHeight);
+        capi.Render.LoadOrUpdateTextureFromBgra(tints.Ramp, linearMag: false, clampMode: 0,
+            ref texture);
+        if (texture.TextureId <= 0) return;   // keep the old table rather than binding nothing
+        tintRampTexture = texture;
+        uploadedTintVersion = tints.Version;
+    }
+
+    LoadedTexture? tintRampTexture;
 
     void ConfigureRenderPaths()
     {
@@ -5908,6 +5945,8 @@ public class LodTerrainRenderer : IRenderer
         {
             target.BindTexture2D("blockAtlas", blockTextures.AtlasTextureId, 9);
         }
+        if (tintRampTexture != null)
+            target.BindTexture2D("tintRamp", tintRampTexture.TextureId, 10);
     }
 
     void DrawLegacyWater()

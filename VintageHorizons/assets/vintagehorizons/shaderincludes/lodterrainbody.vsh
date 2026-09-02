@@ -126,14 +126,32 @@ uniform float sectionSize;
 // -----------------------------------------------------------------------------
 
 // Tint is resolved per VERTEX, not per fragment: the slot is constant across a quad
-// and the altitude blend is linear in height, so interpolating the result is
-// equivalent and saves two indexed uniform-array lookups per fragment.
+// and the ramp is piecewise linear in height, so interpolating the result is
+// equivalent and saves the lookups per fragment.
 // Must equal LodTintRegistry.MaxSlots; LoadShader logs an error if it does not.
 const int TINT_SLOTS = 64;
-uniform vec4 tintsLow[TINT_SLOTS];
-uniform vec4 tintsHigh[TINT_SLOTS];
-uniform float tintYLow;
-uniform float tintYHigh;
+
+// The live tint, as a ramp in height rather than two altitude samples.
+//
+// Two samples could not carry it. Everything height-dependent in a tint comes from the
+// engine's temperature lapse rate, and the curve it produces is flat, then drops sharply
+// over about sixty blocks, then flat again - so a straight line between a low and a high
+// sample misses the only part that moves. The ramp is 96 steps of 8 blocks starting 256
+// below sea level, which is the whole window in which anything changes, in any world:
+// the lapse rate is per BLOCK, so a taller world simply puts more terrain in the flat
+// tail and the clamp at each end is exact rather than approximate.
+//
+// Slot on X, height step on Y. Addressing must match LodTintRegistry.RampTexel; a static
+// check holds the two together, because a disagreement here misaddresses every slot at
+// once and reads as a colour bug rather than an indexing one.
+//
+// texelFetch twice and mix by hand rather than letting the sampler filter: hardware
+// filtering would blend along X as well, quietly mixing one block's tint into its
+// neighbour's.
+uniform sampler2D tintRamp;
+uniform float tintRampOriginY;
+uniform float tintRampInvStep;
+uniform int tintRampSteps;
 
 out vec3 tint;
 out vec4 worldPos;
@@ -264,8 +282,12 @@ void main()
 
     int slotRaw = int(vertexColorIn.a * 255.0 + 0.5);
     int slot = clamp(slotRaw - (slotRaw / TINT_SLOTS) * TINT_SLOTS, 0, TINT_SLOTS - 1);
-    float tintBlend = clamp((yLevel - tintYLow) / max(1.0, tintYHigh - tintYLow), 0.0, 1.0);
-    tint = mix(tintsLow[slot].rgb, tintsHigh[slot].rgb, tintBlend);
+    float rampT = clamp((yLevel - tintRampOriginY) * tintRampInvStep,
+                        0.0, float(tintRampSteps - 1));
+    int rampStep = clamp(int(rampT), 0, tintRampSteps - 2);
+    tint = mix(texelFetch(tintRamp, ivec2(slot, rampStep), 0).rgb,
+               texelFetch(tintRamp, ivec2(slot, rampStep + 1), 0).rgb,
+               rampT - float(rampStep));
 
     sectionLocal = vertexPositionIn;
 

@@ -1,8 +1,10 @@
 # Plan - where the distant seasonal tint is sampled from
 
-**Status:** Not started. **One measurement is outstanding before the design can be chosen**, and it
-is cheap. Do not build section 5 until section 4 has run - the current evidence is consistent with
-two different causes that call for opposite fixes.
+**Status:** Amended 2026-09-01 after 0.3.172/0.3.173 and two owner readings from high ground.
+Read section 5A first: it records a shipped correction that is arithmetically right and never
+reaches the screen, and it moves the two-height tint table from a footnote to the blocking item.
+Section 4's measurement is still outstanding and still decides section 6, but it is no longer
+first in line.
 **Date:** 2026-08-31, after Session 73.
 **Scope:** Client rendering only. How the live tint table is sampled and how a cached fragment
 selects from it. No cache, database, network or wire-format change is expected; section 7 records
@@ -106,6 +108,176 @@ the CPU call at a known position.
 
 This matters more than the sampling question and should run first, because **everything the mod
 samples is that call**. If it is wrong, resampling it better converges on the wrong answer.
+
+## 4A. What the mountain readings added
+
+Owner readings on 2026-09-01, `soil-medium-normal` at 511161,203,513885 - 93 blocks above sea
+level, -10.4C, raw temperature 103 - with the weight correction switched off and on at the same
+block:
+
+| | weight OFF | weight ON |
+|---|---|---|
+| A, what the shader multiplies by | R0.683 G0.627 B0.080 | R0.686 G0.627 B0.081 |
+| B, the lattice at that actual height | R0.693 G0.604 B0.081 | R0.667 G0.518 B0.075 |
+
+Three things fall out of it.
+
+**The lattice error changes sign with position.** At the sea-level test patch the lattice read 22%
+HIGH in blue against the single point; here it reads 29% LOW, and the reading also puts this exact
+block at the very top of its own neighbourhood's blue range. Row averaging cannot do that - the row
+mean is the row mean, so its bias has one sign. Climate smearing goes whichever way the local
+gradient runs. Two readings are not proof and section 4 still stands, but the evidence now leans
+toward climate smear, which is what section 6 assumes.
+
+**Slot sharing is real and was wrongly eliminated.** `soil-medium-verysparse` drew with
+`forestfloor-5`'s untinted share - its own is R0.176 G0.125 B0.079, the slot carries
+R0.203 G0.164 B0.140 - which puts it at 0.207 blue where its own share gives 0.150, **38% too
+much**. Session 73 checked this at the test patch, found the slot claimed by the block itself, and
+eliminated it. It was not eliminated; it was absent at that one position. Slots are keyed on the
+untinted share rounded to 1/8, so blocks of genuinely different coverage share one and the first
+to register wins. Independent of everything else here, and cheap to narrow while slot use is 18
+of 64.
+
+**The two-height table is wrong at altitude by more than the weight is.** A interpolates green to
+0.627 where the lattice at the real height gives 0.518 - 21% - against the roughly 6% estimated
+from the test patch, where the blend factor was 0.025 rather than 0.291.
+
+## 5A. Why 0.3.172's weight correction does not reach the screen
+
+**This is a build that shipped, passes every check, and does nothing.** Recorded in full because
+the failure is instructive and the plan predicted it in writing.
+
+A barely moves between off and on - 0.683 to 0.686 - while B moves properly. A is the published
+tint table, which is what the renderer draws; B is the diagnostic sampling at the block's own
+height. The correction reaches the diagnostic and not the terrain.
+
+The table is sampled at two fixed heights, sea level and sea level + 320, and the shader
+interpolates between them per vertex. So the correction is evaluated at *those* heights, not where
+the ground is:
+
+| sample height | correction computed there |
+|---|---|
+| 110, sea level | x1.058, negligible |
+| 203, the ground being looked at | **x0.506** |
+| 430, the upper sample | refused - the adjusted temperature saturates at 0, so the engine's own weight cannot be recovered |
+
+The table therefore carries a 6% correction from below and nothing from above, and 0.686 against
+0.683 is that 6% leaking through the blend.
+
+An earlier section of this plan already said the two-height table "is reproducing the wrong thing"
+and it was built into anyway. The lesson is not about tint: **a correction that is a function of a
+quantity the delivery mechanism does not carry cannot be delivered, however correct it is.** The
+harness checks could not catch it because they test the arithmetic, and the arithmetic was never
+in doubt.
+
+## 5B. Phase 1, revised - the height ramp
+
+Replaces the two-height table. This is now the blocking item, ahead of section 4's measurement,
+because nothing else can land until the delivery mechanism can carry a height-dependent value.
+
+### Why world height does not enter
+
+Everything height-dependent here comes from one quantity: temperature falls at a fixed 1 unit per
+1.5 blocks. That is per block, not per fraction of the world, so the range over which anything
+moves is a fixed window around sea level and the same in every world:
+
+| raw temperature | blocks above sea level where both the climate coordinate and the weight go flat |
+|---|---|
+| 60 | 139 |
+| 103 | 154 |
+| 160 | 240 |
+| 255 | 382 |
+
+Below sea level it moves too and saturates going down - at 110 below, the weight is 0.482 against
+0.884 at sea level.
+
+So **index the ramp by distance from sea level over a fixed window, and clamp outside it.** A
+taller world simply puts more terrain in the flat tail, which a clamp represents exactly. Nothing
+reads `MapSizeY`.
+
+Rejected: **two sample heights bracketing the visible terrain.** It adapts to world height in the
+wrong way - a taller world means a longer span for two points to cover linearly, across a curve
+that is flat, then drops 0.63 over sixty blocks, then flat again. The present fixed +320 is already
+an instance of that failure, and in a short world with a low sea level it would sit outside the
+world entirely.
+
+Rejected: **a fraction of world height.** Same objection, and it keys on a quantity that has
+nothing to do with the curve.
+
+### Resolution, measured rather than guessed
+
+Linear interpolation error of the weight against sample spacing, worst case over raw temperatures
+20-240 and distances -256 to +512:
+
+| spacing | samples | worst error |
+|---|---|---|
+| 8 | 97 | 0.034 |
+| 16 | 49 | 0.072 |
+| 32 | 25 | 0.157 |
+| 64 | 13 | 0.304 |
+
+A ramp coarse enough to be cheap to SAMPLE is not accurate enough to be worth having - which
+decides the structure below rather than the sample count.
+
+### The structure that makes it affordable
+
+Sampling the colour maps at ~100 heights is out of the question: 64 lattice positions x 100 heights
+x 20 slots is 64x today's refresh cost. But the three things that vary do not vary the same way,
+and separating them makes the expensive one small:
+
+- **The season pixel's average is height-independent.** Its column is the year and its row is a
+  position hash. The hash does include Y, so an individual sample re-rolls with height, but the
+  distribution it is drawn from does not - so the lattice AVERAGE is the same at every height and
+  needs sampling once.
+- **The weight is arithmetic.** `LodSeasonWeight` computes it from the raw temperature and the
+  distance from sea level. It needs no sampling at any height, which is what makes the 8-block
+  spacing above affordable.
+- **Only the climate pixel genuinely moves with height and needs the map read.** It is a smooth
+  gradient in temperature, so a handful of sampled heights carries it.
+
+So the ramp is built as `climate(h) * (1 - w(h)) + season * w(h)`, with `climate(h)` interpolated
+from a few sampled heights, `season` sampled once, and `w(h)` computed at every ramp step. The
+season average is recovered algebraically from the two calls already being made -
+`season = climate + (engineAnswer - climate) / wEngine`, safe because `wEngine` is bounded below
+by 0.065 and a check pins it.
+
+### Delivery
+
+A small 2D texture, slot on one axis and ramp step on the other, sampled in the vertex shader with
+two `texelFetch` calls and a manual lerp along the height axis - manual because hardware filtering
+would blend across SLOTS on the other axis, which would be silent and wrong. 64 slots x 128 steps
+x RGBA8 is 32 KB.
+
+This is the third instance of a pattern the renderer already runs twice, the vanilla readiness mask
+and the seam distance field, both CPU-built 2D textures whose addressing must agree between C# and
+GLSL and both held to it by a static check. Follow that precedent including the check.
+
+The existing `tintsLow`/`tintsHigh` uniform arrays and `tintYLow`/`tintYHigh` are replaced, not
+extended: 64 slots x 96 steps as uniforms would be 6,144 vec4 and well past any guaranteed limit.
+
+### Concrete parameters
+
+- **Ramp:** 96 steps, 8 blocks apart, starting 256 blocks below sea level - covering -256 to +504,
+  which contains the whole window section 5B measures. Outside it, clamp.
+- **Sampled heights:** 17, evenly spread across the same window, 47 blocks apart. The climate map
+  is a smooth gradient in temperature so linear interpolation between them carries it; the weight,
+  which is not smooth, is computed at all 96 steps and needs no sampling.
+- **Refresh spreading:** one (slot, sampled height) pair per frame rather than one slot per frame.
+  17 x 20 slots is 340 units of about 128 colour-map calls each, so the per-frame cost stays what
+  it is today and the whole table still republishes well inside the 30-second cadence. Publishing
+  stays atomic.
+
+### Two things this must not quietly become
+
+**Do not reproduce the engine's map indexing to make it cheaper.** Reading `ColorMap.Pixels`
+directly and reproducing the season row hash and the climate coordinate would make the whole ramp
+arithmetic and cost almost nothing - and it would be a third transcription of engine internals in
+a system that has already been bitten twice by exactly that (G139, G140). Sample through the
+engine's own call at the 17 heights and interpolate.
+
+**Do not let the sampled-height count drift down for cost.** It is the climate map's resolution,
+not the weight's, and the weight is the part that needed 8-block spacing. If the cost is a problem,
+spread the refresh over more frames rather than sampling fewer heights.
 
 ## 5. Phase 2 - the design, if section 4 says climate smear
 
