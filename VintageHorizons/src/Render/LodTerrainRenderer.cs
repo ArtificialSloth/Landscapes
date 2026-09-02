@@ -1523,9 +1523,18 @@ public class LodTerrainRenderer : IRenderer
     }
 
     readonly LodTintRegistry tints;
-    int uploadedTintVersion = -1;
-    int uploadedIndirectTintVersion = -1;
-    int uploadedPackedTintVersion = -1;
+
+    /// <summary>
+    /// The tint table version currently on the GPU. ONE field, not one per program: the ramp
+    /// lives in a texture, so it is not part of any program's state and a single upload serves
+    /// all three programs.
+    ///
+    /// It was one per program while the table was uniform arrays, which are program state, and
+    /// carrying that shape forward to a texture is what made the ramp re-upload on every frame:
+    /// `UploadTintRamp` assigned the field while the two indirect programs passed their own
+    /// counter by ref, so their guard never closed and the upload below ran forever.
+    /// </summary>
+    int uploadedRampVersion = -1;
 
     public LodTerrainRenderer(
         ICoreClientAPI capi,
@@ -1644,9 +1653,9 @@ public class LodTerrainRenderer : IRenderer
         // edited. The compiler agreed: the branch raised CS0162, unreachable code.
         // The check that works reads the shader files, in the fast tier of check.sh.
 
-        uploadedTintVersion = -1; // fresh program object: uniform state is gone
-        uploadedIndirectTintVersion = -1;
-        uploadedPackedTintVersion = -1;
+        // A fresh program object does not invalidate a texture, but the re-upload is one
+        // frame's worth of nothing and this stays honest about the programs being new.
+        uploadedRampVersion = -1;
         WarnIfIncludeMissing(prog, "lodterrain");
         shaderOk = prog.Compile();
         if (!shaderOk && !ShaderLoadIsProvisional)
@@ -3491,8 +3500,7 @@ public class LodTerrainRenderer : IRenderer
             // on the creation branch only, and texelFetch ignores filtering regardless.
             LoadedTexture texture = readinessMaskTexture
                 ?? new LoadedTexture(capi, 0, readinessMask.Width, readinessMask.Height);
-            capi.Render.LoadOrUpdateTextureFromBgra(readinessMask.Texels,
-                linearMag: false, clampMode: 0, ref texture);
+            UploadOwnTexture(readinessMask.Texels, ReadinessMaskUnit, ref texture);
             if (texture.TextureId <= 0)
                 throw new InvalidOperationException("Readiness mask texture was not created.");
             readinessMaskTexture = texture;
@@ -3807,8 +3815,7 @@ public class LodTerrainRenderer : IRenderer
             {
                 LoadedTexture texture = seamFieldTexture
                     ?? new LoadedTexture(capi, 0, seamField.Width, seamField.Height);
-                capi.Render.LoadOrUpdateTextureFromBgra(seamField.Texels,
-                    linearMag: false, clampMode: 0, ref texture);
+                UploadOwnTexture(seamField.Texels, SeamFieldUnit, ref texture);
                 if (texture.TextureId <= 0)
                     throw new InvalidOperationException("Seam distance field texture was not created.");
                 seamFieldTexture = texture;
@@ -5102,7 +5109,7 @@ public class LodTerrainRenderer : IRenderer
             rapi.GlDisableCullFace();
         }
 
-        ApplyFrameUniforms(prog, viewDistance, ref uploadedTintVersion);
+        ApplyFrameUniforms(prog, viewDistance);
 
         float cullDistSq = float.MaxValue;
         if (FarViewDistanceCap > 0)
@@ -5155,6 +5162,46 @@ public class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
+    /// The texture units this renderer owns, named rather than written as literals in ten
+    /// places. Two separate defects have already come from a unit number: the engine rebinds
+    /// its own samplers on every Use() and can land on one of these (G130), and the upload path
+    /// below binds to whichever unit is current. Both are answered by one place saying which
+    /// unit a texture belongs to.
+    ///
+    /// 6 upward keeps clear of the sampler slots the shared includes already use for glow, sky,
+    /// liquid depth, and the two shadow maps.
+    /// </summary>
+    const int ReadinessMaskUnit = 6;
+    const int SeamFieldUnit = 7;
+    const int BlockTableUnit = 8;
+    const int BlockAtlasUnit = 9;
+    const int TintRampUnit = 10;
+
+    /// <summary>
+    /// Upload one of this renderer's own CPU-built tables, with its destination unit made
+    /// current first.
+    ///
+    /// `LoadOrUpdateTextureFromBgra` reaches `GL.BindTexture` with no `GL.ActiveTexture` of its
+    /// own and never puts back what it displaced, so the texture it writes is left bound to
+    /// whichever unit happened to be current. Called from the middle of a binding sequence,
+    /// that quietly takes a unit away from the sampler just bound to it: the tint ramp's upload
+    /// sat one line after the block atlas was bound to unit 9, so every fragment INSIDE the
+    /// blend band - the only place the atlas is sampled - drew the 64x96 tint ramp as its block
+    /// texture and came out several times too bright, while all the terrain outside the band
+    /// was perfect. Making the destination current turns that stray bind into the bind that was
+    /// wanted anyway.
+    ///
+    /// Nearest and clamp for all three: each is read with texelFetch, which ignores filtering,
+    /// and none of them may wrap.
+    /// </summary>
+    void UploadOwnTexture(int[] texels, int unit, ref LoadedTexture texture)
+    {
+        GL.ActiveTexture(TextureUnit.Texture0 + unit);
+        capi.Render.LoadOrUpdateTextureFromBgra(texels, linearMag: false, clampMode: 0,
+            ref texture);
+    }
+
+    /// <summary>
     /// Everything the shader needs that is the same for every section this frame.
     ///
     /// Taken as a parameter rather than read from the field because the indirect path
@@ -5162,8 +5209,7 @@ public class LodTerrainRenderer : IRenderer
     /// identical values: any divergence here would show up as a pixel difference and be
     /// read as a bug in the fast path rather than as a missing upload.
     /// </summary>
-    void ApplyFrameUniforms(
-        IShaderProgram prog, float viewDistance, ref int uploadedTintVersion)
+    void ApplyFrameUniforms(IShaderProgram prog, float viewDistance)
     {
         var rapi = capi.Render;
         prog.UniformMatrix("viewMatrix", rapi.CameraMatrixOriginf);
@@ -5239,9 +5285,8 @@ public class LodTerrainRenderer : IRenderer
             prog.Uniform("maskDepth", readiness.ActiveDepth);
             prog.Uniform("maskCapacity", readinessMask!.Width);
             prog.Uniform("maskVerticalChunks", readinessMask.VerticalChunks);
-            // Unit 6 keeps clear of the sampler slots the shared includes already use for
-            // glow, sky, liquid depth, and the two shadow maps.
-            prog.BindTexture2D("readinessMask", readinessMaskTexture.TextureId, 6);
+            prog.BindTexture2D("readinessMask", readinessMaskTexture.TextureId,
+                ReadinessMaskUnit);
         }
 
         // The sink is not part of the band and does not wait for it: it is a constant
@@ -5270,7 +5315,7 @@ public class LodTerrainRenderer : IRenderer
             prog.Uniform("bandSaturate", BandSaturate);
             prog.Uniform("bandSpeckle", Math.Max(0f, BandSpeckle));
             // Unit 7, one past the mask's own.
-            prog.BindTexture2D("seamField", seamFieldTexture!.TextureId, 7);
+            prog.BindTexture2D("seamField", seamFieldTexture!.TextureId, SeamFieldUnit);
         }
 
         // The table is bound whenever any mesh can be carrying a block slot, and NOT only
@@ -5278,7 +5323,7 @@ public class LodTerrainRenderer : IRenderer
         // an unbound sampler here would leave `.vhtexture off` reading colours out of
         // whatever texture happened to be on unit 0.
         if (blockTexturesLive && blockTableTexture != 0)
-            prog.BindTexture2D("blockTable", blockTableTexture, 8);
+            prog.BindTexture2D("blockTable", blockTableTexture, BlockTableUnit);
 
         bool blockTexturesOn = blendPipelineEnabled && blockTexturesLive && blockTextures != null
             && blockTextures.AtlasTextureId > 0 && BlockTexturesEnabled;
@@ -5289,13 +5334,14 @@ public class LodTerrainRenderer : IRenderer
             prog.Uniform("blockTextureMipLimit", Math.Max(0f, BlockTextureMipLimit));
             prog.Uniform("blockTextureDetail", Math.Max(0f, BlockTextureDetail));
             prog.Uniform("blockAtlasSize", (float)capi.BlockTextureAtlas.Size.Width);
-            prog.BindTexture2D("blockAtlas", blockTextures!.AtlasTextureId, 9);
+            prog.BindTexture2D("blockAtlas", blockTextures!.AtlasTextureId, BlockAtlasUnit);
         }
 
         // The ramp is a texture, not a uniform array: 64 slots x 96 height steps would be
         // 6,144 vec4. Re-uploaded only when the table actually changed rather than every frame.
-        if (uploadedTintVersion != tints.Version) UploadTintRamp();
-        if (tintRampTexture != null) prog.BindTexture2D("tintRamp", tintRampTexture.TextureId, 10);
+        if (uploadedRampVersion != tints.Version) UploadTintRamp();
+        if (tintRampTexture != null)
+            prog.BindTexture2D("tintRamp", tintRampTexture.TextureId, TintRampUnit);
         prog.Uniform("tintRampOriginY", tints.RampOriginY);
         prog.Uniform("tintRampInvStep", 1f / LodTintRegistry.RampStepBlocks);
         prog.Uniform("tintRampSteps", LodTintRegistry.RampSteps);
@@ -5311,11 +5357,10 @@ public class LodTerrainRenderer : IRenderer
     {
         LoadedTexture texture = tintRampTexture
             ?? new LoadedTexture(capi, 0, LodTintRegistry.RampWidth, LodTintRegistry.RampHeight);
-        capi.Render.LoadOrUpdateTextureFromBgra(tints.Ramp, linearMag: false, clampMode: 0,
-            ref texture);
+        UploadOwnTexture(tints.Ramp, TintRampUnit, ref texture);
         if (texture.TextureId <= 0) return;   // keep the old table rather than binding nothing
         tintRampTexture = texture;
-        uploadedTintVersion = tints.Version;
+        uploadedRampVersion = tints.Version;
     }
 
     LoadedTexture? tintRampTexture;
@@ -5746,12 +5791,7 @@ public class LodTerrainRenderer : IRenderer
             drawProgram.Use();
             if (applyFrameUniforms)
             {
-                if (builder.Packed)
-                    ApplyFrameUniforms(
-                        drawProgram, ApprovedViewDistance(), ref uploadedPackedTintVersion);
-                else
-                    ApplyFrameUniforms(
-                        drawProgram, ApprovedViewDistance(), ref uploadedIndirectTintVersion);
+                ApplyFrameUniforms(drawProgram, ApprovedViewDistance());
             }
             LodGpuCullBucket cullBucket = !depthSplitThisFrame
                 ? LodGpuCullBucket.General
@@ -5934,19 +5974,20 @@ public class LodTerrainRenderer : IRenderer
     void RebindOwnSamplers(IShaderProgram target)
     {
         if (readinessMaskActive && readinessMask != null && readinessMaskTexture != null)
-            target.BindTexture2D("readinessMask", readinessMaskTexture.TextureId, 6);
+            target.BindTexture2D("readinessMask", readinessMaskTexture.TextureId,
+                ReadinessMaskUnit);
         if (seamFieldActive && seamField != null && seamFieldTexture != null)
-            target.BindTexture2D("seamField", seamFieldTexture.TextureId, 7);
+            target.BindTexture2D("seamField", seamFieldTexture.TextureId, SeamFieldUnit);
         if (blockTexturesLive && blockTableTexture != 0)
-            target.BindTexture2D("blockTable", blockTableTexture, 8);
+            target.BindTexture2D("blockTable", blockTableTexture, BlockTableUnit);
         if (blendPipelineEnabled && blockTexturesLive
             && blockTextures != null && blockTextures.AtlasTextureId > 0
             && BlockTexturesEnabled)
         {
-            target.BindTexture2D("blockAtlas", blockTextures.AtlasTextureId, 9);
+            target.BindTexture2D("blockAtlas", blockTextures.AtlasTextureId, BlockAtlasUnit);
         }
         if (tintRampTexture != null)
-            target.BindTexture2D("tintRamp", tintRampTexture.TextureId, 10);
+            target.BindTexture2D("tintRamp", tintRampTexture.TextureId, TintRampUnit);
     }
 
     void DrawLegacyWater()

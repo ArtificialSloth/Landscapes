@@ -34,6 +34,60 @@ public static class StaticAssetChecks
         SourceHasNoControlCharacters(c);
         IndirectShaderVariant(c);
         SubtreeBoundsStayOutOfTheCoverageGate(c);
+        SamplerUploadWiring(c);
+    }
+
+    /// <summary>
+    /// Every texture this renderer uploads goes through one helper that makes the destination
+    /// texture unit current first.
+    ///
+    /// `LoadOrUpdateTextureFromBgra` reaches GL.BindTexture with no GL.ActiveTexture of its own
+    /// and never restores what it displaced, so the texture it writes stays bound to whatever
+    /// unit happened to be current. An upload written inline in the middle of a binding sequence
+    /// therefore steals a unit from the sampler that was just bound to it - no error, nothing in
+    /// a diff, and a wrong picture that reads as a colour bug rather than a binding one. The
+    /// tint ramp's upload sat one line after the block atlas bind, and the blend band drew the
+    /// ramp as its block texture: several times too bright, and only inside the band, because
+    /// the band is the only place the atlas is sampled.
+    ///
+    /// The rule this pins is the only thing that can catch the fourth upload someone adds.
+    /// </summary>
+    static void SamplerUploadWiring(Check c)
+    {
+        string renderer = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons",
+            "src", "Render", "LodTerrainRenderer.cs"));
+
+        c.Eq(1, Regex.Matches(renderer, @"capi\.Render\.LoadOrUpdateTextureFrom").Count,
+            "the renderer uploads textures from exactly one place");
+
+        int activate = renderer.IndexOf("GL.ActiveTexture(TextureUnit.Texture0 + unit);",
+            StringComparison.Ordinal);
+        int upload = renderer.IndexOf("capi.Render.LoadOrUpdateTextureFromBgra(",
+            StringComparison.Ordinal);
+        c.True(activate >= 0, "that place makes a texture unit current");
+        c.True(upload > activate && upload - activate < 120,
+            "and does so immediately before the upload, not somewhere else in the file");
+
+        // Upload unit and bind unit are the same named constant, in both binding paths. They
+        // were literals when they disagreed, which is exactly why they are not any more.
+        c.True(renderer.Contains("UploadOwnTexture(tints.Ramp, TintRampUnit, ref texture)",
+                StringComparison.Ordinal),
+            "the tint ramp is uploaded onto its own unit");
+        c.Eq(2, Regex.Matches(renderer,
+                @"BindTexture2D\(""tintRamp"", tintRampTexture\.TextureId, TintRampUnit\)").Count,
+            "and bound to the same one by the frame uniforms and by the sampler repair");
+        c.True(renderer.Contains("UploadOwnTexture(seamField.Texels, SeamFieldUnit, ref texture)",
+                StringComparison.Ordinal)
+            && renderer.Contains(
+                "UploadOwnTexture(readinessMask.Texels, ReadinessMaskUnit, ref texture)",
+                StringComparison.Ordinal),
+            "and the seam field and readiness mask go the same way");
+
+        // One version counter, because the ramp is a texture and a texture is not program
+        // state. Three counters plus a method that assigned a field was a guard that never
+        // closed, and the ramp re-uploaded on every frame of every indirect pass.
+        c.Eq(0, Regex.Matches(renderer, @"uploaded(Packed|Indirect)TintVersion").Count,
+            "the ramp has one upload counter, not one per shader program");
     }
 
     /// <summary>
