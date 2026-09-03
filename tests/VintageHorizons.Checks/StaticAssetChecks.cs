@@ -2165,13 +2165,54 @@ public static class StaticAssetChecks
             "the cached draw-distance slider stops at 32,768 in 512-block increments");
         c.True(dialog.Contains("ToString(\"N0\", CultureInfo.InvariantCulture)", StringComparison.Ordinal),
             "the config window displays full block values instead of abbreviated thousands");
-        c.True(dialog.Contains("AddSwitch(OnBlendPipelineChanged", StringComparison.Ordinal)
-            && dialog.Contains("Seam blending and L0 block textures", StringComparison.Ordinal),
-            "the config window exposes the saved blend-pipeline switch");
-        c.True(mod.Contains("public bool BlendPipeline = true", StringComparison.Ordinal)
-            && mod.Contains("config.BlendPipeline = renderer.BlendPipelineEnabled",
+        // Every optional visual feature has to survive a restart, which means it has to exist
+        // at four points at once: the settings value, a config field of the same name, the
+        // write that puts it on disk, and the startup read that puts it back in the renderer.
+        // Miss any one and the window appears to work while the choice quietly resets - which
+        // is exactly what these settings were before they were saved at all.
+        string visuals = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot,
+            "VintageHorizons", "src", "Gui", "LodVisualSettings.cs"));
+        string[] settingNames =
+        {
+            "BlendPipeline", "SeamBand", "BlockTextures", "ClimateTint",
+            "ClimateTintRange", "LeafSeasonColours", "HalfBlockTerrain", "WaterEffects",
+        };
+        foreach (string name in settingNames)
+        {
+            c.True(visuals.Contains(name, StringComparison.Ordinal),
+                $"LodVisualSettings carries {name}");
+            c.True(mod.Contains($"public bool {name} = true", StringComparison.Ordinal)
+                || mod.Contains($"public float {name} = ", StringComparison.Ordinal),
+                $"the config file remembers {name}, defaulting to the established look");
+            c.True(mod.Contains($"config.{name} = v.{name};", StringComparison.Ordinal),
+                $"and WriteVisualSettings puts {name} on disk");
+            c.True(mod.Contains($"{name}: config.{name}", StringComparison.Ordinal)
+                || mod.Contains($"{name}: Math.Max(0f, config.{name})", StringComparison.Ordinal),
+                $"and reads {name} back out of it");
+        }
+        c.True(mod.Contains("ApplyVisualSettings(ConfiguredVisualSettings());",
                 StringComparison.Ordinal),
-            "the blend choice defaults on and is persisted from the renderer request");
+            "the saved visual settings reach the renderer before the first frame");
+        c.True(mod.Contains("WriteVisualSettings(CurrentVisualSettings());",
+                StringComparison.Ordinal),
+            "and SaveConfig writes what the renderer is actually doing, not a stale copy");
+
+        // The window has to offer them, or none of the above is reachable without commands.
+        foreach (string key in new[]
+        {
+            "seam-blending", "climate-tint", "climate-range", "leaf-season",
+            "half-blocks", "water-effects",
+        })
+        {
+            c.True(dialog.Contains($"\"{key}\"", StringComparison.Ordinal),
+                $"the settings window has a row for {key}");
+        }
+        c.True(dialog.Contains("AddSwitch(on => OnVisualChanged(row, on)", StringComparison.Ordinal),
+            "each visual row is a switch bound to its own row rather than a hand-written pair");
+        c.True(dialog.Contains("LodVisualSettings.Performance", StringComparison.Ordinal)
+            && dialog.Contains("LodVisualSettings.Balanced", StringComparison.Ordinal)
+            && dialog.Contains("LodVisualSettings.Quality", StringComparison.Ordinal),
+            "and the three presets are offered");
         c.True(mod.Contains("ChatCommands.Create(\"vhblend\")", StringComparison.Ordinal),
             "the same saved master switch is available as a simple command");
     }

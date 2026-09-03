@@ -36,6 +36,36 @@ public class VintageHorizonsConfig
     public bool BlendPipeline = true;
 
     /// <summary>
+    /// The visual features that cost measurable frame time, each remembered per install.
+    ///
+    /// <para>
+    /// These were session-only switches for their first several builds - a player who turned
+    /// one off had it back on at the next launch, which is the wrong default for the people
+    /// they exist for. They are the settings a machine that cannot afford them needs to be
+    /// able to give up once. `.vhconfig` presents them; the `.vh*` commands still set the same
+    /// values and save through the same path, so the window and the commands cannot disagree.
+    /// </para>
+    /// <para>
+    /// Every one of them defaults ON. Turning any of them off can only remove something the
+    /// renderer would otherwise draw, so a config file written by an older build - which has
+    /// none of these keys - loads as "everything on" and behaves exactly as it did.
+    /// </para>
+    /// </summary>
+    public bool SeamBand = true;
+    public bool BlockTextures = true;
+    public bool ClimateTint = true;
+
+    /// <summary>
+    /// The voxel size past which distant ground stops working out its own biome colour.
+    /// Zero spends it at every LOD level. See <see cref="LodTerrainRenderer.ClimateFadeBlocks"/>.
+    /// </summary>
+    public float ClimateTintRange = 4f;
+
+    public bool LeafSeasonColours = true;
+    public bool HalfBlockTerrain = true;
+    public bool WaterEffects = true;
+
+    /// <summary>
     /// Draw even when another LOD mod is installed and switched on. The escape hatch for
     /// the mods whose own switch we cannot read; see <see cref="OtherLodMods"/>. Read at
     /// startup only, because turning the mod on mid-session is not something the startup
@@ -233,6 +263,11 @@ public class VintageHorizonsModSystem : ModSystem
         // renderer has already resolved the override, so only an absent variable defers here.
         if (Environment.GetEnvironmentVariable("VINTAGEHORIZONS_CHUNK_MASK") == null)
             renderer.ChunkMaskEnabled = config.ChunkMask;
+
+        // What the player last chose to draw. Applied before the first frame, so a machine
+        // that gave a feature up does not pay for it once on the way in - and no re-mesh is
+        // needed here whatever it says, because nothing is resident yet.
+        ApplyVisualSettings(ConfiguredVisualSettings());
 
         // The GPU path someone chose last session, restored in the order the pieces depend
         // on each other: arenas hold the geometry batching draws from, batching provides the
@@ -2063,11 +2098,19 @@ public class VintageHorizonsModSystem : ModSystem
         // Available even while deferring, because these are persisted player settings;
         // they will apply normally after the competing renderer is switched off.
         capi.ChatCommands.Create("vhconfig")
-            .WithDescription("Open the Vintage Horizons detail, draw-distance and blending settings")
-            .HandleWith(_ =>
+            .WithDescription("Open the Vintage Horizons settings window: detail and draw distance, and which optional visual features are drawn")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("tab"))
+            .HandleWith(args =>
             {
+                // `.vhconfig visuals` opens straight to the feature switches. Named rather
+                // than numbered, and it also retargets a window that is already open.
+                int tab = !args.Parsers[0].IsMissing
+                    && ((string)args[0]).StartsWith("vis", StringComparison.OrdinalIgnoreCase)
+                    ? 1 : 0;
+
                 if (configDialog?.IsOpened() == true)
                 {
+                    configDialog.ShowTab(tab);
                     configDialog.Focus();
                     return TextCommandResult.Success("[VintageHorizons] configuration window focused.");
                 }
@@ -2077,11 +2120,9 @@ public class VintageHorizonsModSystem : ModSystem
                     ? LodWorld.GetLevelThresholds()
                     : LodWorld.NormalizeLevelThresholds(config.LodThresholds, config.DetailDistance);
                 int farCap = deferringTo == null ? renderer.FarViewDistanceCap : config.FarViewDistanceCap;
-                bool blendPipeline = deferringTo == null
-                    ? renderer.BlendPipelineEnabled
-                    : config.BlendPipeline;
                 configDialog = new VintageHorizonsConfigDialog(
-                    capi, thresholds, farCap, blendPipeline, ApplyGuiConfig);
+                    capi, thresholds, farCap, CurrentVisualSettings(), ApplyGuiConfig);
+                configDialog.ShowTab(tab);
 
                 return configDialog.TryOpen()
                     ? TextCommandResult.Success("[VintageHorizons] configuration window opened.")
@@ -2215,7 +2256,11 @@ public class VintageHorizonsModSystem : ModSystem
                     if (renderer == null)
                         return TextCommandResult.Success(
                             "[VintageHorizons] no renderer: another LOD mod is drawing.");
-                    if (!args.Parsers[1].IsMissing) renderer.ClimateFieldTint = (bool)args[1];
+                    if (!args.Parsers[1].IsMissing)
+                    {
+                        renderer.ClimateFieldTint = (bool)args[1];
+                        SaveConfig();
+                    }
                     return TextCommandResult.Success(
                         $"[VintageHorizons] climate field "
                         + $"{(renderer.ClimateFieldTint ? "on" : "off")}. "
@@ -2235,7 +2280,10 @@ public class VintageHorizonsModSystem : ModSystem
                         return TextCommandResult.Success(
                             "[VintageHorizons] no renderer: another LOD mod is drawing.");
                     if (!args.Parsers[1].IsMissing)
+                    {
                         renderer.LeafSeasonVariation = (bool)args[1] ? 1f : 0f;
+                        SaveConfig();
+                    }
                     return TextCommandResult.Success(
                         $"[VintageHorizons] leaf season variation "
                         + $"{(renderer.LeafSeasonVariation > 0f ? "on" : "off")}. "
@@ -2257,7 +2305,12 @@ public class VintageHorizonsModSystem : ModSystem
                         return TextCommandResult.Success(
                             "[VintageHorizons] no renderer: another LOD mod is drawing.");
                     if (!args.Parsers[1].IsMissing)
-                        renderer.ClimateFadeBlocks = (bool)args[1] ? 0f : 4f;
+                    {
+                        renderer.ClimateFadeBlocks = (bool)args[1]
+                            ? LodVisualSettings.FullClimateTintRange
+                            : LodVisualSettings.DefaultClimateTintRange;
+                        SaveConfig();
+                    }
                     bool everywhere = renderer.ClimateFadeBlocks <= 0f;
                     return TextCommandResult.Success(
                         "[VintageHorizons] distant ground works out its own climate "
@@ -2416,6 +2469,7 @@ public class VintageHorizonsModSystem : ModSystem
                     case "on":
                     case "off":
                         renderer.BandEnabled = part == "on";
+                        SaveConfig();
                         return TextCommandResult.Success(
                             $"[VintageHorizons] blending {part}. " + renderer.DescribeBlendBand());
 
@@ -2594,6 +2648,7 @@ public class VintageHorizonsModSystem : ModSystem
                     case "on":
                     case "off":
                         renderer.BlockTexturesEnabled = part == "on";
+                        SaveConfig();
                         return TextCommandResult.Success(
                             $"[VintageHorizons] block textures {part}. "
                             + renderer.DescribeBlockTextures());
@@ -3020,6 +3075,7 @@ public class VintageHorizonsModSystem : ModSystem
                                 + "out. Off makes it one flat value at every distance, which is what "
                                 + "let the lake bottom show through where the game's water is solid.");
                         renderer.WaterFresnel = value == "on";
+                        SaveConfig();
                         return TextCommandResult.Success(
                             $"[VintageHorizons] {DescribeWater(renderer)}. Look now.");
 
@@ -3104,6 +3160,7 @@ public class VintageHorizonsModSystem : ModSystem
 
                 renderer.HalfBlockLevels = wanted;
                 renderer.SurfaceHalfBlocksOnly = surfaceOnly;
+                SaveConfig();
                 int queued = renderer.RemeshAll();
 
                 return TextCommandResult.Success(
@@ -3387,22 +3444,96 @@ public class VintageHorizonsModSystem : ModSystem
             });
     }
 
-    void ApplyGuiConfig(int[] thresholds, int farViewDistanceCap, bool blendPipeline)
+    void ApplyGuiConfig(int[] thresholds, int farViewDistanceCap, LodVisualSettings visuals)
     {
         int[] normalized = LodWorld.NormalizeLevelThresholds(thresholds, config.DetailDistance);
         config.LodThresholds = normalized;
         config.DetailDistance = normalized[0];
         config.FarViewDistanceCap = farViewDistanceCap;
-        config.BlendPipeline = blendPipeline;
 
         if (deferringTo == null)
         {
             LodWorld.SetLevelThresholds(normalized);
             renderer.FarViewDistanceCap = farViewDistanceCap;
-            ApplyBlendPipeline(blendPipeline);
+            ApplyVisualSettings(visuals);
+        }
+        else
+        {
+            // No renderer to set, so the file is the only place the choice can live until one
+            // exists. SaveConfig leaves every renderer-derived key alone while deferring, so
+            // writing them here is what makes the window work at all in that state.
+            WriteVisualSettings(visuals);
         }
 
         SaveConfig();
+    }
+
+    /// <summary>The renderer's current visual settings, as the window shows them.</summary>
+    LodVisualSettings CurrentVisualSettings() => deferringTo != null
+        ? ConfiguredVisualSettings()
+        : new LodVisualSettings(
+            BlendPipeline: renderer.BlendPipelineEnabled,
+            SeamBand: renderer.BandEnabled,
+            BlockTextures: renderer.BlockTexturesEnabled,
+            ClimateTint: renderer.ClimateFieldTint,
+            ClimateTintRange: renderer.ClimateFadeBlocks,
+            LeafSeasonColours: renderer.LeafSeasonVariation > 0f,
+            HalfBlockTerrain: renderer.HalfBlockLevels > 0,
+            WaterEffects: renderer.WaterFresnel);
+
+    /// <summary>What the config file says, for the deferring case and for startup.</summary>
+    LodVisualSettings ConfiguredVisualSettings() => new(
+        BlendPipeline: config.BlendPipeline,
+        SeamBand: config.SeamBand,
+        BlockTextures: config.BlockTextures,
+        ClimateTint: config.ClimateTint,
+        ClimateTintRange: Math.Max(0f, config.ClimateTintRange),
+        LeafSeasonColours: config.LeafSeasonColours,
+        HalfBlockTerrain: config.HalfBlockTerrain,
+        WaterEffects: config.WaterEffects);
+
+    void WriteVisualSettings(LodVisualSettings v)
+    {
+        config.BlendPipeline = v.BlendPipeline;
+        config.SeamBand = v.SeamBand;
+        config.BlockTextures = v.BlockTextures;
+        config.ClimateTint = v.ClimateTint;
+        config.ClimateTintRange = v.ClimateTintRange;
+        config.LeafSeasonColours = v.LeafSeasonColours;
+        config.HalfBlockTerrain = v.HalfBlockTerrain;
+        config.WaterEffects = v.WaterEffects;
+    }
+
+    /// <summary>
+    /// Push a whole visual settings value into the renderer, re-meshing once if the terrain's
+    /// SHAPE changed.
+    ///
+    /// <para>
+    /// Only two of these change geometry - the blend pipeline, because a textured quad carries
+    /// a slot instead of a colour, and half-block terrain, because a slab's surface sits half a
+    /// block lower and needs the walls around it. The rest are shader uniforms and take effect
+    /// on the next frame. Re-meshing for those too would stall the client for a second on a
+    /// setting that did not need it.
+    /// </para>
+    /// </summary>
+    void ApplyVisualSettings(LodVisualSettings v)
+    {
+        bool shapeChanged = renderer.HalfBlockLevels > 0 != v.HalfBlockTerrain;
+
+        ApplyBlendPipeline(v.BlendPipeline);
+        renderer.BandEnabled = v.SeamBand;
+        renderer.BlockTexturesEnabled = v.BlockTextures;
+        renderer.ClimateFieldTint = v.ClimateTint;
+        renderer.ClimateFadeBlocks = Math.Max(0f, v.ClimateTintRange);
+        renderer.LeafSeasonVariation = v.LeafSeasonColours ? 1f : 0f;
+        renderer.HalfBlockLevels =
+            v.HalfBlockTerrain ? LodTerrainRenderer.NearHalfBlockLevels : 0;
+        renderer.SurfaceHalfBlocksOnly = true;
+        renderer.WaterFresnel = v.WaterEffects;
+        renderer.WaterGlint = v.WaterEffects ? 1f : 0f;
+        renderer.WaterFoam = v.WaterEffects ? 1f : 0f;
+
+        if (shapeChanged) renderer.RemeshAll();
     }
 
     /// <summary>
@@ -3438,7 +3569,7 @@ public class VintageHorizonsModSystem : ModSystem
             // The request, never the effective state: a mask that failed this session
             // reports itself disabled, and writing that would turn it off permanently.
             config.ChunkMask = renderer.ChunkMaskRequested;
-            config.BlendPipeline = renderer.BlendPipelineEnabled;
+            WriteVisualSettings(CurrentVisualSettings());
 
             // The requested state, never the effective one, for the same reason the mask
             // uses the request: a path that refused to start this session reports itself
