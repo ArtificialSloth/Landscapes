@@ -53,9 +53,11 @@ the plan set out to fix are fixed and human-accepted; what follows is the remain
   24 distinct shares at 1/64 per channel across 29 blocks, so this costs about two dozen slots of
   64 rather than six. Shipped in 0.3.186; the tell would be sparse-grass soil no longer reading
   too blue.
-- **`.vhtint`'s A, B and C' labels no longer describe what draws.** The D lines added in 0.3.182
-  report the field path's own terms and are the ones to trust. The older lines describe the ramp,
-  and C is a single random row draw that cannot be held against an average (G145).
+- **`.vhtint`'s labels were corrected in 0.3.184.** A is now the flat fallback and says whether
+  it is actually what draws; B is the lattice average; C is labelled as the single random season
+  row it is, with a pointer to G145 saying not to hold it against an average. The C' line and the
+  weight switch went with the height ramp. The D lines remain the report of what reaches the
+  screen.
 - **The plan's section 9 acceptance criterion cannot pass as written** - see G145. It should ask
   for the field path against the lattice mean, not against the engine's answer for one block.
 - **The placed-block invalidation defect (G138) is fixed in 0.3.189 and unseen.** Content change
