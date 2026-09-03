@@ -169,6 +169,20 @@ public static class StaticAssetChecks
         c.True(vertex.Contains("#include noise3d.ash", StringComparison.Ordinal),
             "the noise is the engine's own file, not a copy of it");
 
+        // And included EARLY. `vertexwarp.vsh`, which this body also includes, pulls in
+        // noise3d.ash itself, and the registry's include handler is include-once: whichever
+        // comes first is the one that emits, and the second emits nothing. So the noise is
+        // defined at the point of the FIRST include, and every use of valuenoise has to sit
+        // after it - GLSL has no forward declarations. Move this include below the helper, or
+        // below vertexwarp, and the shader stops compiling and distant terrain stops drawing.
+        int noise = vertex.IndexOf("#include noise3d.ash", StringComparison.Ordinal);
+        int helper = vertex.IndexOf("vec3 seasonAt(", StringComparison.Ordinal);
+        int warp = vertex.IndexOf("#include vertexwarp.vsh", StringComparison.Ordinal);
+        c.True(noise >= 0 && helper > noise,
+            "and it is included before the helper that calls valuenoise");
+        c.True(warp < 0 || warp > noise,
+            "and before vertexwarp.vsh, which would otherwise be the one that emits it");
+
         // Sampled at a STABLE world position. The engine passes an absolute one for the same
         // reason; a camera-relative position would make every tree change season as the player
         // walked, which is G47's original symptom in a new place.

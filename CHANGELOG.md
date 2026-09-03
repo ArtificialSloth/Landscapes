@@ -13,6 +13,13 @@ section is recaptured and can receive its texture slot, but the zero neighbour-e
 currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
 remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
 
+## [0.3.190] - 2026-09-03
+
+**Climate learned in the last half-minute of a session is no longer lost on leaving.** Remembered
+climate was written on the same thirty-second cadence as everything else, so quitting discarded
+whatever had been learned since the last write - which is exactly the part of a session where you
+were moving and learning most. It is handed over on the way out now.
+
 ## [0.3.189] - 2026-09-03
 
 **A block placed away from a chunk edge now updates the distant terrain.** Changes reported which
