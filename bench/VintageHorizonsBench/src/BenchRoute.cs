@@ -17,6 +17,14 @@ public class BenchWaypoint
     public float EndYaw;
     public float EndPitch;
 
+    /// <summary>
+    /// Chat commands to run when this waypoint is entered, before its settle window.
+    /// Empty for an ordinary waypoint. Several are separated by ';' and run in order.
+    /// Settling absorbs whatever the command sets in motion - a re-mesh, a table
+    /// upload - so the measured window is the settled state of the new configuration.
+    /// </summary>
+    public string Command = "";
+
     public double XAt(double progress) => Lerp(X, EndX, progress);
     public double YAt(double progress) => Lerp(Y, EndY, progress);
     public double ZAt(double progress) => Lerp(Z, EndZ, progress);
@@ -65,6 +73,18 @@ public class BenchRoute
             string line = rawLine.Trim();
             if (line.Length == 0 || line.StartsWith('#')) continue;
 
+            // An optional trailing "! <command>" turns a waypoint into a configuration
+            // change as well as a viewpoint, so one route can walk a whole A/B matrix in
+            // a single client session. Split off before the arity checks below, which
+            // count positional fields and know nothing about it.
+            string command = "";
+            int bang = line.IndexOf('!');
+            if (bang >= 0)
+            {
+                command = line[(bang + 1)..].Trim();
+                line = line[..bang].Trim();
+            }
+
             string[] parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length < 4)
             {
@@ -99,6 +119,7 @@ public class BenchRoute
                 EndZ = hasTrajectory ? Parse(parts[9]) : z,
                 EndYaw = hasTrajectory ? Deg(parts[10]) : yaw,
                 EndPitch = hasTrajectory ? Deg(parts[11]) : pitch,
+                Command = command,
             });
         }
 

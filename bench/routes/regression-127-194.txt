@@ -1,0 +1,30 @@
+# Where the 0.3.127 -> 0.3.194 frame time went.
+#
+# One viewpoint, held for the whole run, with a configuration change at each waypoint.
+# Every state is measured by the same settle criterion, so the numbers are comparable in
+# a way a human reading an FPS counter between toggles is not.
+#
+# The subtraction is CUMULATIVE and the ORDER MATTERS. `.vhblend off` releases the seam
+# field and stops L0 quads carrying block-texture slots, which supersedes `.vhband off`
+# entirely - so the band is removed first, and the blend delta afterwards is the part the
+# band switch never touched: the per-vertex block table lookups and the three flat
+# varyings they feed.
+#
+#   pwsh -File scripts/bench-windows.ps1 -Label regression-sweep `
+#     -Route bench/routes/regression-127-194.txt `
+#     -Settle 20 -SettleMax 45 -Measure 10 -Laps 1 -WarmupLaps 0 -GpuStats
+#
+# warm1/warm2 carry no command. They are the warm-up: mesh residency, the tint table and
+# the climate field all settle across them, so the first measured state is not paying for
+# a cold start. s6 restores everything and is the drift control - it has to come back to
+# s0 or the deltas between them are contaminated by something that changed on its own.
+
+warm1        512020  190  512010    0   -8
+warm2        512020  190  512010    0   -8
+s0-base      512020  190  512010    0   -8
+s1-noband    512020  190  512010    0   -8  ! .vhband off
+s2-noblend   512020  190  512010    0   -8  ! .vhblend off
+s3-noclimate 512020  190  512010    0   -8  ! .vhtint field off
+s4-noslabs   512020  190  512010    0   -8  ! .vhslabs off
+s5-cutout    512020  190  512010    0   -8  ! .vhcutout on
+s6-restore   512020  190  512010    0   -8  ! .vhband on; .vhblend on; .vhtint field on; .vhslabs surface; .vhcutout off

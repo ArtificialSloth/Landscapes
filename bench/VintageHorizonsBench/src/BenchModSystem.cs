@@ -236,6 +236,8 @@ public class BenchModSystem : ModSystem, IRenderer
                              $"{wp.Y.ToString("0.##", CultureInfo.InvariantCulture)} " +
                              $"={wp.Z.ToString("0.##", CultureInfo.InvariantCulture)}");
 
+        RunWaypointCommands(wp);
+
         phase = Phase.Settling;
         phaseStartedAt = nowSec;
         settleWindow.Clear();
@@ -507,6 +509,54 @@ public class BenchModSystem : ModSystem, IRenderer
         var sb = new StringBuilder(s.Length);
         foreach (char c in s) sb.Append(char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_');
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Applies a waypoint's configuration change, if it carries one.
+    ///
+    /// <para>
+    /// Dispatched here, at the top of the waypoint, so the settle window absorbs whatever
+    /// the command starts - a bounded re-mesh, a table upload - and the measured window
+    /// sees only the settled result. That is what makes a one-session A/B matrix
+    /// trustworthy: every configuration is measured by the same stability criterion as
+    /// every other, instead of by a human watching a counter.
+    /// </para>
+    /// <para>
+    /// A leading '.' is a CLIENT command and has to be dispatched locally.
+    /// <c>SendChatMessage</c> goes to the server, which runs '/' commands and silently
+    /// drops '.' ones - the message leaves, no handler claims it, and the log reads like a
+    /// success. The same trap is documented on the mod's own auto-command hook.
+    /// </para>
+    /// </summary>
+    void RunWaypointCommands(BenchWaypoint wp)
+    {
+        if (wp.Command.Length == 0) return;
+
+        foreach (string raw in wp.Command.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string command = raw.Trim();
+            if (command.Length == 0) continue;
+
+            Mod.Logger.Notification("Bench waypoint '{0}' command: {1}", wp.Name, command);
+
+            if (command.StartsWith('.'))
+            {
+                capi.ChatCommands.ExecuteUnparsed(command, new TextCommandCallingArgs
+                {
+                    Caller = new Caller
+                    {
+                        Player = capi.World.Player,
+                        Pos = capi.World.Player.Entity.Pos.XYZ,
+                        FromChatGroupId = GlobalConstants.GeneralChatGroup,
+                        CallerPrivileges = new[] { "*" },
+                    },
+                }, result => Mod.Logger.Notification(
+                    "Bench command result: {0}", result.StatusMessage));
+                continue;
+            }
+
+            capi.SendChatMessage(command);
+        }
     }
 
     void Finish()

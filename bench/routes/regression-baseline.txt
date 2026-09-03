@@ -1,0 +1,13 @@
+# Plain steady viewpoint, no configuration changes, for measuring a BUILD rather than a
+# switch. Same coordinates and camera as regression-127-194.txt so the two are comparable:
+# this is what an unmodified 0.3.127 or 0.3.194 draws standing in the same place.
+#
+#   pwsh -File scripts/bench-windows.ps1 -Label baseline-0-3-127 `
+#     -Route bench/routes/regression-baseline.txt `
+#     -Settle 20 -SettleMax 40 -Measure 10 -Laps 1 -WarmupLaps 0 -GpuStats -ChunkMask
+
+warm1  512020  190  512010    0   -8
+warm2  512020  190  512010    0   -8
+m1     512020  190  512010    0   -8
+m2     512020  190  512010    0   -8
+m3     512020  190  512010    0   -8
