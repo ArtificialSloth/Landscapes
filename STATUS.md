@@ -2,15 +2,16 @@
 
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
-**Status date:** 2026-09-02
-**Mod version:** `0.3.191`, built, verified, packaged and copy-installed; **not yet seen in game**.
+**Status date:** 2026-09-03
+**Mod version:** `0.3.194`, built, verified, packaged and copy-installed; **not yet seen in game**.
 0.3.183 is **human-tested and accepted** ("Much better, Excellent!") and carries the substance of
 the colour work below. 0.3.185 is **human-tested and accepted** as well, carrying the retired
-height table and remembered climate. 0.3.186 gave every distinct untinted share its own tint slot
-and 0.3.187 restored per-position seasonal variation on distant leaves; both are source-traced and
-harness-tested only.
+height table and remembered climate. 0.3.193 is **human-tested and accepted** on its numbers - the
+owner measured the seasonal variation's frame cost at three settings and chose the cheapest. Six
+builds between them (0.3.186-0.3.192) are source-traced and harness-tested only, and 0.3.194
+changes one default the owner asked for.
 
-**Distant terrain colour is the through-line of Sessions 73-75 and is now substantially closed.**
+**Distant terrain colour is the through-line of Sessions 73-76 and is now substantially closed.**
 Six independent causes were measured and fixed; every one of them was established by measurement
 rather than inspection, and the last two were found only because the instrument to see them was
 built first.
@@ -44,21 +45,39 @@ diagnostic comparing two quantities that both come from that call cancels the er
 exposing it, which `.vhtint` did for four sessions. And **an average cannot be validated against a
 single random draw** (G145), which is how the plan's own acceptance criterion is written.
 
+Session 76's, which is a look the mod never had rather than a defect it carried: **the game picks
+a season map ROW per position**, at a 2-to-6 block scale for leaves, and through the autumn turn
+those sixteen rows run from clearly green to clearly yellow. Distant terrain drew the flat average,
+which contains no yellow at all, so a wood that was visibly turning beside the player stayed one
+green in the distance. Both are now carried - the row where a voxel is still a block, the average
+beyond - using the engine's own noise rather than a transcription of it.
+
 **What is left is bounded and known.** The climate field only reaches as far as the client holds
 map regions - about 1,000 blocks on arrival, growing toward 3,000 as the player explores, against
 8,192 of drawn terrain - because `ClientWorldMap.GetClimate` returns a fixed default beyond them
 rather than failing. Cells with no answer take the nearest one that has, spreading outward, so
 nothing draws an edge where the data stops and it degrades to the previous behaviour when nothing
-is known. Persisting that field so coverage accumulates across sessions is the next step, together
-with retiring the now-redundant height ramp. See `dev/TODO.md` and section 10 of
-`dev/plans/PLAN_DISTANT_TINT_SAMPLING.md`.
+is known. That field is now **persisted** in the mod's own cache keyed on world position, so
+coverage accumulates across sessions instead of relearning from nothing every login - though the
+first working build of it is 0.3.191 and the rejoin test has not been run. The height ramp is gone.
+See `dev/TODO.md` and section 10 of `dev/plans/PLAN_DISTANT_TINT_SAMPLING.md`.
+
+**The seasonal row's frame cost is understood and mostly paid off.** It cost the owner about 40 fps
+at a fixed scene, and the larger half was not arithmetic but REACH: a section holds the same 64x64
+grid at every detail level, so a fade across levels is priced by how many levels it includes rather
+than by the area they cover (G148). His own log read 110 drawn sections as `L0:31 L1:57 L2:9 L3:1
+L4:5 L5:3 L6:4` - level 1 alone larger than level 0 - and the original fade charged 97 of them.
+Confined to level 0 and with half the per-vertex noise removed, owner-measured at 292 fps across
+three levels, 300 at one and 310 with the feature off, with no visible difference between one level
+and three. About 10 fps of residual cost remains at level 0, which is the honest floor of a design
+that fetches a season row per vertex.
 
 Carried forward from 0.3.164-0.3.166: Forest Floor LOD tops corrected, the zero overlap default
 after 0.3.162/0.3.163 fixed the holes the old margin hid, the saved `.vhconfig`/`.vhblend` master
 switch, and the five blend-pipeline lifecycle corrections. One open bug remains from that line: an
 interior recapture can install new runs and retrieve their texture slot but skip mesh/save/mip
-invalidation because a zero edge mask is mistaken for no change. The full fast tier passes 5,964
-assertions. No game run or performance benchmark supports the new visual or performance behavior. The development line
+invalidation because a zero edge mask is mistaken for no change - **closed in 0.3.189**, unseen.
+The full fast tier passes 21,016 assertions. No game run or performance benchmark supports the new visual or performance behavior. The development line
 remains 0.3.x (`0.2.1` is the public released version; 0.4.0 remains a preserved local rollback
 artifact from the GPU-renderer milestone).
 **Active branch:** `codex/seasonal-tint-blend-weight`, branched from `c98c164` on

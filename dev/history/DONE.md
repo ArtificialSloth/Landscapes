@@ -2,6 +2,30 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-03 - Three colour entries closed in 0.3.185-0.3.193
+
+Retired from `dev/TODO.md` at Session 76 close. See `dev/sessions/SESSION_76.md`.
+
+- **The height ramp is gone** (0.3.185). The 96-step ramp built in Session 74 was superseded by
+  the climate field one session later and survived only as the fallback for slots the field
+  cannot finish. Keeping two ways to compute one colour meant both had to stay correct, and it
+  had already cost a defect - the season change would have blended water toward black on the ramp
+  path only. Those slots now draw the engine's own flat answer, which is what every build before
+  the ramp drew and is already the mechanism for a slot with no temperature. The distant colour
+  table settles about seventeen times faster as a result.
+- **The climate field is persisted** (0.3.185, made real in 0.3.191). Coverage accumulates across
+  sessions instead of relearning from about 1,000 blocks of 8,192 every login. Keyed on world
+  cells, independent of sections, so no terrain format change and no re-exploration. Nothing is
+  stored for ground the game never answered for. The rejoin test has not been run; the entry that
+  replaces this one carries that debt.
+- **Turning leaves keep their seasonal spread** (0.3.187, priced and confined in 0.3.192-0.3.193).
+  The shader picks the game's own season map ROW per position using the engine's own
+  `noise3d.ash`, and blends toward the averaged colour as one voxel grows. The open design
+  question - where the fade should sit - was settled by measurement rather than by eye: the reach
+  is a uniform, defaulting to level 0 alone, after the owner measured 292 fps across three levels,
+  300 at one and 310 with the feature off, with no visible difference between one and three. G148
+  records why the wider fade was so much more expensive than it looked.
+
 ## 2026-08-31 - Blend-toggle lifecycle findings corrected in 0.3.166
 
 - Live capture and cache/foreign reclassification now share a master-gated texture-slot resolver.

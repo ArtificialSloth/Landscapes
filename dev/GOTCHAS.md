@@ -2969,3 +2969,35 @@ it fails on the code as shipped in 0.3.185 through 0.3.190.
 **Found:** 2026-09-03, reviewing this session's own work after the owner had already accepted
 0.3.185. Fixed in 0.3.191. See also G42 and G130: a guard that makes a wrong value look like a
 legitimate answer is the shape all three share.
+
+### G148 - A detail level costs what a section costs, so a fade is priced by levels, not by area
+
+**Trigger:** any per-vertex effect faded out across LOD levels - a tint, a noise, a detail term -
+and any sentence of the form "it only applies near the player, so it is cheap".
+
+**Trap:** a section holds the same 64x64 grid at every level. A coarse section is not a smaller
+section; it is the same amount of geometry stretched over more ground. So the cost of including a
+level is roughly the cost of any other level, and what sets the bill is HOW MANY LEVELS the fade
+reaches - not how much of the world they cover, which is the intuition the word "distant" invites.
+
+The near levels are also not the small ones. `.vhtint leaves` faded to zero at 8 blocks per voxel,
+which reads as a tight near-field restriction and is not one: the owner's own log showed 110 drawn
+sections as `L0:31 L1:57 L2:9 L3:1 L4:5 L5:3 L6:4`. Level 1 alone had more sections in view than
+level 0, and the fade was charging 97 of 110 for a variation already down to 0.57 strength by the
+third level. Confining it to level 0 - 31 sections - cost no visible fidelity, because level 0 is
+where one voxel is one block and the effect is drawn at the scale vanilla draws it anyway.
+
+Two corollaries earned the hard way in the same session. Skipping the levels BEYOND the fade
+(L3-L6) sounded like the big win and was 13 sections, 12%; the cheap end of a level distribution
+is where the sections are not. And when a real 17 fps improvement did not visibly move the frame
+counter, "I cannot see it" got treated as "it is not there", which sent the next change chasing
+the wrong cause.
+
+**Do:** read the drawn-level census before pricing anything that fades across levels - the
+periodic report prints it as `selected [L0:.. L1:.. ..]`. Express the reach as a uniform the owner
+can move at runtime rather than a constant, so the look and the price can be A/B'd in place at one
+scene. And when a change's predicted effect is near the noise floor of the instrument, measure it
+against a state that isolates it rather than concluding from a counter that did not move.
+
+**Found:** 2026-09-03, after a 40 fps regression from 0.3.187. Fixed in 0.3.192 and 0.3.193.
+See also G47, which is the reason the fade exists at all.

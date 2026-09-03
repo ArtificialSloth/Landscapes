@@ -521,8 +521,16 @@ public class LodTerrainRenderer : IRenderer
     /// per-block variation was helping to disguise a mismatch that is now fixed at source.
     /// Once the colour itself is right, the same amount of speckle reads as noise rather
     /// than as texture.
+    ///
+    /// And back to 0.15 on the owner's call, 2026-09-03, for a reason that reverses that one
+    /// rather than repeating it. What made 0.15 read as noise was that it was the ONLY
+    /// variation cached ground had: one flat colour per block type across a whole chunk, with
+    /// speckle scattered over it. Distant terrain now carries the game's own per-position
+    /// seasonal row (0.3.187, confined to level 0 in 0.3.193), so a single chunk holds real
+    /// colour variety before this term is added at all - and against that, the same amount
+    /// reads as texture again. The number is unchanged; what it sits on is not.
     /// </summary>
-    public float BandSpeckle { get; set; } = 0.08f;
+    public float BandSpeckle { get; set; } = 0.15f;
 
     /// <summary>
     /// How close to the camera cached terrain stops being drawn, in blocks, while the mask is

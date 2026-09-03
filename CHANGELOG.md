@@ -13,6 +13,15 @@ section is recaptured and can receive its texture slot, but the zero neighbour-e
 currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
 remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
 
+## [0.3.194] - 2026-09-03
+
+**Seam speckle returns to 0.15.** The per-block brightness variation at the seam was reduced to
+0.08 on 2026-08-31, because at the time it was the only variation cached ground had - one flat
+colour per block type across a whole chunk - and against that it read as scattered noise rather
+than as texture. Distant terrain now carries the game's own per-position seasonal colour, so a
+single chunk holds real colour variety before any speckle is added, and the owner reports the
+original amount reading as texture again. The number is what it was; what it sits on is not.
+
 ## [0.3.193] - 2026-09-03
 
 **Distant forests still turn unevenly, at about a third of the price.** The per-position seasonal

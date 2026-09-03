@@ -2,20 +2,12 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Distant terrain colour: what is left after Session 75
+## Distant terrain colour: what is left after Session 76
 
-Sessions 73-75, branch `codex/seasonal-tint-blend-weight`, committed at `40d8e46`. The four causes
+Sessions 73-76, branch `codex/seasonal-tint-blend-weight`, committed through `f8d22f7`. The four causes
 the plan set out to fix are fixed and human-accepted; what follows is the remainder. Read
-`dev/sessions/SESSION_75.md` and `dev/plans/PLAN_DISTANT_TINT_SAMPLING.md` before touching this.
+`dev/sessions/SESSION_76.md` and `dev/plans/PLAN_DISTANT_TINT_SAMPLING.md` before touching this.
 
-- **The height ramp is now dead weight and should go.** The climate field supersedes it and is
-  accepted, but the ramp survives as the fallback for slots the field cannot finish - no paged
-  climate map, or the tropical season weight this mod does not reproduce. Keeping two parallel ways
-  to compute the same colour means both must stay correct: it already cost a defect this session,
-  when the season change would have blended water toward black on the ramp path only. Those slots
-  need some answer; holding the engine's own flat, which is already the mechanism for a slot with
-  no temperature, is simpler than a 96-step ramp. Removing it takes out a texture, a code path and
-  a permanent "which one drew this?" question.
 - **Remembered climate was inert from 0.3.185 to 0.3.190 and is fixed in 0.3.191, unseen.** The
   handle to the cache writer was taken in `StartClientSide`, but the pipeline builds it in `Open`
   when a world is joined, so it was always null and nothing crossed the disk in either direction.
@@ -23,33 +15,36 @@ the plan set out to fix are fixed and human-accepted; what follows is the remain
   0.3.185 was about behaviour that was really there - just not the durable part. See G147; the
   same null was also masking a crash on world leave. **The tell is now testable: explore, quit,
   rejoin, and `.vhclimate` should report remembered cells before you have gone anywhere.**
-- **The climate field is relearned every session and reaches about 1,000-3,000 blocks of 8,192.**
-  Storing what it learns in the mod's own cache would make coverage accumulate permanently as the
-  player explores, which is the step that eventually gets the whole horizon right. No terrain
-  format change and no re-exploration: the field is keyed on world cells, independent of sections.
-- **Turning leaves lose their seasonal spread.** Vanilla picks a season map ROW per position,
-  and for LEAVES that noise runs at a 2-to-6 block scale where ground uses 12-to-24 - tree
-  sized. During the autumn turn the sixteen rows of `birchtint.png` span (175,224,16), clearly
-  green, to (177,156,42), clearly yellow, so vanilla shows a mix of turned and untinted trees
-  while distant terrain draws the flat average, which contains no yellow at all. Owner-reported
-  and measured 2026-09-02; feasibility investigated and accepted onto the list, not started.
+- **Distant leaves turn unevenly again, and the design question it raised is answered.** Built in
+  0.3.187: the shader picks the game's own season map ROW per position using the engine's own
+  `noise3d.ash`, and blends toward the averaged colour as one voxel grows, because G47's reasoning
+  holds once a voxel is a neighbourhood. What the entry could not decide in advance was where that
+  fade should sit; it is now settled by measurement rather than by eye. See G148.
 
-  Feasible, and most of it exists. The season maps are seventeen tables of 128x16, 136 KiB in
-  total, and `LodClimateMapPages` already pages the far larger climate maps and was verified
-  exact against the source image. The noise is the ENGINE'S OWN: `lodterrainbody.fsh` already
-  `#include`s `noise3d.ash` and already calls `valuenoise`, so this is a literal reuse rather
-  than a transcription - which matters more than usual given G144. What is new is a per-slot
-  "this is leaves" flag to choose the tree-scale noise, and moving the row choice out of
-  `LodSeasonColor`'s flat average into the shader.
+  The reach is `LeafSeasonFadeBlocks`, a uniform, defaulting to 2 - level 0 alone. `.vhtint
+  leafwide on` restores the old fade to 8 blocks so the two can be compared in place at one scene.
+  Owner-measured: **292 fps across three levels, 300 at one, 310 with the feature off**, against
+  315 before the feature existed, with **no visible difference between one level and three**.
 
-  The design question, which is not a coding one: **G47's reasoning still holds at distance.**
-  A distant pixel covers many blocks and wants the mean; a tree several pixels across wants its
-  own row. So this needs to fade toward the average with distance the way block-texture detail
-  already does, and where and how fast is a judgement call for the owner's eye. Two things it
-  will NOT do: match vanilla tree-for-tree beyond level 0, where one voxel is many blocks; and
-  reproduce variation WITHIN one canopy, because merged leaf faces sample only at their corners.
-  Distinct trees are separated by air and so keep their own noise, which is the part that
-  matters - reasoned from the mesher rather than measured.
+  Two things it still will not do, both reasoned from the mesher rather than measured: match
+  vanilla tree-for-tree beyond level 0, where one voxel is many blocks; and reproduce variation
+  WITHIN one canopy, because merged leaf faces sample only at their corners. Distinct trees are
+  separated by air and keep their own noise, which is the part that matters.
+
+- **About 10 fps at level 0 is the seasonal row's residual cost, and nobody has attacked it.**
+  That is the floor of a design that fetches a season row per vertex: two value noises and a
+  scattered texture fetch into a 136 KiB paged map, on every vertex of every level-0 section. The
+  only obvious way to remove it is to bake the row into the mesh at build time - the noise is a
+  pure function of world position, so it is a per-vertex constant being recomputed every frame -
+  but the season moves, so a baked row trades frame cost for a mesh rebuild whenever it does. Not
+  obviously worth it at 10 fps. Do not start this without first re-reading G148: the last two
+  attempts to price this feature both guessed wrong about where its cost was.
+
+- **Five fps sit between "feature off" (310) and the pre-feature baseline (315), unexplained.**
+  Small enough to be scene variance, and the owner's two readings were minutes apart rather than
+  back to back. It is also where 0.3.186 through 0.3.191 sit. Worth isolating only if it grows or
+  if it bothers the owner; the way to do it is `.vhtint leaves off` on 0.3.185 against the same on
+  0.3.194 at one scene.
 
 - **Slot sharing is fixed but unseen.** The key was the MEAN of the share's three channels
   rounded to eighths, which collapsed the base game's 29 top-soil blocks onto six shares and lent
