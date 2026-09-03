@@ -2213,6 +2213,25 @@ public static class StaticAssetChecks
             && dialog.Contains("LodVisualSettings.Balanced", StringComparison.Ordinal)
             && dialog.Contains("LodVisualSettings.Quality", StringComparison.Ordinal),
             "and the three presets are offered");
+
+        // One page, and the explanations live on hover. Printing them under the titles was
+        // tried and does not fit: a medium-weight title is taller than the box it is given, so
+        // every row overran the two lines beneath it and the window read as a wall.
+        c.True(!dialog.Contains("AddHorizontalTabs", StringComparison.Ordinal)
+            && !dialog.Contains("activeTab", StringComparison.Ordinal),
+            "the settings window is one page rather than tabs");
+        c.True(dialog.Contains("composer.AddHoverText(row.Tip", StringComparison.Ordinal),
+            "and each feature explains itself on hover");
+        c.True(dialog.Contains("AddDropDown(PresetCodes, PresetNames", StringComparison.Ordinal),
+            "the presets are a drop-down carrying the current combination as its selection");
+
+        // Far biome colour is the far half of ONE shader threshold, so it cannot be on with
+        // the near half off. Both directions of that are enforced where the switch is written,
+        // and getting it wrong shows up as a switch that will not stay where it is put.
+        c.True(dialog.Contains("ClimateTint = on || v.ClimateTint", StringComparison.Ordinal),
+            "turning far biome colour on turns the close half on with it");
+        c.True(dialog.Contains("? v.ClimateTintRange", StringComparison.Ordinal),
+            "and turning the close half off drops the far half back to the near range");
         c.True(mod.Contains("ChatCommands.Create(\"vhblend\")", StringComparison.Ordinal),
             "the same saved master switch is available as a simple command");
     }

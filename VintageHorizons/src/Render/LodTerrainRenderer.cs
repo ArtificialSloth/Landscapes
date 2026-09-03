@@ -1614,7 +1614,7 @@ public class LodTerrainRenderer : IRenderer
     /// climatewide`.
     /// </para>
     /// </summary>
-    public float ClimateFadeBlocks { get; set; } = 4f;
+    public float ClimateFadeBlocks { get; set; } = LodVisualSettings.CloseClimateTintRange;
 
     /// <summary>
     /// Hand every patch learned since the last call to the storage worker. Nothing here touches

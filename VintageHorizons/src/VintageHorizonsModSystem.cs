@@ -59,7 +59,7 @@ public class VintageHorizonsConfig
     /// The voxel size past which distant ground stops working out its own biome colour.
     /// Zero spends it at every LOD level. See <see cref="LodTerrainRenderer.ClimateFadeBlocks"/>.
     /// </summary>
-    public float ClimateTintRange = 4f;
+    public float ClimateTintRange = LodVisualSettings.CloseClimateTintRange;
 
     public bool LeafSeasonColours = true;
     public bool HalfBlockTerrain = true;
@@ -2099,18 +2099,10 @@ public class VintageHorizonsModSystem : ModSystem
         // they will apply normally after the competing renderer is switched off.
         capi.ChatCommands.Create("vhconfig")
             .WithDescription("Open the Vintage Horizons settings window: detail and draw distance, and which optional visual features are drawn")
-            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("tab"))
-            .HandleWith(args =>
+            .HandleWith(_ =>
             {
-                // `.vhconfig visuals` opens straight to the feature switches. Named rather
-                // than numbered, and it also retargets a window that is already open.
-                int tab = !args.Parsers[0].IsMissing
-                    && ((string)args[0]).StartsWith("vis", StringComparison.OrdinalIgnoreCase)
-                    ? 1 : 0;
-
                 if (configDialog?.IsOpened() == true)
                 {
-                    configDialog.ShowTab(tab);
                     configDialog.Focus();
                     return TextCommandResult.Success("[VintageHorizons] configuration window focused.");
                 }
@@ -2122,7 +2114,6 @@ public class VintageHorizonsModSystem : ModSystem
                 int farCap = deferringTo == null ? renderer.FarViewDistanceCap : config.FarViewDistanceCap;
                 configDialog = new VintageHorizonsConfigDialog(
                     capi, thresholds, farCap, CurrentVisualSettings(), ApplyGuiConfig);
-                configDialog.ShowTab(tab);
 
                 return configDialog.TryOpen()
                     ? TextCommandResult.Success("[VintageHorizons] configuration window opened.")
@@ -2308,7 +2299,7 @@ public class VintageHorizonsModSystem : ModSystem
                     {
                         renderer.ClimateFadeBlocks = (bool)args[1]
                             ? LodVisualSettings.FullClimateTintRange
-                            : LodVisualSettings.DefaultClimateTintRange;
+                            : LodVisualSettings.CloseClimateTintRange;
                         SaveConfig();
                     }
                     bool everywhere = renderer.ClimateFadeBlocks <= 0f;

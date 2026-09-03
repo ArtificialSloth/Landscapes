@@ -25,28 +25,42 @@ internal readonly record struct LodVisualSettings(
     bool HalfBlockTerrain,
     bool WaterEffects)
 {
-    /// <summary>Everything on: what the renderer draws with no setting touched.</summary>
+    /// <summary>
+    /// What a fresh install draws, and what the Defaults button restores.
+    ///
+    /// Everything except the FAR half of the biome colour, which is off because it is the most
+    /// expensive single thing here and the whole point of the 0.3.195 work was to stop paying
+    /// for it by default. Quality turns it on.
+    /// </summary>
     public static LodVisualSettings Default => new(
         BlendPipeline: true,
         SeamBand: true,
         BlockTextures: true,
         ClimateTint: true,
-        ClimateTintRange: DefaultClimateTintRange,
+        ClimateTintRange: CloseClimateTintRange,
         LeafSeasonColours: true,
         HalfBlockTerrain: true,
         WaterEffects: true);
 
     /// <summary>
-    /// Distant biome colour out to four blocks per voxel - LOD levels 0 to 2.
+    /// Biome colour on level 0 alone - one voxel, one block. The window calls this "Close
+    /// Biome Colors" and it is what <see cref="ClimateTint"/> buys on its own.
     ///
-    /// A section costs the same per vertex whatever level it holds, so what sets the bill is
-    /// how many LEVELS pay rather than how much area they cover. Past this the two colours
-    /// being chosen between have usually already converged.
+    /// The units are blocks per voxel, and the level is what actually matters: a section costs
+    /// the same per vertex whatever level it holds, so the bill is set by how many LEVELS pay
+    /// rather than by how much area they cover.
     /// </summary>
-    public const float DefaultClimateTintRange = 4f;
+    public const float CloseClimateTintRange = 1f;
 
-    /// <summary>Every level works out its own biome colour. The 0.3.179-0.3.194 behaviour.</summary>
+    /// <summary>
+    /// Every level works out its own biome colour - "Far Biome Colors", L1 to L6 on top of L0.
+    /// Zero means the fade never applies. This is the 0.3.179-0.3.194 behaviour, and it is the
+    /// single most expensive thing the renderer can be asked to do.
+    /// </summary>
     public const float FullClimateTintRange = 0f;
+
+    /// <summary>Whether the far levels are included, which is what the window's switch shows.</summary>
+    public bool FarBiomeColours => ClimateTint && ClimateTintRange <= 0f;
 
     /// <summary>
     /// Nothing optional drawn. The floor for a machine that cannot afford any of it, and the
@@ -57,7 +71,7 @@ internal readonly record struct LodVisualSettings(
         SeamBand: false,
         BlockTextures: false,
         ClimateTint: false,
-        ClimateTintRange: DefaultClimateTintRange,
+        ClimateTintRange: CloseClimateTintRange,
         LeafSeasonColours: false,
         HalfBlockTerrain: false,
         WaterEffects: false);
@@ -75,7 +89,7 @@ internal readonly record struct LodVisualSettings(
         SeamBand: true,
         BlockTextures: false,
         ClimateTint: true,
-        ClimateTintRange: DefaultClimateTintRange,
+        ClimateTintRange: CloseClimateTintRange,
         LeafSeasonColours: false,
         HalfBlockTerrain: true,
         WaterEffects: true);
