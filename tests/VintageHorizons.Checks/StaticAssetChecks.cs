@@ -175,6 +175,13 @@ public static class StaticAssetChecks
     /// any of them puts distant leaves in a different season from the ones beside them with
     /// nothing to say so, which is G144's shape.
     /// </summary>
+    /// <summary>
+    /// `coarse` from lodterrainbody.vsh: 0 where the variation is drawn in full, 1 where it is
+    /// gone. Mirrored so the reach can be asserted at each level without a running GPU.
+    /// </summary>
+    static float LeafSeasonReach(float columnBlocks, float fadeBlocks) =>
+        Math.Clamp((columnBlocks - 1f) / Math.Max(fadeBlocks - 1f, 1f), 0f, 1f);
+
     static void SeasonRowWiring(Check c)
     {
         string vertex = ShaderBody("vsh");
@@ -219,11 +226,27 @@ public static class StaticAssetChecks
                     "(valuenoise(p / 24.0) + valuenoise(p / 12.0) - 0.55) * 1.25",
                     StringComparison.Ordinal),
                 "and the other scales for everything else");
-            c.True(engine.Contains("clamp(seasonRel + b/40, 0.01, 0.99)", StringComparison.Ordinal)
-                && vertex.Contains("clamp(seasonRel + b / 40.0, 0.01, 0.99)",
-                    StringComparison.Ordinal),
-                "and both jitter the column by the same amount");
+            c.True(engine.Contains("clamp(seasonRel + b/40, 0.01, 0.99)", StringComparison.Ordinal),
+                "the engine still jitters the season column by b/40, b being 0..2");
         }
+
+        // The column jitter is deliberately NOT reproduced per vertex - it costs two of the four
+        // value noises and buys a dither of about three columns in a hundred and twenty eight,
+        // which is what made this the largest per-frame cost in the vertex shader. What matters
+        // is that the constant standing in for it is the MEAN, and that it is the same mean
+        // LodSeasonColor centres its average on: this colour and that one are mixed together, so
+        // a disagreement here would put the two ends of the blend at different points in the
+        // year and the terrain's colour would depend on how coarse its voxels were.
+        c.True(vertex.Contains("const float MEAN_COLUMN_JITTER = 1.0 / 40.0;",
+                StringComparison.Ordinal),
+            "the shader takes the column at the jitter's mean");
+        c.True(vertex.Contains("clamp(seasonRel + MEAN_COLUMN_JITTER, 0.01, 0.99)",
+                StringComparison.Ordinal),
+            "and applies it where the engine applies b/40");
+        c.Eq(LodSeasonColor.MaxColumnJitter / 2f, 1f / 40f,
+            "and that mean is the centre of the range LodSeasonColor integrates over");
+        c.False(vertex.Contains("float b = valuenoise(p)", StringComparison.Ordinal),
+            "so the two noises only the jitter needed are not evaluated per vertex");
 
         // The engine's own noise, included rather than transcribed.
         c.True(vertex.Contains("#include noise3d.ash", StringComparison.Ordinal),
@@ -255,9 +278,51 @@ public static class StaticAssetChecks
 
         // Faded by the VOXEL SIZE rather than by distance: the variation is finer than a coarse
         // voxel can represent, and that is what G47 is actually about.
-        c.True(vertex.Contains("float coarse = clamp((columnBlocks - 1.0) / 7.0, 0.0, 1.0);",
+        c.True(vertex.Contains("uniform float leafSeasonFadeBlocks;", StringComparison.Ordinal),
+            "how far out the variation is paid for is a uniform, not a constant");
+        c.True(vertex.Contains("float coarse = clamp((columnBlocks - 1.0)",
+                StringComparison.Ordinal)
+            && vertex.Contains("/ max(leafSeasonFadeBlocks - 1.0, 1.0), 0.0, 1.0);",
                 StringComparison.Ordinal),
-            "the variation fades out as one voxel grows past a block or two");
+            "and the fade is expressed in terms of it");
+
+        // The default confines it to level 0. This is the feature's price: a section pays per
+        // vertex and holds the same grid at every level, so the bill scales with how many
+        // LEVELS are in, and the near levels are not the small ones - a measured view drew 31
+        // sections at level 0 and 57 at level 1. A default of 8 charged three levels for a
+        // variation already at 0.57 strength by the third.
+        string rend = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons",
+            "src", "Render", "LodTerrainRenderer.cs"));
+        c.True(rend.Contains("public float LeafSeasonFadeBlocks { get; set; } = 2f;",
+                StringComparison.Ordinal),
+            "level 0 alone is the default reach");
+        c.True(rend.Contains(
+                "prog.Uniform(\"leafSeasonFadeBlocks\", Math.Max(2f, LeafSeasonFadeBlocks));",
+                StringComparison.Ordinal),
+            "and it is uploaded, floored at the level-0-only value");
+
+        // The arithmetic itself, at the two settings that have a name.
+        c.Eq(0f, LeafSeasonReach(1f, 2f), "at level 0 the variation is full");
+        c.Eq(1f, LeafSeasonReach(2f, 2f), "and level 1 pays nothing for it by default");
+        c.Eq(1f, LeafSeasonReach(4f, 2f), "nor level 2");
+        c.Eq(0f, LeafSeasonReach(1f, 8f), "widened, level 0 is still full");
+        c.True(LeafSeasonReach(2f, 8f) < 0.2f, "level 1 carries most of it");
+        c.True(LeafSeasonReach(4f, 8f) < 0.5f, "level 2 about half");
+        c.Eq(1f, LeafSeasonReach(8f, 8f), "and it is gone by 8 blocks per voxel either way");
+
+        // And a vertex that would blend NONE of the row does not compute it. The fade reaches
+        // zero at eight blocks per voxel, so every coarse section was evaluating four value
+        // noises and multiplying the result by zero; outside the record path columnBlocks is a
+        // uniform, which makes that an entire draw call's worth of wasted vertex work.
+        int decided = vertex.IndexOf("float amount = leafSeasonVariation * (1.0 - coarse);",
+            StringComparison.Ordinal);
+        int branch = vertex.IndexOf("if (seasonPage < 255 && amount > 0.0)",
+            StringComparison.Ordinal);
+        int call = vertex.IndexOf("seasonAt(seasonPage, terrainPos, leaves)",
+            StringComparison.Ordinal);
+        c.True(decided > 0, "the blend amount is computed");
+        c.True(branch > decided, "before the branch that can skip the noise");
+        c.True(call > branch, "and the noise is only reached through it");
     }
 
     /// <summary>

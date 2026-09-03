@@ -173,6 +173,17 @@ uniform sampler2D climateMaps;
 uniform sampler2D seasonMaps;
 uniform float seasonRel;
 uniform float leafSeasonVariation;
+
+// The voxel size at which the per-position seasonal variation reaches zero, in blocks.
+//
+// It is a cost dial as much as a look one. Every section that draws any of the variation pays
+// two value noises and a scattered texture fetch PER VERTEX, and sections are the same grid at
+// every level - so what decides the bill is how many levels are inside this number, not how
+// much area they cover. In a measured view of 110 drawn sections the split was L0:31 L1:57
+// L2:9 L3-L6:13: fading out at 8 blocks bought in 97 of them, and L1 alone was more than L0.
+// At 2 only level 0 carries it, where one voxel is one block and the noise means exactly what
+// it means in vanilla.
+uniform float leafSeasonFadeBlocks;
 uniform int climateFieldEnabled;
 uniform int climateMinCellX;
 uniform int climateMinCellZ;
@@ -202,16 +213,34 @@ vec2 climateCell(int cellX, int cellZ)
 //            (valuenoise(p/24) + valuenoise(p/12) - 0.55) * 1.25 the row, for everything else
 //   column = clamp(seasonRel + b/40, 0.01, 0.99)
 //
+// The ROW is reproduced per vertex. The COLUMN JITTER is not, and that is the whole difference
+// between this costing two value noises and four.
+//
+// They are not equally worth their price. The row is a choice between sixteen colours that
+// during the autumn turn run from clearly green to clearly yellow - it is what makes a wood
+// turn unevenly, and it is the variation that is visible at LOD range. The jitter moves the
+// year by at most 0.05 and on average 0.025: about three columns of one hundred and twenty
+// eight, a dither so fine that `tint` is a smoothly interpolated varying and the quad it is
+// interpolated across is usually wider than the noise that produced it.
+//
+// Taking the column at that MEAN also fixes something the per-vertex version got slightly
+// wrong. This colour is mixed with the slot's flat one, and LodSeasonColor builds that flat
+// colour by integrating the jitter with triangular weights centred on exactly this value. The
+// two colours being blended now sit at the same point in the year instead of drifting up to
+// three columns apart depending on the vertex.
+//
 // Nearest on both axes: a row is a choice, not a gradient, and interpolating between two rows
 // would draw a colour the map does not contain.
+const float MEAN_COLUMN_JITTER = 1.0 / 40.0;   // b averages 1.0 of its 0..2 range
+
 vec3 seasonAt(int page, vec3 p, bool leaves)
 {
-    float b = valuenoise(p) + valuenoise(p / 2.0);
     float rowNoise = leaves
         ? (valuenoise(p / 6.0) + valuenoise(p / 2.0) - 0.55) * 1.25
         : (valuenoise(p / 24.0) + valuenoise(p / 12.0) - 0.55) * 1.25;
 
-    float rel = clamp(seasonRel + b / 40.0, 0.01, 0.99);
+    // Depends on uniforms alone, so it costs nothing per vertex.
+    float rel = clamp(seasonRel + MEAN_COLUMN_JITTER, 0.01, 0.99);
     int column = clamp(int(rel * 128.0), 0, 127);
     int row = clamp(int(rowNoise * 16.0), 0, 15);
     return texelFetch(seasonMaps, ivec2(column, page * 16 + row), 0).rgb;
@@ -452,11 +481,18 @@ void main()
         // represent, which is G47's reasoning stated in the units that actually govern it.
         vec4 pageRow = texelFetch(slotTable, ivec2(slot, 2), 0);
         int seasonPage = int(pageRow.g * 255.0 + 0.5);
-        if (seasonPage < 255 && leafSeasonVariation > 0.0)
+
+        // `amount` is decided BEFORE the branch so that a vertex which would blend none of the
+        // row can skip computing it. It was inside, so from eight blocks per voxel upward the
+        // noise was evaluated in full and then multiplied by zero - and columnBlocks is a
+        // uniform outside the record path, which makes that whole draw call wasted work rather
+        // than a scattering of wasted lanes.
+        float coarse = clamp((columnBlocks - 1.0)
+            / max(leafSeasonFadeBlocks - 1.0, 1.0), 0.0, 1.0);
+        float amount = leafSeasonVariation * (1.0 - coarse);
+        if (seasonPage < 255 && amount > 0.0)
         {
             bool leaves = pageRow.b > 0.5 / 255.0;
-            float coarse = clamp((columnBlocks - 1.0) / 7.0, 0.0, 1.0);
-            float amount = leafSeasonVariation * (1.0 - coarse);
             season = mix(season, seasonAt(seasonPage, terrainPos, leaves), amount);
         }
 

@@ -1556,6 +1556,23 @@ public class LodTerrainRenderer : IRenderer
     /// voxel's own size and this scales the near end of that. 1 is vanilla's full spread.
     /// </summary>
     public float LeafSeasonVariation { get; set; } = 1f;
+
+    /// <summary>
+    /// The voxel size, in blocks, at which that variation has faded to nothing. 2 confines it to
+    /// level 0; 8 fades it out across levels 0 to 2.
+    ///
+    /// This is the feature's price, not a look setting with a cost attached. A section pays for
+    /// the variation per vertex, and a section is the same 64x64 grid whatever level it holds,
+    /// so the bill scales with how many LEVELS are included - and the near levels are not the
+    /// small ones. A measured view drew 31 sections at level 0 and 57 at level 1. Fading out at
+    /// 8 blocks therefore charged three levels and 97 of 110 drawn sections for a variation that
+    /// is already at 0.57 strength by the third of them.
+    ///
+    /// Level 0 is where it is worth paying for: one voxel is one block, so the 2-to-6 block leaf
+    /// noise is reproduced at the scale vanilla draws it, beside the vanilla trees it has to
+    /// match. Defaults to 2 for that reason; `.vhtint leafwide on` restores the wider fade.
+    /// </summary>
+    public float LeafSeasonFadeBlocks { get; set; } = 2f;
     LoadedTexture? slotTableTexture;
 
     /// <summary>
@@ -5473,6 +5490,7 @@ public class LodTerrainRenderer : IRenderer
             prog.Uniform("seasonRel", tints.SeasonRel);
             prog.Uniform("leafSeasonVariation",
                 seasonMapTexture != null ? Math.Clamp(LeafSeasonVariation, 0f, 1f) : 0f);
+            prog.Uniform("leafSeasonFadeBlocks", Math.Max(2f, LeafSeasonFadeBlocks));
             // Two integer scalars, never the Vec2i overload, which reaches glUniform2f. See G42.
             prog.Uniform("climateMinCellX", climateField.MinCellX);
             prog.Uniform("climateMinCellZ", climateField.MinCellZ);

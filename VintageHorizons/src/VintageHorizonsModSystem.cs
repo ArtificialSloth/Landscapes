@@ -2200,6 +2200,7 @@ public class VintageHorizonsModSystem : ModSystem
                 + "own answer for the same block. Aim at a block, or name one, or stand on it. "
                 + "'.vhtint field on|off' switches per-area distant climate. "
                 + "'.vhtint leaves on|off' switches per-tree seasonal variation. "
+                + "'.vhtint leafwide on|off' spends it out to level 2 instead of level 0. "
                 + "Written to the client log, which is the only copy long enough to read.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("blockCode"),
                       capi.ChatCommands.Parsers.OptionalBool("on"))
@@ -2244,6 +2245,33 @@ public class VintageHorizonsModSystem : ModSystem
                         + "a block or two, because below that the variation is finer than the "
                         + "terrain can carry. Off draws the average of all sixteen rows, which "
                         + "is what every build before this one did.");
+                }
+
+                // How far out that variation is paid for. Separate from whether it is on at all
+                // because they are different questions: one is whether a forest turning
+                // unevenly looks better, the other is how many LOD levels that is worth. A
+                // section costs the same per vertex whatever level it holds, and the near
+                // levels are not the small ones - so this switch is where nearly all of the
+                // feature's frame cost lives.
+                if (!args.Parsers[0].IsMissing
+                    && ((string)args[0]).Equals("leafwide", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (renderer == null)
+                        return TextCommandResult.Success(
+                            "[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    if (!args.Parsers[1].IsMissing)
+                        renderer.LeafSeasonFadeBlocks = (bool)args[1] ? 8f : 2f;
+                    bool wide = renderer.LeafSeasonFadeBlocks > 2f;
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] leaf season variation reaches "
+                        + (wide ? "level 2" : "level 0 only")
+                        + $" (zero at {renderer.LeafSeasonFadeBlocks:0} blocks per voxel). "
+                        + "Off is level 0 alone, where one voxel is one block and the variation "
+                        + "is drawn at the scale vanilla draws it, next to the vanilla trees it "
+                        + "has to match. On spends it across levels 0 to 2 as well, which in a "
+                        + "measured view meant 97 of 110 drawn sections paying for it instead "
+                        + "of 31 - level 1 alone had more sections in view than level 0. "
+                        + "Needs .vhtint leaves on to show at all.");
                 }
 
                 // Aim first, feet second. A player comparing cached ground against the game's

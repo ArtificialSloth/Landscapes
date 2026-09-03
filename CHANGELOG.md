@@ -13,6 +13,37 @@ section is recaptured and can receive its texture slot, but the zero neighbour-e
 currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
 remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
 
+## [0.3.193] - 2026-09-03
+
+**Distant forests still turn unevenly, at about a third of the price.** The per-position seasonal
+variation added in 0.3.187 cost about 40 frames a second in the owner's test scene, and most of
+that was being spent where it could not be seen. The variation was drawn across the three nearest
+detail levels, fading out only once one cached voxel covered eight blocks. But a cached area holds
+the same grid at every level - a coarse one costs the same to draw, it simply covers more ground -
+so the bill is set by how many levels are included, and the nearer levels are not the smaller
+ones. In a measured view of 110 drawn areas the split was 31 at the finest level and 57 at the
+next: fading out at eight blocks charged 97 of them for a variation already down to just over half
+strength by the third level.
+
+It is now drawn at the finest level only, where one cached voxel is one block and the variation
+appears at the scale the game itself draws it, beside the vanilla trees it has to match. Measured
+at the same scene: 292 fps across three levels, 300 at one, 310 with the feature off. No visible
+difference between one level and three. `.vhtint leafwide on` restores the wider reach.
+
+## [0.3.192] - 2026-09-03
+
+**Half the seasonal variation's per-vertex cost removed with no change to how it looks.** Working
+the variation out meant evaluating the game's value noise four times for every vertex of distant
+terrain, every frame - and two of those four produced only the season *column*, which moves the
+year by three parts in a hundred and twenty eight. That is a dither finer than the surface it is
+smeared across, for half the cost. The column now uses that jitter's average, which also puts it
+on exactly the column the flat colour it gets blended with is centred on: the two ends of the
+blend had been sitting up to three columns apart depending on the vertex.
+
+The remaining two noises are also no longer evaluated at detail levels that discard the result -
+the fade reaches zero before they are used, and the whole draw was computing them and multiplying
+by nothing. Worth about 17 fps of the 40 the feature had cost.
+
 ## [0.3.191] - 2026-09-03
 
 **Remembered climate actually persists now.** The feature added in 0.3.185 was reading a handle to
