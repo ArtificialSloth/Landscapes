@@ -139,6 +139,22 @@ public class LodTintRegistry
     /// path and the seam field and readiness mask already agree on it.
     /// </summary>
     readonly int[] ramp = new int[MaxSlots * RampSteps];
+
+    /// <summary>
+    /// Everything the SHADER needs to finish a tint itself, one column per slot.
+    ///
+    /// The ramp above is a finished colour per slot per height, sampled where the player
+    /// stands. This is the other way round: the pieces, so the shader can combine them with
+    /// the climate of the ground it is actually drawing. Row 0 is the season colour with its
+    /// alpha saying whether a season blend applies at all, row 1 the untinted share the tint
+    /// must not touch, row 2 the climate map's page. Three RGBA8 rows rather than floats
+    /// because every one of them is a colour or a small index.
+    /// </summary>
+    public const int SlotTableRows = 3;
+    public const int SeasonRow = 0;
+    public const int ShareRow = 1;
+    public const int PageRow = 2;
+    readonly int[] slotTable = new int[MaxSlots * SlotTableRows];
     readonly float[] pendingRamp = new float[MaxSlots * RampSteps * 4];
 
     // Per-refresh scratch. The climate pixel is the only thing sampled per height; the season
@@ -156,6 +172,15 @@ public class LodTintRegistry
     readonly float[] sampledFallback = new float[MaxSlots * 3];
     readonly bool[] slotReferenceTaken = new bool[MaxSlots];
     readonly bool[] slotCorrectable = new bool[MaxSlots];
+
+    /// <summary>
+    /// Whether a slot's block blends a SEASON colour at all. Water does not: climateWaterTint
+    /// has no season map, and the engine simply skips the blend for it. The ramp has to skip it
+    /// too - blending toward a season colour that was never read would drag distant water down
+    /// toward black by the weight. The shader path carries the same fact in the slot table's
+    /// alpha.
+    /// </summary>
+    readonly bool[] slotHasSeason = new bool[MaxSlots];
     float pendingSeaLevel;
 
     // Slots are appended, never reordered, so one exclusive upper bound is the complete
@@ -173,12 +198,30 @@ public class LodTintRegistry
     public static int RampWidth => MaxSlots;
     public static int RampHeight => RampSteps;
 
+    /// <summary>The published slot table, ready for LoadOrUpdateTextureFromBgra.</summary>
+    public int[] SlotTable => slotTable;
+    public static int SlotTableWidth => MaxSlots;
+    public static int SlotTableHeight => SlotTableRows;
+
+    /// <summary>
+    /// Where one (slot, row) lands in <see cref="SlotTable"/>. Slot across, row down, the same
+    /// arrangement the ramp uses, and held to the shader's by a static check for the same
+    /// reason: a disagreement misreads every slot at once and looks like a colour bug.
+    /// </summary>
+    public static int SlotTableTexel(int slot, int row) => row * MaxSlots + slot;
+
     public int SlotCount => representative.Count;
     public int ReadySlotCount => readySlotCount;
     public bool HasUnreadySlots => readySlotCount < representative.Count;
 
     /// <summary>World Y of ramp step 0. Step n is this plus n * RampStepBlocks.</summary>
     public float RampOriginY { get; private set; }
+
+    /// <summary>
+    /// Where the year is, as the terrain shader is being told. Not <c>Calendar.YearRel</c>:
+    /// see <see cref="LodSeasonColor"/> for why those differ and what it costs.
+    /// </summary>
+    public float SeasonRel { get; private set; }
 
     /// <summary>Units of refresh work: one slot at one sampled height.</summary>
     public int RefreshUnitCount => representative.Count * SampledHeights;
@@ -276,8 +319,16 @@ public class LodTintRegistry
     }
 
     /// <summary>Start an incremental refresh without changing the currently displayed table.</summary>
-    public void BeginRefresh(IClientWorldAccessor world)
+    public void BeginRefresh(IClientWorldAccessor world) => BeginRefresh(world, SeasonRel);
+
+    /// <summary>
+    /// Start a refresh at a known season position. The caller passes the engine's own
+    /// `DefaultShaderUniforms.SeasonRel` - the very number it hands its terrain shaders - so
+    /// the mod cannot disagree with the shader about what time of year it is.
+    /// </summary>
+    public void BeginRefresh(IClientWorldAccessor world, float seasonRel)
     {
+        SeasonRel = seasonRel;
         pendingSeaLevel = world.SeaLevel;
         Array.Clear(slotReferenceTaken);
 
@@ -381,9 +432,92 @@ public class LodTintRegistry
             ramp[i] = unchecked((int)0xFF000000) | (r << 16) | (g << 8) | b;
         }
         RampOriginY = pendingSeaLevel + RampMinDistToSeaLevel;
+        BuildSlotTable();
         readySlotCount = representative.Count;
         Version++;
     }
+
+    /// <summary>
+    /// Which climate map page each slot reads, or NoPage where the shader cannot finish this
+    /// slot's tint itself and the ramp has to. Set by the renderer once the pages are built,
+    /// because paging is a GPU-side concern the registry has no other reason to know about.
+    /// </summary>
+    readonly int[] slotPage = new int[MaxSlots];
+
+    /// <summary>
+    /// Record the page each slot's climate map landed on. A slot with no paged map keeps
+    /// <see cref="LodClimateMapPages.NoPage"/> and its terrain draws from the ramp, which is
+    /// what every build before the climate field did for every slot.
+    /// </summary>
+    /// <summary>
+    /// Give the pages any climate map a slot uses, then record where each one landed. One call
+    /// so the two can never be done in the wrong order: a page index recorded before the page
+    /// exists would send a slot to a page of nothing.
+    /// </summary>
+    internal void AdoptPages(LodClimateMapPages pages)
+    {
+        ArgumentNullException.ThrowIfNull(pages);
+        pages.Adopt(representative);
+        AssignPages(pages);
+    }
+
+    internal void AssignPages(LodClimateMapPages pages)
+    {
+        ArgumentNullException.ThrowIfNull(pages);
+        for (int slot = 0; slot < MaxSlots; slot++)
+        {
+            Block? block = slot < representative.Count ? representative[slot] : null;
+            slotPage[slot] = block != null && pages.TryPageOf(block.ClimateColorMapResolved,
+                out int page) ? page : LodClimateMapPages.NoPage;
+        }
+    }
+
+    /// <summary>
+    /// Pack the pieces the shader combines. Refusal is per slot and explicit: a slot whose
+    /// season colour was never recovered this pass, or whose season map is the tropical one
+    /// whose weight this mod does not reproduce, publishes NoPage and keeps the ramp. Half a
+    /// correction applied confidently is worse than none.
+    /// </summary>
+    void BuildSlotTable()
+    {
+        for (int slot = 0; slot < MaxSlots; slot++)
+        {
+            LodUntintedShare share = slot < untintedShare.Count
+                ? untintedShare[slot] : LodUntintedShare.None;
+            int at = slot * 3;
+
+            bool hasSeason = slot > SlotNone && slot < representative.Count
+                && slotCorrectable[slot];
+            int seasonR = hasSeason ? Byte(sampledSeason[at + 0]) : 0;
+            int seasonG = hasSeason ? Byte(sampledSeason[at + 1]) : 0;
+            int seasonB = hasSeason ? Byte(sampledSeason[at + 2]) : 0;
+            slotTable[SlotTableTexel(slot, SeasonRow)] =
+                (hasSeason ? unchecked((int)0xFF000000) : 0)
+                | (seasonR << 16) | (seasonG << 8) | seasonB;
+
+            slotTable[SlotTableTexel(slot, ShareRow)] = unchecked((int)0xFF000000)
+                | (Byte(share.R * 255f) << 16) | (Byte(share.G * 255f) << 8)
+                | Byte(share.B * 255f);
+
+            // A slot the shader cannot finish is marked here rather than left to be inferred
+            // from a colour, so the fallback is one explicit value in one place.
+            bool usable = slot > SlotNone
+                && slotPage[slot] != LodClimateMapPages.NoPage
+                && (hasSeason || NoSeasonMap(slot));
+            int page = usable ? slotPage[slot] : LodClimateMapPages.NoPage;
+            slotTable[SlotTableTexel(slot, PageRow)] =
+                unchecked((int)0xFF000000) | (page << 16);
+        }
+    }
+
+    /// <summary>A slot whose block carries a climate map but no season map: nothing to blend.</summary>
+    bool NoSeasonMap(int slot)
+    {
+        Block? block = slot < representative.Count ? representative[slot] : null;
+        return block != null && block.SeasonColorMapResolved == null;
+    }
+
+    static int Byte(float value) => Math.Clamp((int)MathF.Round(value), 0, 255);
 
     /// <summary>
     /// The lattice-averaged climate pixel at one height, stored for this slot. The climate map is
@@ -436,9 +570,9 @@ public class LodTintRegistry
         int y = (int)pendingSeaLevel;
         int maxX = world.BlockAccessor.MapSizeX - 1;
         int maxZ = world.BlockAccessor.MapSizeZ - 1;
-        double sr = 0, sg = 0, sb = 0, temp = 0;
+        double temp = 0;
         double fr = 0, fg = 0, fb = 0;
-        int seasonSamples = 0, tempSamples = 0, fullSamples = 0;
+        int tempSamples = 0, fullSamples = 0;
         var pos = new BlockPos(0, y, 0);
 
         for (int i = 0; i < SampleGridSide; i++)
@@ -460,29 +594,8 @@ public class LodTintRegistry
                 int white = unchecked((int)0xFFFFFFFF);
                 int full = world.ApplyColorMapOnRgba(
                     block.ClimateColorMapResolved, block.SeasonColorMapResolved, white, sx, y, sz);
-                int climateOnly = world.ApplyColorMapOnRgba(
-                    block.ClimateColorMapResolved, null, white, sx, y, sz);
-
                 fr += (full >> 16) & 0xFF; fg += (full >> 8) & 0xFF; fb += full & 0xFF;
                 fullSamples++;
-
-                // The engine returns `climate * (1 - w) + season * w`, so the season pixel falls
-                // out once w is known. w is computed from this position's own temperature rather
-                // than differenced out of a third colour call: the difference of two 8-bit
-                // channels is only a few counts wide where the two maps agree, so a recovery
-                // built on it failed on whole slots at once - and a slot with no season pixel
-                // still had its ramp built, blending against a stale one. That is what made
-                // distant colour disappear in some places and not others.
-                float wEngine = LodSeasonWeight.Engine(
-                    Math.Clamp((int)MathF.Round(rawHere), 0, 255));
-                for (int shift = 0; shift <= 16; shift += 8)
-                {
-                    float cc = (climateOnly >> shift) & 0xFF;
-                    float ff = (full >> shift) & 0xFF;
-                    float season = cc + (ff - cc) / wEngine;
-                    if (shift == 16) sr += season; else if (shift == 8) sg += season; else sb += season;
-                }
-                seasonSamples++;
             }
         }
 
@@ -493,20 +606,25 @@ public class LodTintRegistry
             sampledFallback[at + 1] = (float)(fg / fullSamples);
             sampledFallback[at + 2] = (float)(fb / fullSamples);
         }
-        if (seasonSamples > 0)
-        {
-            sampledSeason[at + 0] = (float)(sr / seasonSamples);
-            sampledSeason[at + 1] = (float)(sg / seasonSamples);
-            sampledSeason[at + 2] = (float)(sb / seasonSamples);
-        }
+        // The season colour comes off the map itself, at the column the SHADER reads rather
+        // than the one the engine's CPU call reads. Those differ by up to 0.05 of a year, and
+        // through the autumn turn that is worth about ten counts of red - which is exactly the
+        // 5 to 6 percent excess red the owner measured against vanilla.
+        ColorMap? season = block.SeasonColorMapResolved;
+        bool haveSeason = season == null || LodSeasonColor.TryAverage(
+            season.Pixels, season.OuterSize?.Width ?? 0, season.OuterSize?.Height ?? 0,
+            season.Padding, SeasonRel,
+            out sampledSeason[at + 0], out sampledSeason[at + 1], out sampledSeason[at + 2]);
+        if (season == null) sampledSeason[at + 0] = sampledSeason[at + 1] = sampledSeason[at + 2] = 0f;
 
         // Everything the correction needs, or none of it. A slot that cannot answer keeps the
         // engine's own weight, which is exactly what every build before this one drew.
         // A negative temperature is the single "this slot cannot be rebuilt" signal, and it has
         // to cover a missing SEASON pixel too: BuildRamp blends against that pixel whether or not
         // the weight correction applies, so proceeding without one paints from stale memory.
-        ColorMap? seasonMap = block.SeasonColorMapResolved;
-        bool haveParts = seasonSamples > 0 && tempSamples > 0 && fullSamples > 0;
+        ColorMap? seasonMap = season;
+        slotHasSeason[slot] = season != null;
+        bool haveParts = haveSeason && tempSamples > 0 && fullSamples > 0;
         sampledRawTemp[slot] = haveParts ? (float)(temp / tempSamples) : -1f;
         slotCorrectable[slot] = haveParts
             && seasonMap != null && seasonMap.ExtraFlags == 0
@@ -554,6 +672,22 @@ public class LodTintRegistry
             float f = t - i0;
             int a0 = (slot * SampledHeights + i0) * 3;
             int a1 = a0 + 3;
+
+            // No season map means no blend, whatever the weight says.
+            if (!slotHasSeason[slot])
+            {
+                int flatInto = RampTexel(slot, step) * 4;
+                for (int ch = 0; ch < 3; ch++)
+                {
+                    float climateOnly = sampledClimate[a0 + ch]
+                        + (sampledClimate[a1 + ch] - sampledClimate[a0 + ch]) * f;
+                    float shareOnly = ch == 0 ? share.R : ch == 1 ? share.G : share.B;
+                    pendingRamp[flatInto + ch] = Math.Clamp(
+                        LodTopSoil.Dilute(shareOnly, climateOnly / 255f), 0f, 1f);
+                }
+                pendingRamp[flatInto + 3] = 1f;
+                continue;
+            }
 
             float weight;
             if (correct)

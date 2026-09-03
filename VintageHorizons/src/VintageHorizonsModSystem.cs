@@ -2176,6 +2176,7 @@ public class VintageHorizonsModSystem : ModSystem
                 + "it the live tint is not allowed to touch, and the tint itself against the game's "
                 + "own answer for the same block. Aim at a block, or name one, or stand on it. "
                 + "'.vhtint weight on|off' switches the season/climate blend correction. "
+                + "'.vhtint field on|off' switches per-area distant climate. "
                 + "Written to the client log, which is the only copy long enough to read.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("blockCode"),
                       capi.ChatCommands.Parsers.OptionalBool("on"))
@@ -2184,6 +2185,26 @@ public class VintageHorizonsModSystem : ModSystem
                 // `weight` is a switch rather than a block, and no block is called that. Kept on
                 // this command instead of its own because the report below is how the switch gets
                 // judged, and a diagnostic and the thing it measures belong together.
+                // The climate field: one climate per 64-block cell instead of one for the
+                // whole world. Kept switchable because the ramp it replaces is what every
+                // accepted build has drawn, and the two can only be judged against each other
+                // in place.
+                if (!args.Parsers[0].IsMissing
+                    && ((string)args[0]).Equals("field", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (renderer == null)
+                        return TextCommandResult.Success(
+                            "[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    if (!args.Parsers[1].IsMissing) renderer.ClimateFieldTint = (bool)args[1];
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] climate field "
+                        + $"{(renderer.ClimateFieldTint ? "on" : "off")}. "
+                        + "On tints distant ground from the climate it stands in, cell by cell. "
+                        + "Off is one climate for the whole view, taken where you are standing, "
+                        + "which is what every build before this one drew. Where the client has "
+                        + "no climate the nearest known one is used either way.");
+                }
+
                 if (!args.Parsers[0].IsMissing
                     && ((string)args[0]).Equals("weight", StringComparison.OrdinalIgnoreCase))
                 {
@@ -2242,6 +2263,8 @@ public class VintageHorizonsModSystem : ModSystem
                 };
                 lines.AddRange(tints.Describe(
                     capi.World, block, slot, topSoil ? share : LodUntintedShare.None, at.X, at.Y, at.Z));
+                if (renderer != null)
+                    lines.AddRange(renderer.DescribeClimateTint(at.X, at.Y, at.Z, slot));
 
                 // The log gets the report as written; the chat copy gets its angle brackets
                 // taken out first. Chat text is markup, an unmatched bracket wedges the panel
@@ -2250,6 +2273,25 @@ public class VintageHorizonsModSystem : ModSystem
                 string report = LogAndReturn("tint", string.Join('\n', lines));
                 return TextCommandResult.Success(
                     "[VintageHorizons] " + report.Replace('<', '(').Replace('>', ')'));
+            });
+
+        capi.ChatCommands.Create("vhclimate")
+            .WithDescription("How far the client actually has climate data, and how fast climate "
+                + "changes once it does. Decides whether distant terrain can be given its own "
+                + "biome colour or only the one under your feet. Written to the client log.")
+            .HandleWith(_ =>
+            {
+                var camera = capi.World.Player.Entity.CameraPos;
+                float far = renderer?.EffectiveFarDistance ?? 0f;
+                string report = LogAndReturn("climate", LodClimateProbe.Describe(
+                    capi.World, (int)camera.X, (int)camera.Z, far));
+                // Chat gets the headline only. The full table is dozens of lines and the
+                // panel cannot hold it; the log is the copy that is meant to be read.
+                string[] lines = report.Split('\n');
+                string reach = Array.Find(lines, l => l.Contains("fully covered")) ?? "";
+                return TextCommandResult.Success(
+                    "[VintageHorizons] climate probe written to the client log. "
+                    + reach.Trim().Replace('<', '(').Replace('>', ')'));
             });
 
         capi.ChatCommands.Create("vhpaint")

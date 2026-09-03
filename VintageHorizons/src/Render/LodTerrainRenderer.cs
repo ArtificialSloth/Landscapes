@@ -1535,6 +1535,45 @@ public class LodTerrainRenderer : IRenderer
     /// counter by ref, so their guard never closed and the upload below ran forever.
     /// </summary>
     int uploadedRampVersion = -1;
+    int uploadedSlotTableVersion = -1;
+    int uploadedClimateMapVersion = -1;
+
+    /// <summary>
+    /// Climate over the world around the player, so a vertex can be tinted by the climate it
+    /// stands in rather than the climate under the player's feet. 128 cells of 64 blocks reach
+    /// 4,096 blocks each way; terrain past that clamps to the window edge, which continues the
+    /// spread rather than drawing an edge.
+    /// </summary>
+    readonly LodClimateField climateField = new(128);
+    readonly LodClimateMapPages climatePages = new();
+    LoadedTexture? climateFieldTexture;
+    LoadedTexture? climateMapTexture;
+    LoadedTexture? slotTableTexture;
+
+    /// <summary>
+    /// Tint distant terrain from the climate field instead of from the height ramp. The ramp
+    /// stays until this is judged in place: it is one colour per block type sampled where the
+    /// player stands, which is exactly the defect this replaces, but it is also the behaviour
+    /// every accepted build has drawn. See .vhtint field.
+    /// </summary>
+    public bool ClimateFieldTint { get; set; } = true;
+
+    /// <summary>
+    /// Raw temperature and rainfall for one cell centre, or false where the client holds no
+    /// map region there. Cached rather than built per row: it is called once per cell.
+    /// </summary>
+    LodClimateField.Sampler? climateSampler;
+    LodClimateField.Sampler ClimateSampler => climateSampler ??=
+        (int bx, int bz, out byte temperature, out byte rainfall) =>
+        {
+            temperature = 0;
+            rainfall = 0;
+            if (!LodClimateProbe.TryRawClimate(capi.World, bx, bz, out float t, out float r))
+                return false;
+            temperature = (byte)Math.Clamp((int)MathF.Round(t), 0, 255);
+            rainfall = (byte)Math.Clamp((int)MathF.Round(r), 0, 255);
+            return true;
+        };
 
     public LodTerrainRenderer(
         ICoreClientAPI capi,
@@ -1973,7 +2012,11 @@ public class LodTerrainRenderer : IRenderer
             seasonalRefreshSlot = LodTintRegistry.SampledHeights;   // skip slot 0, the identity
             seasonalRefreshX = (int)camPos.X;
             seasonalRefreshZ = (int)camPos.Z;
-            tints.BeginRefresh(capi.World);
+            // The engine's own season uniform, not Calendar.YearRel. The two differ by the
+            // column jitter colormap.vsh applies and the CPU colour call does not; taking the
+            // uniform means the mod reads the season map at the column the shader reads.
+            tints.BeginRefresh(capi.World, capi.Render.ShaderUniforms.SeasonRel);
+            climateField.BeginRefresh(seasonalRefreshX, seasonalRefreshZ);
             pendingSnowLineY = CalculateSnowLine(seasonalRefreshX, seasonalRefreshZ);
         }
 
@@ -1985,14 +2028,30 @@ public class LodTerrainRenderer : IRenderer
         // doing a slot's worth in one frame would be an order of magnitude more colour-map calls
         // per frame than before. Per unit the cost is what the old per-slot step was, and the
         // whole table still republishes inside the cadence.
-        if (seasonalRefreshSlot < tints.RefreshUnitCount)
+        int tintUnits = tints.RefreshUnitCount;
+        if (seasonalRefreshSlot < tintUnits)
         {
             tints.RefreshUnit(capi.World, seasonalRefreshX, seasonalRefreshZ,
                 seasonalRefreshSlot++);
             return;
         }
 
+        // Then the climate field, one row of cells per frame on the same schedule. A row is
+        // 128 map-region lookups of which only the loaded ones cost a climate read, so it is
+        // cheaper per frame than a tint unit and it shares the tint's atomic publish.
+        int fieldRow = seasonalRefreshSlot - tintUnits;
+        if (fieldRow < climateField.RefreshRowCount)
+        {
+            climateField.RefreshRow(fieldRow, ClimateSampler);
+            seasonalRefreshSlot++;
+            return;
+        }
+
+        // Pages before the table: the table records which page each slot reads, so a page has
+        // to exist before a slot is sent to it.
+        tints.AdoptPages(climatePages);
         tints.CompleteRefresh();
+        climateField.CompleteRefresh();
         snowLineY = pendingSnowLineY;
         seasonalRefreshActive = false;
         seasonalStateInitialized = true;
@@ -5176,6 +5235,9 @@ public class LodTerrainRenderer : IRenderer
     const int BlockTableUnit = 8;
     const int BlockAtlasUnit = 9;
     const int TintRampUnit = 10;
+    const int SlotTableUnit = 11;
+    const int ClimateFieldUnit = 12;
+    const int ClimateMapsUnit = 13;
 
     /// <summary>
     /// Upload one of this renderer's own CPU-built tables, with its destination unit made
@@ -5345,6 +5407,28 @@ public class LodTerrainRenderer : IRenderer
         prog.Uniform("tintRampOriginY", tints.RampOriginY);
         prog.Uniform("tintRampInvStep", 1f / LodTintRegistry.RampStepBlocks);
         prog.Uniform("tintRampSteps", LodTintRegistry.RampSteps);
+
+        UploadClimateTables();
+        bool climateOn = ClimateFieldTint && climateField.Active
+            && climateFieldTexture != null && climateMapTexture != null
+            && slotTableTexture != null && climatePages.PageCount > 0;
+        prog.Uniform("climateFieldEnabled", climateOn ? 1 : 0);
+        if (climateOn)
+        {
+            prog.BindTexture2D("slotTable", slotTableTexture!.TextureId, SlotTableUnit);
+            prog.BindTexture2D("climateField", climateFieldTexture!.TextureId, ClimateFieldUnit);
+            prog.BindTexture2D("climateMaps", climateMapTexture!.TextureId, ClimateMapsUnit);
+            // Two integer scalars, never the Vec2i overload, which reaches glUniform2f. See G42.
+            prog.Uniform("climateMinCellX", climateField.MinCellX);
+            prog.Uniform("climateMinCellZ", climateField.MinCellZ);
+            prog.Uniform("climateCapacity", climateField.Capacity);
+            prog.Uniform("climateCellBlocks", (float)LodClimateField.CellBlocks);
+            prog.Uniform("climateSeaLevel", (float)capi.World.SeaLevel);
+            // Rainfall's height terms are keyed on Climate.Sealevel, which is a separate
+            // static from the world map's sea level the lapse rate uses. Passed rather than
+            // assumed equal - in the owner's world they are not.
+            prog.Uniform("climateRainSeaLevel", Climate.Sealevel);
+        }
         prog.Uniform("snowLineY", snowLineY);
     }
 
@@ -5364,6 +5448,136 @@ public class LodTerrainRenderer : IRenderer
     }
 
     LoadedTexture? tintRampTexture;
+
+    /// <summary>
+    /// What the climate field path computes for one block, term by term, on the CPU using the
+    /// same arithmetic the vertex shader runs.
+    ///
+    /// The point is comparability: `.vhtint` already prints the game's own answer for a block,
+    /// and until now the only mod number beside it came from the height ramp. Reasoning about
+    /// the difference from the ramp's number while the field is what draws is how two rounds
+    /// of guessing happened. Every term is printed rather than the result alone, because the
+    /// result agreeing is not evidence when four terms can cancel.
+    /// </summary>
+    internal List<string> DescribeClimateTint(int x, int y, int z, int slot)
+    {
+        var lines = new List<string>();
+        if (slot <= LodTintRegistry.SlotNone || slot >= LodTintRegistry.MaxSlots)
+        {
+            lines.Add("D field: slot has no tint, so the field path does not apply");
+            return lines;
+        }
+
+        int pageWord = tints.SlotTable[LodTintRegistry.SlotTableTexel(slot, LodTintRegistry.PageRow)];
+        int page = (pageWord >> 16) & 0xFF;
+        bool on = ClimateFieldTint && climateField.Active && climatePages.PageCount > 0;
+        lines.Add($"D field: switch {(ClimateFieldTint ? "on" : "off")}, "
+            + $"field {(climateField.Active ? "live" : "NOT LIVE")} "
+            + $"({climateField.KnownCells} of {climateField.Capacity * climateField.Capacity} "
+            + $"cells real), {climatePages.PageCount} map page(s), this slot uses page "
+            + (page == LodClimateMapPages.NoPage ? "NONE so it draws from the ramp" : $"{page}"));
+
+        if (!on || page == LodClimateMapPages.NoPage) return lines;
+        if (!climateField.TryClimateAt(x + 0.5, z + 0.5,
+                out float rawTemp, out float rawRain, out int spread))
+        {
+            lines.Add("D field: no climate cell here, which should not happen while it is live");
+            return lines;
+        }
+
+        float seaLevelDist = y - capi.World.SeaLevel;
+        float adjusted = Math.Clamp(rawTemp - seaLevelDist / 1.5f, 0f, 255f);
+        int rainfall = LodClimateMath.RainfallAt(
+            (int)MathF.Round(rawRain), y, Climate.Sealevel);
+        float weight = LodSeasonWeight.Vanilla(adjusted, seaLevelDist);
+
+        lines.Add($"D cell: raw temperature {rawTemp:F1}, raw rainfall {rawRain:F1}, "
+            + $"spread {spread} " + (spread == 0
+                ? "(real climate, measured here)"
+                : "(NO climate here; taken from the nearest cell that had one)"));
+        lines.Add($"D here: adjusted temperature {adjusted:F1}, rainfall {rainfall}, "
+            + $"season weight {weight:F3}");
+
+        if (!climatePages.TrySample(page, adjusted, rainfall,
+                out float mr, out float mg, out float mb))
+        {
+            lines.Add("D field: the climate map page could not be sampled");
+            return lines;
+        }
+
+        int seasonWord = tints.SlotTable[LodTintRegistry.SlotTableTexel(slot, LodTintRegistry.SeasonRow)];
+        float sa = ((seasonWord >> 24) & 0xFF) / 255f;
+        float sr = ((seasonWord >> 16) & 0xFF) / 255f;
+        float sg = ((seasonWord >> 8) & 0xFF) / 255f;
+        float sb = (seasonWord & 0xFF) / 255f;
+        int shareWord = tints.SlotTable[LodTintRegistry.SlotTableTexel(slot, LodTintRegistry.ShareRow)];
+        float hr = ((shareWord >> 16) & 0xFF) / 255f;
+        float hg = ((shareWord >> 8) & 0xFF) / 255f;
+        float hb = (shareWord & 0xFF) / 255f;
+
+        lines.Add($"D climate map: R{mr:F3} G{mg:F3} B{mb:F3}");
+        lines.Add($"D season: R{sr:F3} G{sg:F3} B{sb:F3}"
+            + (sa > 0.5f ? "" : "  (no season blend on this slot)"));
+
+        float w = weight * (sa > 0.5f ? 1f : 0f);
+        float br = mr + (sr - mr) * w, bg = mg + (sg - mg) * w, bb = mb + (sb - mb) * w;
+        lines.Add($"D blended: R{br:F3} G{bg:F3} B{bb:F3}");
+        lines.Add($"D what the shader draws: R{Math.Clamp(hr + (1 - hr) * br, 0f, 1f):F3} "
+            + $"G{Math.Clamp(hg + (1 - hg) * bg, 0f, 1f):F3} "
+            + $"B{Math.Clamp(hb + (1 - hb) * bb, 0f, 1f):F3}  "
+            + "(compare against C, the game's own answer above)");
+        return lines;
+    }
+
+    /// <summary>
+    /// Publish the three tables the shader finishes a tint from. All three go up through
+    /// UploadOwnTexture, so none of them can take a unit away from a neighbour.
+    /// </summary>
+    void UploadClimateTables()
+    {
+        if (uploadedSlotTableVersion != tints.Version)
+        {
+            LoadedTexture texture = slotTableTexture ?? new LoadedTexture(
+                capi, 0, LodTintRegistry.SlotTableWidth, LodTintRegistry.SlotTableHeight);
+            UploadOwnTexture(tints.SlotTable, SlotTableUnit, ref texture);
+            if (texture.TextureId > 0)
+            {
+                slotTableTexture = texture;
+                uploadedSlotTableVersion = tints.Version;
+            }
+        }
+
+        if (uploadedClimateMapVersion != climatePages.Version && climatePages.PageCount > 0)
+        {
+            // A new page changes the texture's height, so the old LoadedTexture cannot be
+            // updated in place - its stored size would disagree with the pixels. The one it
+            // replaces is released rather than dropped: pages are only appended, but a
+            // texture leaked per append is still a texture leaked.
+            var texture = new LoadedTexture(
+                capi, 0, climatePages.Width, climatePages.Height);
+            UploadOwnTexture(climatePages.Texels, ClimateMapsUnit, ref texture);
+            if (texture.TextureId > 0)
+            {
+                LoadedTexture? retired = climateMapTexture;
+                climateMapTexture = texture;
+                uploadedClimateMapVersion = climatePages.Version;
+                try { retired?.Dispose(); }
+                catch { /* the replacement is already live; retirement is best effort */ }
+            }
+        }
+
+        if (climateField.Dirty && climateField.Active)
+        {
+            LoadedTexture texture = climateFieldTexture ?? new LoadedTexture(
+                capi, 0, climateField.Width, climateField.Height);
+            UploadOwnTexture(climateField.Texels, ClimateFieldUnit, ref texture);
+            if (texture.TextureId > 0)
+            {
+                climateFieldTexture = texture;
+                climateField.MarkUploaded();
+            }
+        }
+    }
 
     void ConfigureRenderPaths()
     {
@@ -5988,6 +6202,12 @@ public class LodTerrainRenderer : IRenderer
         }
         if (tintRampTexture != null)
             target.BindTexture2D("tintRamp", tintRampTexture.TextureId, TintRampUnit);
+        if (slotTableTexture != null)
+            target.BindTexture2D("slotTable", slotTableTexture.TextureId, SlotTableUnit);
+        if (climateFieldTexture != null)
+            target.BindTexture2D("climateField", climateFieldTexture.TextureId, ClimateFieldUnit);
+        if (climateMapTexture != null)
+            target.BindTexture2D("climateMaps", climateMapTexture.TextureId, ClimateMapsUnit);
     }
 
     void DrawLegacyWater()

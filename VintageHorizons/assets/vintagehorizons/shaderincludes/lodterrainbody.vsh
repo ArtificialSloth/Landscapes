@@ -153,6 +153,66 @@ uniform float tintRampOriginY;
 uniform float tintRampInvStep;
 uniform int tintRampSteps;
 
+// The climate field, and what it takes to finish a tint from it.
+//
+// The ramp above is one finished colour per slot, sampled where the PLAYER stands, so the
+// whole visible world wears the player's own climate and repaints when they move. These
+// tables invert that: the climate of every 64-block cell is stored, and the colour is worked
+// out here from the climate of the ground this vertex actually sits on.
+//
+// The pieces, in the order they combine:
+//   climateField  temperature in red, rainfall in green, per cell, bilinear between cells.
+//                 Wrapped like the seam field and the readiness mask; same addressing rule,
+//                 held to LodClimateField.TexelIndex by a static check.
+//   slotTable     per slot: row 0 the season colour, its alpha saying whether a season blend
+//                 applies at all; row 1 the untinted share; row 2 red the climate map page,
+//                 255 meaning this slot cannot be finished here and keeps the ramp.
+//   climateMaps   the game's own climate colour maps, one 256x256 page each, temperature
+//                 across and rainfall down at one texel per count.
+//
+// Everything between them is arithmetic transcribed from the engine's own colormap.vsh and
+// Climate.GetAdjustedTemperature: the lapse rate, and the season blend weight. Neither needs
+// sampling, which is why height needs no ramp here - it is exact at every vertex.
+uniform sampler2D slotTable;
+uniform sampler2D climateField;
+uniform sampler2D climateMaps;
+uniform int climateFieldEnabled;
+uniform int climateMinCellX;
+uniform int climateMinCellZ;
+uniform int climateCapacity;
+uniform float climateCellBlocks;
+uniform float climateSeaLevel;
+uniform int climateRainSeaLevel;
+
+// One cell's temperature and rainfall, in 0..255. The wrap is the field's own: a window of
+// cells stored in a ring, so a cell address folds into the buffer the same way in both
+// languages.
+vec2 climateCell(int cellX, int cellZ)
+{
+    int wrap = climateCapacity - 1;
+    return texelFetch(climateField, ivec2(cellX & wrap, cellZ & wrap), 0).rg * 255.0;
+}
+
+// One climate map page, bilinear. The engine's CPU path truncates to a whole texel; this
+// interpolates, because the temperature axis moves one texel per 1.5 blocks of height and a
+// nearest lookup would draw the map's own texel grid as steps up every slope. The two agree
+// to within one texel either way.
+vec3 climateColor(int page, float temperature, float rainfall)
+{
+    float u = clamp(temperature, 0.0, 255.0);
+    float v = clamp(rainfall, 0.0, 255.0);
+    int x0 = clamp(int(u), 0, 254);
+    int y0 = clamp(int(v), 0, 254);
+    int row = page * 256;
+    vec3 c00 = texelFetch(climateMaps, ivec2(x0, row + y0), 0).rgb;
+    vec3 c10 = texelFetch(climateMaps, ivec2(x0 + 1, row + y0), 0).rgb;
+    vec3 c01 = texelFetch(climateMaps, ivec2(x0, row + y0 + 1), 0).rgb;
+    vec3 c11 = texelFetch(climateMaps, ivec2(x0 + 1, row + y0 + 1), 0).rgb;
+    float fx = u - float(x0);
+    float fy = v - float(y0);
+    return mix(mix(c00, c10, fx), mix(c01, c11, fx), fy);
+}
+
 out vec3 tint;
 out vec4 worldPos;
 out vec4 vertexColor;
@@ -288,6 +348,78 @@ void main()
     tint = mix(texelFetch(tintRamp, ivec2(slot, rampStep), 0).rgb,
                texelFetch(tintRamp, ivec2(slot, rampStep + 1), 0).rgb,
                rampT - float(rampStep));
+
+    // The climate field, where this slot can be finished from it. A slot whose page is 255
+    // keeps the ramp: no climate map, a season colour that could not be recovered this pass,
+    // or the tropical season weight this mod does not reproduce.
+    int tintPage = 255;
+    if (climateFieldEnabled == 1)
+    {
+        tintPage = int(texelFetch(slotTable, ivec2(slot, 2), 0).r * 255.0 + 0.5);
+    }
+    if (tintPage < 255)
+    {
+        // Cell coordinates from the world position. The stored value for a cell is its
+        // CENTRE, so the half-cell shift is what makes the interpolation land on the samples
+        // rather than half a cell off them.
+        float fx = (noiseOrigin.x + vertexPositionIn.x) / climateCellBlocks - 0.5;
+        float fz = (noiseOrigin.y + vertexPositionIn.z) / climateCellBlocks - 0.5;
+
+        // Terrain past the window clamps to its edge, which continues the spread outward
+        // rather than drawing a line where the stored climate stops.
+        int lo = climateMinCellX;
+        int hi = climateMinCellX + climateCapacity - 2;
+        int cx = clamp(int(floor(fx)), lo, hi);
+        int loZ = climateMinCellZ;
+        int hiZ = climateMinCellZ + climateCapacity - 2;
+        int cz = clamp(int(floor(fz)), loZ, hiZ);
+
+        vec2 c00 = climateCell(cx, cz);
+        vec2 c10 = climateCell(cx + 1, cz);
+        vec2 c01 = climateCell(cx, cz + 1);
+        vec2 c11 = climateCell(cx + 1, cz + 1);
+        vec2 climate = mix(mix(c00, c10, clamp(fx - float(cx), 0.0, 1.0)),
+                           mix(c01, c11, clamp(fx - float(cx), 0.0, 1.0)),
+                           clamp(fz - float(cz), 0.0, 1.0));
+
+        // Climate.GetAdjustedTemperature: one count colder per 1.5 blocks above sea level,
+        // and warmer below it, clamped to the range the maps are indexed by.
+        float seaLevelDist = yLevel - climateSeaLevel;
+        float adjusted = clamp(climate.x - seaLevelDist / 1.5, 0.0, 255.0);
+
+        // Climate.GetRainFall. The field stores RAW rainfall; these are the height terms the
+        // engine adds before anything reads a colour map. The first climbs steadily with
+        // altitude, the second is a bonus of up to 40 that only applies within eight blocks of
+        // sea level. Integer division, truncating toward zero, as the engine's does.
+        //
+        // Storing the rainfall a climate read returns instead of the raw value spends a sea
+        // level rainfall on a hillside, and sea level is exactly where that bonus is largest.
+        // The height ramp this replaced never had the fault, because it asked the engine for a
+        // finished colour at each height and the engine applied this itself.
+        int rainY = int(floor(yLevel));
+        float rainfall = clamp(
+            climate.y
+            + float((rainY - climateRainSeaLevel) / 2)
+            + 5.0 * float(clamp(8 + climateRainSeaLevel - rainY, 0, 8)), 0.0, 255.0);
+
+        // colormap.vsh's season weight, including the engine's own asymmetry: the altitude
+        // term ADDS 1.5 per block where the adjustment above subtracted 1/1.5, which does not
+        // cancel and is not a mistake to correct here - it is what the game draws.
+        float weightTemp = adjusted + max(0.0, seaLevelDist * 1.5);
+        float seasonWeight = clamp(
+            0.5 - cos(weightTemp / 42.0) / 2.3
+            + max(0.0, 128.0 - weightTemp) / 512.0
+            - max(0.0, weightTemp - 130.0) / 200.0, 0.0, 1.0);
+
+        vec4 seasonRow = texelFetch(slotTable, ivec2(slot, 0), 0);
+        vec3 blended = mix(climateColor(tintPage, adjusted, rainfall),
+                           seasonRow.rgb, seasonWeight * seasonRow.a);
+
+        // The share of the stored colour the tint must not touch - bare dirt showing through
+        // a grass overlay - exactly as the ramp already carries it.
+        vec3 share = texelFetch(slotTable, ivec2(slot, 1), 0).rgb;
+        tint = clamp(share + (1.0 - share) * blended, 0.0, 1.0);
+    }
 
     sectionLocal = vertexPositionIn;
 

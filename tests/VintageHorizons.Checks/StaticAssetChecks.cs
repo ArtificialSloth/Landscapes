@@ -35,6 +35,134 @@ public static class StaticAssetChecks
         IndirectShaderVariant(c);
         SubtreeBoundsStayOutOfTheCoverageGate(c);
         SamplerUploadWiring(c);
+        ClimateFieldWiring(c);
+    }
+
+    /// <summary>
+    /// The climate field: the addressing the shader reconstructs, and the engine arithmetic it
+    /// transcribes.
+    ///
+    /// Two things can be wrong here without looking wrong. A cell address that disagrees with
+    /// LodClimateField.TexelIndex misplaces every climate at once; and a transcription of the
+    /// engine's own season weight or lapse rate that has drifted produces a confident colour
+    /// that is simply not the one the game draws. The second is G139's shape exactly - a check
+    /// written from the same wrong reduction agrees with the bug - so the engine's own shader
+    /// source is read here rather than a copy of it kept in this file.
+    /// </summary>
+    static void ClimateFieldWiring(Check c)
+    {
+        string vertex = ShaderBody("vsh");
+        string renderer = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons",
+            "src", "Render", "LodTerrainRenderer.cs"));
+
+        // ---- addressing, against the C# that fills the texture -------------------------
+        // LodClimateField.TexelIndex is (cellZ & mask) * capacity + (cellX & mask): X is the
+        // column and Z the row. Swapping them transposes the whole world's climate, which
+        // reads as a colour bug and not an indexing one.
+        c.True(vertex.Contains(
+                "texelFetch(climateField, ivec2(cellX & wrap, cellZ & wrap), 0)",
+                StringComparison.Ordinal),
+            "the shader addresses a climate cell as (x, z) with the field's own wrap");
+        c.True(vertex.Contains("int wrap = climateCapacity - 1;", StringComparison.Ordinal),
+            "and takes the wrap from the capacity, as the C# does");
+        c.Eq(0, LodClimateField.TexelIndex(0, 0, 128), "cell 0,0 is texel 0");
+        c.Eq(1, LodClimateField.TexelIndex(1, 0, 128), "one cell east is the next texel");
+        c.Eq(128, LodClimateField.TexelIndex(0, 1, 128), "one cell south is a whole row on");
+
+        // The cell is sampled at its centre, so the lookup has to be shifted half a cell or
+        // every climate lands half a cell from where it was measured.
+        c.True(vertex.Contains("/ climateCellBlocks - 0.5;", StringComparison.Ordinal),
+            "the shader shifts by half a cell to land on the sampled centres");
+
+        // ---- the colour map pages ------------------------------------------------------
+        c.True(vertex.Contains("int row = page * 256;", StringComparison.Ordinal),
+            "the shader stacks climate map pages 256 apart");
+        c.Eq(256, LodClimateMapPages.PageSize,
+            "which is the page size the C# writes them at");
+        c.Eq(255, LodClimateMapPages.NoPage,
+            "and 255 is the page that means this slot keeps the ramp");
+        c.True(vertex.Contains("int tintPage = 255;", StringComparison.Ordinal)
+            && vertex.Contains("if (tintPage < 255)", StringComparison.Ordinal),
+            "the shader falls back to the ramp on exactly that value");
+
+        // ---- the slot table rows -------------------------------------------------------
+        c.Eq(0, LodTintRegistry.SeasonRow, "the season colour is row 0");
+        c.Eq(1, LodTintRegistry.ShareRow, "the untinted share is row 1");
+        c.Eq(2, LodTintRegistry.PageRow, "the climate map page is row 2");
+        c.True(vertex.Contains("texelFetch(slotTable, ivec2(slot, 0), 0)", StringComparison.Ordinal),
+            "and the shader reads the season colour from row 0");
+        c.True(vertex.Contains("texelFetch(slotTable, ivec2(slot, 1), 0).rgb", StringComparison.Ordinal),
+            "the untinted share from row 1");
+        c.True(vertex.Contains("texelFetch(slotTable, ivec2(slot, 2), 0).r", StringComparison.Ordinal),
+            "and the page from row 2");
+
+        // ---- the arithmetic, against the ENGINE'S OWN SHADER ----------------------------
+        // Read from the game install rather than quoted here. If a game update changes either
+        // expression, this fails and says so, instead of the mod quietly drawing last
+        // version's colours.
+        string engine = Path.Combine(GameAssemblies.GamePath, "assets", "game",
+            "shaderincludes", "colormap.vsh");
+        if (File.Exists(engine))
+        {
+            string source = File.ReadAllText(engine);
+
+            // The altitude term the weight uses. Note it ADDS 1.5 per block where the climate
+            // coordinate SUBTRACTS 1/1.5; the two do not cancel, and reproducing the engine
+            // means reproducing that.
+            c.True(source.Contains("x += max(0.0, seaLevelDist * 1.5);", StringComparison.Ordinal),
+                "the engine still shifts the weight's temperature by 1.5 per block of altitude");
+            c.True(vertex.Contains("adjusted + max(0.0, seaLevelDist * 1.5);",
+                    StringComparison.Ordinal),
+                "and this shader shifts by the same amount");
+
+            // The weight itself. The engine writes the first correction term as / 256 / 2.
+            c.True(source.Contains(
+                    "clamp(0.5 - cos(x / 42.0) / 2.3 + max(0.0, 128 - x) / 256 / 2 - max(0.0,x - 130)/200, 0.0, 1.0)",
+                    StringComparison.Ordinal),
+                "the engine's season weight is the expression this mod transcribed");
+            c.True(vertex.Contains("0.5 - cos(weightTemp / 42.0) / 2.3", StringComparison.Ordinal)
+                && vertex.Contains("+ max(0.0, 128.0 - weightTemp) / 512.0", StringComparison.Ordinal)
+                && vertex.Contains("- max(0.0, weightTemp - 130.0) / 200.0", StringComparison.Ordinal),
+                "and this shader computes the same one, with 256/2 written as 512");
+
+            // The tropical branch is NOT reproduced, so a slot on a tropical season map has to
+            // keep the ramp. This pins that the branch still exists to be avoided.
+            c.True(source.Contains("(colormapData & 0xc0) == 0x40", StringComparison.Ordinal),
+                "the engine still has a separate tropical weight this mod does not reproduce");
+        }
+
+        // The lapse rate, from Climate.GetAdjustedTemperature: temperature falls one count per
+        // 1.5 blocks above sea level and rises below it, clamped to what the maps are indexed by.
+        c.True(vertex.Contains("clamp(climate.x - seaLevelDist / 1.5, 0.0, 255.0)",
+                StringComparison.Ordinal),
+            "the shader applies the engine's lapse rate and its clamp");
+
+        // ---- every uniform the shader reads is one the renderer uploads -----------------
+        foreach (string uniform in new[]
+        {
+            "climateFieldEnabled", "climateMinCellX", "climateMinCellZ", "climateCapacity",
+            "climateCellBlocks", "climateSeaLevel",
+        })
+        {
+            c.True(vertex.Contains("uniform ", StringComparison.Ordinal)
+                && vertex.Contains(uniform, StringComparison.Ordinal),
+                $"the shader declares {uniform}");
+            c.True(renderer.Contains($"\"{uniform}\"", StringComparison.Ordinal),
+                $"and the renderer uploads {uniform}");
+        }
+        foreach (string sampler in new[] { "slotTable", "climateField", "climateMaps" })
+        {
+            c.True(vertex.Contains($"uniform sampler2D {sampler};", StringComparison.Ordinal),
+                $"the shader declares the {sampler} sampler");
+            c.True(renderer.Contains($"BindTexture2D(\"{sampler}\"", StringComparison.Ordinal),
+                $"and the renderer binds {sampler}");
+        }
+
+        // An unbound sampler reads zero, and zero here is a plausible-looking black tint, so
+        // the switch and the binds have to be decided by the same condition.
+        c.True(renderer.Contains("prog.Uniform(\"climateFieldEnabled\", climateOn ? 1 : 0);",
+                StringComparison.Ordinal),
+            "the field is only switched on when its three tables are actually bound");
     }
 
     /// <summary>
