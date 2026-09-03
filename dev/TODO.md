@@ -2,71 +2,44 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Seasonal tint: IN PROGRESS, uncommitted, one owner-reported regression open
+## Distant terrain colour: what is left after Session 75
 
-Session 74. Branch `codex/seasonal-tint-blend-weight`, 0.3.172-0.3.176, **nothing committed**.
-Read `dev/sessions/SESSION_74.md` and `dev/plans/PLAN_DISTANT_TINT_SAMPLING.md` before touching
-this. Accepted by the owner on 0.3.175: distant high terrain now matches vanilla's seasonal colour,
-checked against vanilla's own rendering at the same spots.
+Sessions 73-75, branch `codex/seasonal-tint-blend-weight`, committed at `40d8e46`. The four causes
+the plan set out to fix are fixed and human-accepted; what follows is the remainder. Read
+`dev/sessions/SESSION_75.md` and `dev/plans/PLAN_DISTANT_TINT_SAMPLING.md` before touching this.
 
-- **THE BLEND BAND IS A REGRESSION AND IS THE PRIORITY.** Owner on 0.3.175: ordinary distant
-  terrain looks great, the band is "dramatically" worse and "way off from the proper colours". Not
-  explained. 0.3.176 fixes a season-pixel recovery bug that may or may not cover it. If it does
-  not, suspect in order: the tint ramp is bound to **texture unit 10** and nothing has verified
-  that unit is free of the engine's own samplers in the included stages - G130 is exactly this
-  defect, and the band is the path that also samples `seamField` (7) and `blockAtlas` (9); then,
-  that band terrain now sees a genuinely height-varying tint where it used to see a nearly
-  constant one.
-- **Distant colour disappeared in some areas** on 0.3.175 and returned elsewhere. Cause found -
-  the season pixel was recovered by differencing 8-bit channels and failed for whole slots at once,
-  after which the ramp blended against a stale one. Fixed in 0.3.176, **unverified**.
-- **`.vhtint`'s B line still uses the old per-position correction**, so its "A vs B" and
-  "B vs C'" labels no longer describe what the ramp does. Misleading; fix before relying on them.
-- **No shader is compile-verified offline.** 0.3.174 rewrote the vertex stage's tint lookup on all
-  three render paths. It draws, so it compiles, but nothing offline can say so.
-- **Slot sharing: 38% excess blue on `soil-medium-verysparse`**, which drew with
-  `forestfloor-5`'s untinted share. Slots are keyed on the share rounded to eighths and 18 of 64
-  are in use, so a finer key has room. Independent of the ramp; not started.
-- **Two traps are recorded in the session and not yet promoted to GOTCHAS**: a correction cannot be
-  delivered by a mechanism that does not carry its independent variable, and differencing 8-bit
-  channels to recover a blend factor fails where the inputs agree.
-- **`DocCheck` fails on version drift.** STATUS, CHANGELOG and the source-file count are behind;
-  the documentation ritual has not been run for Session 74.
+- **The height ramp is now dead weight and should go.** The climate field supersedes it and is
+  accepted, but the ramp survives as the fallback for slots the field cannot finish - no paged
+  climate map, or the tropical season weight this mod does not reproduce. Keeping two parallel ways
+  to compute the same colour means both must stay correct: it already cost a defect this session,
+  when the season change would have blended water toward black on the ramp path only. Those slots
+  need some answer; holding the engine's own flat, which is already the mechanism for a slot with
+  no temperature, is simpler than a 96-step ramp. Removing it takes out a texture, a code path and
+  a permanent "which one drew this?" question.
+- **The climate field is relearned every session and reaches about 1,000-3,000 blocks of 8,192.**
+  Storing what it learns in the mod's own cache would make coverage accumulate permanently as the
+  player explores, which is the step that eventually gets the whole horizon right. No terrain
+  format change and no re-exploration: the field is keyed on world cells, independent of sections.
+- **Slot sharing: 38% excess blue on `soil-medium-verysparse`**, which drew with `forestfloor-5`'s
+  untinted share. Slots are keyed on the share rounded to eighths and 18 of 64 are in use, so a
+  finer key has room. Measured in Session 74; not started.
+- **`.vhtint`'s A, B and C' labels no longer describe what draws.** The D lines added in 0.3.182
+  report the field path's own terms and are the ones to trust. The older lines describe the ramp,
+  and C is a single random row draw that cannot be held against an average (G145).
+- **The plan's section 9 acceptance criterion cannot pass as written** - see G145. It should ask
+  for the field path against the lattice mean, not against the engine's answer for one block.
+- **Nothing has been measured since 0.3.183.** The owner's verdict is "much better"; no post-fix
+  screenshot has been differenced, so the size of any remaining mismatch is unknown.
+- **No shader is compile-verified offline.** The vertex stage's tint path was rewritten again on
+  all three render paths. It draws, so it compiles, but nothing offline can say so.
+- **The climate field's coverage figures are one world, one machine, one afternoon.**
 
-## Distant terrain colour: three causes fixed, one open and planned
+## Distant terrain colour: verification debt carried from Session 73
 
-0.3.169 and 0.3.170 are human-tested and accepted ("nearly perfect"). What is left is one measured
-cause plus verification debt.
-
-- **Fix 3 is open and planned: the seasonal tint is sampled from one place.** The tint table holds
-  one colour per slot, sampled on a 64-position lattice 56 blocks across, centred on the PLAYER,
-  and every cached surface out to the horizon is multiplied by it. Two consequences, one local and
-  one global. Locally the lattice reads about 22% high in blue, measured by `.vhtint` on the
-  owner's test patch: blue runs 0.078..0.220 across that window while the true value at the block
-  is 0.125, near the bottom of a range spanning nearly 3x, so red and green barely move and blue
-  takes all of it. **Which half of the lattice does that is not established** - it averages the
-  season map's per-block row, which is correct and is why it exists (G47), and the climate, which
-  is not - and the two readings call for opposite fixes. Globally, distant terrain in another
-  biome wears the player's climate, which no one has judged in play because the seam is the only
-  place the two can be compared. The plan's Phase 0 is the cheap measurement that separates them;
-  do not build before it runs. See `dev/plans/PLAN_DISTANT_TINT_SAMPLING.md`.
-- **A further ~6% of the blue is the low sample's height, not the lattice.** `tintsLow` is taken at
-  sea level rather than at the terrain's own height, and the ground on the test patch is 8 blocks
-  above it. Cheap to correct and it belongs with the plan rather than ahead of it, because the
-  two-height table may not survive the redesign.
-- **The seasonal blend weight is still unquantified, and `.vhtint` cannot settle it.** The
-  long-standing hypothesis below - that `ApplyColorMapOnRgba` and `colormap.vsh` compute the
-  climate/season weight differently - remains open. Both the mod's tint and `.vhtint`'s C line go
-  through `ApplyColorMapOnRgba`, so comparing them cancels the error rather than exposing it. C
-  matched the screenshot's back-solved vanilla tint closely at one position, which is encouraging
-  and is not a general result. Settling it needs the shader's own weight computed independently
-  and compared against the CPU call at a known temperature and rainfall.
 - **0.3.170 changed the stored colour of every non-TopSoil block in the game.** Stone and grassy
   soil were measured; nothing else was. Any block whose thirty-pixel sample happened to be badly
   unrepresentative moves further than gravel's 8%. The tell would be one block type looking wrong
   rather than a general shift.
-- **0.3.171's 0.08 speckle default has not been seen rendering.** The owner directed it from the
-  0.3.170 state.
 - **The 4% residual on gravel is unattributed.** Ambient occlusion, shadow-map filtering and the
   atlas mip chain are the candidates. A screenshot cannot separate them, and it is below the level
   worth chasing unless something else makes it matter.

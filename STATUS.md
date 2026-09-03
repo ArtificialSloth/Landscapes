@@ -2,30 +2,52 @@
 
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
-**Status date:** 2026-08-31
-**Mod version:** `0.3.171`, built, verified, packaged, and copy-installed; **not seen rendering**.
-0.3.169 and 0.3.170 are **human-tested and accepted** and carry the substance of this line.
+**Status date:** 2026-09-02
+**Mod version:** `0.3.183`, built, verified, packaged, copy-installed, and **human-tested and
+accepted** ("Much better, Excellent!").
 
-Three independent causes of the distant-terrain colour mismatch were measured on a flat two-block
-test patch the owner built for it - grassy soil and granite gravel, cached above and vanilla below,
-seam speckle off - and fixed. 0.3.169 applies the sun light level `applyLight` multiplies by, which
-0.3.51's derivation had cancelled in error and which had left every cached surface 24% too bright
-at every hour; and takes the grass overlay's top tile rather than the whole two-tile strip, which
-had understated coverage by about a third and put roughly twice vanilla's blue into all distant
-grass. 0.3.170 takes a block's stored colour from its texture's own average instead of the engine's
-thirty-pixel sample. 0.3.171 lowers the seam speckle default to 0.08 at owner direction, the 0.15
-having been tuned when the ground was still too bright. Existing caches correct themselves on load
-throughout; no schema bump was needed.
+**Distant terrain colour is the through-line of Sessions 73-75 and is now substantially closed.**
+Six independent causes were measured and fixed; every one of them was established by measurement
+rather than inspection, and the last two were found only because the instrument to see them was
+built first.
 
-One measured cause remains and is planned rather than fixed: the seasonal tint is one colour per
-slot, sampled on a 56-block lattice centred on the player and then applied to every cached surface
-in the world. Local blue reads about 22% high, and distant terrain wears the player's climate
-rather than its own - the second has never been judged in play, because the seam is the only place
-the two terrains can be compared. Which half of the lattice causes the 22% is deliberately left
-open: it averages both the season map's per-block row, which is correct, and the climate, which is
-not, and the two readings call for opposite fixes. See `dev/plans/PLAN_DISTANT_TINT_SAMPLING.md`,
-whose Phase 0 is the measurement that separates them, and the colour section of `dev/TODO.md`.
-`.vhtint` shipped in 0.3.167 to take this apart and is what eliminated two of its three suspects.
+Sessions 73's three: cached surfaces were 24% too bright at every hour, because 0.3.51's derivation
+cancelled the sun light level that `bMax` renormalisation does not cancel; grass coverage was
+understated by about a third, because the colour path averaged both tiles of a two-tile overlay
+where the shader takes only the top one, and that share is where nearly all the blue in distant
+grass came from; and a block's stored colour came from the engine's thirty-pixel sample rather than
+its texture's average.
+
+Session 74's: the engine blends its climate and season colour maps by one weight on the CPU and a
+different one in the shader that draws the world - the CPU's correction terms are integer divisions
+that are always zero and it has no altitude term at all - so cold and hot ground were wrong in
+opposite directions, which is why no single global correction had ever worked.
+
+Session 75's two, and the larger of them is the oldest defect of the set. **There was one tint for
+the entire visible world and it was sampled where the player stood**; climate is now stored per
+64-block cell and the shader finishes the colour from it, applying the game's own altitude cooling,
+rainfall height terms and seasonal blend, which also makes height exact rather than interpolated.
+And **the mod was about ten in-game days behind the season**: the engine's CPU colour call reads
+the season map at `YearRel * width` while `colormap.vsh` reads it at `(seasonRel + b/40) * width`,
+and everything the mod knew about the season came from that call. Constant offset, cost dependent
+on how fast the season map is moving - which is why four sessions had called the match "nearly
+perfect" and the autumn turn made it obvious. Predicted +5.6/+5.7/+6.3% excess red against the
+owner's measured +5.6/+5.4/+6.4% in three screenshots.
+
+Two general lessons are now gotchas and outrank the individual fixes. **The engine's CPU colour
+call is not what the engine draws** (G144) - it has disagreed with `colormap.vsh` twice, and any
+diagnostic comparing two quantities that both come from that call cancels the error rather than
+exposing it, which `.vhtint` did for four sessions. And **an average cannot be validated against a
+single random draw** (G145), which is how the plan's own acceptance criterion is written.
+
+**What is left is bounded and known.** The climate field only reaches as far as the client holds
+map regions - about 1,000 blocks on arrival, growing toward 3,000 as the player explores, against
+8,192 of drawn terrain - because `ClientWorldMap.GetClimate` returns a fixed default beyond them
+rather than failing. Cells with no answer take the nearest one that has, spreading outward, so
+nothing draws an edge where the data stops and it degrades to the previous behaviour when nothing
+is known. Persisting that field so coverage accumulates across sessions is the next step, together
+with retiring the now-redundant height ramp. See `dev/TODO.md` and section 10 of
+`dev/plans/PLAN_DISTANT_TINT_SAMPLING.md`.
 
 Carried forward from 0.3.164-0.3.166: Forest Floor LOD tops corrected, the zero overlap default
 after 0.3.162/0.3.163 fixed the holes the old margin hid, the saved `.vhconfig`/`.vhblend` master
@@ -35,12 +57,13 @@ invalidation because a zero edge mask is mistaken for no change. The full fast t
 assertions. No game run or performance benchmark supports the new visual or performance behavior. The development line
 remains 0.3.x (`0.2.1` is the public released version; 0.4.0 remains a preserved local rollback
 artifact from the GPU-renderer milestone).
-**Active branch:** `codex/exact-vanilla-draw-range`, branched from `14bfe4b` on
-`codex/water-seam-transition`, itself from `94cde0e` on `codex/terrain-slabs-and-near-water`,
-itself from `a55fc5b` on `codex/seam-blending-and-block-textures`, itself from `master` at
-`21da6be` (the accepted 0.3.127 baseline). Not pushed.
+**Active branch:** `codex/seasonal-tint-blend-weight`, branched from `c98c164` on
+`codex/exact-vanilla-draw-range`, itself from `14bfe4b` on `codex/water-seam-transition`, itself
+from `94cde0e` on `codex/terrain-slabs-and-near-water`, itself from `a55fc5b` on
+`codex/seam-blending-and-block-textures`, itself from `master` at `21da6be` (the accepted 0.3.127
+baseline). Not pushed.
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `78` C# files under `VintageHorizons/src`
+**Source files:** `84` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
@@ -1084,7 +1107,8 @@ shutdown retains the existing exact-revision final flush.
 to a second bounded read-only worker. The owning thread now only admits requests and
 publishes completed immutable results.
 40. Periodic maintenance was spread across frames: seasonal tint refresh runs every 30
-seconds and stages one tint slot per frame before atomic publication, GPU mesh eviction
+seconds and stages one tint slot at one height, or one climate field row, per frame before
+atomic publication, GPU mesh eviction
 examines four rolling candidates per frame, CPU section eviction examines two per tick,
 delayed-occlusion work is capped at eight query issues and sixteen result checks per frame,
 and unchanged server manifest follow-up runs every 30 seconds.
@@ -1256,9 +1280,14 @@ guard cost, GPU timer breakdown and cross-driver evidence remain absent.
 snapshot remains an owning-thread atomic unit. The worker transaction can also create a
 30-second I/O burst, although it no longer blocks the game thread directly. Neither tail
 has been measured in game yet.
-8. One seasonal tint slot still performs its 128 colour-map samples atomically on the
-render thread. Mesh/section rolling eviction and delayed-query caps bound aggregate work,
-but the cost distribution has only source and harness evidence.
+8. The seasonal refresh still does owning-thread work in per-frame units: since 0.3.174 a
+unit is one tint slot at one sampled height rather than a whole slot, and since 0.3.179 the
+climate field adds one row of cells per frame - 128 map-region lookups, of which only the
+loaded ones cost a climate read. Per-frame cost is at or below what the old whole-slot step
+was, but the whole table now takes roughly 434 frames to republish instead of 20, so the
+30-second cadence is what bounds staleness rather than the step size. Mesh/section rolling
+eviction and delayed-query caps bound aggregate work; the cost distribution has only source
+and harness evidence.
 
 The approved and now evidence-reordered sequence is `dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md`.
 

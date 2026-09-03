@@ -13,6 +13,43 @@ section is recaptured and can receive its texture slot, but the zero neighbour-e
 currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
 remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
 
+## [0.3.183] - 2026-09-02
+
+**Distant ground is tinted by the climate where it stands.** There was one colour for the entire
+visible world and it was sampled where the player was standing, so flying repainted the horizon and
+distant terrain wore the player's biome until it caught up. The mod now stores temperature and
+rainfall for every 64-block cell around the player and the shader works the colour out per patch of
+ground, applying the game's own altitude cooling, rainfall height terms and seasonal blend. Height
+stops being an approximation and becomes exact.
+
+The client only knows the climate where it has been sent map regions - about 1,000 blocks on
+arrival, growing toward 3,000 as you explore, against 8,192 of drawn terrain - and asking beyond
+that returns a fixed default rather than an error. Cells with no real answer take the nearest one
+that has, spreading outward, so there is no line in the terrain where the data stops and the far
+field takes a real nearby climate instead of the player's own. With nothing known it behaves
+exactly as before. `.vhtint field on|off` switches the two in place; `.vhclimate` reports how far
+real climate reaches and how fast it changes.
+
+**Distant terrain was about ten in-game days behind the season.** The function the mod asked for
+colours reads the seasonal colour table at one point in the year; the shader that draws the world
+reads it slightly later, advanced by a noise term. Everything the mod knew about the season came
+from that function, so distant ground had always worn a slightly earlier season than the ground
+beside it. The offset is constant, but what it costs depends on how fast the seasonal colours are
+moving - almost nothing through midsummer, about ten counts of red through the autumn turn, which
+is why it was invisible for months. Measured at 5 to 6 percent too red against vanilla in three
+screenshots. The table is now read directly at the column the shader reads, using the engine's own
+season value.
+
+**The blend band drew the tint table as its ground texture.** Uploading a table bound it to
+whichever texture slot happened to be current, which was the block atlas's - and the band is the
+only place that atlas is sampled, so terrain inside the band came out several times too bright
+while everything outside it was correct. A second fault made it permanent rather than a single
+frame every thirty seconds. Every upload now claims its own slot first.
+
+Also fixed: an autumn hillside drew deep blue, from a red/blue swap in the copied colour maps;
+distant colour flipped back to the old whole-world tint for a moment on every refresh; and rainfall
+was read at sea level, where its height bonus peaks, and then used unchanged at every altitude.
+
 ## [0.3.171] - 2026-08-31
 
 **Seam speckle defaults to 0.08**, down from 0.15, at owner direction. The higher value was tuned

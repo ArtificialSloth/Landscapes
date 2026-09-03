@@ -2835,3 +2835,100 @@ it. Send the report to the log unmodified: the log is the copy that has to stay 
 not parsed.
 
 **Found:** Session 73, on the owner's first use of 0.3.167. Fixed in 0.3.168.
+
+### G143 - A texture upload binds on the current unit and steals whatever was there
+
+**Trigger:** calling `LoadOrUpdateTextureFromBgra` or any sibling, anywhere near a run of
+`BindTexture2D` calls.
+
+**Trap:** `ClientPlatformWindows.LoadOrUpdateTextureFromPixels` reaches `GL.BindTexture` on both
+its create and its update branch and never calls `GL.ActiveTexture`, so the texture it writes is
+left bound to whichever unit happened to be current - and it never restores what it displaced.
+`ShaderProgramBase.BindTexture2D` sets the uniform, activates its unit and binds, leaving that unit
+current. Put an upload one line after a bind and the upload takes that bind's unit. The tint ramp's
+upload sat after the block atlas was bound to unit 9, so the blend band - the only place the atlas
+is sampled - drew a 64x96 tint ramp as its block texture and came out several times too bright,
+while every fragment outside the band was perfect. No error, nothing in a diff, and it reads as a
+colour bug rather than a binding one.
+
+Alone it would have been one frame in eighteen hundred. It was permanent because a second defect
+kept the upload running every frame: the version guard was one counter per shader program, carried
+over from when the table was uniform arrays, and the upload method assigned the field while two
+programs passed their own counters by ref.
+
+**Do:** make the destination unit current before uploading, so a stray bind lands where the texture
+belongs anyway. Keep every upload behind one helper that does it, and hold that to one call site
+with a check. A texture is not program state: version it once, not per program.
+
+**Found:** Session 75, from the owner's report that the blend band was "way off". Fixed in 0.3.177.
+
+### G144 - The engine's CPU colour call is not what the engine draws
+
+**Trigger:** taking a tint, a blend weight, or a season from `ApplyColorMapOnRgba` and expecting
+the terrain shader to agree.
+
+**Trap:** the CPU path and `colormap.vsh` disagree in at least two ways, and both were shipped
+before either was found.
+
+- **The season weight.** The CPU's two correction terms are integer divisions that evaluate to zero
+  for every reachable temperature, and it has no altitude term at all; the shader computes both as
+  floats and shifts the temperature by 1.5 per block above sea level. Up to 0.85 apart. Corrected
+  in Session 74.
+- **The season column.** The CPU reads `YearRel * width`; the shader reads
+  `(seasonRel + b/40) * width`, where `b` is two value noises, so it draws the world up to 0.05 of
+  a year - about ten in-game days - further into the season. Constant offset, but its colour cost
+  depends entirely on how fast the season map is moving: near zero through midsummer, about ten
+  counts of red through the autumn turn. It was as old as the tint and only became visible when the
+  calendar reached a fast-moving part of the map, which is why four sessions of colour work had
+  called the match "nearly perfect".
+
+Both are invisible to any diagnostic that compares two quantities which both come from the CPU
+call, because the error cancels. `.vhtint`'s A and C lines did exactly that for four sessions.
+
+**Do:** for any quantity the terrain shader uses, read `colormap.vsh` and transcribe it, and hold
+the transcription against the game's own file in a check rather than against a copy of it in this
+repo. Where the shader is given a uniform - `seasonRel` is the case here - take the engine's own
+`DefaultShaderUniforms` value rather than recomputing it from the calendar, so the two cannot
+diverge at all. See also G139: a check written from the same wrong reduction agrees with the bug.
+
+**Found:** Session 74 (the weight) and Session 75 (the column). Fixed in 0.3.172 and 0.3.183.
+
+### G145 - An average cannot be held to within a few percent of one random draw
+
+**Trigger:** validating a deliberately averaged summary against the engine's answer for a single
+block, or writing an acceptance criterion that says the two should agree.
+
+**Trap:** the engine picks a season map ROW per position from a hash, so its answer for one block
+is one draw from a wide distribution - across the 64 lattice positions `.vhtint` samples, blue
+spans 0.004 to 0.090. Distant terrain is a summary of many blocks and averages the rows on purpose
+(G47), so the two quantities are not the same kind of thing. A 37% gap between them is the spread,
+not an error, and chasing it costs whole rounds.
+
+`dev/plans/PLAN_DISTANT_TINT_SAMPLING.md` section 9 still asks for A and C "within a few percent on
+every channel". That criterion cannot pass and should not be treated as a target.
+
+**Do:** compare an average against an average - the lattice mean, which the same report already
+prints. Print the spread beside any single-sample reading so its width is visible. When a
+comparison looks alarming, check first whether one side is a single sample.
+
+**Found:** Session 75, after a 37% blue "error" turned out to be one row draw.
+
+### G146 - Climate values carry height terms before anything reads a colour map
+
+**Trigger:** sampling temperature, rainfall or any other climate quantity at one convenient height
+and using it at another.
+
+**Trap:** `Climate.GetRainFall(raw, y)` adds `(y - Climate.Sealevel)/2` plus a bonus of up to 40
+that applies only within eight blocks of sea level, before the value ever indexes a colour map. The
+climate field sampled rainfall at sea level - exactly where that bonus peaks - and spent it
+unchanged everywhere: 35 counts too wet ten blocks up on a 256-count axis. Temperature has its own
+term, `GetAdjustedTemperature`, keyed on a DIFFERENT sea level: the client world map's, not
+`Climate.Sealevel`. The height ramp this replaced never had the fault, because it asked the engine
+for a finished colour at each height and the engine applied the terms itself; storing climate
+instead moves that responsibility into this mod.
+
+**Do:** store the raw quantity and reconstruct at the height being drawn, with the reconstruction
+in one named place that a check can hold against the engine's IL. Do not assume the two sea levels
+are the same value; pass both.
+
+**Found:** Session 75. Fixed in 0.3.181.

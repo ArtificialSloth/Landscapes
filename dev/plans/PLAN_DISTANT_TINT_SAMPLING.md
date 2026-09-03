@@ -62,9 +62,15 @@ The lattice averages over two things at once, because position moves both:
    at one climate. **Averaging these is correct** - a vanilla field really is all sixteen mixed,
    and G47 exists because sampling one row painted every distant field with it and re-rolled as the
    player walked.
-2. **The climate**, temperature and rainfall, which set both the climate map's coordinate and the
-   season map's column. **Averaging this is wrong** - it is a property of the ground being drawn,
-   not of a neighbourhood.
+2. **The climate**, temperature and rainfall, which set the climate map's coordinate.
+   **Averaging this is wrong** - it is a property of the ground being drawn, not of a
+   neighbourhood.
+
+> **Corrected in Session 75.** This said climate sets the season map's column as well. It does not.
+> `colormap.vsh` reads the season column at `clamp(seasonRel + b/40, 0.01, 0.99)` - the calendar
+> plus a position noise - and climate never enters it. The season colour therefore needs no spatial
+> field at all, which removed half of what Phase 2 below was sized to carry. See also G144 for the
+> separate and larger fault this uncovered in the same expression.
 
 The measured spread, blue 0.078..0.220, is wider than the row range alone, so both are present. It
 does not say in what proportion. And the two readings disagree about what to do:
@@ -279,6 +285,15 @@ engine's own call at the 17 heights and interpolate.
 not the weight's, and the weight is the part that needed 8-block spacing. If the cost is a problem,
 spread the refresh over more frames rather than sampling fewer heights.
 
+> **Superseded in Session 75.** The whole height axis is gone. Climate is stored per cell and the
+> shader applies the lapse rate at the vertex's own height, so height is exact arithmetic and needs
+> no sampling. The ramp survives only as a fallback and is scheduled for removal. The claim above
+> that the climate map is "a smooth gradient in temperature" is also worth qualifying: measured off
+> `planttint.png` it is a broad gradient with about +/-5 counts of per-texel noise, and adjacent
+> texels differ by 5.7 counts on average. Interpolating across that averages the noise, which is
+> correct for a summary of distant ground for the same reason G47 gives - but the reasoning should
+> say so rather than assert smoothness.
+
 ## 5. Phase 2 - the design, if section 4 says climate smear
 
 A tint field over world cells, replacing one colour per slot with one colour per (slot, cell).
@@ -366,5 +381,43 @@ owner's:
   changing with the player's position. This one has never been judged in play and is the larger
   half of the defect; the test patch cannot show it.
 
+> **Corrected in Session 75.** The criterion below cannot pass and is not a target. C is the
+> engine's answer for ONE block, and the engine picks a season map row per position from a hash:
+> across the 64 lattice positions the same report prints, blue spans 0.004..0.090. Holding a
+> deliberate average to within a few percent of one draw from that is not possible. Compare the
+> field path's own numbers - the D lines added in 0.3.182 - against the lattice mean instead, and
+> read the spread line beside any single-sample reading. See G145.
+
 Offline, `.vhtint` should report A and C within a few percent on every channel at all three Phase 0
 positions, not only at the test patch.
+
+
+## 10. What Session 75 actually built
+
+Phase 2 shipped, in a different shape than section 5 describes, and section 5 should be read as the
+design that was considered rather than the one that exists.
+
+**Built:** a field of CLIMATE - raw temperature and rainfall, two bytes per 64-block cell, no slot
+axis - and the shader finishes the colour from it. One climate read per cell per refresh against
+roughly 370,000 colour calls for section 5's shape, and the height ramp disappears because the
+lapse rate is arithmetic. Cell size 64 blocks: one level-0 section edge, so a section origin is
+cell-aligned at every LOD level, and the measured gradient is linear well past it.
+
+**The constraint neither design accounted for.** The client holds map regions for roughly 1,000
+blocks on arrival, growing toward 3,000 as the player explores, against 8,192 of drawn terrain -
+and `ClientWorldMap.GetClimate` returns the constant `0xB4B4B4` outside them rather than failing.
+This bounds section 5's design exactly as much as the one that shipped. Cells with no answer are
+filled by spreading outward from the nearest cell that has one, so nothing draws an edge where the
+data stops. `.vhclimate` measures it.
+
+**Phase 0 is answered, differently than it was posed.** Section 4 asked which half of the lattice
+error was climate smear and which was row averaging, to decide whether a per-position tint was
+worth building. That question is now moot for the climate half - it is per position and correct -
+and the row half is settled: the mod averages the rows on purpose and must, because distant terrain
+is a summary. What section 4 correctly identified as the thing that "matters more and should run
+first" - whether `ApplyColorMapOnRgba` agrees with `colormap.vsh` at all - turned out to be the
+whole remaining error, twice: the blend weight in Session 74 and the season column in Session 75.
+It is now G144, and it should have been the first thing done.
+
+**Still open:** retire the ramp; persist the field so coverage accumulates across sessions; slot
+sharing. See `dev/TODO.md`.
