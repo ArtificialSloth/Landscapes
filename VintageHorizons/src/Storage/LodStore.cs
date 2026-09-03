@@ -51,6 +51,13 @@ public class LodStore : SQLiteDBConnection
                     PRIMARY KEY (Detail, SX, SZ)
                 );
                 CREATE INDEX IF NOT EXISTS SectionKeys ON Section (Detail, SX, SZ, ApplyToParent);
+                CREATE TABLE IF NOT EXISTS Climate (
+                    PX INTEGER NOT NULL,
+                    PZ INTEGER NOT NULL,
+                    Data BLOB NOT NULL,
+                    ModifiedMs INTEGER NOT NULL,
+                    PRIMARY KEY (PX, PZ)
+                );
                 DROP TABLE IF EXISTS Region;
                 DROP TABLE IF EXISTS Region2;";
             cmd.ExecuteNonQuery();
@@ -90,9 +97,60 @@ public class LodStore : SQLiteDBConnection
                 + "sections from the old format. They rebuild from capture as you play.",
                 existing, SchemaVersion, discarded);
         }
+        // Sections only. Remembered climate is worldgen, not our format: it does not go stale
+        // when the way we store TERRAIN changes, and throwing it away would cost the player the
+        // exploration that filled it for no reason. It carries its own format byte and a blob
+        // that does not match is ignored rather than parsed.
         using var cmd = sqliteConn.CreateCommand();
         cmd.CommandText = "DELETE FROM Section; INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('FormatVersion', '" + SchemaVersion + "');";
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// One remembered climate patch, or null when the player has never been there. Called on
+    /// the storage thread; the render path never touches SQLite for this.
+    /// </summary>
+    public byte[]? LoadClimatePatch(int px, int pz)
+    {
+        try
+        {
+            using var cmd = sqliteConn.CreateCommand();
+            cmd.CommandText = "SELECT Data FROM Climate WHERE PX=@px AND PZ=@pz";
+            cmd.Parameters.AddWithValue("@px", px);
+            cmd.Parameters.AddWithValue("@pz", pz);
+            return cmd.ExecuteScalar() as byte[];
+        }
+        catch (Exception e)
+        {
+            logger.Warning("[VintageHorizons] could not read remembered climate at {0},{1}: {2}",
+                px, pz, e.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Write one remembered climate patch. Failure is logged and dropped: the cells are relearned
+    /// the next time the player is there, so there is nothing to retry and nothing to acknowledge.
+    /// </summary>
+    public void SaveClimatePatch(int px, int pz, byte[] data)
+    {
+        try
+        {
+            using var cmd = sqliteConn.CreateCommand();
+            cmd.CommandText =
+                "INSERT OR REPLACE INTO Climate (PX, PZ, Data, ModifiedMs) "
+                + "VALUES (@px, @pz, @data, @ms)";
+            cmd.Parameters.AddWithValue("@px", px);
+            cmd.Parameters.AddWithValue("@pz", pz);
+            cmd.Parameters.AddWithValue("@data", data);
+            cmd.Parameters.AddWithValue("@ms", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception e)
+        {
+            logger.Warning("[VintageHorizons] could not store remembered climate at {0},{1}: {2}",
+                px, pz, e.Message);
+        }
     }
 
     public override void OnOpened()

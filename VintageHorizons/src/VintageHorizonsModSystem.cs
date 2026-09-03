@@ -217,6 +217,10 @@ public class VintageHorizonsModSystem : ModSystem
                 Environment.GetEnvironmentVariable("VINTAGEHORIZONS_DEPTH_PYRAMID") != "0",
         };
 
+        // Remembered climate rides the section worker. Null on a client with no cache, in which
+        // case the field simply learns nothing durable and behaves as it did before.
+        renderer.ClimateStorage = pipeline.StorageThread;
+
         // Install only after the competing-LOD return above. The adapter changes no
         // atmosphere, client setting, culling or streaming state: it moves only vanilla
         // terrain's visual edge fade while this renderer exists, then becomes inert and
@@ -2244,7 +2248,7 @@ public class VintageHorizonsModSystem : ModSystem
                 var camera = capi.World.Player.Entity.CameraPos;
                 float far = renderer?.EffectiveFarDistance ?? 0f;
                 string report = LogAndReturn("climate", LodClimateProbe.Describe(
-                    capi.World, (int)camera.X, (int)camera.Z, far));
+                    capi.World, (int)camera.X, (int)camera.Z, far, renderer?.ClimateMemory));
                 // Chat gets the headline only. The full table is dozens of lines and the
                 // panel cannot hold it; the log is the copy that is meant to be read.
                 string[] lines = report.Split('\n');

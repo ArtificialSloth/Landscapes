@@ -58,6 +58,7 @@ public static class Program
         ("pure", "season blend weight", SeasonWeightChecks.Run),
         ("pure", "climate probe geometry", ClimateProbeChecks.Run),
         ("pure", "climate field", ClimateFieldChecks.Run),
+        ("pure", "climate memory", ClimateMemoryChecks.Run),
         ("pure", "climate rainfall", ClimateRainfallChecks.Run),
         ("pure", "season colour column", SeasonColorChecks.Run),
         ("pure", "remote keys", RemoteKeyChecks.Run),

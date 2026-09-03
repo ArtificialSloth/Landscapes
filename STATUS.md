@@ -3,8 +3,10 @@
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
 **Status date:** 2026-09-02
-**Mod version:** `0.3.183`, built, verified, packaged, copy-installed, and **human-tested and
-accepted** ("Much better, Excellent!").
+**Mod version:** `0.3.185`, built, verified, packaged and copy-installed; **not yet seen in game**.
+0.3.183 is **human-tested and accepted** ("Much better, Excellent!") and carries the substance of
+the colour work below; 0.3.184 retired the height table and 0.3.185 made remembered climate
+persistent, both source-traced and harness-tested only.
 
 **Distant terrain colour is the through-line of Sessions 73-75 and is now substantially closed.**
 Six independent causes were measured and fixed; every one of them was established by measurement
@@ -63,7 +65,7 @@ from `94cde0e` on `codex/terrain-slabs-and-near-water`, itself from `a55fc5b` on
 `codex/seam-blending-and-block-textures`, itself from `master` at `21da6be` (the accepted 0.3.127
 baseline). Not pushed.
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `84` C# files under `VintageHorizons/src`
+**Source files:** `85` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`

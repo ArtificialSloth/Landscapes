@@ -95,7 +95,8 @@ public static class LodClimateProbe
     /// The report. Written to the log rather than chat because it is far too long for a chat
     /// panel and the owner cannot copy chat out of the game.
     /// </summary>
-    public static string Describe(IClientWorldAccessor world, int camX, int camZ, float farDistance)
+    public static string Describe(IClientWorldAccessor world, int camX, int camZ, float farDistance,
+        LodClimateMemory? memory = null)
     {
         IBlockAccessor blocks = world.BlockAccessor;
         var text = new System.Text.StringBuilder();
@@ -108,6 +109,14 @@ public static class LodClimateProbe
             text.AppendLine($"  here: raw temperature {hereT:F0}, rainfall {hereR:F0}");
         else
             text.AppendLine("  here: NO CLIMATE, which should be impossible standing on ground");
+
+        if (memory != null)
+        {
+            text.AppendLine($"  remembered from previous visits: {memory.KnownCells()} cells "
+                + $"across {memory.PatchCount} patches, {memory.PendingRequests} still being "
+                + "read back. A cell answered once is answered forever, so the rings below "
+                + "grow with exploration rather than resetting when the world reloads.");
+        }
 
         // Availability. This is the number that decides whether a per-position tint is
         // possible at all, or only possible near the player.

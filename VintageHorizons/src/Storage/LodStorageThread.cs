@@ -2,6 +2,9 @@ using System.Collections.Concurrent;
 
 namespace VintageHorizons;
 
+/// <summary>A remembered climate patch read back, waiting for owning-thread publication.</summary>
+public readonly record struct LodClimateLoadResult(long Key, byte[]? Data);
+
 /// <summary>A completed background read waiting for owning-thread publication.</summary>
 public readonly record struct LodLoadResult(
     long Key, LodSection? Section, long EstimatedBytes, long ReadyAtMilliseconds);
@@ -67,6 +70,13 @@ public class LodStorageThread : IDisposable
     // the slots reserved for the network client's protocol-bounded in-flight set.
     const int MaxServerForeignOutstanding = Net.LodAssist.MaxSectionsInFlight;
     const int MaxLocalForeignOutstanding = 8;
+    // Remembered climate. Tiny rows, read a couple of dozen at a time when the field's window
+    // moves and written only when a refresh learned something new, so they ride the section
+    // worker rather than justifying a thread or a main-thread read of their own (G2).
+    readonly ConcurrentQueue<long> climateLoadRequests = new();
+    readonly ConcurrentQueue<LodClimateLoadResult> climateLoadResults = new();
+    readonly ConcurrentQueue<(long Key, byte[] Data)> climateSaves = new();
+
     readonly ConcurrentQueue<LodForeignDecodeJob> foreignRequests = new();
     readonly ConcurrentQueue<LodForeignDecodeResult> foreignResults = new();
     int serverForeignOutstanding;
@@ -75,6 +85,25 @@ public class LodStorageThread : IDisposable
 
     /// <summary>Set by the coordinator: performs one blocking read, called on this thread.</summary>
     public void SetLoader(Func<long, LodSection?> loader) => loadFunc = loader;
+
+    /// <summary>Ask for one remembered climate patch. Answers arrive out of band.</summary>
+    public void RequestClimate(long key)
+    {
+        climateLoadRequests.Enqueue(key);
+        signal.Set();
+    }
+
+    public bool TryTakeClimateResult(out LodClimateLoadResult result) =>
+        climateLoadResults.TryDequeue(out result);
+
+    /// <summary>Queue one remembered climate patch for writing.</summary>
+    public void SaveClimate(long key, byte[] data)
+    {
+        climateSaves.Enqueue((key, data));
+        signal.Set();
+    }
+
+    public int PendingClimateWrites => climateSaves.Count;
 
     public void RequestLoad(long key)
     {
@@ -247,6 +276,25 @@ public class LodStorageThread : IDisposable
                 ReadOne(key);
             }
 
+            // Remembered climate, before the section batch: a pending read is holding a
+            // patch of the world at a borrowed colour, and these rows are two kilobytes.
+            while (climateLoadRequests.TryDequeue(out long climateKey))
+            {
+                didWork = true;
+                climateLoadResults.Enqueue(new LodClimateLoadResult(climateKey,
+                    store.LoadClimatePatch(
+                        LodClimateMemory.PatchXOf(climateKey),
+                        LodClimateMemory.PatchZOf(climateKey))));
+            }
+
+            while (climateSaves.TryDequeue(out (long Key, byte[] Data) climateSave))
+            {
+                didWork = true;
+                store.SaveClimatePatch(
+                    LodClimateMemory.PatchXOf(climateSave.Key),
+                    LodClimateMemory.PatchZOf(climateSave.Key), climateSave.Data);
+            }
+
             if (ShouldCommit() && TryTakePendingSaveBatch(out List<LodSaveSnapshot> batch))
             {
                 didWork = true;
@@ -257,6 +305,12 @@ public class LodStorageThread : IDisposable
         }
 
         // Shutting down: never drop queued work, the rows are the player's cache.
+        while (climateSaves.TryDequeue(out (long Key, byte[] Data) last))
+        {
+            store.SaveClimatePatch(
+                LodClimateMemory.PatchXOf(last.Key), LodClimateMemory.PatchZOf(last.Key),
+                last.Data);
+        }
         if (TryTakePendingSaveBatch(out List<LodSaveSnapshot> finalBatch)) WriteBatch(finalBatch);
     }
 

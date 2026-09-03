@@ -1529,6 +1529,18 @@ public class LodTerrainRenderer : IRenderer
     /// </summary>
     readonly LodClimateField climateField = new(128);
     readonly LodClimateMapPages climatePages = new();
+
+    /// <summary>
+    /// Climate the client has answered before, so exploration is cumulative rather than
+    /// relearned every session. See <see cref="LodClimateMemory"/>.
+    /// </summary>
+    public LodClimateMemory ClimateMemory { get; } = new();
+
+    /// <summary>
+    /// Where remembered climate is read and written. Set by the mod system once the pipeline
+    /// exists; null on a client with no cache, where the field simply learns nothing durable.
+    /// </summary>
+    public LodStorageThread? ClimateStorage { get; set; }
     LoadedTexture? climateFieldTexture;
     LoadedTexture? climateMapTexture;
     LoadedTexture? slotTableTexture;
@@ -1551,11 +1563,27 @@ public class LodTerrainRenderer : IRenderer
         {
             temperature = 0;
             rainfall = 0;
-            if (!LodClimateProbe.TryRawClimate(capi.World, bx, bz, out float t, out float r))
-                return false;
-            temperature = (byte)Math.Clamp((int)MathF.Round(t), 0, 255);
-            rainfall = (byte)Math.Clamp((int)MathF.Round(r), 0, 255);
-            return true;
+            int cellX = LodClimateField.CellOf(bx);
+            int cellZ = LodClimateField.CellOf(bz);
+
+            // The client first: it is authoritative where it can answer, and answering also
+            // teaches the memory, which is what makes coverage grow with exploration.
+            if (LodClimateProbe.TryRawClimate(capi.World, bx, bz, out float t, out float r))
+            {
+                temperature = (byte)Math.Clamp((int)MathF.Round(t), 0, 255);
+                rainfall = (byte)Math.Clamp((int)MathF.Round(r), 0, 255);
+                ClimateMemory.Learn(cellX, cellZ, temperature, rainfall);
+                return true;
+            }
+
+            // Then what we were told the last time we were here. A real answer from a previous
+            // session beats spreading a neighbour's climate across it.
+            if (ClimateMemory.TryGet(cellX, cellZ, out temperature, out rainfall)) return true;
+
+            // Otherwise ask the store, once per patch, and let the spread cover this refresh.
+            if (ClimateStorage != null && ClimateMemory.ShouldRequest(cellX, cellZ, out long key))
+                ClimateStorage.RequestClimate(key);
+            return false;
         };
 
     public LodTerrainRenderer(
@@ -2027,6 +2055,20 @@ public class LodTerrainRenderer : IRenderer
             climateField.RefreshRow(fieldRow, ClimateSampler);
             seasonalRefreshSlot++;
             return;
+        }
+
+        // What the refresh learned goes to disk, and anything the store answered while it ran
+        // is folded in for the next one. Both are handed to the section worker; neither touches
+        // SQLite from here.
+        if (ClimateStorage != null)
+        {
+            while (ClimateStorage.TryTakeClimateResult(out LodClimateLoadResult loaded))
+                ClimateMemory.Accept(loaded.Key, loaded.Data);
+            foreach (long dirty in ClimateMemory.TakeDirtyKeys())
+            {
+                byte[]? blob = ClimateMemory.Encode(dirty);
+                if (blob != null) ClimateStorage.SaveClimate(dirty, blob);
+            }
         }
 
         // Pages before the table: the table records which page each slot reads, so a page has
@@ -7831,6 +7873,11 @@ public class LodTerrainRenderer : IRenderer
         seasonalStateInitialized = false;
         seasonalRefreshSlot = 0;
         tints.InvalidateReadiness();
+
+        // Remembered climate is per world and nothing in it is true in the next one. The rows
+        // stay on disk; only the copy in memory goes.
+        climateField.Clear();
+        ClimateMemory.Clear();
         snowLineY = pendingSnowLineY = 99999;
         DisposeTemporalOcclusionQueries();
         ClearReadiness();

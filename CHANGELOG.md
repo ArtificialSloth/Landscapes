@@ -13,6 +13,21 @@ section is recaptured and can receive its texture slot, but the zero neighbour-e
 currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
 remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
 
+## [0.3.185] - 2026-09-02
+
+**Distant terrain remembers the climate it has been told.** The game only knows the climate where
+it has sent you map regions, so the mod could only colour about a thousand blocks correctly on
+arrival and relearned even that from nothing every session. Climate answers are now kept in the
+mod's own cache, keyed on world position, so a place answered once stays answered - coverage grows
+with exploration instead of resetting when you log in, and it survives across sessions. Nothing is
+stored for ground the game never answered for; a guess is never saved as if it were data.
+
+**The height table is gone.** The per-area climate replaced it, and keeping both meant two ways of
+computing one colour that both had to stay correct. Block types the shader cannot finish - the
+tropical seasonal blend, or a colour map of an unexpected size - now draw the game's own answer
+flat, which is what every build before the height table drew anyway. The distant colour table also
+settles about seventeen times faster, undoing a slowdown introduced when the height table arrived.
+
 ## [0.3.183] - 2026-09-02
 
 **Distant ground is tinted by the climate where it stands.** There was one colour for the entire
