@@ -2744,7 +2744,13 @@ decide which neighbouring meshes also become stale. Assert both halves: an inter
 the section/save/mip but no neighbour, and a byte-identical replacement dirties nothing.
 
 **Found:** source-traced after 0.3.166 while answering how newly placed blocks receive L0 textures.
-The texture lookup path was correct; the independent invalidation path was not. Open in TODO.
+The texture lookup path was correct; the independent invalidation path was not.
+
+**Fixed in 0.3.189.** `ReplaceColumns` and `LodMip.ApplyToParent` now report content change and
+touched edges as two separate answers, and both call sites act on the first. `MarkChanged` already
+did the right thing with `EdgeNone` - it advances the revisions and skips all four neighbours - so
+the defect was only ever in not reaching it. `LodMip.DownsampleIntoParent`, the helper the checks
+use, carried the same conflation in its return value and now reports content change too.
 
 ### G139 - A derivation that cancels a factor must show the factor cancelling
 

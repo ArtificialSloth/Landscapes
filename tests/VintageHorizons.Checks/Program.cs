@@ -56,6 +56,7 @@ public static class Program
         ("fixture", "block policy", PolicyChecks.Run),
         ("pure", "top soil colour", TopSoilColorChecks.Run),
         ("pure", "tint slot keys", SlotKeyChecks.Run),
+        ("pure", "interior changes", InteriorChangeChecks.Run),
         ("pure", "season blend weight", SeasonWeightChecks.Run),
         ("pure", "climate probe geometry", ClimateProbeChecks.Run),
         ("pure", "climate field", ClimateFieldChecks.Run),

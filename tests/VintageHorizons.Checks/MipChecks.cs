@@ -196,7 +196,7 @@ public static class MipChecks
         c.Eq(4L, result.Epoch, "worker result preserves its world epoch");
         c.Eq(99L, result.ChildKey, "worker result preserves its child identity");
         c.Eq(7L, result.ChildRevision, "worker result preserves its content revision");
-        c.True(LodMip.ApplyToParent(result, parent) != LodSection.EdgeNone,
+        c.True(LodMip.ApplyToParent(result, parent, out _) != LodSection.EdgeNone,
             "owning-thread publication changes the parent");
         c.Eq(Half * Half, parent.CapturedColumns, "published worker result fills only its quadrant");
     }

@@ -862,8 +862,15 @@ public class LodPipeline
         }
 
         ColumnsCaptured++;
-        int touchedEdges = section.ReplaceColumns(batch);
-        if (touchedEdges != LodSection.EdgeNone)
+
+        // Whether anything changed and which edges it touched are two different questions.
+        // A block placed in the middle of a section changes it and touches no edge, so the
+        // edge mask alone is EdgeNone - and treating that as "nothing happened" let the new
+        // runs into resident RAM without dirtying the L0 mesh, the persistent row or the mip
+        // obligation. MarkChanged already does the right thing with EdgeNone: it advances the
+        // revisions and skips all four neighbours. See G138.
+        int touchedEdges = section.ReplaceColumns(batch, out bool contentChanged);
+        if (contentChanged)
         {
             World.MarkChanged(result.SectionKey, touchedEdges);
         }

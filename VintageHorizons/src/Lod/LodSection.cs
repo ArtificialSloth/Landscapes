@@ -247,11 +247,18 @@ public class LodSection
     /// the capture path applies a whole chunk column's worth of LOD columns at once.
     /// Entries in newRunsByCol may be null to leave that column untouched.
     ///
-    /// Returns the edges the change touched, or <see cref="EdgeNone"/> if nothing changed.
-    /// The loop below already knows exactly which columns moved; it simply did not say so,
-    /// and every caller then had to assume all four neighbours needed rebuilding.
+    /// Returns the edges the change touched, and reports whether anything changed at all
+    /// through <paramref name="contentChanged"/>. The two are SEPARATE answers and the caller
+    /// needs both: an interior placement changes the section and touches no edge, so it returns
+    /// <see cref="EdgeNone"/> with contentChanged true. Collapsing them into the edge mask alone
+    /// meant "changed nothing" and "changed nothing a neighbour can see" were the same value,
+    /// and a placed block could enter resident RAM without dirtying the mesh, the save row or
+    /// the mip obligation. See G138.
+    ///
+    /// The loop below already knows exactly which columns moved; it simply did not say so, and
+    /// every caller then had to assume all four neighbours needed rebuilding.
     /// </summary>
-    public int ReplaceColumns(ulong[]?[] newRunsByCol)
+    public int ReplaceColumns(ulong[]?[] newRunsByCol, out bool contentChanged)
     {
         int total = GridSize * GridSize;
         int touchedEdges = EdgeNone;
@@ -295,6 +302,7 @@ public class LodSection
             }
         }
 
+        contentChanged = changed;
         if (!changed) return EdgeNone;
 
         var nextRuns = new ulong[newLength];

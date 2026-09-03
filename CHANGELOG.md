@@ -13,6 +13,14 @@ section is recaptured and can receive its texture slot, but the zero neighbour-e
 currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
 remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
 
+## [0.3.189] - 2026-09-03
+
+**A block placed away from a chunk edge now updates the distant terrain.** Changes reported which
+neighbouring areas also needed redrawing, and a block placed in the middle of an area correctly
+answered "none" - which was then read as "nothing changed at all", so the area's own distant copy,
+its saved row and its coarser levels could all stay stale. A later change near an edge would flush
+it, which is why it looked intermittent rather than broken.
+
 ## [0.3.188] - 2026-09-03
 
 **Sparse grass no longer wears the full-grass pattern at the seam.** The texture drawn on a

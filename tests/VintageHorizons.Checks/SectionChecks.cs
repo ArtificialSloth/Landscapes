@@ -115,7 +115,7 @@ public static class SectionChecks
 
         // Columns 0 and Total-1 are opposite corners, so between them this batch sits on
         // all four edges.
-        c.Eq(LodSection.EdgeAll, s.ReplaceColumns(batch),
+        c.Eq(LodSection.EdgeAll, s.ReplaceColumns(batch, out _),
             "a batch with new content on every edge reports all four");
         c.Eq(3, s.CapturedColumns, "the batch captured three columns");
         c.SeqEq(a, s.ColumnRuns(0).ToArray(), "batch column 0 reads back");
@@ -127,7 +127,7 @@ public static class SectionChecks
         // only its own 16x16 patch of a 64x64 section.
         var partial = new ulong[]?[Fixtures.Total];
         partial[5] = a;
-        c.Eq(LodSection.EdgeMinusZ, s.ReplaceColumns(partial),
+        c.Eq(LodSection.EdgeMinusZ, s.ReplaceColumns(partial, out _),
             "a change on one edge reports only that edge");
         c.SeqEq(a, s.ColumnRuns(5).ToArray(), "the replaced column changed");
         c.SeqEq(a, s.ColumnRuns(0).ToArray(), "an untouched column kept its runs");
@@ -137,7 +137,7 @@ public static class SectionChecks
         // not an implementation detail.
         var identical = new ulong[]?[Fixtures.Total];
         identical[0] = (ulong[])a.Clone();
-        c.Eq(LodSection.EdgeNone, s.ReplaceColumns(identical),
+        c.Eq(LodSection.EdgeNone, s.ReplaceColumns(identical, out _),
             "a batch of identical content reports no change");
         c.Eq(null, identical[0], "an unchanged column is nulled out in the caller's batch");
 
@@ -145,7 +145,7 @@ public static class SectionChecks
         // Four neighbouring meshes used to be rebuilt for this and none of them could see it.
         var interior = new ulong[]?[Fixtures.Total];
         interior[LodSection.ColumnIndex(32, 32)] = b;
-        c.Eq(LodSection.EdgeNone, s.ReplaceColumns(interior),
+        c.Eq(LodSection.EdgeNone, s.ReplaceColumns(interior, out _),
             "an interior change reports no edges even though it changed content");
         c.SeqEq(b, s.ColumnRuns(LodSection.ColumnIndex(32, 32)).ToArray(),
             "the interior column still changed");

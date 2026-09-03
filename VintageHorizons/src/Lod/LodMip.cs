@@ -45,11 +45,16 @@ public static class LodMip
     /// <summary>
     /// Compatibility helper for checks and isolated callers. Runtime propagation uses
     /// <see cref="BuildResult"/> on the mip worker and only applies its result here.
+    ///
+    /// Answers whether the parent's CONTENT changed, not whether an edge moved. It used to test
+    /// the edge mask against EdgeNone, which is the same conflation G138 records: a mip that
+    /// rewrites only the parent's interior would have reported "nothing happened".
     /// </summary>
     public static bool DownsampleIntoParent(LodSection child, LodSection parent, int qx, int qz)
     {
         MipJob job = CreateJob(epoch: 0, childKey: 0, childRevision: 0, child, qx, qz);
-        return ApplyToParent(BuildResult(job), parent) != LodSection.EdgeNone;
+        ApplyToParent(BuildResult(job), parent, out bool contentChanged);
+        return contentChanged;
     }
 
     public static MipJob CreateJob(long epoch, long childKey, long childRevision,
@@ -130,7 +135,8 @@ public static class LodMip
     /// if it changed nothing. A quadrant covers a quarter of the parent, so it can only
     /// ever reach two of the parent's four edges, and often reaches none of them.
     /// </summary>
-    public static int ApplyToParent(MipResult result, LodSection parent)
+    public static int ApplyToParent(
+        MipResult result, LodSection parent, out bool contentChanged)
     {
         ulong[]?[] batch = result.RunsByParentColumn;
         var paletteMap = new int[result.ChildPalette.Length];
@@ -156,7 +162,7 @@ public static class LodMip
             }
         }
 
-        return parent.ReplaceColumns(batch);
+        return parent.ReplaceColumns(batch, out contentChanged);
     }
 
     /// <summary>

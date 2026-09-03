@@ -634,8 +634,12 @@ public class LodWorld
         MarkSaveDirty(result.ChildKey); // persist the cleared ApplyToParent flag
 
         LodSection parent = GetOrCreateSection(parentKey);
-        int parentEdges = LodMip.ApplyToParent(result, parent);
-        if (parentEdges != LodSection.EdgeNone) MarkChanged(parentKey, parentEdges);
+        // Content change and touched edges are separate answers here for the same reason they
+        // are in the capture path: a mip that rewrites only the parent's interior touches no
+        // edge, and skipping MarkChanged on that would leave the parent's own mesh, save row
+        // and mip obligation stale. See G138.
+        int parentEdges = LodMip.ApplyToParent(result, parent, out bool parentChanged);
+        if (parentChanged) MarkChanged(parentKey, parentEdges);
         return true;
     }
 

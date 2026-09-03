@@ -58,6 +58,9 @@ the plan set out to fix are fixed and human-accepted; what follows is the remain
   and C is a single random row draw that cannot be held against an average (G145).
 - **The plan's section 9 acceptance criterion cannot pass as written** - see G145. It should ask
   for the field path against the lattice mean, not against the engine's answer for one block.
+- **The placed-block invalidation defect (G138) is fixed in 0.3.189 and unseen.** Content change
+  and touched edges are separate answers now. The tell would be a block placed well inside a
+  cached area updating in the distant terrain without needing an edge mutation to flush it.
 - **Nothing has been measured since 0.3.183.** The owner's verdict is "much better"; no post-fix
   screenshot has been differenced, so the size of any remaining mismatch is unknown.
 - **No shader is compile-verified offline.** The vertex stage's tint path was rewritten again on
@@ -80,10 +83,16 @@ the plan set out to fix are fixed and human-accepted; what follows is the remain
   and the right tile of `normal.png` are byte-identical, checked pixel by pixel. Colour was never
   affected - the mean the shader divides by is the mean of whatever is sampled - so the tell is
   pattern density on sparse ground inside the band, not hue.
-- **`soil-low-normal` is stored as flat grey (134,134,134) in about 300 of the owner's cached
-  sections**, against 1,064 correctly coloured, found while scanning the live cache. Probably left
-  by an older build; load-time reclassification should have corrected them by now, which is itself
-  worth confirming before investigating. The tell would be flat grey patches where grass belongs.
+- **Grey `soil-low-normal`: confirmed gone, and the stale colours behind it are inert.** Scanned
+  the owner's live 446 MB cache on 2026-09-03: 7,201 sections, 3,804 entries for that block,
+  **zero** still flat grey (134,134,134). What is there instead is 3,521 at (133,128,107) - the
+  PRE-0.3.169 whole-strip composite, arithmetically confirmed - against 283 at the corrected
+  (152,154,127). So the disk is 92.5% stale, and it does not matter: both load paths call
+  `ResolvePendingPalette` before a section is installed, and `Reclassify` re-derives the colour
+  from the live block there, so the stale value never reaches a mesh. Session 73's "writes back"
+  is true only for sections that happen to be re-saved; its "corrects itself on load" is true for
+  every section that draws, which is the part that was load-bearing. No action; recorded so the
+  next person does not re-scan.
 
 ## Exact draw-range ownership: what 0.3.160 has not proven
 

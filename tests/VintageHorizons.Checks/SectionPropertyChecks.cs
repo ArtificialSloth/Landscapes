@@ -124,7 +124,7 @@ public static class SectionPropertyChecks
                         batch[col] = RandomRuns(rng);
                         touched++;
                     }
-                    section.ReplaceColumns(batch);
+                    section.ReplaceColumns(batch, out _);
                     what = $"ReplaceColumns({touched} columns)";
                     break;
                 }

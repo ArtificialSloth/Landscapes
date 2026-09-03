@@ -97,7 +97,7 @@ public static class ChangeLocalityChecks
                 for (int cx = 0; cx < half; cx++)
                     batch[LodSection.ColumnIndex(qx * half + cx, qz * half + cz)] = (ulong[])runs.Clone();
 
-            c.Eq(edges, section.ReplaceColumns(batch),
+            c.Eq(edges, section.ReplaceColumns(batch, out _),
                 $"a first-time capture into quadrant ({qx},{qz}) reports its two outer edges");
         }
 
@@ -108,7 +108,7 @@ public static class ChangeLocalityChecks
         for (int cz = 0; cz < half; cz++)
             for (int cx = 0; cx < half; cx++)
                 full[LodSection.ColumnIndex(cx, cz)] = (ulong[])runs.Clone();
-        settled.ReplaceColumns(full);
+        settled.ReplaceColumns(full, out _);
 
         var recapture = new ulong[]?[LodSection.GridSize * LodSection.GridSize];
         for (int cz = 0; cz < half; cz++)
@@ -116,7 +116,7 @@ public static class ChangeLocalityChecks
                 recapture[LodSection.ColumnIndex(cx, cz)] = (ulong[])runs.Clone();
         recapture[LodSection.ColumnIndex(5, 5)] = new[] { LodSection.PackRun(0, 20, 0) };
 
-        c.Eq(LodSection.EdgeNone, settled.ReplaceColumns(recapture),
+        c.Eq(LodSection.EdgeNone, settled.ReplaceColumns(recapture, out _),
             "a re-capture differing only in an interior column reports no edges");
     }
 
