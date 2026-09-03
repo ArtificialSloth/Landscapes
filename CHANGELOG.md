@@ -13,6 +13,14 @@ section is recaptured and can receive its texture slot, but the zero neighbour-e
 currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
 remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
 
+## [0.3.188] - 2026-09-03
+
+**Sparse grass no longer wears the full-grass pattern at the seam.** The texture drawn on a
+grassy block's top face was taken from the one the game throws as particles when you walk on it -
+which for every soil block is the full-coverage one, whatever coverage the block actually has. It
+now comes from the texture the game itself draws there. Colour was never affected, only the
+pattern, and only close enough to the seam for the pattern to be visible.
+
 ## [0.3.187] - 2026-09-03
 
 **Distant forests turn unevenly again.** The game gives each patch of leaves its own shade from a

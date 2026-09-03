@@ -38,6 +38,43 @@ public static class StaticAssetChecks
         ClimateFieldWiring(c);
         SeasonRowWiring(c);
         EveryDocumentedSwitchIsReachable(c);
+        TopFaceOverlayComesFromTheStrip(c);
+    }
+
+    /// <summary>
+    /// The top face's overlay comes from the same texture in both places that ask for it.
+    ///
+    /// `chunktopsoil.fsh` draws a top face from the right half of `specialSecondTexture` and
+    /// from nothing else, so both the colour path and the block-texture path must take it from
+    /// there. The block-texture path preferred `particletop` instead - a particle texture, and
+    /// for every `soil-*` block that is `normal-top` whatever the coverage - so sparse ground
+    /// drew the full-grass pattern near the seam. The colour was unaffected, because the mean
+    /// the shader divides by is the mean of whatever is sampled, which is precisely why this
+    /// went unnoticed: nothing looks wrong until a sparse patch is held against the real thing.
+    /// </summary>
+    static void TopFaceOverlayComesFromTheStrip(Check c)
+    {
+        string mod = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons",
+            "src", "VintageHorizonsModSystem.cs"));
+
+        int body = mod.IndexOf("static bool TryTopSoilOverlay(", StringComparison.Ordinal);
+        c.True(body > 0, "the overlay chooser exists");
+        int end = mod.IndexOf("return false;", body, StringComparison.Ordinal);
+        c.True(end > body, "and has a body this can read");
+        string chooser = mod.Substring(body, Math.Max(0, end - body));
+
+        int strip = chooser.IndexOf("\"specialSecondTexture\"", StringComparison.Ordinal);
+        int particles = chooser.IndexOf("\"particletop\"", StringComparison.Ordinal);
+        c.True(strip >= 0, "it can take the two-tile strip");
+        c.True(particles >= 0, "and still falls back to the particle texture");
+        c.True(strip < particles,
+            "and tries the strip FIRST, because that is the one the engine draws");
+
+        // The colour path takes the same texture, so the two cannot disagree about one block
+        // the way they did before Session 73.
+        c.True(mod.Contains("block.Textures.TryGetValue(\"specialSecondTexture\", out CompositeTexture? overlay)",
+                StringComparison.Ordinal),
+            "and the colour path reads the same texture");
     }
 
     /// <summary>

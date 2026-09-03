@@ -73,11 +73,13 @@ the plan set out to fix are fixed and human-accepted; what follows is the remain
 - **The 4% residual on gravel is unattributed.** Ambient occlusion, shadow-map filtering and the
   atlas mip chain are the candidates. A screenshot cannot separate them, and it is below the level
   worth chasing unless something else makes it matter.
-- **Sparse grass is drawn with the full-grass pattern near the seam.** `TryTopSoilOverlay` prefers
-  `particletop`, which for `soil-*` is always `normal-top` regardless of coverage, where vanilla
-  draws the right tile of the coverage-specific `specialSecondTexture`. The arithmetic cancels -
-  `vhBlockMean` is the mean of whatever is actually sampled - so this costs pattern accuracy and
-  not colour. Only visible inside the blend band.
+- **Sparse grass pattern: fixed in 0.3.188, unseen.** `TryTopSoilOverlay` preferred
+  `particletop`, which for `soil-*` is always `normal-top` regardless of coverage, where the
+  engine draws the right tile of the coverage-specific `specialSecondTexture`. It now takes the
+  strip first and keeps `particletop` only as a fallback. Safe for full grass: `normal-top.png`
+  and the right tile of `normal.png` are byte-identical, checked pixel by pixel. Colour was never
+  affected - the mean the shader divides by is the mean of whatever is sampled - so the tell is
+  pattern density on sparse ground inside the band, not hue.
 - **`soil-low-normal` is stored as flat grey (134,134,134) in about 300 of the owner's cached
   sections**, against 1,064 correctly coloured, found while scanning the live cache. Probably left
   by an older build; load-time reclassification should have corrected them by now, which is itself

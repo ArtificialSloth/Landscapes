@@ -960,10 +960,21 @@ public class VintageHorizonsModSystem : ModSystem
     /// <summary>
     /// The overlay texture region that belongs on a TopSoil block's TOP face.
     ///
-    /// `particletop` is where the game names it - the same fully-opaque texture it throws as
-    /// particles when you walk on grass. When that is absent, `specialSecondTexture` follows
-    /// the engine's TopSoil convention: side and top occupy the left and right halves of one
-    /// atlas rectangle. Forest floor takes this fallback.
+    /// `specialSecondTexture` first, because that is what the engine actually draws:
+    /// `chunktopsoil.fsh` samples it and shifts one tile right for an upward normal, so the top
+    /// face comes from the right half of that strip and from nothing else.
+    ///
+    /// It used to prefer `particletop`, which is a PARTICLE texture - what the game throws when
+    /// you walk on grass - and for every `soil-*` block that is `normal-top` whatever the
+    /// coverage is. So sparse and very sparse ground drew the full-grass pattern near the seam
+    /// while vanilla drew its own thinner one. The colour was unaffected, because the mean the
+    /// shader normalises by is the mean of whatever is actually sampled, so this only ever cost
+    /// pattern accuracy - which is exactly why it survived: nothing about it looks wrong until
+    /// you compare a sparse patch against the real thing.
+    ///
+    /// Safe for full grass too: `normal-top.png` and the right tile of `normal.png` are
+    /// byte-identical, checked pixel by pixel, so this changes nothing where coverage is full.
+    /// `particletop` remains the fallback for a block that names no strip.
     /// </summary>
     /// <summary>
     /// Whether an atlas rectangle holds vanilla's two-tile TopSoil strip: the side fringe in
@@ -984,15 +995,15 @@ public class VintageHorizonsModSystem : ModSystem
     static bool TryTopSoilOverlay(
         Block block, out CompositeTexture? texture, out bool rightHalf)
     {
-        if (block.Textures!.TryGetValue("particletop", out texture) && texture?.Baked != null)
-        {
-            rightHalf = false;
-            return true;
-        }
-        if (block.Textures.TryGetValue("specialSecondTexture", out texture)
+        if (block.Textures!.TryGetValue("specialSecondTexture", out texture)
             && texture?.Baked != null)
         {
             rightHalf = true;
+            return true;
+        }
+        if (block.Textures.TryGetValue("particletop", out texture) && texture?.Baked != null)
+        {
+            rightHalf = false;
             return true;
         }
         texture = null;

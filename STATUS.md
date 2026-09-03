@@ -3,7 +3,7 @@
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
 **Status date:** 2026-09-02
-**Mod version:** `0.3.187`, built, verified, packaged and copy-installed; **not yet seen in game**.
+**Mod version:** `0.3.188`, built, verified, packaged and copy-installed; **not yet seen in game**.
 0.3.183 is **human-tested and accepted** ("Much better, Excellent!") and carries the substance of
 the colour work below. 0.3.185 is **human-tested and accepted** as well, carrying the retired
 height table and remembered climate. 0.3.186 gave every distinct untinted share its own tint slot
