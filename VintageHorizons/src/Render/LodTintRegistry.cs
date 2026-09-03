@@ -385,6 +385,15 @@ public class LodTintRegistry
     readonly int[] slotPage = new int[MaxSlots];
 
     /// <summary>
+    /// Which SEASON map page each slot reads, and whether its block is leaves. Both go into the
+    /// slot table's page row so the shader can pick a row from noise instead of drawing the
+    /// averaged colour - see <see cref="LodSeasonMapPages"/>. Leaves matter because the engine
+    /// runs that noise at a 2-to-6 block scale for them and 12-to-24 for everything else.
+    /// </summary>
+    readonly int[] slotSeasonPage = new int[MaxSlots];
+    readonly bool[] slotIsLeaves = new bool[MaxSlots];
+
+    /// <summary>
     /// Record the page each slot's climate map landed on. A slot with no paged map keeps
     /// <see cref="LodClimateMapPages.NoPage"/> and its terrain draws the engine's own answer
     /// flat, which is what every build before 0.3.174 did for every slot.
@@ -394,21 +403,29 @@ public class LodTintRegistry
     /// so the two can never be done in the wrong order: a page index recorded before the page
     /// exists would send a slot to a page of nothing.
     /// </summary>
-    internal void AdoptPages(LodClimateMapPages pages)
+    internal void AdoptPages(LodClimateMapPages pages, LodSeasonMapPages seasons)
     {
         ArgumentNullException.ThrowIfNull(pages);
+        ArgumentNullException.ThrowIfNull(seasons);
         pages.Adopt(representative);
-        AssignPages(pages);
+        seasons.Adopt(representative);
+        AssignPages(pages, seasons);
     }
 
-    internal void AssignPages(LodClimateMapPages pages)
+    internal void AssignPages(LodClimateMapPages pages, LodSeasonMapPages seasons)
     {
         ArgumentNullException.ThrowIfNull(pages);
+        ArgumentNullException.ThrowIfNull(seasons);
         for (int slot = 0; slot < MaxSlots; slot++)
         {
             Block? block = slot < representative.Count ? representative[slot] : null;
             slotPage[slot] = block != null && pages.TryPageOf(block.ClimateColorMapResolved,
                 out int page) ? page : LodClimateMapPages.NoPage;
+            slotSeasonPage[slot] = block != null
+                && seasons.TryPageOf(block.SeasonColorMapResolved, out int seasonPage)
+                ? seasonPage : LodSeasonMapPages.NoPage;
+            slotIsLeaves[slot] = block != null
+                && block.BlockMaterial == EnumBlockMaterial.Leaves;
         }
     }
 
@@ -445,8 +462,15 @@ public class LodTintRegistry
                 && slotPage[slot] != LodClimateMapPages.NoPage
                 && (hasSeason || NoSeasonMap(slot));
             int page = usable ? slotPage[slot] : LodClimateMapPages.NoPage;
-            slotTable[SlotTableTexel(slot, PageRow)] =
-                unchecked((int)0xFF000000) | (page << 16);
+
+            // Green carries the SEASON page and blue the flags, so the shader can pick a row
+            // from noise rather than take the averaged colour. Only offered where the slot is
+            // usable and actually blends a season: without both, there is no row to pick.
+            int seasonPage = usable && hasSeason
+                ? slotSeasonPage[slot] : LodSeasonMapPages.NoPage;
+            int flags = slotIsLeaves[slot] ? 1 : 0;
+            slotTable[SlotTableTexel(slot, PageRow)] = unchecked((int)0xFF000000)
+                | (page << 16) | (seasonPage << 8) | flags;
 
             // What a slot draws when the shader cannot finish it: the engine's own blended
             // answer, diluted by the same share, flat in height. Slot 0 is the identity tint and

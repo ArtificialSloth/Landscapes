@@ -13,6 +13,16 @@ section is recaptured and can receive its texture slot, but the zero neighbour-e
 currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
 remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
 
+## [0.3.187] - 2026-09-03
+
+**Distant forests turn unevenly again.** The game gives each patch of leaves its own shade from a
+table of sixteen, chosen by position at a scale of a few blocks - which is why a real autumn wood
+is a mix of turned and untinted trees. Distant terrain was drawing the average of all sixteen, so
+it stayed one flat green while nearby trees went yellow. It now picks the same way the game does,
+using the game's own noise rather than a copy of it, and fades back to the average as one cached
+block grows to cover a neighbourhood - below that the variation is finer than distant terrain can
+carry. `.vhtint leaves on|off`.
+
 ## [0.3.186] - 2026-09-03
 
 **Sparse-grass ground no longer borrows another block's bare dirt.** Grass-covered soil is part

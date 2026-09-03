@@ -2180,11 +2180,53 @@ public class VintageHorizonsModSystem : ModSystem
                 + "it the live tint is not allowed to touch, and the tint itself against the game's "
                 + "own answer for the same block. Aim at a block, or name one, or stand on it. "
                 + "'.vhtint field on|off' switches per-area distant climate. "
+                + "'.vhtint leaves on|off' switches per-tree seasonal variation. "
                 + "Written to the client log, which is the only copy long enough to read.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("blockCode"),
                       capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
+                // Two switches rather than blocks, and no block is called either. Kept on this
+                // command instead of their own because this report is how they get judged, and a
+                // diagnostic and the thing it measures belong together.
+                if (!args.Parsers[0].IsMissing
+                    && ((string)args[0]).Equals("field", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (renderer == null)
+                        return TextCommandResult.Success(
+                            "[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    if (!args.Parsers[1].IsMissing) renderer.ClimateFieldTint = (bool)args[1];
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] climate field "
+                        + $"{(renderer.ClimateFieldTint ? "on" : "off")}. "
+                        + "On tints distant ground from the climate it stands in, cell by cell. "
+                        + "Off is one climate for the whole view, taken where you are standing, "
+                        + "which is what every build before this one drew. Where the client has "
+                        + "no climate the nearest known one is used either way.");
+                }
+
+                // Per-position seasonal variation on leaves. The whole question is whether a
+                // forest turning unevenly reads better than one flat colour, which is judged by
+                // looking at trees rather than at numbers.
+                if (!args.Parsers[0].IsMissing
+                    && ((string)args[0]).Equals("leaves", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (renderer == null)
+                        return TextCommandResult.Success(
+                            "[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    if (!args.Parsers[1].IsMissing)
+                        renderer.LeafSeasonVariation = (bool)args[1] ? 1f : 0f;
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] leaf season variation "
+                        + $"{(renderer.LeafSeasonVariation > 0f ? "on" : "off")}. "
+                        + "On picks each patch of distant leaves its own row of the seasonal "
+                        + "colour table, the way the game does, so a forest turns unevenly "
+                        + "instead of all at once. It fades out as one cached voxel grows past "
+                        + "a block or two, because below that the variation is finer than the "
+                        + "terrain can carry. Off draws the average of all sixteen rows, which "
+                        + "is what every build before this one did.");
+                }
+
                 // Aim first, feet second. A player comparing cached ground against the game's
                 // own is looking at the seam, so the block under the crosshair is the one they
                 // mean; standing on it is the fallback for ground too far to select.

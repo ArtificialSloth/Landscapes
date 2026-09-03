@@ -1529,6 +1529,7 @@ public class LodTerrainRenderer : IRenderer
     /// </summary>
     readonly LodClimateField climateField = new(128);
     readonly LodClimateMapPages climatePages = new();
+    readonly LodSeasonMapPages seasonPages = new();
 
     /// <summary>
     /// Climate the client has answered before, so exploration is cumulative rather than
@@ -1543,6 +1544,18 @@ public class LodTerrainRenderer : IRenderer
     public LodStorageThread? ClimateStorage { get; set; }
     LoadedTexture? climateFieldTexture;
     LoadedTexture? climateMapTexture;
+    LoadedTexture? seasonMapTexture;
+    int uploadedSeasonMapVersion = -1;
+
+    /// <summary>
+    /// How much of vanilla's per-position seasonal variation distant leaves carry, 0 to 1.
+    ///
+    /// The game picks a row of the seasonal map per position, and for leaves that noise runs at
+    /// a 2-to-6 block scale - tree sized. Averaging the rows is right once one voxel is a whole
+    /// neighbourhood (G47) and wrong while a tree is still a tree, so the two are blended by the
+    /// voxel's own size and this scales the near end of that. 1 is vanilla's full spread.
+    /// </summary>
+    public float LeafSeasonVariation { get; set; } = 1f;
     LoadedTexture? slotTableTexture;
 
     /// <summary>
@@ -1707,6 +1720,7 @@ public class LodTerrainRenderer : IRenderer
         // frame's worth of nothing and this stays honest about the programs being new.
         uploadedSlotTableVersion = -1;
         uploadedClimateMapVersion = -1;
+        uploadedSeasonMapVersion = -1;
         WarnIfIncludeMissing(prog, "lodterrain");
         shaderOk = prog.Compile();
         if (!shaderOk && !ShaderLoadIsProvisional)
@@ -2073,7 +2087,7 @@ public class LodTerrainRenderer : IRenderer
 
         // Pages before the table: the table records which page each slot reads, so a page has
         // to exist before a slot is sent to it.
-        tints.AdoptPages(climatePages);
+        tints.AdoptPages(climatePages, seasonPages);
         tints.CompleteRefresh();
         climateField.CompleteRefresh();
         snowLineY = pendingSnowLineY;
@@ -5261,6 +5275,7 @@ public class LodTerrainRenderer : IRenderer
     const int SlotTableUnit = 11;
     const int ClimateFieldUnit = 12;
     const int ClimateMapsUnit = 13;
+    const int SeasonMapsUnit = 14;
 
     /// <summary>
     /// Upload one of this renderer's own CPU-built tables, with its destination unit made
@@ -5437,6 +5452,11 @@ public class LodTerrainRenderer : IRenderer
         {
             prog.BindTexture2D("climateField", climateFieldTexture!.TextureId, ClimateFieldUnit);
             prog.BindTexture2D("climateMaps", climateMapTexture!.TextureId, ClimateMapsUnit);
+            if (seasonMapTexture != null)
+                prog.BindTexture2D("seasonMaps", seasonMapTexture.TextureId, SeasonMapsUnit);
+            prog.Uniform("seasonRel", tints.SeasonRel);
+            prog.Uniform("leafSeasonVariation",
+                seasonMapTexture != null ? Math.Clamp(LeafSeasonVariation, 0f, 1f) : 0f);
             // Two integer scalars, never the Vec2i overload, which reaches glUniform2f. See G42.
             prog.Uniform("climateMinCellX", climateField.MinCellX);
             prog.Uniform("climateMinCellZ", climateField.MinCellZ);
@@ -5547,6 +5567,20 @@ public class LodTerrainRenderer : IRenderer
             {
                 slotTableTexture = texture;
                 uploadedSlotTableVersion = tints.Version;
+            }
+        }
+
+        if (uploadedSeasonMapVersion != seasonPages.Version && seasonPages.PageCount > 0)
+        {
+            var texture = new LoadedTexture(capi, 0, seasonPages.Width, seasonPages.Height);
+            UploadOwnTexture(seasonPages.Texels, SeasonMapsUnit, ref texture);
+            if (texture.TextureId > 0)
+            {
+                LoadedTexture? retiredSeason = seasonMapTexture;
+                seasonMapTexture = texture;
+                uploadedSeasonMapVersion = seasonPages.Version;
+                try { retiredSeason?.Dispose(); }
+                catch { /* the replacement is already live; retirement is best effort */ }
             }
         }
 
@@ -6209,6 +6243,8 @@ public class LodTerrainRenderer : IRenderer
             target.BindTexture2D("climateField", climateFieldTexture.TextureId, ClimateFieldUnit);
         if (climateMapTexture != null)
             target.BindTexture2D("climateMaps", climateMapTexture.TextureId, ClimateMapsUnit);
+        if (seasonMapTexture != null)
+            target.BindTexture2D("seasonMaps", seasonMapTexture.TextureId, SeasonMapsUnit);
     }
 
     void DrawLegacyWater()

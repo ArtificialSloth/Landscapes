@@ -36,6 +36,117 @@ public static class StaticAssetChecks
         SubtreeBoundsStayOutOfTheCoverageGate(c);
         SamplerUploadWiring(c);
         ClimateFieldWiring(c);
+        SeasonRowWiring(c);
+        EveryDocumentedSwitchIsReachable(c);
+    }
+
+    /// <summary>
+    /// Every switch a command's own help text names has a handler.
+    ///
+    /// Written after `.vhtint field on|off` was deleted by accident: removing the neighbouring
+    /// `weight` switch cut from one comment to another and took the block between them with it.
+    /// The build stayed green, the property it set was still there, and the help text still
+    /// advertised it - so the only symptom would have been a switch that silently did nothing,
+    /// found by the owner trying to A/B something and getting no answer back.
+    /// </summary>
+    static void EveryDocumentedSwitchIsReachable(Check c)
+    {
+        string mod = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons",
+            "src", "VintageHorizonsModSystem.cs"));
+
+        var named = new HashSet<string>();
+        foreach (Match m in Regex.Matches(mod, @"'\.vh\w+ (\w+) on\|off'"))
+        {
+            named.Add(m.Groups[1].Value);
+        }
+
+        c.True(named.Count > 0, "at least one on|off switch is documented");
+        foreach (string name in named)
+        {
+            c.True(mod.Contains("Equals(\"" + name + "\", StringComparison.OrdinalIgnoreCase)",
+                    StringComparison.Ordinal),
+                "the documented switch '" + name + "' has a handler that answers to it");
+        }
+    }
+
+    /// <summary>
+    /// The seasonal row the shader picks per position, against the engine's own expression.
+    ///
+    /// The row is what makes a forest turn unevenly - during the autumn turn the sixteen rows of
+    /// a leaf map run from clearly green to clearly yellow - and the mod drew the average of all
+    /// of them. Reproducing the choice means reproducing three expressions exactly; a drift in
+    /// any of them puts distant leaves in a different season from the ones beside them with
+    /// nothing to say so, which is G144's shape.
+    /// </summary>
+    static void SeasonRowWiring(Check c)
+    {
+        string vertex = ShaderBody("vsh");
+
+        // The pages, and the addressing the C# writes them at.
+        c.Eq(128, LodSeasonMapPages.PageWidth, "a seasonal map is 128 columns of the year");
+        c.Eq(16, LodSeasonMapPages.PageHeight, "and 16 rows of per-position variation");
+        c.Eq(255, LodSeasonMapPages.NoPage, "255 means this slot has no paged seasonal map");
+        c.True(vertex.Contains("ivec2(column, page * 16 + row)", StringComparison.Ordinal),
+            "the shader stacks seasonal pages 16 rows apart, as the C# writes them");
+        c.True(vertex.Contains("int column = clamp(int(rel * 128.0), 0, 127);",
+                StringComparison.Ordinal),
+            "and indexes 128 columns");
+
+        // The slot table's page row carries three things and the shader reads each from its own
+        // channel. Swapping two would send a slot to another map's page.
+        c.True(vertex.Contains("int seasonPage = int(pageRow.g * 255.0 + 0.5);",
+                StringComparison.Ordinal),
+            "the seasonal page is the page row's green channel");
+        c.True(vertex.Contains("bool leaves = pageRow.b > 0.5 / 255.0;", StringComparison.Ordinal),
+            "and the leaves flag is its blue");
+
+        // The noise, against the engine's own file rather than a copy of it kept here.
+        string enginePath = Path.Combine(GameAssemblies.GamePath, "assets", "game",
+            "shaderincludes", "colormap.vsh");
+        if (File.Exists(enginePath))
+        {
+            string engine = File.ReadAllText(enginePath);
+            c.True(engine.Contains(
+                    "valuenoise(worldPos.xyz / 6) + valuenoise(worldPos.xyz / 2) - 0.55",
+                    StringComparison.Ordinal),
+                "the engine still picks a LEAF row from noise at 6 and 2 blocks");
+            c.True(engine.Contains(
+                    "valuenoise(worldPos.xyz / 24) + valuenoise(worldPos.xyz / 12) - 0.55",
+                    StringComparison.Ordinal),
+                "and every other row from noise at 24 and 12");
+            c.True(vertex.Contains(
+                    "(valuenoise(p / 6.0) + valuenoise(p / 2.0) - 0.55) * 1.25",
+                    StringComparison.Ordinal),
+                "and this shader uses the leaf scales for leaves");
+            c.True(vertex.Contains(
+                    "(valuenoise(p / 24.0) + valuenoise(p / 12.0) - 0.55) * 1.25",
+                    StringComparison.Ordinal),
+                "and the other scales for everything else");
+            c.True(engine.Contains("clamp(seasonRel + b/40, 0.01, 0.99)", StringComparison.Ordinal)
+                && vertex.Contains("clamp(seasonRel + b / 40.0, 0.01, 0.99)",
+                    StringComparison.Ordinal),
+                "and both jitter the column by the same amount");
+        }
+
+        // The engine's own noise, included rather than transcribed.
+        c.True(vertex.Contains("#include noise3d.ash", StringComparison.Ordinal),
+            "the noise is the engine's own file, not a copy of it");
+
+        // Sampled at a STABLE world position. The engine passes an absolute one for the same
+        // reason; a camera-relative position would make every tree change season as the player
+        // walked, which is G47's original symptom in a new place.
+        c.True(vertex.Contains("seasonAt(seasonPage, terrainPos, leaves)", StringComparison.Ordinal),
+            "the row is picked at the stable world position");
+        int assign = vertex.IndexOf("terrainPos = vec3(", StringComparison.Ordinal);
+        int use = vertex.IndexOf("seasonAt(seasonPage, terrainPos", StringComparison.Ordinal);
+        c.True(assign >= 0 && use > assign,
+            "and that position is assigned before the tint reads it");
+
+        // Faded by the VOXEL SIZE rather than by distance: the variation is finer than a coarse
+        // voxel can represent, and that is what G47 is actually about.
+        c.True(vertex.Contains("float coarse = clamp((columnBlocks - 1.0) / 7.0, 0.0, 1.0);",
+                StringComparison.Ordinal),
+            "the variation fades out as one voxel grows past a block or two");
     }
 
     /// <summary>

@@ -107,6 +107,8 @@ layout(location = 5) in vec4 vhRecordOpenEdges;  // -X, +X, -Z, +Z, 1 = open
 // chunk origin would be meaningless, and interpolating the column size would shimmer.
 flat out float vhColumnBlocks;
 flat out ivec2 vhMaskSectionOrigin;
+
+#define columnBlocks vhRecordNoise.z
 #else
 uniform mat4 modelMatrix;
 
@@ -114,6 +116,11 @@ uniform mat4 modelMatrix;
 // but appearance must not move with the camera: a fixed terrain point must always
 // sample the same colour variation.
 uniform vec4 noiseOrigin;
+
+// Blocks per column in the section being drawn, 1 at level 0 and doubling per level. The
+// seasonal row below is picked from a 2-to-6 block noise, which is meaningless once one voxel
+// is a neighbourhood, so this is what fades it out. Matches the fragment body's own uniform.
+uniform float columnBlocks;
 
 // Which of this section's four sides border on area we have NO captured data for
 // (-X, +X, -Z, +Z; 1 = open). Client-side-only means coverage is whatever the
@@ -155,6 +162,17 @@ const int TINT_SLOTS = 64;
 uniform sampler2D slotTable;
 uniform sampler2D climateField;
 uniform sampler2D climateMaps;
+
+// The seasonal maps, 128 columns of 16 rows each, one page per map stacked down Y.
+//
+// The column is the point in the year; the ROW the game picks per position from noise, and for
+// LEAVES it draws that noise at a 2-to-6 block scale where ground uses 12-to-24. During the
+// autumn turn the sixteen rows run from clearly green to clearly yellow, which is what makes a
+// forest turn unevenly. Distant terrain averages them on purpose - one distant pixel covers many
+// blocks (G47) - so both are carried and blended by the voxel's own size.
+uniform sampler2D seasonMaps;
+uniform float seasonRel;
+uniform float leafSeasonVariation;
 uniform int climateFieldEnabled;
 uniform int climateMinCellX;
 uniform int climateMinCellZ;
@@ -163,6 +181,11 @@ uniform float climateCellBlocks;
 uniform float climateSeaLevel;
 uniform int climateRainSeaLevel;
 
+// The ENGINE'S own value noise, included rather than transcribed. colormap.vsh builds both the
+// row and the column jitter out of it, and a transcription that drifted would put distant leaves
+// in a different season from the ones beside them with nothing to say so. See G144.
+#include noise3d.ash
+
 // One cell's temperature and rainfall, in 0..255. The wrap is the field's own: a window of
 // cells stored in a ring, so a cell address folds into the buffer the same way in both
 // languages.
@@ -170,6 +193,28 @@ vec2 climateCell(int cellX, int cellZ)
 {
     int wrap = climateCapacity - 1;
     return texelFetch(climateField, ivec2(cellX & wrap, cellZ & wrap), 0).rg * 255.0;
+}
+
+// The seasonal colour the game would draw at this position, from colormap.vsh:
+//
+//   b      = valuenoise(p) + valuenoise(p/2)                     column jitter, 0..2
+//   noise  = (valuenoise(p/6)  + valuenoise(p/2)  - 0.55) * 1.25 the row, for LEAVES
+//            (valuenoise(p/24) + valuenoise(p/12) - 0.55) * 1.25 the row, for everything else
+//   column = clamp(seasonRel + b/40, 0.01, 0.99)
+//
+// Nearest on both axes: a row is a choice, not a gradient, and interpolating between two rows
+// would draw a colour the map does not contain.
+vec3 seasonAt(int page, vec3 p, bool leaves)
+{
+    float b = valuenoise(p) + valuenoise(p / 2.0);
+    float rowNoise = leaves
+        ? (valuenoise(p / 6.0) + valuenoise(p / 2.0) - 0.55) * 1.25
+        : (valuenoise(p / 24.0) + valuenoise(p / 12.0) - 0.55) * 1.25;
+
+    float rel = clamp(seasonRel + b / 40.0, 0.01, 0.99);
+    int column = clamp(int(rel * 128.0), 0, 127);
+    int row = clamp(int(rowNoise * 16.0), 0, 15);
+    return texelFetch(seasonMaps, ivec2(column, page * 16 + row), 0).rgb;
 }
 
 // One climate map page, bilinear. The engine's CPU path truncates to a whole texel; this
@@ -319,6 +364,16 @@ void main()
     yLevel = vertexPositionIn.y;
     vertexColor = vertexColorIn;
 
+    // The stable world position, set before the tint because the tint reads it. Geometry stays
+    // camera-relative for precision, but appearance must not move with the camera: a fixed
+    // terrain point has to sample the same variation from any distance. This is also exactly
+    // what the engine hands its own colour maps - chunkopaque.vsh passes `truePos + playerpos`,
+    // an absolute position, for the same reason.
+    terrainPos = vec3(
+        noiseOrigin.x + vertexPositionIn.x,
+        vertexPositionIn.y,
+        noiseOrigin.y + vertexPositionIn.z);
+
     int slotRaw = int(vertexColorIn.a * 255.0 + 0.5);
     int slot = clamp(slotRaw - (slotRaw / TINT_SLOTS) * TINT_SLOTS, 0, TINT_SLOTS - 1);
     // The flat fallback: the engine's own blended answer for this slot, already diluted by its
@@ -389,8 +444,24 @@ void main()
             - max(0.0, weightTemp - 130.0) / 200.0, 0.0, 1.0);
 
         vec4 seasonRow = texelFetch(slotTable, ivec2(slot, 0), 0);
+        vec3 season = seasonRow.rgb;
+
+        // The row the game would pick here, where this slot has a paged seasonal map. Faded
+        // toward the averaged colour by the voxel's own size: at one block per voxel the noise
+        // means what it means in vanilla, and by eight it is finer than anything a voxel can
+        // represent, which is G47's reasoning stated in the units that actually govern it.
+        vec4 pageRow = texelFetch(slotTable, ivec2(slot, 2), 0);
+        int seasonPage = int(pageRow.g * 255.0 + 0.5);
+        if (seasonPage < 255 && leafSeasonVariation > 0.0)
+        {
+            bool leaves = pageRow.b > 0.5 / 255.0;
+            float coarse = clamp((columnBlocks - 1.0) / 7.0, 0.0, 1.0);
+            float amount = leafSeasonVariation * (1.0 - coarse);
+            season = mix(season, seasonAt(seasonPage, terrainPos, leaves), amount);
+        }
+
         vec3 blended = mix(climateColor(tintPage, adjusted, rainfall),
-                           seasonRow.rgb, seasonWeight * seasonRow.a);
+                           season, seasonWeight * seasonRow.a);
 
         // The share of the stored colour the tint must not touch - bare dirt showing through
         // a grass overlay - exactly as the ramp already carries it.
@@ -412,11 +483,6 @@ void main()
     if (slotRaw / TINT_SLOTS != 1) worldPos.y -= bandSinkBlocks;
 
     worldPos = applyGlobalWarping(worldPos);
-
-    terrainPos = vec3(
-        noiseOrigin.x + vertexPositionIn.x,
-        vertexPositionIn.y,
-        noiseOrigin.y + vertexPositionIn.z);
 
     // 0 at the start of the LOD band (inside vanilla terrain), 1 at the far edge
     float distStart = viewDistance * 0.785;
