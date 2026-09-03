@@ -1568,11 +1568,15 @@ public class LodTerrainRenderer : IRenderer
 
     /// <summary>
     /// Hand every patch learned since the last call to the storage worker. Nothing here touches
-    /// SQLite; the worker owns the connection, and its queue drains on shutdown so a flush at a
-    /// world boundary still lands. A patch whose values did not change is not dirty and costs
-    /// nothing, which is the common case once an area has been visited.
+    /// SQLite; the worker owns the connection, and its queue drains on shutdown so a flush
+    /// before that disposal still lands.
+    ///
+    /// Public because the ordering matters and only the caller knows it: this must run BEFORE
+    /// the pipeline closes, since closing disposes the worker this hands to. A patch whose
+    /// values did not change is not dirty and costs nothing, which is the common case once an
+    /// area has been visited.
     /// </summary>
-    void FlushClimateMemory()
+    public void SaveClimateMemory()
     {
         if (ClimateStorage == null) return;
         foreach (long dirty in ClimateMemory.TakeDirtyKeys())
@@ -2095,7 +2099,7 @@ public class LodTerrainRenderer : IRenderer
             while (ClimateStorage.TryTakeClimateResult(out LodClimateLoadResult loaded))
                 ClimateMemory.Accept(loaded.Key, loaded.Data);
         }
-        FlushClimateMemory();
+        SaveClimateMemory();
 
         // Pages before the table: the table records which page each slot reads, so a page has
         // to exist before a slot is sent to it.
@@ -7923,11 +7927,12 @@ public class LodTerrainRenderer : IRenderer
         tints.InvalidateReadiness();
 
         // Remembered climate is per world and nothing in it is true in the next one. The rows
-        // stay on disk; only the copy in memory goes - but anything learned since the last
-        // refresh has to reach the worker first. A refresh only writes every thirty seconds, so
-        // leaving without this discards up to a full cadence of exploration, and that is exactly
-        // the part of a session where the player was moving and learning most.
-        FlushClimateMemory();
+        // stay on disk; only the copy in memory goes.
+        //
+        // No WRITE from here. This runs from the render path's mesh clear, whose ordering
+        // relative to the storage worker's disposal is not ours to choose - and on the world
+        // leave path the worker is already gone by the time this is reached. The owner of both
+        // calls SaveClimateMemory first; see the mod system's leave path.
         climateField.Clear();
         ClimateMemory.Clear();
         snowLineY = pendingSnowLineY = 99999;

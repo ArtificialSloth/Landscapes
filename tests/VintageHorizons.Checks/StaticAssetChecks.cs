@@ -39,6 +39,66 @@ public static class StaticAssetChecks
         SeasonRowWiring(c);
         EveryDocumentedSwitchIsReachable(c);
         TopFaceOverlayComesFromTheStrip(c);
+        ClimateStorageIsWiredInTheRightOrder(c);
+    }
+
+    /// <summary>
+    /// The remembered-climate writer is taken after it exists, handed to before it is disposed,
+    /// and dropped afterwards.
+    ///
+    /// All three were wrong at once and the feature was silently inert. The handle was read in
+    /// `StartClientSide`, but the pipeline builds its storage thread in `Open`, which runs when
+    /// a world is JOINED - so the reference was always null and nothing was ever written to or
+    /// read from disk. The in-memory learning still worked inside a session, so coverage still
+    /// grew as the owner explored and the absence was invisible in play.
+    ///
+    /// Then the flush that was meant to save on the way out sat behind that same null, which is
+    /// the only reason it never threw: on the leave path the pipeline closes and disposes the
+    /// worker BEFORE the renderer's mesh clear runs, so a live handle there would have set a
+    /// disposed wait handle. Fixing the null alone would have turned an inert feature into a
+    /// crash on every world leave.
+    ///
+    /// Ordering in source is a crude thing to assert. It is also exactly what this class of
+    /// defect is made of: statements whose only requirement is which side of another statement
+    /// they fall on.
+    /// </summary>
+    static void ClimateStorageIsWiredInTheRightOrder(Check c)
+    {
+        string mod = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons",
+            "src", "VintageHorizonsModSystem.cs"));
+
+        int open = mod.IndexOf("pipeline.Open(", StringComparison.Ordinal);
+        int close = mod.IndexOf("pipeline.Close();", StringComparison.Ordinal);
+        int take = mod.IndexOf("renderer.ClimateStorage = pipeline.StorageThread;",
+            StringComparison.Ordinal);
+        int drop = mod.IndexOf("renderer.ClimateStorage = null;", StringComparison.Ordinal);
+        int flush = mod.IndexOf("renderer.SaveClimateMemory();", StringComparison.Ordinal);
+
+        c.True(open > 0, "the pipeline is opened somewhere");
+        c.True(close > 0, "and closed somewhere");
+        c.True(take > 0, "the storage handle is taken");
+        c.True(drop > 0, "and dropped");
+        c.True(flush > 0, "and the memory is flushed");
+
+        c.True(take > open, "the handle is taken AFTER Open, which is what builds the writer");
+        c.True(flush < close, "the flush hands to the writer BEFORE Close disposes it");
+        c.True(drop > close,
+            "and the handle is dropped after Close, so the next world's writer is used");
+
+        c.Eq(1, Regex.Matches(mod,
+                "renderer\\.ClimateStorage\\s*=\\s*pipeline\\.StorageThread;").Count,
+            "and only one place takes it, so there is no second site to keep in order");
+
+        // And the renderer never WRITES from its mesh clear, where disposal order is not ours.
+        string renderer = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot,
+            "VintageHorizons", "src", "Render", "LodTerrainRenderer.cs"));
+        int meshClear = renderer.IndexOf("void ClearMeshesLegacy(", StringComparison.Ordinal);
+        int memoryClear = renderer.IndexOf("ClimateMemory.Clear();", StringComparison.Ordinal);
+        c.True(meshClear > 0, "the mesh clear exists");
+        c.True(memoryClear > meshClear, "and is where the in-memory copy is dropped");
+        string tail = renderer.Substring(meshClear, Math.Max(0, memoryClear - meshClear) + 64);
+        c.False(tail.Contains("SaveClimateMemory()", StringComparison.Ordinal),
+            "and it does not write from there, where disposal order is not ours to choose");
     }
 
     /// <summary>

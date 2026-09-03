@@ -2938,3 +2938,34 @@ in one named place that a check can hold against the engine's IL. Do not assume 
 are the same value; pass both.
 
 **Found:** Session 75. Fixed in 0.3.181.
+
+### G147 - A handle taken before its owner builds it is null, and null is a silent no-op
+
+**Trigger:** caching a reference to something the pipeline creates lazily - the storage thread,
+the store, a texture the first upload makes - especially when the consumer guards on null.
+
+**Trap:** `renderer.ClimateStorage = pipeline.StorageThread` was assigned in `StartClientSide`.
+`LodPipeline` builds its storage thread in `Open`, which runs when a WORLD IS JOINED, so the
+reference was always null and remembered climate never reached disk in either direction. Nothing
+failed: the consumer's `if (ClimateStorage == null) return` is a correct guard, the in-memory half
+of the feature still worked, coverage still grew as the player explored within a session, and the
+owner tested the build and called it good. The whole point of the feature - surviving a restart -
+was absent with no symptom at all.
+
+The second half is what makes this worth a gotcha. The same null was ALSO suppressing a real
+crash: the flush that saves on the way out ran from the render path's mesh clear, and on the world
+leave path `pipeline.Close()` disposes the storage thread BEFORE that clear is reached, so a live
+handle would have set a disposed `AutoResetEvent`. Fixing the null on its own would have converted
+an inert feature into an exception on every world leave.
+
+**Do:** take a lazily-created handle where it is created, not where the consumer is constructed,
+and drop it where the owner closes - a reopened pipeline builds a new one and a stale handle is
+worse than a null one. Do not put a WRITE to it inside a callback whose ordering you do not own;
+the mesh clear is a render-path concern and its position relative to storage disposal is not the
+renderer's to choose. Where three statements' only requirement is which side of another statement
+they fall on, assert the order: `StaticAssetChecks.ClimateStorageIsWiredInTheRightOrder` does, and
+it fails on the code as shipped in 0.3.185 through 0.3.190.
+
+**Found:** 2026-09-03, reviewing this session's own work after the owner had already accepted
+0.3.185. Fixed in 0.3.191. See also G42 and G130: a guard that makes a wrong value look like a
+legitimate answer is the shape all three share.

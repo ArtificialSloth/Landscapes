@@ -217,10 +217,6 @@ public class VintageHorizonsModSystem : ModSystem
                 Environment.GetEnvironmentVariable("VINTAGEHORIZONS_DEPTH_PYRAMID") != "0",
         };
 
-        // Remembered climate rides the section worker. Null on a client with no cache, in which
-        // case the field simply learns nothing durable and behaves as it did before.
-        renderer.ClimateStorage = pipeline.StorageThread;
-
         // Install only after the competing-LOD return above. The adapter changes no
         // atmosphere, client setting, culling or streaming state: it moves only vanilla
         // terrain's visual edge fade while this renderer exists, then becomes inert and
@@ -1374,6 +1370,12 @@ public class VintageHorizonsModSystem : ModSystem
             unknownTextureColor == 0 ? " (zero: magenta-block salvage disabled)" : "");
         renderer.ApplyZFar();
         pipeline.Open("ModData/vintagehorizons");
+
+        // AFTER Open, which is what creates the writer. Taking this at startup instead read a
+        // null - the pipeline builds its storage thread when a world opens, not in its
+        // constructor - so remembered climate never reached disk at all, and the in-memory
+        // learning that still worked within a session hid it completely.
+        renderer.ClimateStorage = pipeline.StorageThread;
         renderer.TextureSlotSourceReady = pipeline.TextureSlotsPrepared;
         joinClock.Restart();
         joinStallReported = false;
@@ -1948,7 +1950,13 @@ public class VintageHorizonsModSystem : ModSystem
         localOfferRetryableMisses = 0;
         localOfferSectionsAccepted = 0;
         localOfferSectionsInstalled = 0;
+        // Order matters and is stated here because only this method knows it: the flush hands
+        // patches to the storage worker, and Close disposes that worker. Afterwards the
+        // reference is dropped, because the next world's Open builds a new one and a stale
+        // handle would be written to.
+        renderer.SaveClimateMemory();
         pipeline.Close();
+        renderer.ClimateStorage = null;
         renderer.ClearMeshes();
         renderer.ResetBlockTextureStateForWorld();
         blockTextures.Clear();

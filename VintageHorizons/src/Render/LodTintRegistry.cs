@@ -224,8 +224,8 @@ public class LodTintRegistry
         for (int slot = 0; slot < MaxSlots; slot++)
         {
             slotTable[SlotTableTexel(slot, FallbackRow)] = unchecked((int)0xFFFFFFFF);
-            slotTable[SlotTableTexel(slot, PageRow)] =
-                unchecked((int)0xFF000000) | (LodClimateMapPages.NoPage << 16);
+            slotTable[SlotTableTexel(slot, PageRow)] = unchecked((int)0xFF000000)
+                | (LodClimateMapPages.NoPage << 16) | (LodSeasonMapPages.NoPage << 8);
         }
     }
 

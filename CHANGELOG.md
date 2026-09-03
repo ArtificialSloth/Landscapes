@@ -13,6 +13,14 @@ section is recaptured and can receive its texture slot, but the zero neighbour-e
 currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
 remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
 
+## [0.3.191] - 2026-09-03
+
+**Remembered climate actually persists now.** The feature added in 0.3.185 was reading a handle to
+the cache writer before the writer existed, so nothing was ever written to or read from disk. The
+in-memory half still worked, which is why coverage still grew as you explored and the gap was
+invisible - but it started from nothing every time you loaded the world. It is taken at the right
+moment now, handed over before the writer shuts down, and released afterwards.
+
 ## [0.3.190] - 2026-09-03
 
 **Climate learned in the last half-minute of a session is no longer lost on leaving.** Remembered

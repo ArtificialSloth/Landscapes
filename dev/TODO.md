@@ -16,6 +16,13 @@ the plan set out to fix are fixed and human-accepted; what follows is the remain
   need some answer; holding the engine's own flat, which is already the mechanism for a slot with
   no temperature, is simpler than a 96-step ramp. Removing it takes out a texture, a code path and
   a permanent "which one drew this?" question.
+- **Remembered climate was inert from 0.3.185 to 0.3.190 and is fixed in 0.3.191, unseen.** The
+  handle to the cache writer was taken in `StartClientSide`, but the pipeline builds it in `Open`
+  when a world is joined, so it was always null and nothing crossed the disk in either direction.
+  The in-memory half worked, so coverage still grew within a session and the owner's acceptance of
+  0.3.185 was about behaviour that was really there - just not the durable part. See G147; the
+  same null was also masking a crash on world leave. **The tell is now testable: explore, quit,
+  rejoin, and `.vhclimate` should report remembered cells before you have gone anywhere.**
 - **The climate field is relearned every session and reaches about 1,000-3,000 blocks of 8,192.**
   Storing what it learns in the mod's own cache would make coverage accumulate permanently as the
   player explores, which is the step that eventually gets the whole horizon right. No terrain
