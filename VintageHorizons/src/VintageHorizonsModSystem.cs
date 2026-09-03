@@ -2247,6 +2247,31 @@ public class VintageHorizonsModSystem : ModSystem
                         + "is what every build before this one did.");
                 }
 
+                // How far out the CLIMATE lookup itself is paid for. The same question the
+                // leaf switch below asks, about the more expensive half: leaves pick a row of
+                // one biome's season table, this picks the biome.
+                if (!args.Parsers[0].IsMissing
+                    && ((string)args[0]).Equals("climatewide", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (renderer == null)
+                        return TextCommandResult.Success(
+                            "[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    if (!args.Parsers[1].IsMissing)
+                        renderer.ClimateFadeBlocks = (bool)args[1] ? 0f : 4f;
+                    bool everywhere = renderer.ClimateFadeBlocks <= 0f;
+                    return TextCommandResult.Success(
+                        "[VintageHorizons] distant ground works out its own climate "
+                        + (everywhere
+                            ? "at every level (zero fade)."
+                            : $"out to {renderer.ClimateFadeBlocks:0} blocks per voxel.")
+                        + " Past that it wears the flat colour taken where you stand, which is "
+                        + "what every build before 0.3.179 drew everywhere. The lookup is eight "
+                        + "table reads per vertex and a section costs the same per vertex at "
+                        + "any level, so this is where most of the feature's frame cost lives. "
+                        + "On spends it everywhere. What to watch for is a biome edge on the "
+                        + "horizon changing colour as it crosses the cut-off.");
+                }
+
                 // How far out that variation is paid for. Separate from whether it is on at all
                 // because they are different questions: one is whether a forest turning
                 // unevenly looks better, the other is how many LOD levels that is worth. A

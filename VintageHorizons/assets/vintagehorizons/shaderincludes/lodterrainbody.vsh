@@ -61,16 +61,20 @@ uniform float bandSinkBlocks;
 // memory at all. Fetched per vertex, not per fragment: both values are constant across a
 // quad, so a flat varying carries the rectangle onward for free.
 uniform sampler2D blockTable;
-flat out vec4 vhBlockRect;
-// The sampled texture's own mean. The fragment stage divides by it so the texture becomes
-// variation AROUND the block's colour rather than the colour itself - grass-covered ground
-// has a brown soil texture under a green overlay, so taking the texture at face value drew a
-// brown band across the world.
-flat out vec3 vhBlockMean;
-// The grass-style overlay's own rectangle, zero when the block has none. Grass-covered ground
-// is soil under a grass texture composited by the grass's per-pixel alpha; sampling only the
-// base drew correctly coloured ground wearing dirt's pattern.
-flat out vec4 vhBlockOverlay;
+
+// The SLOT, and nothing unpacked from it. -1 means this quad carries a colour.
+//
+// This carried three unpacked rows - the atlas rectangle, the texture's mean, and the grass
+// overlay's rectangle - eleven floats of flat varying per vertex, written on BOTH branches
+// and therefore paid in full even with `.vhblend off`, plus three table fetches per vertex to
+// produce them. The fragment stage reads them only inside the blend band, which is a thin
+// ring of the screen against millions of vertices, so the whole bundle was being computed and
+// carried for geometry that would never ask.
+//
+// One integer travels instead, and the band fetches its own rows where it actually needs
+// them. The averaged colour stays here because it is this vertex's albedo and every fragment
+// of the quad needs it, band or no band.
+flat out int vhBlockSlot;
 #endif
 
 // ---- Per-section facts ------------------------------------------------------
@@ -163,6 +167,19 @@ uniform sampler2D slotTable;
 uniform sampler2D climateField;
 uniform sampler2D climateMaps;
 
+// The slot table's FALLBACK and PAGE rows, as uniform arrays rather than texels.
+//
+// Every vertex reads both - the fallback because it is what draws when the climate path
+// cannot finish, the page to decide whether that path runs at all - so as texels they were
+// two scattered dependent fetches per vertex on every vertex in the view. 0.3.127 read its
+// tints from a uniform array and paid nothing for them; this restores that for the two rows
+// that are not optional. The other two rows stay in the texture: they are read only inside
+// the climate branch, and four arrays of this size would sit on the guaranteed vertex uniform
+// budget. Mirrored from the same packed row the texture is built from; see
+// LodTintRegistry.MirrorRow.
+uniform vec4 tintFallback[TINT_SLOTS];
+uniform vec4 tintPages[TINT_SLOTS];
+
 // The seasonal maps, 128 columns of 16 rows each, one page per map stacked down Y.
 //
 // The column is the point in the year; the ROW the game picks per position from noise, and for
@@ -184,6 +201,20 @@ uniform float leafSeasonVariation;
 // At 2 only level 0 carries it, where one voxel is one block and the noise means exactly what
 // it means in vanilla.
 uniform float leafSeasonFadeBlocks;
+
+// The voxel size, in blocks, past which a vertex stops asking for its own climate and takes
+// the flat fallback instead. Zero means never - every level pays.
+//
+// The same argument `leafSeasonFadeBlocks` makes for the season row, applied to the whole
+// climate lookup: what decides the bill is how many LEVELS are inside the number, not how
+// much area they cover, because a section costs the same per vertex at every level and the
+// near levels are not the small ones. The difference is what is being given up. The season
+// row is a variation within one biome and vanishes into a distant pixel; the climate is the
+// biome itself, and two sections either side of the cut-off would wear different ones. So
+// this is deliberately set far enough out that the cut falls between sections whose climates
+// have already converged, and it is a switch rather than a constant because only looking at
+// the horizon can say where that is. See `.vhtint climatewide`.
+uniform float climateFadeBlocks;
 uniform int climateFieldEnabled;
 uniform int climateMinCellX;
 uniform int climateMinCellZ;
@@ -368,21 +399,17 @@ void main()
     vec4 vertexColorIn;
     if ((vhGeometry & 0x80000000u) != 0u)
     {
-        int vhSlot = int(vhColor & 0x00FFFFFFu);
-        vhBlockRect = texelFetch(blockTable, ivec2(vhSlot, 0), 0);
-        vec4 vhAverage = texelFetch(blockTable, ivec2(vhSlot, 1), 0);
-        vec4 vhMeanRow = texelFetch(blockTable, ivec2(vhSlot, 2), 0);
-        vhBlockMean = vhMeanRow.rgb;
-        vhBlockOverlay = vhMeanRow.a > 0.5
-            ? texelFetch(blockTable, ivec2(vhSlot, 3), 0)
-            : vec4(0.0);
+        vhBlockSlot = int(vhColor & 0x00FFFFFFu);
+        // Row 1 alone. This is the quad's albedo - the averaged colour it carries INSTEAD of
+        // its own, which every fragment needs whether or not the band asks for a texture - so
+        // it is the one row that belongs at this stage. The atlas rectangle, the mean and the
+        // overlay are read by the band, in the band.
+        vec4 vhAverage = texelFetch(blockTable, ivec2(vhBlockSlot, 1), 0);
         vertexColorIn = vec4(vhAverage.rgb, float(vhColor >> 24u) / 255.0);
     }
     else
     {
-        vhBlockRect = vec4(0.0);
-        vhBlockMean = vec3(1.0);
-        vhBlockOverlay = vec4(0.0);
+        vhBlockSlot = -1;
         vertexColorIn = vec4(
             float(vhColor & 255u),
             float((vhColor >> 8u) & 255u),
@@ -409,14 +436,18 @@ void main()
     // untinted share. This is what draws where the shader cannot finish the tint itself - no
     // paged climate map, the tropical season weight this mod does not reproduce, or no climate
     // field at all - and it is what every build before the field drew everywhere.
-    tint = texelFetch(slotTable, ivec2(slot, 3), 0).rgb;
+    tint = tintFallback[slot].rgb;
 
     // The climate field, where this slot can be finished from it. A page of 255 means it
     // cannot be, and the fallback above stands.
     int tintPage = 255;
-    if (climateFieldEnabled == 1)
+    // Coarse sections take the flat fallback and skip the whole lookup - the four field
+    // samples, the four map samples, the season row and the weight - rather than computing a
+    // per-position climate for a voxel that already averages a neighbourhood.
+    if (climateFieldEnabled == 1
+        && (climateFadeBlocks <= 0.0 || columnBlocks <= climateFadeBlocks))
     {
-        tintPage = int(texelFetch(slotTable, ivec2(slot, 2), 0).r * 255.0 + 0.5);
+        tintPage = int(tintPages[slot].r * 255.0 + 0.5);
     }
     if (tintPage < 255)
     {
@@ -479,7 +510,7 @@ void main()
         // toward the averaged colour by the voxel's own size: at one block per voxel the noise
         // means what it means in vanilla, and by eight it is finer than anything a voxel can
         // represent, which is G47's reasoning stated in the units that actually govern it.
-        vec4 pageRow = texelFetch(slotTable, ivec2(slot, 2), 0);
+        vec4 pageRow = tintPages[slot];
         int seasonPage = int(pageRow.g * 255.0 + 0.5);
 
         // `amount` is decided BEFORE the branch so that a vertex which would blend none of the

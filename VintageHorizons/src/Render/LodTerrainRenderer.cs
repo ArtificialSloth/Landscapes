@@ -1592,6 +1592,31 @@ public class LodTerrainRenderer : IRenderer
     public bool ClimateFieldTint { get; set; } = true;
 
     /// <summary>
+    /// The voxel size, in blocks, past which distant ground stops working out its own climate
+    /// and wears the flat per-slot fallback instead. Zero spends it at every level, which is
+    /// what 0.3.179 through 0.3.194 did.
+    ///
+    /// <para>
+    /// This is the climate lookup's own version of <see cref="LeafSeasonFadeBlocks"/>, and it
+    /// exists for the same reason: a section costs the same per vertex whatever level it
+    /// holds, so the bill is set by how many LEVELS pay, not by how much area they cover. The
+    /// lookup is four climate-field samples, four climate-map samples, a season row and a
+    /// weight, per vertex - measured as the largest single piece of the 0.3.127 -> 0.3.194
+    /// frame-time regression.
+    /// </para>
+    /// <para>
+    /// The default spends it out to 4 blocks per voxel - levels 0 to 2 - because that is
+    /// where a biome edge is still a shape a player can see. Past it the two climates being
+    /// chosen between have usually already converged, and where they have not the cut falls
+    /// on a section boundary far enough out that the fallback and the finished tint differ by
+    /// less than the fog over them. It is a switch because only looking at a horizon with a
+    /// biome edge on it can say whether that is true in a given world; see `.vhtint
+    /// climatewide`.
+    /// </para>
+    /// </summary>
+    public float ClimateFadeBlocks { get; set; } = 4f;
+
+    /// <summary>
     /// Hand every patch learned since the last call to the storage worker. Nothing here touches
     /// SQLite; the worker owns the connection, and its queue drains on shutdown so a flush
     /// before that disposal still lands.
@@ -5485,6 +5510,13 @@ public class LodTerrainRenderer : IRenderer
         if (slotTableTexture != null)
             prog.BindTexture2D("slotTable", slotTableTexture.TextureId, SlotTableUnit);
 
+        // The two rows every vertex reads, as uniform arrays rather than texels. Unconditional
+        // and outside the climate switch: the fallback is what draws when the climate path is
+        // off or cannot finish, so it must be present in exactly the cases the climate block
+        // below is skipped. See LodTintRegistry.FallbackUniforms.
+        prog.Uniforms4("tintFallback", LodTintRegistry.MaxSlots, tints.FallbackUniforms);
+        prog.Uniforms4("tintPages", LodTintRegistry.MaxSlots, tints.PageUniforms);
+
         bool climateOn = ClimateFieldTint && climateField.Active
             && climateFieldTexture != null && climateMapTexture != null
             && slotTableTexture != null && climatePages.PageCount > 0;
@@ -5499,6 +5531,9 @@ public class LodTerrainRenderer : IRenderer
             prog.Uniform("leafSeasonVariation",
                 seasonMapTexture != null ? Math.Clamp(LeafSeasonVariation, 0f, 1f) : 0f);
             prog.Uniform("leafSeasonFadeBlocks", Math.Max(2f, LeafSeasonFadeBlocks));
+            // Zero means every level pays. Anything else is the voxel size past which a
+            // vertex takes the flat fallback instead of working out its own climate.
+            prog.Uniform("climateFadeBlocks", Math.Max(0f, ClimateFadeBlocks));
             // Two integer scalars, never the Vec2i overload, which reaches glUniform2f. See G42.
             prog.Uniform("climateMinCellX", climateField.MinCellX);
             prog.Uniform("climateMinCellZ", climateField.MinCellZ);

@@ -145,6 +145,33 @@ public class LodTintRegistry
     public const int PageRow = 2;
     public const int FallbackRow = 3;
     readonly int[] slotTable = new int[MaxSlots * SlotTableRows];
+
+    /// <summary>
+    /// The FALLBACK and PAGE rows again, as flat vec4 arrays for `Uniforms4`.
+    ///
+    /// <para>
+    /// These two rows are read for EVERY vertex - the fallback unconditionally, the page to
+    /// decide whether the climate path runs at all - so reading them from a texture cost one
+    /// scattered dependent fetch per vertex each, on millions of vertices per frame, where
+    /// 0.3.127 read a uniform array and paid nothing. Measured at the seam viewpoint, the
+    /// per-vertex table reads were the largest single part of the 0.3.127 -> 0.3.194
+    /// regression that no feature switch could remove.
+    /// </para>
+    /// <para>
+    /// DERIVED from <see cref="slotTable"/> rather than written beside it, because the other
+    /// two rows still come from the texture and a slot whose uniform disagreed with its texel
+    /// would draw one colour from the fallback and another from the season blend. One source,
+    /// two shapes.
+    /// </para>
+    /// </summary>
+    readonly float[] fallbackUniforms = new float[MaxSlots * 4];
+    readonly float[] pageUniforms = new float[MaxSlots * 4];
+
+    /// <summary>The fallback row as RGBA floats, `MaxSlots` vec4s. See <see cref="fallbackUniforms"/>.</summary>
+    public float[] FallbackUniforms => fallbackUniforms;
+
+    /// <summary>The page row as RGBA floats, `MaxSlots` vec4s. See <see cref="fallbackUniforms"/>.</summary>
+    public float[] PageUniforms => pageUniforms;
     // Per-refresh scratch. Both are properties of the slot rather than of a position: the
     // season colour comes off the map at the calendar's own column, and the fallback is the
     // engine's own blended answer at the reference height.
@@ -227,6 +254,14 @@ public class LodTintRegistry
             slotTable[SlotTableTexel(slot, PageRow)] = unchecked((int)0xFF000000)
                 | (LodClimateMapPages.NoPage << 16) | (LodSeasonMapPages.NoPage << 8);
         }
+
+        // The uniform mirrors have to carry the seed too, for the same reason the seed exists.
+        // BuildSlotTable is what normally fills them and it does not run until the first
+        // refresh completes - so a shader reading them before then would take a fallback of
+        // zero, which is black ground, and a climate page of zero, which is a real page it
+        // would then finish a tint from. Both are values that look like answers.
+        MirrorRow(FallbackRow, fallbackUniforms);
+        MirrorRow(PageRow, pageUniforms);
     }
 
     /// <summary>
@@ -480,6 +515,29 @@ public class LodTintRegistry
                 | (Byte(255f * LodTopSoil.Dilute(share.R, sampledFallback[at + 0] / 255f)) << 16)
                 | (Byte(255f * LodTopSoil.Dilute(share.G, sampledFallback[at + 1] / 255f)) << 8)
                 | Byte(255f * LodTopSoil.Dilute(share.B, sampledFallback[at + 2] / 255f));
+        }
+
+        // After every row is final, never inside the loop: the `continue` above skips the
+        // fallback for unusable slots, and a mirror written mid-loop would keep the previous
+        // refresh's value for exactly those.
+        MirrorRow(FallbackRow, fallbackUniforms);
+        MirrorRow(PageRow, pageUniforms);
+    }
+
+    /// <summary>
+    /// Copies one packed row into a flat RGBA float array, in the same channel order the
+    /// texture upload produces, so the shader reads the same numbers whichever it asks.
+    /// </summary>
+    void MirrorRow(int row, float[] into)
+    {
+        for (int slot = 0; slot < MaxSlots; slot++)
+        {
+            int packed = slotTable[SlotTableTexel(slot, row)];
+            int at = slot * 4;
+            into[at + 0] = ((packed >> 16) & 0xFF) / 255f;
+            into[at + 1] = ((packed >> 8) & 0xFF) / 255f;
+            into[at + 2] = (packed & 0xFF) / 255f;
+            into[at + 3] = ((packed >> 24) & 0xFF) / 255f;
         }
     }
 

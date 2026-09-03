@@ -399,8 +399,8 @@ public static class StaticAssetChecks
             "and the shader reads the season colour from row 0");
         c.True(vertex.Contains("texelFetch(slotTable, ivec2(slot, 1), 0).rgb", StringComparison.Ordinal),
             "the untinted share from row 1");
-        c.True(vertex.Contains("texelFetch(slotTable, ivec2(slot, 2), 0).r", StringComparison.Ordinal),
-            "and the page from row 2");
+        c.True(vertex.Contains("tintPages[slot].r", StringComparison.Ordinal),
+            "and the page from the uniform mirror of row 2");
 
         // ---- the arithmetic, against the ENGINE'S OWN SHADER ----------------------------
         // Read from the game install rather than quoted here. If a game update changes either
@@ -829,15 +829,51 @@ public static class StaticAssetChecks
                 $"the indirect vertex body reads {name} from attribute {location}");
         }
 
-        // The tint ramp is a texture whose addressing exists in two languages. The C# side is
-        // pinned in SeasonWeightChecks; this is the GLSL half. Slot on X and height step on Y,
-        // fetched rather than filtered - hardware filtering would blend along X and mix one
-        // block's tint into its neighbour's, which is silent and looks like a colour bug.
+        // The per-slot table lives in two shapes and they must not drift apart. Rows 0 and 1
+        // are read only inside the climate branch and stay texels, fetched rather than
+        // filtered - hardware filtering would blend along X and mix one block's tint into its
+        // neighbour's, which is silent and looks like a colour bug. Rows 2 and 3 are read by
+        // EVERY vertex, so they are uniform arrays: as texels they cost a scattered dependent
+        // fetch per vertex each, which was measured as the largest part of the 0.3.127 ->
+        // 0.3.194 frame-time regression that no feature switch could remove.
         c.True(vertex.Contains("uniform sampler2D slotTable;", StringComparison.Ordinal),
-            "the vertex body reads the per-slot table as a texture, not a uniform array");
-        c.True(vertex.Contains("tint = texelFetch(slotTable, ivec2(slot, 3), 0).rgb;",
+            "the vertex body still reads the season and share rows as a texture");
+        c.True(vertex.Contains("uniform vec4 tintFallback[TINT_SLOTS];", StringComparison.Ordinal)
+            && vertex.Contains("uniform vec4 tintPages[TINT_SLOTS];", StringComparison.Ordinal),
+            "and the two per-vertex rows as uniform arrays sized by the slot count");
+        c.True(vertex.Contains("tint = tintFallback[slot].rgb;", StringComparison.Ordinal),
+            "and takes the flat fallback from the uniform mirror of its fourth row");
+
+        // The mirror is only safe while it carries the same numbers as the texture, because a
+        // slot reads its fallback from one and its season blend from the other. One source,
+        // derived twice - never two sources.
+        c.True(renderer.Contains("prog.Uniforms4(\"tintFallback\", LodTintRegistry.MaxSlots, tints.FallbackUniforms);",
+                StringComparison.Ordinal)
+            && renderer.Contains("prog.Uniforms4(\"tintPages\", LodTintRegistry.MaxSlots, tints.PageUniforms);",
                 StringComparison.Ordinal),
-            "and takes the flat fallback from its fourth row");
+            "the renderer uploads both mirrors every frame, outside the climate switch");
+        {
+            var mirrored = new LodTintRegistry();
+            for (int slot = 0; slot < LodTintRegistry.MaxSlots; slot++)
+            {
+                foreach ((int row, float[] into) in new[]
+                {
+                    (LodTintRegistry.FallbackRow, mirrored.FallbackUniforms),
+                    (LodTintRegistry.PageRow, mirrored.PageUniforms),
+                })
+                {
+                    int packed = mirrored.SlotTable[LodTintRegistry.SlotTableTexel(slot, row)];
+                    c.Eq(((packed >> 16) & 0xFF) / 255f, into[slot * 4 + 0],
+                        $"slot {slot} row {row} mirrors red");
+                    c.Eq(((packed >> 8) & 0xFF) / 255f, into[slot * 4 + 1],
+                        $"slot {slot} row {row} mirrors green");
+                    c.Eq((packed & 0xFF) / 255f, into[slot * 4 + 2],
+                        $"slot {slot} row {row} mirrors blue");
+                    c.Eq(((packed >> 24) & 0xFF) / 255f, into[slot * 4 + 3],
+                        $"slot {slot} row {row} mirrors alpha");
+                }
+            }
+        }
 
         // Two whole tint mechanisms have been retired here. Neither may come back by accident:
         // the two-height uniform arrays, and the 96-step height ramp that replaced them and was
@@ -1275,8 +1311,25 @@ public static class StaticAssetChecks
             "the vertex stage declares the block table it reads a textured quad's colour from");
         c.True(vertex.Contains("(vhGeometry & 0x80000000u) != 0u", StringComparison.Ordinal),
             "the vertex stage tests the flag that says word two is a slot");
-        c.True(vertex.Contains("flat out vec4 vhBlockRect", StringComparison.Ordinal),
-            "the atlas rectangle is carried flat rather than interpolated across the quad");
+        // The SLOT is carried, not the rows unpacked from it. Three unpacked rows meant
+        // eleven floats of flat varying and three table fetches on every vertex, written on
+        // both branches and so paid in full even with the blend pipeline off - for data only
+        // a fragment inside the blend band ever reads. The averaged colour stays in the
+        // vertex stage because it is the quad's albedo and every fragment needs it.
+        c.True(vertex.Contains("flat out int vhBlockSlot;", StringComparison.Ordinal)
+            && fragment.Contains("flat in int vhBlockSlot;", StringComparison.Ordinal),
+            "the block slot is carried flat rather than the rows unpacked from it");
+        c.True(!vertex.Contains("vhBlockRect", StringComparison.Ordinal)
+            && !vertex.Contains("vhBlockMean", StringComparison.Ordinal)
+            && !vertex.Contains("vhBlockOverlay", StringComparison.Ordinal),
+            "and the vertex stage no longer unpacks the atlas rectangle, mean or overlay");
+        c.True(fragment.Contains("uniform sampler2D blockTable;", StringComparison.Ordinal)
+            && fragment.Contains("texelFetch(blockTable, ivec2(vhBlockSlot, 0), 0)",
+                StringComparison.Ordinal),
+            "the fragment stage reads the atlas rectangle itself, inside the band");
+        c.True(vertex.Contains("texelFetch(blockTable, ivec2(vhBlockSlot, 1), 0)",
+                StringComparison.Ordinal),
+            "while the averaged colour is still read per vertex, where the albedo is needed");
 
         // An explicit level, computed from gradients the shader works out itself. Two reasons,
         // and both matter: fract() tears once per block, so a GPU left to infer the level picks

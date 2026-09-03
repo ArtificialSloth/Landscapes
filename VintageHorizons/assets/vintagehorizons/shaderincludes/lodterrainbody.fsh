@@ -214,9 +214,13 @@ uniform float blockTextureMipLimit;
 // the mip chain for it. Zero is physically correct and invisible; higher is deliberately
 // wrong, trading aliasing for detail the eye can actually resolve.
 uniform float blockTextureDetail;
-flat in vec4 vhBlockRect;
-flat in vec3 vhBlockMean;
-flat in vec4 vhBlockOverlay;
+
+// The block table, read here rather than in the vertex stage. Its rows are needed only inside
+// the blend band, and the band is a ring of the screen against millions of vertices, so the
+// fetches belong on the side that actually asks. -1 in the slot means the quad carries a
+// plain colour and there is nothing to read.
+uniform sampler2D blockTable;
+flat in int vhBlockSlot;
 #endif
 // ------------------------------------------------------------------------------
 
@@ -615,62 +619,89 @@ void main()
 
 #ifdef VH_PACKED
     // Real vanilla texels, where the band asks for them.
-    if (!translucent && blockTextureEnabled == 1 && bandWeight > 0.0
-        && vhBlockRect.z > vhBlockRect.x)
+    //
+    // The table rows are read HERE rather than in the vertex stage. They are wanted only by a
+    // fragment that is inside the band, on an opaque quad that carries a slot, with textures
+    // switched on - and the band is a ring of the screen, against millions of vertices. Read
+    // per vertex they were three dependent fetches and eleven floats of flat varying paid by
+    // every vertex in the view, textures on or off. See lodterrainbody.vsh's vhBlockSlot.
+    if (!translucent && blockTextureEnabled == 1 && bandWeight > 0.0 && vhBlockSlot >= 0)
     {
-        // Tile the block's own texture once per world block, on whichever plane this face
-        // lies in. terrainPos is the stable world position, so the pattern is anchored to
-        // the ground rather than to the camera.
-        vec2 tile = abs(normal.y) > 0.5
-            ? terrainPos.xz
-            : (abs(normal.x) > 0.5 ? vec2(terrainPos.z, -terrainPos.y)
-                                   : vec2(terrainPos.x, -terrainPos.y));
-        vec2 rectSize = vhBlockRect.zw - vhBlockRect.xy;
-        vec2 blockUv = vhBlockRect.xy + fract(tile) * rectSize;
-        vec2 duvdx = dFdx(tile) * rectSize;
-        vec2 duvdy = dFdy(tile) * rectSize;
-
-        // How far into the mip chain this fragment is asking to go. Deep mips blend a
-        // block's tile into its neighbours' in the shared atlas, which would put another
-        // block's colour on this ground, so past a limit the texture bows out and the
-        // averaged colour - what a fully minified texture converges to anyway - takes over.
-        // That is also free performance: the far field never pays for a texture fetch.
-        //
-        // The limit cannot be cautious. The seam sits hundreds of blocks out, where one block
-        // covers a few pixels and a 32-pixel tile is already asking for mip three or four, so
-        // a low limit would remove the texture at exactly the distance it exists for.
-        vec2 footprint = max(abs(duvdx), abs(duvdy)) * blockAtlasSize;
-        float mipWanted = log2(max(max(footprint.x, footprint.y), 1.0));
-        float mipFade = clamp(blockTextureMipLimit - mipWanted, 0.0, 1.0);
-
-        float textureAmount = bandWeight * clamp(blockTextureStrength, 0.0, 1.0) * mipFade;
-        if (textureAmount > 0.0)
+        // Row 0 is the atlas rectangle. An empty one means the slot describes no texture,
+        // which is the same "nothing to draw here" the vertex stage used to answer with a
+        // zeroed rectangle. Row 1 is the averaged colour and was consumed as this quad's
+        // albedo already.
+        vec4 vhBlockRect = texelFetch(blockTable, ivec2(vhBlockSlot, 0), 0);
+        if (vhBlockRect.z > vhBlockRect.x)
         {
-            // Variation around the block's colour, never the colour itself. Dividing the
-            // texel by its own texture's mean leaves a number that is 1 where the texture is
-            // average and swings either side of it where the texture has detail, so the
-            // ground keeps exactly the colour it had and gains the pattern. Taking the texel
-            // directly instead drew grass as bare soil: the green is an overlay composited
-            // over a brown base, and the base is what the atlas holds.
-            // Explicit level, not the inferred one. fract() tears once per block, so a GPU
-            // left to derive the level itself picks the coarsest mip on every block boundary
-            // and draws a grid of grey lines; and the whole point here is to choose a level
-            // sharper than the footprint asks for anyway.
-            float sampleLod = max(mipWanted - blockTextureDetail, 0.0);
-            vec3 texel = textureLod(blockAtlas, blockUv, sampleLod).rgb;
+            // Row 2 is the sampled texture's own mean, with alpha flagging whether a
+            // grass-style overlay exists; row 3 is that overlay's rectangle. The fragment
+            // stage divides by the mean so the texture becomes variation AROUND the block's
+            // colour rather than the colour itself - grass-covered ground has a brown soil
+            // texture under a green overlay, so taking the texture at face value drew a brown
+            // band across the world.
+            vec4 vhMeanRow = texelFetch(blockTable, ivec2(vhBlockSlot, 2), 0);
+            vec3 vhBlockMean = vhMeanRow.rgb;
+            vec4 vhBlockOverlay = vhMeanRow.a > 0.5
+                ? texelFetch(blockTable, ivec2(vhBlockSlot, 3), 0)
+                : vec4(0.0);
 
-            // Grass over soil, composited exactly the way the engine's own top-soil shader
-            // does it: soil * (1 - grass.a) + grass * grass.a, per pixel. The overlay tiles
-            // on the same block grid, so it reuses the same fractional coordinate.
-            if (vhBlockOverlay.z > vhBlockOverlay.x)
+            // Tile the block's own texture once per world block, on whichever plane this face
+            // lies in. terrainPos is the stable world position, so the pattern is anchored to
+            // the ground rather than to the camera.
+            vec2 tile = abs(normal.y) > 0.5
+                ? terrainPos.xz
+                : (abs(normal.x) > 0.5 ? vec2(terrainPos.z, -terrainPos.y)
+                                       : vec2(terrainPos.x, -terrainPos.y));
+            vec2 rectSize = vhBlockRect.zw - vhBlockRect.xy;
+            vec2 blockUv = vhBlockRect.xy + fract(tile) * rectSize;
+            vec2 duvdx = dFdx(tile) * rectSize;
+            vec2 duvdy = dFdy(tile) * rectSize;
+
+            // How far into the mip chain this fragment is asking to go. Deep mips blend a
+            // block's tile into its neighbours' in the shared atlas, which would put another
+            // block's colour on this ground, so past a limit the texture bows out and the
+            // averaged colour - what a fully minified texture converges to anyway - takes
+            // over. That is also free performance: the far field never pays for a fetch.
+            //
+            // The limit cannot be cautious. The seam sits hundreds of blocks out, where one
+            // block covers a few pixels and a 32-pixel tile is already asking for mip three
+            // or four, so a low limit would remove the texture at exactly the distance it
+            // exists for.
+            vec2 footprint = max(abs(duvdx), abs(duvdy)) * blockAtlasSize;
+            float mipWanted = log2(max(max(footprint.x, footprint.y), 1.0));
+            float mipFade = clamp(blockTextureMipLimit - mipWanted, 0.0, 1.0);
+
+            float textureAmount = bandWeight * clamp(blockTextureStrength, 0.0, 1.0) * mipFade;
+            if (textureAmount > 0.0)
             {
-                vec2 overlaySize = vhBlockOverlay.zw - vhBlockOverlay.xy;
-                vec4 overlayTexel = textureLod(
-                    blockAtlas, vhBlockOverlay.xy + fract(tile) * overlaySize, sampleLod);
-                texel = mix(texel, overlayTexel.rgb, overlayTexel.a);
+                // Variation around the block's colour, never the colour itself. Dividing the
+                // texel by its own texture's mean leaves a number that is 1 where the texture
+                // is average and swings either side of it where it has detail, so the ground
+                // keeps exactly the colour it had and gains the pattern. Taking the texel
+                // directly instead drew grass as bare soil: the green is an overlay
+                // composited over a brown base, and the base is what the atlas holds.
+                //
+                // Explicit level, not the inferred one. fract() tears once per block, so a
+                // GPU left to derive the level itself picks the coarsest mip on every block
+                // boundary and draws a grid of grey lines; and the whole point here is to
+                // choose a level sharper than the footprint asks for anyway.
+                float sampleLod = max(mipWanted - blockTextureDetail, 0.0);
+                vec3 texel = textureLod(blockAtlas, blockUv, sampleLod).rgb;
+
+                // Grass over soil, composited exactly the way the engine's own top-soil
+                // shader does it: soil * (1 - grass.a) + grass * grass.a, per pixel. The
+                // overlay tiles on the same block grid, so it reuses the same coordinate.
+                if (vhBlockOverlay.z > vhBlockOverlay.x)
+                {
+                    vec2 overlaySize = vhBlockOverlay.zw - vhBlockOverlay.xy;
+                    vec4 overlayTexel = textureLod(
+                        blockAtlas, vhBlockOverlay.xy + fract(tile) * overlaySize, sampleLod);
+                    texel = mix(texel, overlayTexel.rgb, overlayTexel.a);
+                }
+                vec3 detail = texel / max(vhBlockMean, vec3(0.02));
+                albedo *= mix(vec3(1.0), detail, textureAmount);
             }
-            vec3 detail = texel / max(vhBlockMean, vec3(0.02));
-            albedo *= mix(vec3(1.0), detail, textureAmount);
         }
     }
 #endif
