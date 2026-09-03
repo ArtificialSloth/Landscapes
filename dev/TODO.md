@@ -134,9 +134,28 @@ human-tested and was reported as excellent; 0.3.163 is not.
   but nothing has been benchmarked. `.vhcutout on` is the A/B and reports the live vertex total.
   The +4.37% sample is roughly double the median with no cause established; four samples is a
   small n (G98).
-- **Leaves carry G137's defect and are excluded on cost.** Source inspection only - no seam hole
-  on a tree has been observed. Including them would put a wall between every pair of leaves in
-  every canopy, so it needs its own `cutoutfield --families` measurement before anyone tries it.
+- **Leaves carry G137's defect and are excluded on cost. NOW PRICED - it is the owner's call.**
+  Measured 2026-09-03 against the owner's live cache with `cutoutfield --families
+  leaves-,leavesbranchy-`, the measurement this entry asked for:
+
+  | | crops (accepted, 0.3.163) | leaves |
+  |---|---|---|
+  | share of level-0 sections | 42% | **78%** |
+  | palette entries in the cache | 4,855 | **88,322** |
+  | opaque geometry | +2.19 to +4.37% | **+19.95 / +20.24 / +22.02%** (three seeds, 120 sections) |
+  | draw clusters | +0.00% | **+0.00%** |
+
+  So it is six to ten times what crops cost, and the cost lands exactly where the entry predicted:
+  X and Z walls +25 to +27%, tops nearly free at +9%, because every pair of adjacent leaves in a
+  canopy gains a wall between them. Draw clusters do not move at any level, which is the number
+  that usually decides - here it does not, because this is vertex memory and upload rather than
+  submissions.
+
+  **It does not fall off with distance:** +19.80% at level 1, +19.27% at level 2, +15.99% at
+  level 3. So restricting the flag to level 0 - fixing the seam, which is where holes are visible,
+  and leaving the far field alone - is a real option and a real saving rather than a free one.
+  Still nobody has observed a seam hole on a tree; the harness reports the entire cost and cannot
+  report the benefit.
 - **The blend band's own address carries G136's off-by-one** at 8-block granularity, so a wall on
   an 8-block plane takes its neighbour's band weight. Left alone as colour-only and not verified
   as harmless in play. Fixing it means choosing what a distance field should answer at a boundary,
@@ -639,17 +658,13 @@ Human-reported and still open:
   separately, and no one has checked whether flat ground now reads too bright at dawn against
   its own surroundings rather than against vanilla.
 
-- **The seasonal blend weight (still open; see the colour section at the top of this file).** The mod takes
-  its tint from `ApplyColorMapOnRgba`; terrain is actually drawn through `calcColorMapUvs` in
-  `colormap.vsh`, and the two compute the climate/season blend weight differently. The C#
-  version's `Math.Max(0, 128 - temp) / 512` and `Math.Max(0, temp - 130) / 200` are INTEGER
-  divisions and evaluate to zero for every reachable temperature; the shader computes both as
-  floats and adds an altitude term. At a temperate summer temperature that is roughly a third
-  more seasonal colour in the mod's tint than vanilla draws. Unquantified because it needs the
-  world's actual temperature and rainfall. It biases grass and leaves together, so the tell is
-  an overall hue shift rather than grass alone being wrong. The `(rain, temp)` overload cannot
-  fix it - see G47 - but the mod can sample the climate map alone and blend it against the
-  season map with the shader's own weight.
+- **The seasonal blend weight: FIXED, and the entry that was here is superseded.** Carried as a
+  hypothesis from Session 31 and settled in Sessions 74 and 75. The divergence was real and
+  larger than the "roughly a third" estimated here - up to 0.85 of weight, with the sign flipping
+  around temperature 128, which is why no single global correction had ever worked. The shader now
+  computes the weight itself from the climate field, so there is no CPU weight left to disagree
+  with. The general lesson outlived the instance and is G144: the engine's CPU colour call is not
+  what the engine draws, and it has now differed twice.
 - **Water seams are fixed and human-confirmed (0.3.23); one measurement is still owed.**
   See G51 and session 31 for the cause. The 2026-08-20 log reads `974 seam repairs` beside
   `599 meshes` at the 30-second mark - non-zero as designed, and the same join reached its
