@@ -3,10 +3,11 @@
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
 **Status date:** 2026-09-02
-**Mod version:** `0.3.185`, built, verified, packaged and copy-installed; **not yet seen in game**.
+**Mod version:** `0.3.186`, built, verified, packaged and copy-installed; **not yet seen in game**.
 0.3.183 is **human-tested and accepted** ("Much better, Excellent!") and carries the substance of
-the colour work below; 0.3.184 retired the height table and 0.3.185 made remembered climate
-persistent, both source-traced and harness-tested only.
+the colour work below; 0.3.184 retired the height table, 0.3.185 made remembered climate
+persistent, and 0.3.186 gave every distinct untinted share its own tint slot - all three
+source-traced and harness-tested only.
 
 **Distant terrain colour is the through-line of Sessions 73-75 and is now substantially closed.**
 Six independent causes were measured and fixed; every one of them was established by measurement

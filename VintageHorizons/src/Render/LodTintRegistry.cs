@@ -46,8 +46,35 @@ public readonly struct LodUntintedShare
     /// <summary>Everything is tinted: the ordinary case, and what a plain block gets.</summary>
     public static LodUntintedShare None => default;
 
-    /// <summary>Coarse key so blocks of the same coverage share one slot, at 1/8 steps.</summary>
-    public int Bucket => (int)((R + G + B) / 3f * 8f + 0.5f);
+    /// <summary>
+    /// The share as the slot table actually stores it: one byte per channel, packed.
+    ///
+    /// This is the slot key, and it is deliberately EXACT rather than coarse. It used to be the
+    /// mean of the three channels rounded to eighths, which collapsed the base game's 29
+    /// top-soil blocks onto six shares: `soil-medium-verysparse` (0.176, 0.125, 0.079) and
+    /// `forestfloor-5` (0.188, 0.142, 0.107) both landed in bucket 1, so whichever registered
+    /// first lent the other its share and 35% too much blue - and blue is where this shows,
+    /// because the seasonal tint carries almost none and the untinted dirt carries all of it.
+    ///
+    /// Rounding to eighths of a MEAN was doubly lossy: two blocks can agree on the mean and
+    /// disagree on every channel. A byte is the finest resolution the published table can carry,
+    /// so keying on anything finer would distinguish slots the shader cannot tell apart, and
+    /// anything coarser throws away accuracy the table could have held.
+    ///
+    /// Measured: 29 top-soil blocks hold 24 distinct shares at 1/64 per channel, so an exact key
+    /// costs about two dozen slots of 64 rather than the six it costs today. Overflow is handled
+    /// by falling back to the nearest registered share rather than by being coarse up front -
+    /// see LodTintRegistry.SlotFor.
+    /// </summary>
+    public int Key => (Byte(R) << 16) | (Byte(G) << 8) | Byte(B);
+
+    static int Byte(float v) => Math.Clamp((int)MathF.Round(v * 255f), 0, 255);
+
+    /// <summary>How far another share is from this one, in bytes summed over the channels.</summary>
+    public int DistanceTo(LodUntintedShare other) =>
+        Math.Abs(Byte(R) - Byte(other.R))
+        + Math.Abs(Byte(G) - Byte(other.G))
+        + Math.Abs(Byte(B) - Byte(other.B));
 }
 
 /// <summary>
@@ -231,10 +258,16 @@ public class LodTintRegistry
                 : SlotNone;
         }
 
-        var key = (climate, season, share.Bucket);
+        var key = (climate, season, share.Key);
         if (slotByMaps.TryGetValue(key, out int slot)) return slot;
 
-        if (representative.Count >= MaxSlots) return SlotNone; // out of slots: untinted beats wrong
+        // Out of slots: hand this block the registered slot on the SAME colour maps whose share
+        // is closest. That is what a coarse key does eagerly for every block; doing it lazily
+        // means shares are exact while slots last and only degrade once 64 are spoken for.
+        // Untinted was the old answer and it is worse than a near neighbour by a wide margin -
+        // a share is at most 0.7 and a missing tint is the whole colour.
+        if (representative.Count >= MaxSlots) return NearestSlot(climate, season, share);
+
         slot = representative.Count;
         representative.Add(block);
         untintedShare.Add(share);
@@ -261,7 +294,34 @@ public class LodTintRegistry
                 : SlotNone;
         }
 
-        return slotByMaps.TryGetValue((climate, season, share.Bucket), out int slot) ? slot : SlotNone;
+        if (slotByMaps.TryGetValue((climate, season, share.Key), out int slot)) return slot;
+
+        // Only once the table is full does a block draw from a neighbour's slot, so only then
+        // may this report one. Answering with a near neighbour before that would describe a slot
+        // this block does not use and SlotFor would not give it - a diagnostic that agrees with
+        // itself and not with the renderer is worse than one that says "not registered".
+        return representative.Count >= MaxSlots ? NearestSlot(climate, season, share) : SlotNone;
+    }
+
+    /// <summary>
+    /// The registered slot on these colour maps whose untinted share is nearest, or
+    /// <see cref="SlotNone"/> when none is registered at all. Only reached once every slot is
+    /// spoken for, which the base game does not do on its own.
+    /// </summary>
+    int NearestSlot(string? climate, string? season, LodUntintedShare share)
+    {
+        int best = SlotNone;
+        int bestDistance = int.MaxValue;
+        foreach (((string? c, string? s, int _), int slot) in slotByMaps)
+        {
+            if (c != climate || s != season) continue;
+            if (slot <= SlotNone || slot >= untintedShare.Count) continue;
+            int distance = share.DistanceTo(untintedShare[slot]);
+            if (distance >= bestDistance) continue;
+            bestDistance = distance;
+            best = slot;
+        }
+        return best;
     }
 
     /// <summary>
@@ -673,7 +733,7 @@ public class LodTintRegistry
         yield return $"{block.Code} at {x},{y},{z} | sea level {world.SeaLevel} | "
             + $"slot {slot} of {representative.Count - 1} ({readySlotCount - 1} published)";
         yield return $"  maps: climate {block.ClimateColorMap ?? "none"}, "
-            + $"season {block.SeasonColorMap ?? "none"}, share bucket {blockShare.Bucket}";
+            + $"season {block.SeasonColorMap ?? "none"}";
         yield return $"  slot claimed by {claimant.Code}"
             + (claimant.Code == block.Code ? " (this block)" : " (A DIFFERENT BLOCK)");
         yield return $"  untinted share: this block {Fmt(blockShare.R, blockShare.G, blockShare.B)}, "

@@ -13,6 +13,16 @@ section is recaptured and can receive its texture slot, but the zero neighbour-e
 currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
 remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
 
+## [0.3.186] - 2026-09-03
+
+**Sparse-grass ground no longer borrows another block's bare dirt.** Grass-covered soil is part
+grass and part dirt showing through, and only the grass takes the seasonal colour - so how much
+dirt shows decides how much of the block the season cannot touch. Blocks were grouped by the
+average of that across the three colour channels, rounded coarsely, which put 29 different ground
+types into six groups: very sparse medium soil ended up using forest floor's dirt and came out
+about 35% too blue. Each distinct amount now gets its own entry, at exactly the precision the
+renderer can actually use.
+
 ## [0.3.185] - 2026-09-02
 
 **Distant terrain remembers the climate it has been told.** The game only knows the climate where

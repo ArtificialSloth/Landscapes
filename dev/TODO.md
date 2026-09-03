@@ -20,9 +20,39 @@ the plan set out to fix are fixed and human-accepted; what follows is the remain
   Storing what it learns in the mod's own cache would make coverage accumulate permanently as the
   player explores, which is the step that eventually gets the whole horizon right. No terrain
   format change and no re-exploration: the field is keyed on world cells, independent of sections.
-- **Slot sharing: 38% excess blue on `soil-medium-verysparse`**, which drew with `forestfloor-5`'s
-  untinted share. Slots are keyed on the share rounded to eighths and 18 of 64 are in use, so a
-  finer key has room. Measured in Session 74; not started.
+- **Turning leaves lose their seasonal spread.** Vanilla picks a season map ROW per position,
+  and for LEAVES that noise runs at a 2-to-6 block scale where ground uses 12-to-24 - tree
+  sized. During the autumn turn the sixteen rows of `birchtint.png` span (175,224,16), clearly
+  green, to (177,156,42), clearly yellow, so vanilla shows a mix of turned and untinted trees
+  while distant terrain draws the flat average, which contains no yellow at all. Owner-reported
+  and measured 2026-09-02; feasibility investigated and accepted onto the list, not started.
+
+  Feasible, and most of it exists. The season maps are seventeen tables of 128x16, 136 KiB in
+  total, and `LodClimateMapPages` already pages the far larger climate maps and was verified
+  exact against the source image. The noise is the ENGINE'S OWN: `lodterrainbody.fsh` already
+  `#include`s `noise3d.ash` and already calls `valuenoise`, so this is a literal reuse rather
+  than a transcription - which matters more than usual given G144. What is new is a per-slot
+  "this is leaves" flag to choose the tree-scale noise, and moving the row choice out of
+  `LodSeasonColor`'s flat average into the shader.
+
+  The design question, which is not a coding one: **G47's reasoning still holds at distance.**
+  A distant pixel covers many blocks and wants the mean; a tree several pixels across wants its
+  own row. So this needs to fade toward the average with distance the way block-texture detail
+  already does, and where and how fast is a judgement call for the owner's eye. Two things it
+  will NOT do: match vanilla tree-for-tree beyond level 0, where one voxel is many blocks; and
+  reproduce variation WITHIN one canopy, because merged leaf faces sample only at their corners.
+  Distinct trees are separated by air and so keep their own noise, which is the part that
+  matters - reasoned from the mesher rather than measured.
+
+- **Slot sharing is fixed but unseen.** The key was the MEAN of the share's three channels
+  rounded to eighths, which collapsed the base game's 29 top-soil blocks onto six shares and lent
+  `soil-medium-verysparse` (0.176, 0.125, 0.079) the share of `forestfloor-5` (0.188, 0.142,
+  0.107) - 35% too much blue, and blue is where it shows because the seasonal tint carries almost
+  none. The key is now the exact byte triple the slot table publishes, and overflow falls back to
+  the nearest registered share rather than to untinted. Measured against the game's own textures:
+  24 distinct shares at 1/64 per channel across 29 blocks, so this costs about two dozen slots of
+  64 rather than six. Shipped in 0.3.186; the tell would be sparse-grass soil no longer reading
+  too blue.
 - **`.vhtint`'s A, B and C' labels no longer describe what draws.** The D lines added in 0.3.182
   report the field path's own terms and are the ones to trust. The older lines describe the ramp,
   and C is a single random row draw that cannot be held against an average (G145).
