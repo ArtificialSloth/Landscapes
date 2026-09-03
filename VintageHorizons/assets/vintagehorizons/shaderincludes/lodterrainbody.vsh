@@ -125,38 +125,16 @@ uniform float sectionSize;
 #endif
 // -----------------------------------------------------------------------------
 
-// Tint is resolved per VERTEX, not per fragment: the slot is constant across a quad
-// and the ramp is piecewise linear in height, so interpolating the result is
+// Tint is resolved per VERTEX, not per fragment: the slot is constant across a quad and
+// everything the tint depends on varies smoothly with position, so interpolating the result is
 // equivalent and saves the lookups per fragment.
 // Must equal LodTintRegistry.MaxSlots; LoadShader logs an error if it does not.
 const int TINT_SLOTS = 64;
 
-// The live tint, as a ramp in height rather than two altitude samples.
-//
-// Two samples could not carry it. Everything height-dependent in a tint comes from the
-// engine's temperature lapse rate, and the curve it produces is flat, then drops sharply
-// over about sixty blocks, then flat again - so a straight line between a low and a high
-// sample misses the only part that moves. The ramp is 96 steps of 8 blocks starting 256
-// below sea level, which is the whole window in which anything changes, in any world:
-// the lapse rate is per BLOCK, so a taller world simply puts more terrain in the flat
-// tail and the clamp at each end is exact rather than approximate.
-//
-// Slot on X, height step on Y. Addressing must match LodTintRegistry.RampTexel; a static
-// check holds the two together, because a disagreement here misaddresses every slot at
-// once and reads as a colour bug rather than an indexing one.
-//
-// texelFetch twice and mix by hand rather than letting the sampler filter: hardware
-// filtering would blend along X as well, quietly mixing one block's tint into its
-// neighbour's.
-uniform sampler2D tintRamp;
-uniform float tintRampOriginY;
-uniform float tintRampInvStep;
-uniform int tintRampSteps;
-
 // The climate field, and what it takes to finish a tint from it.
 //
-// The ramp above is one finished colour per slot, sampled where the PLAYER stands, so the
-// whole visible world wears the player's own climate and repaints when they move. These
+// Until 0.3.179 there was one finished colour per slot, sampled where the PLAYER stood, so the
+// whole visible world wore the player's own climate and repainted when they moved. These
 // tables invert that: the climate of every 64-block cell is stored, and the colour is worked
 // out here from the climate of the ground this vertex actually sits on.
 //
@@ -166,7 +144,8 @@ uniform int tintRampSteps;
 //                 held to LodClimateField.TexelIndex by a static check.
 //   slotTable     per slot: row 0 the season colour, its alpha saying whether a season blend
 //                 applies at all; row 1 the untinted share; row 2 red the climate map page,
-//                 255 meaning this slot cannot be finished here and keeps the ramp.
+//                 255 meaning this slot cannot be finished here; row 3 the flat fallback it
+//                 falls back to when it cannot, which is the engine's own blended answer.
 //   climateMaps   the game's own climate colour maps, one 256x256 page each, temperature
 //                 across and rainfall down at one texel per count.
 //
@@ -342,16 +321,14 @@ void main()
 
     int slotRaw = int(vertexColorIn.a * 255.0 + 0.5);
     int slot = clamp(slotRaw - (slotRaw / TINT_SLOTS) * TINT_SLOTS, 0, TINT_SLOTS - 1);
-    float rampT = clamp((yLevel - tintRampOriginY) * tintRampInvStep,
-                        0.0, float(tintRampSteps - 1));
-    int rampStep = clamp(int(rampT), 0, tintRampSteps - 2);
-    tint = mix(texelFetch(tintRamp, ivec2(slot, rampStep), 0).rgb,
-               texelFetch(tintRamp, ivec2(slot, rampStep + 1), 0).rgb,
-               rampT - float(rampStep));
+    // The flat fallback: the engine's own blended answer for this slot, already diluted by its
+    // untinted share. This is what draws where the shader cannot finish the tint itself - no
+    // paged climate map, the tropical season weight this mod does not reproduce, or no climate
+    // field at all - and it is what every build before the field drew everywhere.
+    tint = texelFetch(slotTable, ivec2(slot, 3), 0).rgb;
 
-    // The climate field, where this slot can be finished from it. A slot whose page is 255
-    // keeps the ramp: no climate map, a season colour that could not be recovered this pass,
-    // or the tropical season weight this mod does not reproduce.
+    // The climate field, where this slot can be finished from it. A page of 255 means it
+    // cannot be, and the fallback above stands.
     int tintPage = 255;
     if (climateFieldEnabled == 1)
     {

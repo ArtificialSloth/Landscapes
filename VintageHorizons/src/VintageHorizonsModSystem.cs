@@ -2175,52 +2175,12 @@ public class VintageHorizonsModSystem : ModSystem
             .WithDescription("Take one block's distant colour apart: the stored colour, how much of "
                 + "it the live tint is not allowed to touch, and the tint itself against the game's "
                 + "own answer for the same block. Aim at a block, or name one, or stand on it. "
-                + "'.vhtint weight on|off' switches the season/climate blend correction. "
                 + "'.vhtint field on|off' switches per-area distant climate. "
                 + "Written to the client log, which is the only copy long enough to read.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("blockCode"),
                       capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
-                // `weight` is a switch rather than a block, and no block is called that. Kept on
-                // this command instead of its own because the report below is how the switch gets
-                // judged, and a diagnostic and the thing it measures belong together.
-                // The climate field: one climate per 64-block cell instead of one for the
-                // whole world. Kept switchable because the ramp it replaces is what every
-                // accepted build has drawn, and the two can only be judged against each other
-                // in place.
-                if (!args.Parsers[0].IsMissing
-                    && ((string)args[0]).Equals("field", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (renderer == null)
-                        return TextCommandResult.Success(
-                            "[VintageHorizons] no renderer: another LOD mod is drawing.");
-                    if (!args.Parsers[1].IsMissing) renderer.ClimateFieldTint = (bool)args[1];
-                    return TextCommandResult.Success(
-                        $"[VintageHorizons] climate field "
-                        + $"{(renderer.ClimateFieldTint ? "on" : "off")}. "
-                        + "On tints distant ground from the climate it stands in, cell by cell. "
-                        + "Off is one climate for the whole view, taken where you are standing, "
-                        + "which is what every build before this one drew. Where the client has "
-                        + "no climate the nearest known one is used either way.");
-                }
-
-                if (!args.Parsers[0].IsMissing
-                    && ((string)args[0]).Equals("weight", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (renderer == null)
-                        return TextCommandResult.Success(
-                            "[VintageHorizons] no renderer: another LOD mod is drawing.");
-                    if (!args.Parsers[1].IsMissing) renderer.SeasonWeightCorrection = (bool)args[1];
-                    return TextCommandResult.Success(
-                        $"[VintageHorizons] season weight correction "
-                        + $"{(renderer.SeasonWeightCorrection ? "on" : "off")}. "
-                        + "The game blends its climate and season colour maps by one weight on the "
-                        + "CPU and a different one in the shader that draws the world. On matches "
-                        + "the shader; off is what every build before this one did. Distant "
-                        + "terrain resamples immediately either way.");
-                }
-
                 // Aim first, feet second. A player comparing cached ground against the game's
                 // own is looking at the seam, so the block under the crosshair is the one they
                 // mean; standing on it is the fallback for ground too far to select.

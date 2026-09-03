@@ -692,22 +692,6 @@ public class LodTerrainRenderer : IRenderer
     public bool LightSunLevel { get; set; } = true;
 
     /// <summary>
-    /// Rebalance the engine's climate/season blend to the one the terrain shader draws, and
-    /// resample immediately rather than waiting out the 30-second cadence so the switch can be
-    /// judged in place. See <see cref="LodSeasonWeight"/> for the difference being corrected.
-    /// </summary>
-    public bool SeasonWeightCorrection
-    {
-        get => tints.SeasonWeightCorrection;
-        set
-        {
-            if (tints.SeasonWeightCorrection == value) return;
-            tints.SeasonWeightCorrection = value;
-            seasonalStateInitialized = false;
-        }
-    }
-
-    /// <summary>
     /// The sun light level a sky-exposed vanilla terrain vertex carries, as the shader sees
     /// it. Read from the world rather than assumed: a server may replace either the ramp or
     /// the brightness, and both are public.
@@ -1525,16 +1509,15 @@ public class LodTerrainRenderer : IRenderer
     readonly LodTintRegistry tints;
 
     /// <summary>
-    /// The tint table version currently on the GPU. ONE field, not one per program: the ramp
-    /// lives in a texture, so it is not part of any program's state and a single upload serves
-    /// all three programs.
+    /// The slot table version currently on the GPU. ONE field, not one per program: it lives in
+    /// a texture, so it is not part of any program's state and a single upload serves all three
+    /// programs.
     ///
     /// It was one per program while the table was uniform arrays, which are program state, and
-    /// carrying that shape forward to a texture is what made the ramp re-upload on every frame:
-    /// `UploadTintRamp` assigned the field while the two indirect programs passed their own
-    /// counter by ref, so their guard never closed and the upload below ran forever.
+    /// carrying that shape forward to a texture made the old height ramp re-upload on every
+    /// frame - the upload method assigned the field while the two indirect programs passed their
+    /// own counter by ref, so their guard never closed. See G143.
     /// </summary>
-    int uploadedRampVersion = -1;
     int uploadedSlotTableVersion = -1;
     int uploadedClimateMapVersion = -1;
 
@@ -1694,7 +1677,8 @@ public class LodTerrainRenderer : IRenderer
 
         // A fresh program object does not invalidate a texture, but the re-upload is one
         // frame's worth of nothing and this stays honest about the programs being new.
-        uploadedRampVersion = -1;
+        uploadedSlotTableVersion = -1;
+        uploadedClimateMapVersion = -1;
         WarnIfIncludeMissing(prog, "lodterrain");
         shaderOk = prog.Compile();
         if (!shaderOk && !ShaderLoadIsProvisional)
@@ -2009,7 +1993,7 @@ public class LodTerrainRenderer : IRenderer
                 SeasonalRefreshIntervalMs)) return;
 
             seasonalRefreshActive = true;
-            seasonalRefreshSlot = LodTintRegistry.SampledHeights;   // skip slot 0, the identity
+            seasonalRefreshSlot = 1;   // skip slot 0, the identity tint
             seasonalRefreshX = (int)camPos.X;
             seasonalRefreshZ = (int)camPos.Z;
             // The engine's own season uniform, not Calendar.YearRel. The two differ by the
@@ -2023,11 +2007,9 @@ public class LodTerrainRenderer : IRenderer
         // Game climate and colour-map APIs are owning-thread state. Keep them here, but
         // spread the calls over frames and publish only after the whole table is ready.
         //
-        // One unit is one slot at one sampled height, not a whole slot: the ramp reads the
-        // colour maps at seventeen heights where the old two-height table read them at two, and
-        // doing a slot's worth in one frame would be an order of magnitude more colour-map calls
-        // per frame than before. Per unit the cost is what the old per-slot step was, and the
-        // whole table still republishes inside the cadence.
+        // One unit is one slot. The colour maps are no longer read per height - the shader
+        // applies the lapse rate at the vertex's own height - so this is back to what it was
+        // before the ramp, and the whole table republishes in as many frames as there are slots.
         int tintUnits = tints.RefreshUnitCount;
         if (seasonalRefreshSlot < tintUnits)
         {
@@ -5234,7 +5216,6 @@ public class LodTerrainRenderer : IRenderer
     const int SeamFieldUnit = 7;
     const int BlockTableUnit = 8;
     const int BlockAtlasUnit = 9;
-    const int TintRampUnit = 10;
     const int SlotTableUnit = 11;
     const int ClimateFieldUnit = 12;
     const int ClimateMapsUnit = 13;
@@ -5399,23 +5380,19 @@ public class LodTerrainRenderer : IRenderer
             prog.BindTexture2D("blockAtlas", blockTextures!.AtlasTextureId, BlockAtlasUnit);
         }
 
-        // The ramp is a texture, not a uniform array: 64 slots x 96 height steps would be
-        // 6,144 vec4. Re-uploaded only when the table actually changed rather than every frame.
-        if (uploadedRampVersion != tints.Version) UploadTintRamp();
-        if (tintRampTexture != null)
-            prog.BindTexture2D("tintRamp", tintRampTexture.TextureId, TintRampUnit);
-        prog.Uniform("tintRampOriginY", tints.RampOriginY);
-        prog.Uniform("tintRampInvStep", 1f / LodTintRegistry.RampStepBlocks);
-        prog.Uniform("tintRampSteps", LodTintRegistry.RampSteps);
-
         UploadClimateTables();
+        // The slot table is bound whenever anything can be carrying a slot, not only when the
+        // field is on: it also carries the flat fallback every slot falls back to, and an unbound
+        // sampler reads zero, which is a plausible-looking black tint.
+        if (slotTableTexture != null)
+            prog.BindTexture2D("slotTable", slotTableTexture.TextureId, SlotTableUnit);
+
         bool climateOn = ClimateFieldTint && climateField.Active
             && climateFieldTexture != null && climateMapTexture != null
             && slotTableTexture != null && climatePages.PageCount > 0;
         prog.Uniform("climateFieldEnabled", climateOn ? 1 : 0);
         if (climateOn)
         {
-            prog.BindTexture2D("slotTable", slotTableTexture!.TextureId, SlotTableUnit);
             prog.BindTexture2D("climateField", climateFieldTexture!.TextureId, ClimateFieldUnit);
             prog.BindTexture2D("climateMaps", climateMapTexture!.TextureId, ClimateMapsUnit);
             // Two integer scalars, never the Vec2i overload, which reaches glUniform2f. See G42.
@@ -5432,22 +5409,6 @@ public class LodTerrainRenderer : IRenderer
         prog.Uniform("snowLineY", snowLineY);
     }
 
-    /// <summary>
-    /// Publish the tint ramp to the GPU. Nearest filtering in both axes on purpose: the height
-    /// axis is interpolated by hand in the vertex shader, because hardware filtering would blend
-    /// across the SLOT axis as well and silently mix one block's tint into another's.
-    /// </summary>
-    void UploadTintRamp()
-    {
-        LoadedTexture texture = tintRampTexture
-            ?? new LoadedTexture(capi, 0, LodTintRegistry.RampWidth, LodTintRegistry.RampHeight);
-        UploadOwnTexture(tints.Ramp, TintRampUnit, ref texture);
-        if (texture.TextureId <= 0) return;   // keep the old table rather than binding nothing
-        tintRampTexture = texture;
-        uploadedRampVersion = tints.Version;
-    }
-
-    LoadedTexture? tintRampTexture;
 
     /// <summary>
     /// What the climate field path computes for one block, term by term, on the CPU using the
@@ -6200,8 +6161,6 @@ public class LodTerrainRenderer : IRenderer
         {
             target.BindTexture2D("blockAtlas", blockTextures.AtlasTextureId, BlockAtlasUnit);
         }
-        if (tintRampTexture != null)
-            target.BindTexture2D("tintRamp", tintRampTexture.TextureId, TintRampUnit);
         if (slotTableTexture != null)
             target.BindTexture2D("slotTable", slotTableTexture.TextureId, SlotTableUnit);
         if (climateFieldTexture != null)

@@ -80,15 +80,34 @@ public static class StaticAssetChecks
         c.Eq(256, LodClimateMapPages.PageSize,
             "which is the page size the C# writes them at");
         c.Eq(255, LodClimateMapPages.NoPage,
-            "and 255 is the page that means this slot keeps the ramp");
+            "and 255 is the page that means this slot draws the flat fallback");
         c.True(vertex.Contains("int tintPage = 255;", StringComparison.Ordinal)
             && vertex.Contains("if (tintPage < 255)", StringComparison.Ordinal),
-            "the shader falls back to the ramp on exactly that value");
+            "the shader falls back to the flat colour on exactly that value");
 
         // ---- the slot table rows -------------------------------------------------------
         c.Eq(0, LodTintRegistry.SeasonRow, "the season colour is row 0");
         c.Eq(1, LodTintRegistry.ShareRow, "the untinted share is row 1");
         c.Eq(2, LodTintRegistry.PageRow, "the climate map page is row 2");
+        c.Eq(3, LodTintRegistry.FallbackRow, "the flat fallback is row 3");
+        c.Eq(4, LodTintRegistry.SlotTableRows, "and the table is four rows tall");
+
+        // A slot that has never been sampled must publish WHITE, not the zero its buffers start
+        // at: BuildSlotTable runs over every slot, and zero diluted by a share of zero is black.
+        // The same shape of mistake made a skipped slot draw untinted in 0.3.175.
+        var fresh = new LodTintRegistry();
+        for (int slot = 0; slot < LodTintRegistry.MaxSlots; slot++)
+        {
+            int fallback = fresh.SlotTable[
+                LodTintRegistry.SlotTableTexel(slot, LodTintRegistry.FallbackRow)];
+            c.Eq(255, (fallback >> 16) & 0xFF, $"slot {slot} starts white, not black");
+            c.Eq(255, (fallback >> 8) & 0xFF, $"slot {slot} starts white, not black");
+            c.Eq(255, fallback & 0xFF, $"slot {slot} starts white, not black");
+            int page = (fresh.SlotTable[
+                LodTintRegistry.SlotTableTexel(slot, LodTintRegistry.PageRow)] >> 16) & 0xFF;
+            c.Eq(LodClimateMapPages.NoPage, page,
+                $"slot {slot} starts with no climate map page");
+        }
         c.True(vertex.Contains("texelFetch(slotTable, ivec2(slot, 0), 0)", StringComparison.Ordinal),
             "and the shader reads the season colour from row 0");
         c.True(vertex.Contains("texelFetch(slotTable, ivec2(slot, 1), 0).rgb", StringComparison.Ordinal),
@@ -198,11 +217,11 @@ public static class StaticAssetChecks
 
         // Upload unit and bind unit are the same named constant, in both binding paths. They
         // were literals when they disagreed, which is exactly why they are not any more.
-        c.True(renderer.Contains("UploadOwnTexture(tints.Ramp, TintRampUnit, ref texture)",
+        c.True(renderer.Contains("UploadOwnTexture(tints.SlotTable, SlotTableUnit, ref texture)",
                 StringComparison.Ordinal),
-            "the tint ramp is uploaded onto its own unit");
+            "the slot table is uploaded onto its own unit");
         c.Eq(2, Regex.Matches(renderer,
-                @"BindTexture2D\(""tintRamp"", tintRampTexture\.TextureId, TintRampUnit\)").Count,
+                @"BindTexture2D\(""slotTable"", slotTableTexture\.TextureId, SlotTableUnit\)").Count,
             "and bound to the same one by the frame uniforms and by the sampler repair");
         c.True(renderer.Contains("UploadOwnTexture(seamField.Texels, SeamFieldUnit, ref texture)",
                 StringComparison.Ordinal)
@@ -527,14 +546,24 @@ public static class StaticAssetChecks
         // pinned in SeasonWeightChecks; this is the GLSL half. Slot on X and height step on Y,
         // fetched rather than filtered - hardware filtering would blend along X and mix one
         // block's tint into its neighbour's, which is silent and looks like a colour bug.
-        c.True(vertex.Contains("uniform sampler2D tintRamp;", StringComparison.Ordinal),
-            "the vertex body reads the tint ramp as a texture, not a uniform array");
-        c.True(vertex.Contains("texelFetch(tintRamp, ivec2(slot, rampStep), 0)", StringComparison.Ordinal)
-            && vertex.Contains("texelFetch(tintRamp, ivec2(slot, rampStep + 1), 0)", StringComparison.Ordinal),
-            "the tint ramp is indexed slot-on-X, step-on-Y, and fetched at two adjacent steps");
-        foreach (string gone in new[] { "tintsLow", "tintsHigh", "tintYLow", "tintYHigh" })
+        c.True(vertex.Contains("uniform sampler2D slotTable;", StringComparison.Ordinal),
+            "the vertex body reads the per-slot table as a texture, not a uniform array");
+        c.True(vertex.Contains("tint = texelFetch(slotTable, ivec2(slot, 3), 0).rgb;",
+                StringComparison.Ordinal),
+            "and takes the flat fallback from its fourth row");
+
+        // Two whole tint mechanisms have been retired here. Neither may come back by accident:
+        // the two-height uniform arrays, and the 96-step height ramp that replaced them and was
+        // itself replaced by climate the shader finishes per vertex.
+        foreach (string gone in new[]
+        {
+            "tintsLow", "tintsHigh", "tintYLow", "tintYHigh",
+            "tintRamp", "tintRampOriginY", "tintRampInvStep", "tintRampSteps",
+        })
+        {
             c.True(!vertex.Contains(gone, StringComparison.Ordinal),
-                $"the replaced two-height tint uniform {gone} is gone from the vertex body");
+                $"the retired tint uniform {gone} is gone from the vertex body");
+        }
 
         c.True(vertex.Contains("flat out float vhColumnBlocks;", StringComparison.Ordinal)
             && fragment.Contains("flat in float vhColumnBlocks;", StringComparison.Ordinal),
