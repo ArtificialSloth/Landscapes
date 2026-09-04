@@ -19,16 +19,17 @@ namespace VintageHorizons.Checks;
 /// does not need to be captured or probed: the cache already holds the water runs sitting on
 /// top of the bed, so the depth is arithmetic on data an existing cache already has.
 ///
-/// WHAT IT WOULD COST. The mesher merges neighbouring quads that share a palette entry. Give
-/// every column its own brightness and quads at different depths stop merging, so the bed
-/// grows geometry. Rounding depth into a few buckets bounds that: fewer buckets, less growth,
-/// coarser gradient. This harness measures the trade before anything is built.
+/// WHAT IT COSTS. The mesher merges neighbouring quads that share a palette entry, so giving
+/// every column its own brightness stops quads at different depths merging and the bed grows
+/// geometry. Bucketing the depth would bound that; it turned out not to be worth doing, because
+/// a bed that changes depth is a bed that changes height and those quads were not merging
+/// anyway. The exact per-block gradient measured +0.24%, so there is no ladder here any more.
 ///
-/// HOW IT MEASURES. Not by counting faces itself - that would measure a reimplementation.
-/// Each sampled section is meshed by the SHIPPING mesher, once unmodified and once per bucket
-/// count with submerged runs re-keyed onto per-bucket palette entries. Re-keying is exactly
-/// what a real depth-aware colour would do to the merge key, so the difference in vertices is
-/// the whole cost. Colours are left alone: this measures merging, not appearance.
+/// HOW IT MEASURES. Not by counting faces itself - that would measure a reimplementation. Each
+/// sampled section is meshed twice by the SHIPPING mesher, with and without the absorption
+/// table the renderer supplies, and the difference is the answer. The depth histogram is walked
+/// independently of the mesher's own walk, so the two disagreeing is a signal rather than a
+/// coincidence.
 ///
 /// WHAT IT DOES NOT MEASURE. The benefit - a screenshot is the only judge of that. Nor
 /// absorption from anything other than water: overhangs, cave mouths and foliage are invisible
@@ -51,7 +52,6 @@ public static class WaterDepthField
         public int Seed = 20260903;
         public int Level;
         public int Cull = 64;
-        public int[] Buckets = { 2, 4, 8, 16, MaxDepth };
         public bool Help;
     }
 
@@ -98,10 +98,18 @@ public static class WaterDepthField
         var depthHistogram = new long[MaxDepth + 1];
         long columns = 0, submerged = 0, waterColumns = 0;
         long baseVerts = 0, baseQuads = 0;
-        var bucketVerts = new long[o.Buckets.Length];
-        var bucketQuads = new long[o.Buckets.Length];
-        var bucketSplitRuns = new long[o.Buckets.Length];
+        // Water is a SEPARATE buffer from opaque and VertexCount does not include it, so a
+        // water-only change is invisible unless both are counted. Learned the hard way: an
+        // experiment that disabled the water surface split produced byte-identical totals.
+        long shadedVerts = 0, shadedQuads = 0;
+        long baseWaterVerts = 0, shadedWaterVerts = 0;
         int meshed = 0, withWater = 0;
+
+        // The world's own ramp is not reachable without a client, so the harness uses the
+        // survival config's published levels. LodTerrainRenderer reads the live world instead;
+        // a server that replaces the ramp changes the shade, not the geometry this measures.
+        var absorption = new float[LodMesher.MaxSubmergedDepth + 1];
+        for (int d = 0; d < absorption.Length; d++) absorption[d] = (float)Brightness(d);
 
         foreach (long key in sample)
         {
@@ -130,24 +138,24 @@ public static class WaterDepthField
             meshed++;
             if (anyWater) withWater++;
             baseVerts += baseline.VertexCount;
+            baseWaterVerts += baseline.WaterVertexCount;
             baseQuads += baseline.ClusteredPackedOpaqueQuads.Length
                 / LodPackedQuadFormat.WordsPerQuad;
 
-            for (int b = 0; b < o.Buckets.Length; b++)
+            // The SHIPPING path, not a simulation of it: the same mesher with the same input
+            // and the absorption table supplied, which is exactly what the renderer hands it.
+            MeshResult shaded = LodMesher.BuildMesh(new MeshJob
             {
-                SectionSnapshot split = Rekeyed(plain, depthOfRun, o.Buckets[b], out long moved);
-                MeshResult mesh = LodMesher.BuildMesh(new MeshJob
-                {
-                    Key = key,
-                    Self = split,
-                    Neighbors = neighbours,
-                    CaveCullReach = o.Cull,
-                });
-                bucketVerts[b] += mesh.VertexCount;
-                bucketQuads[b] += mesh.ClusteredPackedOpaqueQuads.Length
-                    / LodPackedQuadFormat.WordsPerQuad;
-                bucketSplitRuns[b] += moved;
-            }
+                Key = key,
+                Self = plain,
+                Neighbors = neighbours,
+                CaveCullReach = o.Cull,
+                WaterAbsorption = absorption,
+            });
+            shadedVerts += shaded.VertexCount;
+            shadedWaterVerts += shaded.WaterVertexCount;
+            shadedQuads += shaded.ClusteredPackedOpaqueQuads.Length
+                / LodPackedQuadFormat.WordsPerQuad;
 
             sections.Forget(key);
         }
@@ -181,19 +189,18 @@ public static class WaterDepthField
             Console.WriteLine();
         }
 
-        Console.WriteLine("  geometry cost of splitting the merge by depth");
-        Console.WriteLine($"  baseline           {baseVerts,12:n0} vertices   "
+        Console.WriteLine("  geometry cost of the exact per-block gradient, shipping mesher");
+        Console.WriteLine($"  absorption off     {baseVerts,12:n0} vertices   "
             + $"{baseQuads,10:n0} clustered quads");
-        for (int b = 0; b < o.Buckets.Length; b++)
-        {
-            string label = o.Buckets[b] >= MaxDepth ? "exact (per block)" : $"{o.Buckets[b]} buckets";
-            Console.WriteLine($"  {label,-18} {bucketVerts[b],12:n0} vertices   "
-                + $"{bucketQuads[b],10:n0} quads   "
-                + $"verts {Delta(baseVerts, bucketVerts[b])}");
-        }
-        Console.WriteLine();
-        Console.WriteLine("  Bucket counts are the gradient's resolution: 2 buckets is shallow/deep,");
-        Console.WriteLine("  'exact' is one step per block and is the ceiling on both cost and fidelity.");
+        Console.WriteLine($"  absorption on      {shadedVerts,12:n0} vertices   "
+            + $"{shadedQuads,10:n0} quads   "
+            + $"verts {Delta(baseVerts, shadedVerts)}");
+        Console.WriteLine($"  water off          {baseWaterVerts,12:n0} water vertices");
+        Console.WriteLine($"  water on           {shadedWaterVerts,12:n0} water vertices   "
+            + $"{Delta(baseWaterVerts, shadedWaterVerts)}");
+        Console.WriteLine($"  combined           {baseVerts + baseWaterVerts,12:n0} -> "
+            + $"{shadedVerts + shadedWaterVerts:n0}   "
+            + $"{Delta(baseVerts + baseWaterVerts, shadedVerts + shadedWaterVerts)}");
         Console.WriteLine();
         return 0;
     }
@@ -258,64 +265,10 @@ public static class WaterDepthField
     }
 
     /// <summary>
-    /// The same section with every submerged run moved onto a palette entry of its own depth
-    /// bucket. Colours and flags are copied unchanged: a real implementation would darken the
-    /// colour, but the darkening is free and only the SPLIT costs geometry, so leaving the
-    /// colour alone keeps this measuring one thing.
+    /// The bed's share of shore brightness at this depth, on the survival ramp. Water absorbs
+    /// one light level per block and the ramp is 0.176 at level 1 rising 0.03 a level, so this
+    /// is the factor LodMesher.SubmergedColor multiplies a stored colour by.
     /// </summary>
-    static SectionSnapshot Rekeyed(SectionSnapshot s, int[] depths, int buckets, out long moved)
-    {
-        moved = 0;
-        var runs = (ulong[])s.Runs.Clone();
-        var colors = new List<int>(s.PaletteColors);
-        var flags = new List<byte>(s.PaletteFlags);
-        var tints = new List<byte>(s.PaletteTintSlots);
-        var textures = new List<ushort>(s.PaletteTextureSlots);
-        var minted = new Dictionary<(int Pid, int Bucket), int>();
-
-        for (int r = 0; r < runs.Length; r++)
-        {
-            int depth = depths[r];
-            if (depth <= 0) continue;
-            int pid = LodSection.RunPaletteId(runs[r]);
-            if (pid < 0 || pid >= s.PaletteFlags.Length) continue;
-
-            int bucket = BucketOf(depth, buckets);
-            if (!minted.TryGetValue((pid, bucket), out int replacement))
-            {
-                replacement = colors.Count;
-                colors.Add(s.PaletteColors[pid]);
-                flags.Add(s.PaletteFlags[pid]);
-                tints.Add(s.PaletteTintSlots[pid]);
-                if (textures.Count > 0) textures.Add(
-                    pid < s.PaletteTextureSlots.Length ? s.PaletteTextureSlots[pid] : (ushort)0);
-                minted[(pid, bucket)] = replacement;
-            }
-            runs[r] = LodSection.PackRun(
-                replacement, LodSection.RunYTop(runs[r]), LodSection.RunYBottom(runs[r]));
-            moved++;
-        }
-
-        return new SectionSnapshot
-        {
-            Runs = runs,
-            ColumnStart = s.ColumnStart,
-            Captured = s.Captured,
-            PaletteColors = colors.ToArray(),
-            PaletteFlags = flags.ToArray(),
-            PaletteTintSlots = tints.ToArray(),
-            PaletteTextureSlots = textures.ToArray(),
-        };
-    }
-
-    /// <summary>
-    /// Which brightness step a depth falls in. Uniform over 1..MaxDepth because the survival
-    /// light ramp is affine in the level, so equal depth steps are equal brightness steps.
-    /// </summary>
-    static int BucketOf(int depth, int buckets) =>
-        Math.Clamp((depth - 1) * buckets / MaxDepth, 0, buckets - 1);
-
-    /// <summary>The bed's share of shore brightness at this depth, on the survival ramp.</summary>
     static double Brightness(int depth)
     {
         const int SkyExposed = 22;
@@ -437,17 +390,9 @@ public static class WaterDepthField
                 case "--seed": o.Seed = int.Parse(Next(args, ref i)); break;
                 case "--level": o.Level = int.Parse(Next(args, ref i)); break;
                 case "--cull": o.Cull = int.Parse(Next(args, ref i)); break;
-                case "--buckets":
-                    o.Buckets = Next(args, ref i)
-                        .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                        .Select(int.Parse)
-                        .Where(n => n >= 1)
-                        .ToArray();
-                    break;
                 default: throw new ArgumentException($"unknown argument '{args[i]}'");
             }
         }
-        if (o.Buckets.Length == 0) throw new ArgumentException("--buckets needs at least one count");
         return o;
     }
 
@@ -467,7 +412,6 @@ public static class WaterDepthField
         Console.WriteLine("  --seed <n>         sample seed");
         Console.WriteLine("  --level <n>        LOD level to sample (default 0)");
         Console.WriteLine("  --cull <blocks>    cave cull reach (default 64)");
-        Console.WriteLine("  --buckets a,b,c    depth resolutions to price (default 2,4,8,16,24)");
         Console.WriteLine();
     }
 }

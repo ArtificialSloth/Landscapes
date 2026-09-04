@@ -47,6 +47,56 @@ public static class LodMesher
         return slot;
     }
 
+    /// <summary>
+    /// How much darker a surface is for the water standing above it, in WHOLE blocks, capped
+    /// where the light ramp has bottomed out and further depth cannot be told apart.
+    ///
+    /// Water carries <c>lightAbsorption: 1</c>, and the engine's illuminator settles a directly
+    /// lit column at <c>defaultSunLight - (summed absorption above)</c> with no per-block travel
+    /// penalty - so a bed under d blocks of water is exactly d light levels darker than the
+    /// shore beside it. Cached terrain has no per-position light of any kind, so it draws a
+    /// lakebed as brightly as an open field; owner screenshots measure vanilla water covering a
+    /// 2.2x brightness range for this reason against one flat value for ours.
+    ///
+    /// Baking the ratio into the stored colour is exact rather than a shortcut. `SunBrightness`
+    /// is the world's MAXIMUM sun level, not the time of day - the clock arrives separately as
+    /// the ambient colour, which multiplies afterwards - and with no block light vanilla's own
+    /// light maths collapses to `lightColor.a * ambientColor`, linear in the level. So a
+    /// constant factor here is arithmetically identical to drawing the surface at a lower light
+    /// level, at every hour, with nothing to recompute when the sun moves.
+    /// </summary>
+    public const int MaxSubmergedDepth = 24;
+
+    static int SubmergedColor(int color, int depth, float[]? absorption)
+    {
+        if (depth <= 0 || absorption == null || absorption.Length == 0) return color;
+        float factor = absorption[Math.Min(depth, absorption.Length - 1)];
+        if (factor >= 0.999f) return color;
+        int r = (int)((color & 0xFF) * factor + 0.5f);
+        int g = (int)(((color >> 8) & 0xFF) * factor + 0.5f);
+        int b = (int)(((color >> 16) & 0xFF) * factor + 0.5f);
+        return Math.Clamp(r, 0, 255)
+            | (Math.Clamp(g, 0, 255) << 8)
+            | (Math.Clamp(b, 0, 255) << 16);
+    }
+
+    /// <summary>Half-block extent to whole blocks of water, clamped to the useful range.</summary>
+    static short SubmergedBlocks(int halfBlocks) =>
+        (short)Math.Clamp(halfBlocks / 2, 0, MaxSubmergedDepth);
+
+    /// <summary>
+    /// A wall's depth, taken at its TOP - the shallowest, brightest end of it. One value per
+    /// merged segment is a simplification of a gradient, and erring toward the light end keeps
+    /// a submerged cliff from reading as a black band against the bed beside it.
+    ///
+    /// Water's own walls take none. A lake's edge outlined in shadow is not something vanilla
+    /// draws, and the surface above it already carries the depth.
+    /// </summary>
+    static short WallSubmerged(bool isTranslucent, int waterSurface, int wallTop) =>
+        isTranslucent || waterSurface == short.MinValue
+            ? (short)0
+            : SubmergedBlocks(waterSurface - wallTop);
+
     class Buffers
     {
         public readonly List<float> Xyz = new(16384);
@@ -89,10 +139,10 @@ public static class LodMesher
     /// HALF blocks. A short holds every height a 14-bit run can carry for any world height
     /// up to 8,191 blocks, which is far past what the game builds.
     /// </summary>
-    readonly record struct HFace(short Cx, short Cz, short Y, short Pid, bool Bottom, bool Water, bool Thin, short YBottom);
+    readonly record struct HFace(short Cx, short Cz, short Y, short Pid, bool Bottom, bool Water, bool Thin, short YBottom, short Submerged);
 
     /// <summary>One exposed wall segment on a column edge. YTop and YBottom are half blocks.</summary>
-    readonly record struct VFace(byte Dir, short Fixed, short Along, short YTop, short YBottom, short Pid, bool Water);
+    readonly record struct VFace(byte Dir, short Fixed, short Along, short YTop, short YBottom, short Pid, bool Water, short Submerged);
 
     [ThreadStatic] static List<HFace>? hFaces;
     [ThreadStatic] static List<VFace>? vFaces;
@@ -227,6 +277,20 @@ public static class LodMesher
 
                 Span<ulong> runs = self.ColumnRuns(col);
 
+                // The water surface standing over this column, in half blocks, or a sentinel
+                // where there is none. Runs are stored top-down, so the first translucent one
+                // is the surface and everything below it is under that much water.
+                int waterSurface = short.MinValue;
+                if (job.WaterAbsorption != null)
+                {
+                    for (int r = 0; r < runs.Length; r++)
+                    {
+                        if (!IsTranslucentRun(self, runs[r])) continue;
+                        waterSurface = TopHalf(self, runs, r, half, surfaceHalfOnly);
+                        break;
+                    }
+                }
+
                 for (int r = 0; r < runs.Length; r++)
                 {
                     ulong run = runs[r];
@@ -246,7 +310,7 @@ public static class LodMesher
                     // perfectly good colour.
                     if (isThin)
                     {
-                        hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, true, true, (short)yBottom));
+                        hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, true, true, (short)yBottom, 0));
                         continue;
                     }
 
@@ -263,7 +327,27 @@ public static class LodMesher
                     // face is drawn at its own y whatever depth the run beneath it
                     // reaches, so recording that depth here only splits the plane: a flat
                     // sea would break up along the contour of the seabed under it.
-                    if (!topCovered) hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, isTranslucent, false, 0));
+                    //
+                    // Submerged depth is the exception to that, and it is deliberate. A flat
+                    // sea DOES break up along the contour of the seabed under it now, because
+                    // that contour is what the eye reads as depth - and it was measured before
+                    // it was written: over 481,287 columns of the owner's cache the exact
+                    // per-block gradient costs +0.24% vertices, because a bed that changes
+                    // depth is a bed that changes height and those quads were not merging
+                    // anyway. A water SURFACE takes its own thickness instead, standing in for
+                    // the darkened bed it is too opaque at this range to show.
+                    //
+                    // The WATER SURFACE is deliberately not one of them, and it was measured
+                    // before that was decided: shading the surface by its own thickness costs
+                    // +75% of the water buffer, because it breaks a lake into one quad per
+                    // depth step exactly as the paragraph above warns. The bed underneath now
+                    // carries the depth for free, so the cheaper and truer way to show it is to
+                    // let the water be seen through rather than to paint the gradient twice.
+                    short submerged =
+                        job.WaterAbsorption == null || isTranslucent || waterSurface == short.MinValue
+                            ? (short)0
+                            : SubmergedBlocks(waterSurface - yTop);
+                    if (!topCovered) hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, isTranslucent, false, 0, submerged));
 
                     bool bottomCovered = r < runs.Length - 1
                         && TopHalf(self, runs, r + 1, half, surfaceHalfOnly) == yBottom
@@ -273,30 +357,32 @@ public static class LodMesher
                     if (!bottomCovered && yBottom > 2 && !isTranslucent)
                     {
                         // A floor's own plane IS the run's bottom, so Y already carries it.
-                        hf.Add(new HFace((short)cx, (short)cz, (short)yBottom, (short)pid, true, false, false, 0));
+                        hf.Add(new HFace((short)cx, (short)cz, (short)yBottom, (short)pid, true, false, false, 0, 0));
                     }
 
                     bool solidCoverOnly = !isTranslucent;
                     CollectSide(vf, job, self, cave, W, cx, cz, cx - 1, cz,
                         yTop, yBottom, pid, isTranslucent, solidCoverOnly, half, surfaceHalfOnly,
-                        cutoutsCover);
+                        cutoutsCover, waterSurface);
                     CollectSide(vf, job, self, cave, E, cx, cz, cx + 1, cz,
                         yTop, yBottom, pid, isTranslucent, solidCoverOnly, half, surfaceHalfOnly,
-                        cutoutsCover);
+                        cutoutsCover, waterSurface);
                     CollectSide(vf, job, self, cave, N, cx, cz, cx, cz - 1,
                         yTop, yBottom, pid, isTranslucent, solidCoverOnly, half, surfaceHalfOnly,
-                        cutoutsCover);
+                        cutoutsCover, waterSurface);
                     CollectSide(vf, job, self, cave, S, cx, cz, cx, cz + 1,
                         yTop, yBottom, pid, isTranslucent, solidCoverOnly, half, surfaceHalfOnly,
-                        cutoutsCover);
+                        cutoutsCover, waterSurface);
                 }
             }
         }
 
         // ---- Phase 2: greedy-merge and emit ----
 
-        EmitHorizontalGreedy(hf, self, opaque, water, step, job.EmitTextureSlots);
-        EmitVerticalMerged(vf, self, opaque, water, step, job.EmitTextureSlots);
+        EmitHorizontalGreedy(hf, self, opaque, water, step, job.EmitTextureSlots,
+            job.WaterAbsorption);
+        EmitVerticalMerged(vf, self, opaque, water, step, job.EmitTextureSlots,
+            job.WaterAbsorption);
         opaque.ClusteredPacked!.Finish(
             out uint[] clusteredPackedQuads,
             out LodPackedCluster[] packedClusters);
@@ -338,7 +424,7 @@ public static class LodMesher
     [ThreadStatic] static int planeGridStamp;
 
     static void EmitHorizontalGreedy(List<HFace> faces, SectionSnapshot self, Buffers opaque,
-        Buffers water, int step, bool emitTextureSlots)
+        Buffers water, int step, bool emitTextureSlots, float[]? absorption)
     {
         if (faces.Count == 0) return;
         int gs = LodSection.GridSize;
@@ -367,6 +453,8 @@ public static class LodMesher
             if (c != 0) return c;
             c = a.YBottom.CompareTo(b.YBottom);
             if (c != 0) return c;
+            c = a.Submerged.CompareTo(b.Submerged);
+            if (c != 0) return c;
             c = a.Cz.CompareTo(b.Cz);
             return c != 0 ? c : a.Cx.CompareTo(b.Cx);
         });
@@ -383,7 +471,8 @@ public static class LodMesher
                 && faces[end].Pid == first.Pid
                 && faces[end].Bottom == first.Bottom
                 && faces[end].Thin == first.Thin
-                && faces[end].YBottom == first.YBottom)
+                && faces[end].YBottom == first.YBottom
+                && faces[end].Submerged == first.Submerged)
             {
                 end++;
             }
@@ -395,7 +484,8 @@ public static class LodMesher
             }
 
             Buffers buf = first.Water ? water : opaque;
-            int color = self.PaletteColors[first.Pid];
+            int color = SubmergedColor(
+                self.PaletteColors[first.Pid], first.Submerged, absorption);
             byte alpha = AlphaFor(self.PaletteFlags[first.Pid], self.PaletteTintSlots[first.Pid]);
             int textureSlot = TextureSlotFor(self, first.Pid, step, emitTextureSlots);
 
@@ -468,7 +558,7 @@ public static class LodMesher
     // ---- Vertical faces: merge along the strip axis ----
 
     static void EmitVerticalMerged(List<VFace> faces, SectionSnapshot self, Buffers opaque,
-        Buffers water, int step, bool emitTextureSlots)
+        Buffers water, int step, bool emitTextureSlots, float[]? absorption)
     {
         if (faces.Count == 0) return;
 
@@ -483,6 +573,8 @@ public static class LodMesher
             c = a.YBottom.CompareTo(b.YBottom);
             if (c != 0) return c;
             c = a.Pid.CompareTo(b.Pid);
+            if (c != 0) return c;
+            c = a.Submerged.CompareTo(b.Submerged);
             return c != 0 ? c : a.Along.CompareTo(b.Along);
         });
 
@@ -496,7 +588,8 @@ public static class LodMesher
             {
                 VFace next = faces[j];
                 if (next.Dir != seg.Dir || next.Fixed != seg.Fixed || next.YTop != seg.YTop
-                    || next.YBottom != seg.YBottom || next.Pid != seg.Pid || next.Along != alongEnd)
+                    || next.YBottom != seg.YBottom || next.Pid != seg.Pid
+                    || next.Submerged != seg.Submerged || next.Along != alongEnd)
                 {
                     break;
                 }
@@ -505,7 +598,7 @@ public static class LodMesher
             }
 
             Buffers buf = seg.Water ? water : opaque;
-            int color = self.PaletteColors[seg.Pid];
+            int color = SubmergedColor(self.PaletteColors[seg.Pid], seg.Submerged, absorption);
             byte alpha = AlphaFor(self.PaletteFlags[seg.Pid], self.PaletteTintSlots[seg.Pid]);
             int textureSlot = TextureSlotFor(self, seg.Pid, step, emitTextureSlots);
 
@@ -663,7 +756,7 @@ public static class LodMesher
     static void CollectSide(List<VFace> vf, MeshJob job, SectionSnapshot self,
         LodCaveCull.Prepared cave, int dir, int cx, int cz, int ncx, int ncz,
         int yTop, int yBottom, int pid, bool isTranslucent, bool solidCoverOnly, bool half,
-        bool surfaceHalfOnly, bool cutoutsCover)
+        bool surfaceHalfOnly, bool cutoutsCover, int waterSurface)
     {
         var (nb, ncol) = NeighborColumn(job, self, ncx, ncz);
 
@@ -696,7 +789,7 @@ public static class LodMesher
         {
             CollectSideWithCaveCoverage(vf, cave, neighborRuns, nb!, dir, fix, along,
                 ncx, ncz, yTop, yBottom, pid, isTranslucent, solidCoverOnly, half,
-                surfaceHalfOnly, cutoutsCover);
+                surfaceHalfOnly, cutoutsCover, waterSurface);
             return;
         }
 
@@ -718,14 +811,16 @@ public static class LodMesher
             int coverTop = Math.Min(nTop, cur);
             if (coverTop < cur)
             {
-                vf.Add(new VFace((byte)dir, fix, along, (short)cur, (short)coverTop, (short)pid, isTranslucent));
+                vf.Add(new VFace((byte)dir, fix, along, (short)cur, (short)coverTop, (short)pid, isTranslucent,
+                    WallSubmerged(isTranslucent, waterSurface, cur)));
             }
             cur = Math.Max(nBottom, yBottom);
         }
 
         if (cur > yBottom)
         {
-            vf.Add(new VFace((byte)dir, fix, along, (short)cur, (short)yBottom, (short)pid, isTranslucent));
+            vf.Add(new VFace((byte)dir, fix, along, (short)cur, (short)yBottom, (short)pid, isTranslucent,
+                WallSubmerged(isTranslucent, waterSurface, cur)));
         }
     }
 
@@ -737,7 +832,8 @@ public static class LodMesher
     static void CollectSideWithCaveCoverage(List<VFace> vf, LodCaveCull.Prepared cave,
         Span<ulong> neighborRuns, SectionSnapshot neighbor, int dir, short fix, short along,
         int ncx, int ncz, int yTop, int yBottom, int pid, bool isTranslucent,
-        bool solidCoverOnly, bool half, bool surfaceHalfOnly, bool cutoutsCover)
+        bool solidCoverOnly, bool half, bool surfaceHalfOnly, bool cutoutsCover,
+        int waterSurface)
     {
         // yTop/yBottom arrive in half blocks; the cave classification is per whole block,
         // so the walk stays on whole cells and each cell reports how much of itself it
@@ -799,7 +895,8 @@ public static class LodMesher
                 if (openTop >= 0)
                 {
                     vf.Add(new VFace((byte)dir, fix, along,
-                        (short)openTop, (short)cellTop, (short)pid, isTranslucent));
+                        (short)openTop, (short)cellTop, (short)pid, isTranslucent,
+                        WallSubmerged(isTranslucent, waterSurface, openTop)));
                     openTop = -1;
                 }
                 continue;
@@ -808,14 +905,16 @@ public static class LodMesher
             // Half covered: the wall runs down to the slab's top and stops there.
             if (openTop < 0) openTop = cellTop;
             vf.Add(new VFace((byte)dir, fix, along,
-                (short)openTop, (short)openBottom, (short)pid, isTranslucent));
+                (short)openTop, (short)openBottom, (short)pid, isTranslucent,
+                WallSubmerged(isTranslucent, waterSurface, openTop)));
             openTop = -1;
         }
 
         if (openTop >= 0)
         {
             vf.Add(new VFace((byte)dir, fix, along,
-                (short)openTop, (short)yBottom, (short)pid, isTranslucent));
+                (short)openTop, (short)yBottom, (short)pid, isTranslucent,
+                WallSubmerged(isTranslucent, waterSurface, openTop)));
         }
     }
 

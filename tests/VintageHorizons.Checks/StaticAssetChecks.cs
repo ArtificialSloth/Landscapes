@@ -551,10 +551,18 @@ public static class StaticAssetChecks
         // The opacity term. Vanilla grades water by view angle; cached water was one flat
         // constant, which at the seam let the cached lakebed show through a surface vanilla
         // draws solid. Transcribed rather than approximated, so the two agree by derivation.
+        //
+        // The CEILING is the one deliberate departure, and it is a departure from a formula
+        // rather than from the engine's behaviour: vanilla's expression saturates past a couple
+        // of hundred blocks, and vanilla can afford that because it stops drawing water at 80%
+        // of the view distance. This mod draws it to the horizon, where a saturated sheet hides
+        // the depth-shaded bed that now sits under it. The angle term itself is still vanilla's,
+        // exactly.
         c.True(fragment.Contains("float fresnel = max(0.2, 0.01 + 4.5 * rise * rise * rise);",
                 StringComparison.Ordinal)
-            && fragment.Contains("outAlpha = clamp(0.8 * fresnel, 0.0, 1.0);", StringComparison.Ordinal),
-            "cached water carries the engine's own view-angle opacity expression");
+            && fragment.Contains("outAlpha = clamp(0.8 * fresnel, 0.0, max(0.0, waterMaxAlpha));",
+                StringComparison.Ordinal),
+            "cached water carries the engine's own view-angle opacity under a settable ceiling");
         // A dot product one ulp below -1 would cube a negative number. Vanilla writes the
         // bare add and gets away with it; the guard is free and this pins it.
         c.True(fragment.Contains("float rise = max(0.0, 1.0 + eyeFresnel.y);", StringComparison.Ordinal),
@@ -2255,6 +2263,54 @@ public static class StaticAssetChecks
             "and turning the close half off drops the far half back to the near range");
         c.True(mod.Contains("ChatCommands.Create(\"vhblend\")", StringComparison.Ordinal),
             "the same saved master switch is available as a simple command");
+
+        // Water darkens what is under it, one light level per block, and cached terrain carries
+        // no per-position light at all - so the bed has to be shaded when the mesh is built.
+        string mesher = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons",
+            "src", "Lod", "LodMesher.cs"));
+        string rend = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons",
+            "src", "Render", "LodTerrainRenderer.cs"));
+        string water = ShaderBody("fsh");
+
+        // The switch has to reach the mesher, or a bed shaded at build time can never be
+        // un-shaded and the A/B is not an A/B.
+        c.True(mesher.Contains("job.WaterAbsorption == null || isTranslucent", StringComparison.Ordinal),
+            "the whole depth computation is gated on the absorption table");
+        c.True(rend.Contains("WaterAbsorption = WaterAbsorptionTable(),", StringComparison.Ordinal)
+            && rend.Contains("if (!waterDepthShading) return null;", StringComparison.Ordinal),
+            "and the renderer supplies that table only while the setting is on");
+
+        // A water SURFACE must not take a depth of its own. Doing so breaks a lake into one
+        // quad per depth step and measured +75% of the water buffer for a gradient the bed
+        // underneath already carries. The bug that hid it is worth its own line: with the
+        // gate missing, the split happened in BOTH halves of the A/B and cancelled to zero.
+        c.False(mesher.Contains("SubmergedBlocks(yTop - yBottom)", StringComparison.Ordinal),
+            "a water surface takes no depth of its own");
+
+        // Both merge keys must carry it, or quads at different depths merge and take one
+        // colour - which is the same class of defect as the plane splits the sort exists for.
+        c.True(mesher.Contains("c = a.Submerged.CompareTo(b.Submerged);", StringComparison.Ordinal),
+            "submerged depth is part of the face sort");
+        c.True(mesher.Contains("faces[end].Submerged == first.Submerged", StringComparison.Ordinal)
+            && mesher.Contains("next.Submerged != seg.Submerged", StringComparison.Ordinal),
+            "and of both greedy scans, horizontal and vertical");
+
+        // The ramp is the world's, not a constant: a server may replace either.
+        c.True(rend.Contains("capi.World.SunLightLevels", StringComparison.Ordinal)
+            && rend.Contains("levels[level] / open", StringComparison.Ordinal),
+            "the absorption table is read from the world's own light ramp");
+
+        // Vanilla's foam is a shallow-water term; substituting zero depth pinned it on over
+        // every ocean and is most of why cached water measured 1.7x vanilla's across a seam.
+        c.True(water.Contains("uniform float waterShallowness;", StringComparison.Ordinal)
+            && water.Contains("clamp(waterShallowness - noise1 / 2.0", StringComparison.Ordinal),
+            "the foam term asks how shallow the water is instead of assuming the waterline");
+        c.True(rend.Contains("public float WaterShallowness { get; set; }", StringComparison.Ordinal),
+            "and open water - zero - is the default");
+        c.True(water.Contains("uniform float waterMaxAlpha;", StringComparison.Ordinal)
+            && water.Contains("clamp(0.8 * fresnel, 0.0, max(0.0, waterMaxAlpha))",
+                StringComparison.Ordinal),
+            "and distant water keeps enough transparency to show the shaded bed");
     }
 
     /// <summary>

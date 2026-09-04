@@ -99,6 +99,39 @@ uniform int waterFresnel;
 uniform float waterGlint;
 uniform float waterFoam;
 
+// How shallow this shader should assume cached water is, 0 deep to 1 at the waterline.
+//
+// Vanilla's foam term is a SHALLOW-water effect and nothing else. It reads the depth buffer to
+// find how far the bed is behind the surface, caps that at 0.05 and multiplies by 1500, so any
+// water more than a block or two deep drives the term to exactly zero: `clamp(1 - diffTotal *
+// 1500 - ...)`. Foam is what vanilla draws at a shoreline, not on open water.
+//
+// This shader has no depth buffer to read, and for three builds it substituted ZERO for that
+// term - "infinitely shallow" - which pinned the effect at its maximum over every lake and
+// ocean in the world. It adds about `bright * 0.3`, so cached water was carrying roughly a
+// third of its own brightness as permanent shoreline foam, which is most of why it measured
+// 1.7x vanilla's across the seam and read as flat bright paint.
+//
+// Zero is vanilla's answer for the water this actually draws: 60% of submerged ground in the
+// owner's cache stands under 8 blocks or more and 38% under 24 or more. Real shoreline foam
+// needs the depth per fragment, which the water mesh does not carry yet; until it does, being
+// right about the open water is better than being wrong about all of it.
+uniform float waterShallowness;
+
+// The most opaque cached water is allowed to become, 0 to 1.
+//
+// Vanilla's own fresnel saturates: past roughly 200 blocks its water is fully opaque, and ours
+// agrees with it because it is the same formula. Vanilla gets away with that because it stops
+// drawing water at 80% of the view distance and you never see the far end - this mod draws it
+// all the way out, so the saturation is visible as a flat sheet with nothing underneath.
+//
+// The bed beneath is now shaded by the water standing over it, one light level per block, so
+// the depth information the eye reads in vanilla's water is already sitting under ours. Holding
+// a little transparency back is what lets it through, and it costs no geometry: painting the
+// same gradient onto the surface instead breaks a lake into one quad per depth step and
+// measured +75% of the water buffer.
+uniform float waterMaxAlpha;
+
 // Engine state the liquid shader uses, uploaded under mod-owned names so nothing here can
 // collide with a uniform the engine manages on its own programs. All are public API:
 // ShaderUniforms.SunPosition3D / SunSpecularIntensity / WaterWaveCounter / WindWaveCounter /
@@ -613,7 +646,7 @@ void main()
         // the cube of a negative number, which is undefined for pow and free here.
         float rise = max(0.0, 1.0 + eyeFresnel.y);
         float fresnel = max(0.2, 0.01 + 4.5 * rise * rise * rise);
-        outAlpha = clamp(0.8 * fresnel, 0.0, 1.0);
+        outAlpha = clamp(0.8 * fresnel, 0.0, max(0.0, waterMaxAlpha));
         if (!waterTop) outAlpha *= 0.3333333;
     }
 
@@ -786,7 +819,8 @@ void main()
         if (waterFoam > 0.0)
         {
             float foamAmount = waterAmount * waterFoam;
-            float diff = upness * clamp(1.0 - noise1 / 2.0 + noise2 / 2.0, 0.0, 1.0);
+            float diff = upness
+                * clamp(waterShallowness - noise1 / 2.0 + noise2 / 2.0, 0.0, 1.0);
             float grain = upness
                 * (gnoise(vec3(a * 0.4, b * 0.4, vhWaterFlow)) / 2.0 + noise2 / 2.0 + 0.5) / 2.0;
             float bright = (terraColor.r + terraColor.g + terraColor.b) / 3.0;

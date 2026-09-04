@@ -836,6 +836,71 @@ public class LodTerrainRenderer : IRenderer
     /// </summary>
     public bool CutoutBlocksCover { get; set; }
 
+    /// <summary>
+    /// Darken submerged ground and deep water by the water standing above it. Changing it
+    /// re-meshes every resident section. See `.vhwater depth`.
+    ///
+    /// Water absorbs one light level per block, so vanilla draws a lakebed under 8 blocks at
+    /// 70% of the shore beside it and one under 20 at 26%. Cached terrain carries no
+    /// per-position light at all - one sky-exposed level multiplies every surface in the world
+    /// - so without this a lakebed is as bright as an open field and distant water reads as
+    /// flat paint. Measured at +0.24% vertices over 481,287 columns of a real cache.
+    /// </summary>
+    public bool WaterDepthShading
+    {
+        get => waterDepthShading;
+        set
+        {
+            if (waterDepthShading == value) return;
+            waterDepthShading = value;
+            RemeshAll();
+        }
+    }
+
+    bool waterDepthShading = true;
+    float[]? waterAbsorption;
+
+    /// <summary>
+    /// How shallow the water shader assumes cached water is, 0 to 1. Zero is vanilla's answer
+    /// for open water and the default; 1 is the "infinitely shallow" substitution every build
+    /// before this one made, which pinned vanilla's shoreline foam on over every ocean.
+    /// See `waterShallowness` in lodterrainbody.fsh.
+    /// </summary>
+    public float WaterShallowness { get; set; }
+
+    /// <summary>
+    /// The most opaque cached water becomes, 0 to 1. Below 1 the depth-shaded bed shows through
+    /// where vanilla's own fresnel would have saturated. A look setting, not a correction:
+    /// vanilla has no answer at this range because it draws no water here.
+    /// </summary>
+    public float WaterMaxAlpha { get; set; } = 0.85f;
+
+    /// <summary>
+    /// Brightness under n blocks of water as a share of open air, read from the world's own
+    /// ramp. Rebuilt only when the ramp or the maximum sun level changes, which is a world
+    /// load rather than a frame.
+    /// </summary>
+    float[]? WaterAbsorptionTable()
+    {
+        if (!waterDepthShading) return null;
+        if (waterAbsorption != null) return waterAbsorption;
+
+        float[]? levels = capi.World.SunLightLevels;
+        if (levels == null || levels.Length == 0) return null;
+        int sky = GameMath.Clamp(capi.World.SunBrightness, 0, levels.Length - 1);
+        float open = levels[sky];
+        if (open <= 0f) return null;
+
+        var table = new float[LodMesher.MaxSubmergedDepth + 1];
+        for (int depth = 0; depth < table.Length; depth++)
+        {
+            int level = GameMath.Clamp(sky - depth, 0, levels.Length - 1);
+            table[depth] = Math.Clamp(levels[level] / open, 0f, 1f);
+        }
+        waterAbsorption = table;
+        return table;
+    }
+
     int caveCullReach = LodCaveCull.DefaultReach;
 
     /// <summary>How far daylight spreads before a cavity counts as unreachable, in blocks.</summary>
@@ -2480,6 +2545,7 @@ public class LodTerrainRenderer : IRenderer
                 HalfBlockLevels = halfBlockLevels,
                 SurfaceHalfBlocksOnly = SurfaceHalfBlocksOnly,
                 CutoutBlocksCover = CutoutBlocksCover,
+                WaterAbsorption = WaterAbsorptionTable(),
                 EmitTextureSlots = includeTextureSlots,
                 TextureModeRevision = textureModeRevision,
             });
@@ -5431,6 +5497,8 @@ public class LodTerrainRenderer : IRenderer
         prog.Uniform("waterFresnel", WaterFresnel ? 1 : 0);
         prog.Uniform("waterGlint", waterGlint);
         prog.Uniform("waterFoam", waterFoam);
+        prog.Uniform("waterShallowness", Math.Clamp(WaterShallowness, 0f, 1f));
+        prog.Uniform("waterMaxAlpha", Math.Clamp(WaterMaxAlpha, 0.05f, 1f));
 
         // Everything the engine's own liquid shader reads, under mod-owned names so no
         // engine-managed uniform can be shadowed. All public API: nothing here reaches into

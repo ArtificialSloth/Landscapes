@@ -74,6 +74,16 @@ public class VintageHorizonsConfig
     public bool WaterEffects = true;
 
     /// <summary>
+    /// Darken ground under water by its depth, as the engine's own light does. On by default:
+    /// it is a correction rather than an effect, and a config written by an older build - which
+    /// has no such key - loads as on and gains it without re-exploring anything.
+    /// </summary>
+    public bool WaterDepthShading = true;
+
+    /// <summary>How solid distant water may become. See LodTerrainRenderer.WaterMaxAlpha.</summary>
+    public float WaterMaxAlpha = 0.85f;
+
+    /// <summary>
     /// Draw even when another LOD mod is installed and switched on. The escape hatch for
     /// the mods whose own switch we cannot read; see <see cref="OtherLodMods"/>. Read at
     /// startup only, because turning the mod on mid-session is not something the startup
@@ -236,6 +246,8 @@ public class VintageHorizonsModSystem : ModSystem
             AutoUnpause = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOUNPAUSE") == "1",
             TrackPhaseAllocations = allocationTelemetryEnabled,
             FarViewDistanceCap = config.FarViewDistanceCap,
+            WaterDepthShading = config.WaterDepthShading,
+            WaterMaxAlpha = config.WaterMaxAlpha,
             TextureSlotSourceReady = pipeline.TextureSlotsPrepared,
             BlendPipelineEnabled = config.BlendPipeline,
             OpaqueBackfaceCulling =
@@ -3041,7 +3053,8 @@ public class VintageHorizonsModSystem : ModSystem
 
         capi.ChatCommands.Create("vhwater")
             .WithDescription("How distant water meets the game's own. No argument reports the settings. "
-                + "off | a number of chunks | edge <chunks> | fresnel on|off | glint <0-1> | foam <0-1>.")
+                + "off | a number of chunks | edge <chunks> | fresnel on|off | glint <0-1> | "
+                + "foam <0-1> | depth on|off | alpha <0-1>.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
                       capi.ChatCommands.Parsers.OptionalWord("value"))
             .HandleWith(args =>
@@ -3132,6 +3145,40 @@ public class VintageHorizonsModSystem : ModSystem
                         return TextCommandResult.Success(
                             $"[VintageHorizons] foam {renderer.WaterFoam:0.00}. Look now.");
 
+                    case "depth":
+                        if (value != "on" && value != "off")
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] depth shading "
+                                + $"{(renderer.WaterDepthShading ? "on" : "off")}. "
+                                + "On darkens ground under water by how deep it is, the way the "
+                                + "game does: water swallows one light level a block, so a bed "
+                                + "under eight blocks is at 70% of the shore beside it and one "
+                                + "under twenty is at 26%. Off draws a lakebed as brightly as an "
+                                + "open field, which is what every build before this one did. "
+                                + "Rebuilds every loaded section.");
+                        renderer.WaterDepthShading = value == "on";
+                        SaveConfig();
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] depth shading "
+                            + $"{(renderer.WaterDepthShading ? "on" : "off")}. Rebuilding.");
+
+                    case "alpha":
+                        if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out float maxAlpha))
+                        {
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] alpha {renderer.WaterMaxAlpha:0.00}. 0 to 1. The "
+                                + "most solid distant water is allowed to get. The game's own rule "
+                                + "makes water fully solid past a couple of hundred blocks, and it "
+                                + "gets away with that by not drawing water that far; we do, so "
+                                + "holding a little back is what lets the darkened bed underneath "
+                                + "show through. 1 is the game's own saturating value.");
+                        }
+                        renderer.WaterMaxAlpha = maxAlpha;
+                        SaveConfig();
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] alpha {renderer.WaterMaxAlpha:0.00}. Look now.");
+
                     default:
                         int chunks;
                         if (part == "off") chunks = 0;
@@ -3140,7 +3187,8 @@ public class VintageHorizonsModSystem : ModSystem
                         {
                             return TextCommandResult.Error(
                                 "[VintageHorizons] use: .vhwater off | a number of chunks | "
-                                + "edge <chunks> | fresnel on/off | glint 0-1 | foam 0-1");
+                                + "edge <chunks> | fresnel on/off | glint 0-1 | foam 0-1 | "
+                                + "depth on/off | alpha 0-1");
                         }
 
                         renderer.WaterNearChunks = chunks;
@@ -3593,6 +3641,8 @@ public class VintageHorizonsModSystem : ModSystem
             // The request, never the effective state: a mask that failed this session
             // reports itself disabled, and writing that would turn it off permanently.
             config.ChunkMask = renderer.ChunkMaskRequested;
+            config.WaterDepthShading = renderer.WaterDepthShading;
+            config.WaterMaxAlpha = renderer.WaterMaxAlpha;
             WriteVisualSettings(CurrentVisualSettings());
 
             // The requested state, never the effective one, for the same reason the mask

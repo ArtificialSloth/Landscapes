@@ -175,6 +175,19 @@ public class MeshJob
     public bool CutoutBlocksCover;
 
     /// <summary>
+    /// Brightness of a surface under n whole blocks of water, as a share of the same surface in
+    /// open air, indexed by depth. Null leaves every surface at open-air brightness, which is
+    /// what every build before this one drew.
+    ///
+    /// Handed in rather than derived here because the ramp is the world's, not a constant: a
+    /// server may replace <c>SunLightLevels</c> or the maximum sun level, and both are public.
+    /// The mesher runs off-thread with no world access, so the renderer resolves it once and
+    /// passes the finished table. See LodMesher.SubmergedColor for why a fixed factor is exact
+    /// at every time of day.
+    /// </summary>
+    public float[]? WaterAbsorption;
+
+    /// <summary>
     /// Apply half-block detail only to the highest solid run in each column. Water and
     /// thin cover do not disqualify the ground beneath them. This preserves outdoor terrain
     /// slabs while declining the much larger geometry cost of distant cave and overhang
