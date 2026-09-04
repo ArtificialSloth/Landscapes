@@ -80,6 +80,31 @@ public static class LodMesher
             | (Math.Clamp(b, 0, 255) << 16);
     }
 
+    /// <summary>
+    /// A key that keeps a water column from merging with its neighbours, or 0 to merge freely.
+    ///
+    /// Vanilla warps its water surface downward with noise - 0.10 blocks on an inland lake and
+    /// up to 0.96 on open ocean in wind - while ours is flat, so where the two meet vanilla's
+    /// surface dips below ours and nothing fills the wedge. Carrying the same wave needs
+    /// vertices fine enough to hold it, and the wave's own wavelength is about three blocks.
+    ///
+    /// It does NOT need them everywhere. Ownership is decided per 32-BLOCK VANILLA CHUNK, so
+    /// the seam can land nowhere except a 32-block plane - a static grid, section-local, known
+    /// here rather than needing the view. Measured against a real cache: per-block water
+    /// everywhere costs +16.32% of the whole mesh, and a one-block strip either side of that
+    /// grid costs +1.02% for the same fidelity in the only place a seam can be.
+    ///
+    /// Sections are 64 blocks and 64-aligned, so the planes inside one land at local 0 and 32.
+    /// </summary>
+    static short SeamCellFor(int cx, int cz, int stripBlocks, int step, bool isTranslucent)
+    {
+        if (stripBlocks <= 0 || step != 1 || !isTranslucent) return 0;
+        int dx = Math.Min(cx % 32, 32 - cx % 32);
+        int dz = Math.Min(cz % 32, 32 - cz % 32);
+        if (dx >= stripBlocks && dz >= stripBlocks) return 0;
+        return (short)(cz * LodSection.GridSize + cx + 1);
+    }
+
     /// <summary>Half-block extent to whole blocks of water, clamped to the useful range.</summary>
     static short SubmergedBlocks(int halfBlocks) =>
         (short)Math.Clamp(halfBlocks / 2, 0, MaxSubmergedDepth);
@@ -139,7 +164,7 @@ public static class LodMesher
     /// HALF blocks. A short holds every height a 14-bit run can carry for any world height
     /// up to 8,191 blocks, which is far past what the game builds.
     /// </summary>
-    readonly record struct HFace(short Cx, short Cz, short Y, short Pid, bool Bottom, bool Water, bool Thin, short YBottom, short Submerged);
+    readonly record struct HFace(short Cx, short Cz, short Y, short Pid, bool Bottom, bool Water, bool Thin, short YBottom, short Submerged, short SeamCell);
 
     /// <summary>One exposed wall segment on a column edge. YTop and YBottom are half blocks.</summary>
     readonly record struct VFace(byte Dir, short Fixed, short Along, short YTop, short YBottom, short Pid, bool Water, short Submerged);
@@ -314,7 +339,7 @@ public static class LodMesher
                     // perfectly good colour.
                     if (isThin)
                     {
-                        hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, true, true, (short)yBottom, 0));
+                        hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, true, true, (short)yBottom, 0, 0));
                         continue;
                     }
 
@@ -351,7 +376,12 @@ public static class LodMesher
                         job.WaterAbsorption == null || isTranslucent || waterSurface == short.MinValue
                             ? (short)0
                             : SubmergedBlocks(waterSurface - yTop);
-                    if (!topCovered) hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, isTranslucent, false, 0, submerged));
+                    if (!topCovered)
+                    {
+                        hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false,
+                            isTranslucent, false, 0, submerged,
+                            SeamCellFor(cx, cz, job.WaterSeamStripBlocks, step, isTranslucent)));
+                    }
 
                     bool bottomCovered = r < runs.Length - 1
                         && TopHalf(self, runs, r + 1, half, surfaceHalfOnly) == yBottom
@@ -361,7 +391,7 @@ public static class LodMesher
                     if (!bottomCovered && yBottom > 2 && !isTranslucent)
                     {
                         // A floor's own plane IS the run's bottom, so Y already carries it.
-                        hf.Add(new HFace((short)cx, (short)cz, (short)yBottom, (short)pid, true, false, false, 0, 0));
+                        hf.Add(new HFace((short)cx, (short)cz, (short)yBottom, (short)pid, true, false, false, 0, 0, 0));
                     }
 
                     bool solidCoverOnly = !isTranslucent;
@@ -459,6 +489,8 @@ public static class LodMesher
             if (c != 0) return c;
             c = a.Submerged.CompareTo(b.Submerged);
             if (c != 0) return c;
+            c = a.SeamCell.CompareTo(b.SeamCell);
+            if (c != 0) return c;
             c = a.Cz.CompareTo(b.Cz);
             return c != 0 ? c : a.Cx.CompareTo(b.Cx);
         });
@@ -476,7 +508,8 @@ public static class LodMesher
                 && faces[end].Bottom == first.Bottom
                 && faces[end].Thin == first.Thin
                 && faces[end].YBottom == first.YBottom
-                && faces[end].Submerged == first.Submerged)
+                && faces[end].Submerged == first.Submerged
+                && faces[end].SeamCell == first.SeamCell)
             {
                 end++;
             }

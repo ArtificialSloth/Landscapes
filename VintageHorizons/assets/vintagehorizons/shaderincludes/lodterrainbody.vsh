@@ -205,6 +205,37 @@ uniform float leafSeasonVariation;
 // it means in vanilla.
 uniform float leafSeasonFadeBlocks;
 
+// Vanilla's own liquid warp, carried on cached water near the seam.
+//
+// The game does not draw its water flat: every liquid vertex is pushed up and down by noise,
+// by 0.10 blocks on an inland lake and up to 0.96 on open ocean in wind. Ours was flat, so
+// where the two meet vanilla's surface dips below ours and nothing fills the wedge - reported
+// in play as an opening at the waterline.
+//
+// The displacement is the ENGINE'S OWN applyLiquidWarping out of vertexwarp.vsh, which this
+// body already includes, so there is no transcription to drift from it (G144). It also means
+// the warp follows the player's Waving Foliage setting: ShaderRegistry compiles WAVINGSTUFF
+// into every program, and with waving off vanilla's water is flat too, so ours should be.
+//
+// vhOceanity is the game's own oceanity for this section, which sets the amplitude - it is a
+// five-fold swing between a pond and the open sea and cannot be guessed.
+uniform float vhOceanity;
+
+// How many blocks past VANILLA'S OWN VIEW DISTANCE the wave fades to nothing.
+//
+// The geometry that can carry a wave is a one-block strip either side of every 32-block chunk
+// plane - the only place a seam can be, since ownership is decided per vanilla chunk. Between
+// those strips water is still merged into wide quads, and a wave applied there would displace
+// their corners and interpolate flat across the middle, faceting the surface into a grid. So
+// the amplitude is held to the ring where the seam actually is and faded to nothing beyond it,
+// which is also the only place anyone is close enough to see it.
+//
+// Measured from `viewDistance` rather than a distance handed in from the CPU. The seam IS
+// vanilla's edge, and this shader already knows where that is; the near-field floor that was
+// tried first is the ownership cutoff, which is zero by default and would have put the wave
+// around the player's feet instead.
+uniform float vhWaveReach;
+
 // MEASUREMENT INSTRUMENT, not a look setting. Non-zero replaces the engine's value noise with
 // a cheap position hash of similar spread, leaving the scattered seasonMaps fetch and the whole
 // blend exactly as they are.
@@ -583,6 +614,23 @@ void main()
     // 0 at the start of the LOD band (inside vanilla terrain), 1 at the far edge
     float distStart = viewDistance * 0.785;
     float radial = length(worldPos.xz);
+
+    // Water takes vanilla's wave, faded out past the handoff ring. Applied to worldPos.y
+    // alone and AFTER the radial distance is taken, so the fade cannot move with the wave
+    // and neither can ownership addressing, which reads sectionLocal rather than this.
+    if (slotRaw / TINT_SLOTS == 1 && vhWaveReach > 0.0)
+    {
+        float waveFade = clamp(
+            1.0 - max(0.0, radial - viewDistance) / vhWaveReach, 0.0, 1.0);
+        if (waveFade > 0.0)
+        {
+            // chunkliquid.vsh's own divisor: 5 for ordinary water, scaled by oceanity, and
+            // floored at a fifth so the open sea does not divide by nothing.
+            float div = 5.0 * max(0.2, 1.0 - clamp(vhOceanity, 0.0, 1.0));
+            vec4 warped = applyLiquidWarping(true, worldPos, div);
+            worldPos.y += (warped.y - worldPos.y) * waveFade;
+        }
+    }
     radialDistance = radial;
     dist = (radial - distStart) / (farViewDistance - distStart - 512.0);
 

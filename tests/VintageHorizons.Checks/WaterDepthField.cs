@@ -188,13 +188,16 @@ public static class WaterDepthField
             // property of the section, needing no view and no re-mesh.
             for (int c = 0; c < SeamStrips.Length; c++)
             {
+                // The SHIPPING flag, not a simulation of it - this is the number the mod
+                // actually pays, built by the mesher the game runs.
                 MeshResult strip = LodMesher.BuildMesh(new MeshJob
                 {
                     Key = key,
-                    Self = WaterPerColumn(plain, 1, SeamStrips[c]),
+                    Self = plain,
                     Neighbors = neighbours,
                     CaveCullReach = o.Cull,
                     WaterAbsorption = absorption,
+                    WaterSeamStripBlocks = SeamStrips[c],
                 });
                 stripWaterVerts[c] += strip.WaterVertexCount;
             }

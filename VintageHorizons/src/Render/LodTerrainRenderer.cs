@@ -4,6 +4,7 @@ using OpenTK.Graphics.OpenGL4;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
+using Vintagestory.API.Datastructures;
 using Vintagestory.API.MathTools;
 using Vintagestory.Client.NoObf;
 
@@ -897,6 +898,33 @@ public class LodTerrainRenderer : IRenderer
     }
 
     float waterClarity = 16f;
+
+    /// <summary>
+    /// How many blocks either side of a 32-block vanilla chunk plane keep one water quad per
+    /// block, so the surface can hold vanilla's wave where a seam can appear. 0 turns the wave
+    /// off entirely. Changing it rebuilds every resident mesh. See `.vhwater wave`.
+    ///
+    /// One block is the measured sweet spot: it is full per-block fidelity in the only place a
+    /// seam can land, for +1.02% of the mesh, against +16.32% for doing it everywhere and
+    /// +4.24% for 2x2 patches that would be worse at the seam than this is.
+    /// </summary>
+    public int WaterSeamStripBlocks
+    {
+        get => waterSeamStripBlocks;
+        set
+        {
+            int wanted = Math.Clamp(value, 0, 4);
+            if (waterSeamStripBlocks == wanted) return;
+            waterSeamStripBlocks = wanted;
+            RemeshAll();
+        }
+    }
+
+    int waterSeamStripBlocks = 1;
+
+    /// <summary>Blocks past the handoff over which the wave fades to nothing.</summary>
+    public float WaterWaveReachBlocks { get; set; } = 64f;
+
 
     /// <summary>
     /// Brightness under n blocks of water as a share of open air, read from the world's own
@@ -2641,6 +2669,7 @@ public class LodTerrainRenderer : IRenderer
                 SurfaceHalfBlocksOnly = SurfaceHalfBlocksOnly,
                 CutoutBlocksCover = CutoutBlocksCover,
                 WaterAbsorption = WaterAbsorptionTable(),
+                WaterSeamStripBlocks = waterSeamStripBlocks,
                 EmitTextureSlots = includeTextureSlots,
                 TextureModeRevision = textureModeRevision,
             });
@@ -5607,6 +5636,24 @@ public class LodTerrainRenderer : IRenderer
         prog.Uniform("vhWaterFlow", engineUniforms.WaterFlowCounter);
         prog.Uniform("vhWindSpeed", engineUniforms.WindSpeed);
         prog.Uniform("vhFoamOrigin", engineUniforms.PlayerPosForFoam);
+
+        // What vertexwarp.vsh's applyLiquidWarping reads, under the engine's own names. The
+        // include is already in our vertex body, so the warp itself is the game's code rather
+        // than a copy of it; these are the inputs it would otherwise find at zero.
+        prog.Uniform("playerpos", new Vec3f(
+            (float)engineUniforms.playerReferencePos.X,
+            (float)engineUniforms.playerReferencePos.Y,
+            (float)engineUniforms.playerReferencePos.Z));
+        prog.Uniform("waterWaveCounter", engineUniforms.WaterWaveCounter);
+        prog.Uniform("windWaveCounter", engineUniforms.WindWaveCounter);
+        prog.Uniform("waterWaveIntensity", engineUniforms.WaterWaveIntensity);
+        prog.Uniform("windWaveIntensity", engineUniforms.WindWaveIntensity);
+        prog.Uniform("windSpeed", engineUniforms.WindSpeed);
+
+        // Held to the ring where a seam can be. Between the per-block strips water is still
+        // merged into wide quads, and waving those would facet the surface rather than ripple
+        // it - see vhWaveReach in the vertex body.
+        prog.Uniform("vhWaveReach", WaterSeamStripBlocks > 0 ? WaterWaveReachBlocks : 0f);
         prog.Uniform("maskDebug", MaskDebugPaint ? 1 : 0);
         prog.Uniform("flatTopLight", FlatTopLight ? 1 : 0);
         prog.Uniform("lightMoonDir", LightMoonDirection ? 1 : 0);
@@ -7121,11 +7168,61 @@ public class LodTerrainRenderer : IRenderer
         catch { /* eviction must not fail over an optional driver object */ }
     }
 
+    readonly Dictionary<long, float> oceanityBySection = new();
+
+    /// <summary>
+    /// The game's own oceanity where this section sits, 0 inland to 1 open sea.
+    ///
+    /// It sets the wave amplitude and cannot be guessed: chunkliquid.vsh divides the warp by
+    /// <c>5 * max(0.2, 1 - oceanity)</c>, so a pond moves 0.10 blocks where the open sea moves
+    /// up to 0.96. Read from `IMapRegion.OceanMap` through the engine's own lerped accessor, so
+    /// it is the same field the engine's tesselator bilerps into its vertex flags.
+    ///
+    /// Cached per section: it is a worldgen property and never changes, and an uncached miss
+    /// answers 0, which is the calm end and the safe direction to be wrong in.
+    /// </summary>
+    float SectionOceanity(long key, double originX, double originZ, int footprint)
+    {
+        if (oceanityBySection.TryGetValue(key, out float known)) return known;
+
+        float oceanity = 0f;
+        try
+        {
+            int blockX = (int)originX + footprint / 2;
+            int blockZ = (int)originZ + footprint / 2;
+            int regionSize = capi.World.BlockAccessor.RegionSize;
+            // The two-int overload deliberately. The Vec2i one is banned repo-wide because
+            // the same-named uniform overload reaches glUniform2f and silently breaks integer
+            // uniforms (G42), and the check that enforces it matches the token, not the call.
+            IMapChunk? mapChunk = capi.World.BlockAccessor.GetMapChunk(
+                blockX / VanillaReadinessMask.ChunkBlocks,
+                blockZ / VanillaReadinessMask.ChunkBlocks);
+            IntDataMap2D? ocean = mapChunk?.MapRegion?.OceanMap;
+            if (ocean != null && ocean.Data != null && ocean.Data.Length > 0)
+            {
+                oceanity = Math.Clamp(
+                    ocean.GetUnpaddedIntLerpedForBlockPos(blockX, blockZ, regionSize) / 255f,
+                    0f, 1f);
+                oceanityBySection[key] = oceanity;
+            }
+        }
+        catch
+        {
+            // A map region that is not loaded answers nothing; calm water is the safe answer
+            // and the next frame asks again rather than caching the miss.
+        }
+        return oceanity;
+    }
+
     bool SetupSectionTransform(long key, float cullDistSq, bool waterPass = false)
     {
         int footprint = LodWorld.KeyFootprintBlocks(key);
         double originX = LodWorld.KeySx(key) * (double)footprint;
         double originZ = LodWorld.KeySz(key) * (double)footprint;
+        if (waterPass)
+        {
+            prog!.Uniform("vhOceanity", SectionOceanity(key, originX, originZ, footprint));
+        }
 
         double dx = originX + footprint / 2.0 - camPos.X;
         double dz = originZ + footprint / 2.0 - camPos.Z;

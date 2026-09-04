@@ -87,6 +87,13 @@ public class VintageHorizonsConfig
     public float WaterClarity = 16f;
 
     /// <summary>
+    /// Blocks either side of a vanilla chunk plane where water keeps one quad per block, so it
+    /// can carry the game's own wave and meet its surface without an opening. See
+    /// LodTerrainRenderer.WaterSeamStripBlocks.
+    /// </summary>
+    public int WaterSeamStripBlocks = 1;
+
+    /// <summary>
     /// Draw even when another LOD mod is installed and switched on. The escape hatch for
     /// the mods whose own switch we cannot read; see <see cref="OtherLodMods"/>. Read at
     /// startup only, because turning the mod on mid-session is not something the startup
@@ -252,6 +259,7 @@ public class VintageHorizonsModSystem : ModSystem
             WaterDepthShading = config.WaterDepthShading,
             WaterMaxAlpha = config.WaterMaxAlpha,
             WaterClarity = config.WaterClarity,
+            WaterSeamStripBlocks = config.WaterSeamStripBlocks,
             TextureSlotSourceReady = pipeline.TextureSlotsPrepared,
             BlendPipelineEnabled = config.BlendPipeline,
             OpaqueBackfaceCulling =
@@ -3058,7 +3066,7 @@ public class VintageHorizonsModSystem : ModSystem
         capi.ChatCommands.Create("vhwater")
             .WithDescription("How distant water meets the game's own. No argument reports the settings. "
                 + "off | a number of chunks | edge <chunks> | fresnel on|off | glint <0-1> | "
-                + "foam <0-1> | depth on|off | alpha <0-1> | clarity <blocks>.")
+                + "foam <0-1> | depth on|off | alpha <0-1> | clarity <blocks> | wave <blocks>.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
                       capi.ChatCommands.Parsers.OptionalWord("value"))
             .HandleWith(args =>
@@ -3175,6 +3183,28 @@ public class VintageHorizonsModSystem : ModSystem
                             + renderer.DescribeWaterAbsorption()
                             + ". Written to the log too.");
 
+                    case "wave":
+                        if (!int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out int strip))
+                        {
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] wave strip {renderer.WaterSeamStripBlocks} "
+                                + "blocks. The game does not draw water flat - it pushes every "
+                                + "liquid vertex up and down, a tenth of a block on a pond and "
+                                + "up to a whole one on the open sea - and ours was flat, so "
+                                + "where they meet the game's surface dips below ours and leaves "
+                                + "an opening. This is how wide a strip of water keeps one quad "
+                                + "per block so it can carry the same wave. The seam can only "
+                                + "land on a 32-block chunk edge, so 1 covers it for about 1% of "
+                                + "the mesh where doing it everywhere costs 16%. 0 turns the "
+                                + "wave off. Rebuilds every loaded section.");
+                        }
+                        renderer.WaterSeamStripBlocks = strip;
+                        SaveConfig();
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] wave strip {renderer.WaterSeamStripBlocks} blocks. "
+                            + "Rebuilding.");
+
                     case "clarity":
                         if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
                             System.Globalization.CultureInfo.InvariantCulture, out float clarity))
@@ -3221,7 +3251,7 @@ public class VintageHorizonsModSystem : ModSystem
                             return TextCommandResult.Error(
                                 "[VintageHorizons] use: .vhwater off | a number of chunks | "
                                 + "edge <chunks> | fresnel on/off | glint 0-1 | foam 0-1 | "
-                                + "depth on/off | alpha 0-1 | clarity <blocks>");
+                                + "depth on/off | alpha 0-1 | clarity <blocks> | wave <blocks>");
                         }
 
                         renderer.WaterNearChunks = chunks;
@@ -3677,6 +3707,7 @@ public class VintageHorizonsModSystem : ModSystem
             config.WaterDepthShading = renderer.WaterDepthShading;
             config.WaterMaxAlpha = renderer.WaterMaxAlpha;
             config.WaterClarity = renderer.WaterClarity;
+            config.WaterSeamStripBlocks = renderer.WaterSeamStripBlocks;
             WriteVisualSettings(CurrentVisualSettings());
 
             // The requested state, never the effective one, for the same reason the mask

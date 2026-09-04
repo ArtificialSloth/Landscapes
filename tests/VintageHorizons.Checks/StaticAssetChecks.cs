@@ -2326,6 +2326,39 @@ public static class StaticAssetChecks
         c.True(rend.Contains("waterAbsorption = null;", StringComparison.Ordinal),
             "changing the clarity drops the cached table rather than shading with a stale one");
 
+        // Vanilla warps its water surface and ours was flat, so where they meet its surface
+        // dips below ours and leaves an opening - up to 0.96 blocks on open ocean in wind.
+        // Carrying the same wave needs the surface split finely enough to hold it, and its
+        // wavelength is about three blocks.
+        string vsh = ShaderBody("vsh");
+        c.True(vsh.Contains("applyLiquidWarping(true, worldPos, div)", StringComparison.Ordinal),
+            "the wave is the ENGINE'S own applyLiquidWarping, not a transcription of it");
+        c.True(vsh.Contains("float div = 5.0 * max(0.2, 1.0 - clamp(vhOceanity, 0.0, 1.0));",
+                StringComparison.Ordinal),
+            "with chunkliquid.vsh's own oceanity divisor");
+        c.True(rend.Contains("ocean.GetUnpaddedIntLerpedForBlockPos", StringComparison.Ordinal),
+            "and oceanity read from the game's own map rather than guessed");
+
+        // The split is confined to the 32-block vanilla chunk grid, which is the only place a
+        // seam can land because ownership is decided per chunk. Measured on a real cache:
+        // +1.02% of the mesh here against +16.32% for splitting water everywhere.
+        c.True(mesher.Contains("int dx = Math.Min(cx % 32, 32 - cx % 32);", StringComparison.Ordinal)
+            && mesher.Contains("if (dx >= stripBlocks && dz >= stripBlocks) return 0;",
+                StringComparison.Ordinal),
+            "per-block water is confined to a strip on the vanilla chunk grid");
+        c.True(mesher.Contains("faces[end].SeamCell == first.SeamCell", StringComparison.Ordinal)
+            && mesher.Contains("c = a.SeamCell.CompareTo(b.SeamCell);", StringComparison.Ordinal),
+            "and the merge key carries it, or the split does not happen at all");
+
+        // Between the strips water is still merged into wide quads, and waving those would
+        // displace their corners and facet the surface. The amplitude is therefore held to
+        // vanilla's own edge - which the shader already knows - and faded out beyond it.
+        c.True(vsh.Contains("1.0 - max(0.0, radial - viewDistance) / vhWaveReach",
+                StringComparison.Ordinal),
+            "the wave is anchored to vanilla's view distance, where the seam actually is");
+        c.False(rend.Contains("vhWaveStart", StringComparison.Ordinal),
+            "and not to the near-suppression floor, which is zero by default");
+
         // Vanilla's foam is a shallow-water term; substituting zero depth pinned it on over
         // every ocean and is most of why cached water measured 1.7x vanilla's across a seam.
         c.True(water.Contains("uniform float waterShallowness;", StringComparison.Ordinal)

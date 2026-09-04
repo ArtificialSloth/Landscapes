@@ -188,6 +188,14 @@ public class MeshJob
     public float[]? WaterAbsorption;
 
     /// <summary>
+    /// How many blocks either side of a 32-block vanilla chunk plane keep one water quad per
+    /// block, so the surface can carry vanilla's wave where a seam can appear. 0 merges water
+    /// as before. See <see cref="LodMesher.SeamCellFor"/> for why the chunk grid is the right
+    /// place and why it needs no view.
+    /// </summary>
+    public int WaterSeamStripBlocks;
+
+    /// <summary>
     /// Apply half-block detail only to the highest solid run in each column. Water and
     /// thin cover do not disqualify the ground beneath them. This preserves outdoor terrain
     /// slabs while declining the much larger geometry cost of distant cave and overhang
