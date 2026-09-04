@@ -45,6 +45,15 @@ public static class WaterDepthField
     /// </summary>
     const int MaxDepth = 24;
 
+    /// <summary>Water patch sizes to price, in blocks. 1 is one quad per block.</summary>
+    static readonly int[] WaveCells = { 1, 2, 4, 8 };
+
+    /// <summary>
+    /// Half-widths, in blocks, of a per-block strip either side of every 32-block chunk plane.
+    /// 1 means the two columns touching the plane; 3 means six columns.
+    /// </summary>
+    static readonly int[] SeamStrips = { 1, 2, 3 };
+
     sealed class Options
     {
         public string? Cache;
@@ -103,6 +112,9 @@ public static class WaterDepthField
         // experiment that disabled the water surface split produced byte-identical totals.
         long shadedVerts = 0, shadedQuads = 0;
         long baseWaterVerts = 0, shadedWaterVerts = 0;
+        var waveWaterVerts = new long[WaveCells.Length];
+        var stripWaterVerts = new long[SeamStrips.Length];
+        var meshClock = new System.Diagnostics.Stopwatch();
         int meshed = 0, withWater = 0;
 
         // The world's own ramp is not reachable without a client, so the harness uses the
@@ -127,6 +139,7 @@ public static class WaterDepthField
             int[] depthOfRun = DepthPerRun(plain, out bool anyWater,
                 ref columns, ref submerged, ref waterColumns, depthHistogram);
 
+            meshClock.Start();
             MeshResult baseline = LodMesher.BuildMesh(new MeshJob
             {
                 Key = key,
@@ -135,6 +148,7 @@ public static class WaterDepthField
                 CaveCullReach = o.Cull,
             });
 
+            meshClock.Stop();
             meshed++;
             if (anyWater) withWater++;
             baseVerts += baseline.VertexCount;
@@ -152,6 +166,39 @@ public static class WaterDepthField
                 CaveCullReach = o.Cull,
                 WaterAbsorption = absorption,
             });
+            // What it would cost to stop merging water, so the surface can carry vanilla's
+            // wave per block instead of interpolating it across a quad tens of blocks wide.
+            // Simulated by giving every column's water run a palette entry of its own, which
+            // is precisely what stops the greedy pass joining two columns.
+            for (int c = 0; c < WaveCells.Length; c++)
+            {
+                MeshResult unmerged = LodMesher.BuildMesh(new MeshJob
+                {
+                    Key = key,
+                    Self = WaterPerColumn(plain, WaveCells[c], 0),
+                    Neighbors = neighbours,
+                    CaveCullReach = o.Cull,
+                    WaterAbsorption = absorption,
+                });
+                waveWaterVerts[c] += unmerged.WaterVertexCount;
+            }
+
+            // The seam can only ever lie on a 32-block chunk plane, because ownership is
+            // decided per vanilla chunk - so a narrow strip around that grid is a STATIC
+            // property of the section, needing no view and no re-mesh.
+            for (int c = 0; c < SeamStrips.Length; c++)
+            {
+                MeshResult strip = LodMesher.BuildMesh(new MeshJob
+                {
+                    Key = key,
+                    Self = WaterPerColumn(plain, 1, SeamStrips[c]),
+                    Neighbors = neighbours,
+                    CaveCullReach = o.Cull,
+                    WaterAbsorption = absorption,
+                });
+                stripWaterVerts[c] += strip.WaterVertexCount;
+            }
+
             shadedVerts += shaded.VertexCount;
             shadedWaterVerts += shaded.WaterVertexCount;
             shadedQuads += shaded.ClusteredPackedOpaqueQuads.Length
@@ -198,6 +245,32 @@ public static class WaterDepthField
         Console.WriteLine($"  water off          {baseWaterVerts,12:n0} water vertices");
         Console.WriteLine($"  water on           {shadedWaterVerts,12:n0} water vertices   "
             + $"{Delta(baseWaterVerts, shadedWaterVerts)}");
+        Console.WriteLine();
+        Console.WriteLine("  cost of splitting water so its surface can carry vanilla's wave");
+        Console.WriteLine("  vanilla's liquid warp has a wavelength of about 3 blocks, so a patch");
+        Console.WriteLine("  wider than 1-2 blocks samples it below Nyquist and flattens it.");
+        Console.WriteLine();
+        Console.WriteLine($"  merged (today)     {shadedWaterVerts,12:n0} water vertices");
+        for (int c = 0; c < WaveCells.Length; c++)
+        {
+            Console.WriteLine($"  {WaveCells[c],2}x{WaveCells[c]} patches      {waveWaterVerts[c],12:n0} water vertices   "
+                + $"{Delta(shadedWaterVerts, waveWaterVerts[c])}   "
+                + $"whole mesh +{Share(waveWaterVerts[c] - shadedWaterVerts, shadedVerts + shadedWaterVerts):0.00}%");
+        }
+        Console.WriteLine();
+        Console.WriteLine();
+        Console.WriteLine("  per-block water only within N blocks of a 32-block chunk plane");
+        Console.WriteLine("  (the seam can land nowhere else, so this needs no view and no re-mesh)");
+        for (int c = 0; c < SeamStrips.Length; c++)
+        {
+            Console.WriteLine($"  strip +/-{SeamStrips[c]}         {stripWaterVerts[c],12:n0} water vertices   "
+                + $"{Delta(shadedWaterVerts, stripWaterVerts[c])}   "
+                + $"whole mesh +{Share(stripWaterVerts[c] - shadedWaterVerts, shadedVerts + shadedWaterVerts):0.00}%");
+        }
+        Console.WriteLine();
+        Console.WriteLine($"  mesh build time    {meshClock.Elapsed.TotalMilliseconds / Math.Max(1, meshed):0.00} ms "
+            + "per section, one pass (Release, no game)");
+        Console.WriteLine();
         Console.WriteLine($"  combined           {baseVerts + baseWaterVerts,12:n0} -> "
             + $"{shadedVerts + shadedWaterVerts:n0}   "
             + $"{Delta(baseVerts + baseWaterVerts, shadedVerts + shadedWaterVerts)}");
@@ -262,6 +335,79 @@ public static class WaterDepthField
             if (columnHasWater) waterColumns++;
         }
         return depths;
+    }
+
+    /// <summary>
+    /// The same section with every water run on a palette entry unique to its column, so the
+    /// greedy pass cannot join two columns and every water block emits its own quad.
+    ///
+    /// This is the shape a wave-carrying surface needs. Vanilla evaluates its liquid warp at
+    /// every block corner; a merged quad spanning tens of blocks can only interpolate the wave
+    /// straight across its middle, and the wave's own wavelength is about three blocks. Colours
+    /// and flags are copied unchanged - this measures the merge, nothing else.
+    /// </summary>
+    static SectionSnapshot WaterPerColumn(SectionSnapshot s, int cell, int seamStrip)
+    {
+        var runs = (ulong[])s.Runs.Clone();
+        var colors = new List<int>(s.PaletteColors);
+        var flags = new List<byte>(s.PaletteFlags);
+        var tints = new List<byte>(s.PaletteTintSlots);
+        var textures = new List<ushort>(s.PaletteTextureSlots);
+        int gs = LodSection.GridSize;
+        var minted = new Dictionary<(int Pid, int Cell), int>();
+
+        for (int col = 0; col < gs * gs; col++)
+        {
+            // Which NxN patch of the section this column falls in. cell 1 is one quad per
+            // block; larger patches merge inside themselves and sample the wave that much
+            // more coarsely.
+            int localX = col % gs;
+            int localZ = col / gs;
+
+            // Sections are 64 blocks and 64-aligned, so the vanilla chunk planes inside one
+            // land at local 0 and 32. Outside the strip, water keeps merging normally.
+            if (seamStrip > 0)
+            {
+                int dx = Math.Min(localX % 32, 32 - localX % 32);
+                int dz = Math.Min(localZ % 32, 32 - localZ % 32);
+                if (dx >= seamStrip && dz >= seamStrip) continue;
+            }
+
+            int patch = (localZ / cell) * gs + (localX / cell);
+            for (int r = s.ColumnStart[col]; r < s.ColumnStart[col + 1]; r++)
+            {
+                int pid = LodSection.RunPaletteId(runs[r]);
+                if (pid < 0 || pid >= s.PaletteFlags.Length) continue;
+                if ((s.PaletteFlags[pid] & LodPaletteEntry.FlagWater) == 0) continue;
+                if (minted.TryGetValue((pid, patch), out int existing))
+                {
+                    runs[r] = LodSection.PackRun(
+                        existing, LodSection.RunYTop(runs[r]), LodSection.RunYBottom(runs[r]));
+                    continue;
+                }
+
+                int replacement = colors.Count;
+                colors.Add(s.PaletteColors[pid]);
+                flags.Add(s.PaletteFlags[pid]);
+                tints.Add(s.PaletteTintSlots[pid]);
+                if (textures.Count > 0) textures.Add(
+                    pid < s.PaletteTextureSlots.Length ? s.PaletteTextureSlots[pid] : (ushort)0);
+                minted[(pid, patch)] = replacement;
+                runs[r] = LodSection.PackRun(
+                    replacement, LodSection.RunYTop(runs[r]), LodSection.RunYBottom(runs[r]));
+            }
+        }
+
+        return new SectionSnapshot
+        {
+            Runs = runs,
+            ColumnStart = s.ColumnStart,
+            Captured = s.Captured,
+            PaletteColors = colors.ToArray(),
+            PaletteFlags = flags.ToArray(),
+            PaletteTintSlots = tints.ToArray(),
+            PaletteTextureSlots = textures.ToArray(),
+        };
     }
 
     /// <summary>
