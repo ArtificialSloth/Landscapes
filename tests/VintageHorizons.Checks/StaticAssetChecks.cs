@@ -2287,6 +2287,20 @@ public static class StaticAssetChecks
         c.False(mesher.Contains("SubmergedBlocks(yTop - yBottom)", StringComparison.Ordinal),
             "a water surface takes no depth of its own");
 
+        // A textured quad spends its colour word on a texture slot, and the vertex shader
+        // recovers the colour from the block table by that slot - so a darkened colour written
+        // there is read as an index and thrown away. Reported in play as depth shading that
+        // worked beyond the L0/L1 threshold and nowhere inside it, and it tracked the threshold
+        // when it moved. A submerged quad must therefore give the slot up.
+        c.True(mesher.Contains("emitTextureSlots && step == 1 && submerged == 0",
+                StringComparison.Ordinal),
+            "a submerged quad carries a colour rather than a texture slot");
+        c.True(ShaderBody("vsh").Contains("vhBlockSlot = int(vhColor & 0x00FFFFFFu);",
+                StringComparison.Ordinal)
+            && ShaderBody("vsh").Contains("texelFetch(blockTable, ivec2(vhBlockSlot, 1), 0)",
+                StringComparison.Ordinal),
+            "which is the lookup that would otherwise discard it");
+
         // Both merge keys must carry it, or quads at different depths merge and take one
         // colour - which is the same class of defect as the plane splits the sort exists for.
         c.True(mesher.Contains("c = a.Submerged.CompareTo(b.Submerged);", StringComparison.Ordinal),

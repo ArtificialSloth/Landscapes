@@ -859,6 +859,7 @@ public class LodTerrainRenderer : IRenderer
 
     bool waterDepthShading = true;
     float[]? waterAbsorption;
+    bool waterAbsorptionDeferred;
 
     /// <summary>
     /// How shallow the water shader assumes cached water is, 0 to 1. Zero is vanilla's answer
@@ -873,7 +874,7 @@ public class LodTerrainRenderer : IRenderer
     /// where vanilla's own fresnel would have saturated. A look setting, not a correction:
     /// vanilla has no answer at this range because it draws no water here.
     /// </summary>
-    public float WaterMaxAlpha { get; set; } = 0.85f;
+    public float WaterMaxAlpha { get; set; } = 0.7f;
 
     /// <summary>
     /// Brightness under n blocks of water as a share of open air, read from the world's own
@@ -897,8 +898,62 @@ public class LodTerrainRenderer : IRenderer
             int level = GameMath.Clamp(sky - depth, 0, levels.Length - 1);
             table[depth] = Math.Clamp(levels[level] / open, 0f, 1f);
         }
+
+        // A table of ones darkens nothing while still splitting the merge, so the feature
+        // would cost its whole geometry bill and draw exactly what it drew before - which is
+        // indistinguishable in play from the switch not working at all. It happens when the
+        // world is not ready to answer yet: a SunBrightness of 0 makes every lookup clamp to
+        // the same floor and every ratio come out 1. Not cached, so the next mesh asks again
+        // rather than freezing the world's start-up state for the session.
+        if (table[table.Length - 1] >= 0.999f)
+        {
+            if (!waterAbsorptionDeferred)
+            {
+                waterAbsorptionDeferred = true;
+                capi.Logger.Notification(
+                    "[VintageHorizons] water depth shading has nothing to apply yet: "
+                    + $"sun brightness {capi.World.SunBrightness}, {levels.Length} levels, "
+                    + $"open water {open:0.000}. Retrying on the next mesh.");
+            }
+            return null;
+        }
+
         waterAbsorption = table;
+        capi.Logger.Notification(
+            "[VintageHorizons] water depth shading resolved: " + DescribeWaterAbsorption());
+
+        // Anything meshed while the answer was unavailable is built unshaded and would stay
+        // that way for the session - the join is exactly when the world is least ready to
+        // answer, and it is also when most of the view is built. Rebuild those once.
+        if (waterAbsorptionDeferred)
+        {
+            waterAbsorptionDeferred = false;
+            int queued = RemeshAll();
+            if (queued > 0)
+            {
+                capi.Logger.Notification(
+                    $"[VintageHorizons] rebuilding {queued} sections meshed before it resolved.");
+            }
+        }
         return table;
+    }
+
+    /// <summary>
+    /// What the depth table actually resolved to, for the log and for `.vhwater`. A person
+    /// cannot copy chat out of the game, and "it had no effect" and "it is applying 1.00 at
+    /// every depth" look identical on screen; this is the line that tells them apart.
+    /// </summary>
+    public string DescribeWaterAbsorption()
+    {
+        if (!waterDepthShading) return "off";
+        float[]? table = waterAbsorption;
+        if (table == null) return "on, but no table resolved yet";
+        return $"sky level {capi.World.SunBrightness}, "
+            + $"1 block {table[Math.Min(1, table.Length - 1)]:0.00}, "
+            + $"4 {table[Math.Min(4, table.Length - 1)]:0.00}, "
+            + $"8 {table[Math.Min(8, table.Length - 1)]:0.00}, "
+            + $"16 {table[Math.Min(16, table.Length - 1)]:0.00}, "
+            + $"{table.Length - 1}+ {table[table.Length - 1]:0.00} of shore brightness";
     }
 
     int caveCullReach = LodCaveCull.DefaultReach;

@@ -285,7 +285,11 @@ public static class LodMesher
                 {
                     for (int r = 0; r < runs.Length; r++)
                     {
-                        if (!IsTranslucentRun(self, runs[r])) continue;
+                        // WATER, not merely translucent. Thin ground cover is translucent too,
+                        // and taking a flower as the water surface would call the soil beneath
+                        // it submerged - a whole meadow shaded for standing under a buttercup.
+                        int rpid = LodSection.RunPaletteId(runs[r]);
+                        if ((self.PaletteFlags[rpid] & LodPaletteEntry.FlagWater) == 0) continue;
                         waterSurface = TopHalf(self, runs, r, half, surfaceHalfOnly);
                         break;
                     }
@@ -487,7 +491,8 @@ public static class LodMesher
             int color = SubmergedColor(
                 self.PaletteColors[first.Pid], first.Submerged, absorption);
             byte alpha = AlphaFor(self.PaletteFlags[first.Pid], self.PaletteTintSlots[first.Pid]);
-            int textureSlot = TextureSlotFor(self, first.Pid, step, emitTextureSlots);
+            int textureSlot = TextureSlotFor(self, first.Pid, step, emitTextureSlots,
+                first.Submerged);
 
             for (int i = start; i < end; i++)
             {
@@ -600,7 +605,8 @@ public static class LodMesher
             Buffers buf = seg.Water ? water : opaque;
             int color = SubmergedColor(self.PaletteColors[seg.Pid], seg.Submerged, absorption);
             byte alpha = AlphaFor(self.PaletteFlags[seg.Pid], self.PaletteTintSlots[seg.Pid]);
-            int textureSlot = TextureSlotFor(self, seg.Pid, step, emitTextureSlots);
+            int textureSlot = TextureSlotFor(self, seg.Pid, step, emitTextureSlots,
+                seg.Submerged);
 
             // W/E walls run along Z at fixed X; N/S walls run along X at fixed Z.
             bool xWall = seg.Dir is W or E;
@@ -975,8 +981,29 @@ public static class LodMesher
     ///
     /// Solid land only. Water and thin cover draw translucent and were never the complaint.
     /// </summary>
-    static int TextureSlotFor(SectionSnapshot self, int pid, int step, bool emitTextureSlots) =>
-        emitTextureSlots && step == 1 && !IsTranslucent(self.PaletteFlags[pid])
+    /// <summary>
+    /// The block texture this quad draws inside the blend band, or 0 for none.
+    ///
+    /// SUBMERGED QUADS TAKE NONE, and that is what makes depth shading work at level 0 at all.
+    /// A textured quad spends word 2 of its packed record on the texture slot INSTEAD of a
+    /// colour, and the vertex shader recovers the colour from the block table by that slot -
+    /// so a darkened colour written there is read as an index and discarded. The symptom is
+    /// exact and was reported in play: the bed shades correctly at level 1 and beyond, where
+    /// quads carry real colours, and not at level 0, where they carry slots. It follows the
+    /// L0/L1 threshold wherever that threshold is moved to.
+    ///
+    /// Giving the slot up is the cheap side of the trade. The texture is only ever sampled
+    /// inside the seam band, and what is lost is vanilla texture detail on ground that is
+    /// under water and behind a surface drawn at 0.7 opacity; what is gained is the depth
+    /// gradient at the level nearest the player, which is where it reads most. Carrying both
+    /// would mean packing the depth into the spare high bits of the slot field and shading
+    /// after the table lookup - possible, since real slot values are twelve bits of the
+    /// twenty-four, but it is a shader change on every path and this is not.
+    /// </summary>
+    static int TextureSlotFor(SectionSnapshot self, int pid, int step, bool emitTextureSlots,
+        int submerged) =>
+        emitTextureSlots && step == 1 && submerged == 0
+            && !IsTranslucent(self.PaletteFlags[pid])
             && (uint)pid < (uint)self.PaletteTextureSlots.Length
             ? self.PaletteTextureSlots[pid]
             : 0;

@@ -3073,6 +3073,9 @@ public class VintageHorizonsModSystem : ModSystem
                         // read back when a screenshot disagreed with what the code should do.
                         capi.Logger.Notification(
                             "[VintageHorizons] water settings: " + DescribeWater(renderer));
+                        capi.Logger.Notification(
+                            "[VintageHorizons] water depth shading: "
+                            + renderer.DescribeWaterAbsorption());
                         return TextCommandResult.Success(
                             $"[VintageHorizons] {DescribeWater(renderer)}. Use: .vhwater off |"
                             + " a number of CHUNKS | edge <chunks> | fresnel on/off |"
@@ -3158,9 +3161,15 @@ public class VintageHorizonsModSystem : ModSystem
                                 + "Rebuilds every loaded section.");
                         renderer.WaterDepthShading = value == "on";
                         SaveConfig();
+                        // The resolved table goes to the log every time, because "no effect"
+                        // and "applying 1.00 at every depth" are the same picture.
+                        capi.Logger.Notification("[VintageHorizons] water depth shading: "
+                            + renderer.DescribeWaterAbsorption());
                         return TextCommandResult.Success(
                             $"[VintageHorizons] depth shading "
-                            + $"{(renderer.WaterDepthShading ? "on" : "off")}. Rebuilding.");
+                            + $"{(renderer.WaterDepthShading ? "on" : "off")}. Rebuilding. "
+                            + renderer.DescribeWaterAbsorption()
+                            + ". Written to the log too.");
 
                     case "alpha":
                         if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
