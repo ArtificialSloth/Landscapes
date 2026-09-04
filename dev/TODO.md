@@ -2,6 +2,38 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
+## Frame-time regression and the settings window: what Session 77 has not proven
+
+Branch `codex/vertex-tint-cost`, `0.4.0`. The regression is measured and its unreachable half
+is closed; what follows is what a sandbox run cannot answer. Read `dev/sessions/SESSION_77.md`
+before touching this.
+
+- **The settings window has never been seen running.** 0.3.196's layout was wrong in a way
+  only an owner screenshot caught - a medium-weight title is taller than the box it is given,
+  so every row overran its own description - and 0.3.197 moved every element on the page. The
+  window is source-traced and harness-tested only. **The tell: open `.vhconfig` and check the
+  six feature rows clear the buttons at the bottom.** The window grew from 640 to 700 tall to
+  fit them, and nothing has confirmed 700 is enough at the owner's GUI scale.
+- **The fixes are measured in the sandbox, not in the owner's scene.** 100 us of 270 recovered
+  at one seam viewpoint that runs about 2.9x lighter than his. The proportion should carry and
+  the mechanism does not depend on the scene, but the number in his world is inference. **The
+  tell: the same spot that read 285 fps on 0.3.194.**
+- **Far Biome Colors defaults off, and the colour step that implies is unexamined.** With Close
+  on and Far off, ground past the L0 boundary - about 1,024 blocks on default thresholds -
+  wears the biome colour from where the player stands rather than its own. Whether that reads
+  as a ring depends on how different the two biomes are. **The tell: stand where a biome edge
+  crosses the horizon and compare Far on against Far off.** If it shows, the answer is a wider
+  Close range, not a wider fade: `LodVisualSettings.CloseClimateTintRange`.
+- **The three preset compositions are a judgement call.** Balanced keeps the features paid by
+  the fragments that show them and gives up the two paid by every vertex; that split follows
+  the measurement, but which features a player would rather keep does not.
+- **The residue is closed as an aggregate, not item by item.** All-features-off on 0.3.195
+  measures exactly 0.3.127, so the three named costs are gone between them. Their individual
+  shares were never separated, and doing so would need a shader edit per hypothesis.
+- **`.vhcutout` is deliberately absent from the window.** It is a small win that reintroduces
+  the seam holes it was added to fix. If it is ever wanted there, it needs the hole fixed
+  first, not a warning label.
+
 ## Distant terrain colour: what is left after Session 76
 
 Sessions 73-76, branch `codex/seasonal-tint-blend-weight`, committed through `f8d22f7`. The four causes

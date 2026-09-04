@@ -3,13 +3,17 @@
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
 **Status date:** 2026-09-03
-**Mod version:** `0.3.194`, built, verified, packaged and copy-installed; **not yet seen in game**.
-0.3.183 is **human-tested and accepted** ("Much better, Excellent!") and carries the substance of
-the colour work below. 0.3.185 is **human-tested and accepted** as well, carrying the retired
-height table and remembered climate. 0.3.193 is **human-tested and accepted** on its numbers - the
-owner measured the seasonal variation's frame cost at three settings and chose the cheapest. Six
-builds between them (0.3.186-0.3.192) are source-traced and harness-tested only, and 0.3.194
-changes one default the owner asked for.
+**Mod version:** `0.4.0`, built, verified, packaged and copy-installed; **not yet seen in game**.
+Promoted from 0.3.197 at owner direction and source-identical to it. 0.3.183 is **human-tested
+and accepted** ("Much better, Excellent!") and carries the substance of the colour work below.
+0.3.185 is **human-tested and accepted** as well, carrying the retired height table and remembered
+climate. 0.3.193 is **human-tested and accepted** on its numbers - the owner measured the seasonal
+variation's frame cost at three settings and chose the cheapest. The builds between them
+(0.3.186-0.3.192, 0.3.195-0.3.197) are source-traced and harness-tested only.
+
+**The frame-time regression the owner reported between 0.3.127 and 0.3.194 is measured, and the
+part of it that no setting could reach is closed.** Section 0 below is the current summary; the
+full record is `dev/sessions/SESSION_77.md`.
 
 **Distant terrain colour is the through-line of Sessions 73-76 and is now substantially closed.**
 Six independent causes were measured and fixed; every one of them was established by measurement
@@ -86,7 +90,7 @@ from `94cde0e` on `codex/terrain-slabs-and-near-water`, itself from `a55fc5b` on
 `codex/seam-blending-and-block-textures`, itself from `master` at `21da6be` (the accepted 0.3.127
 baseline). Not pushed.
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `86` C# files under `VintageHorizons/src`
+**Source files:** `87` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
@@ -136,6 +140,56 @@ baseline). Not pushed.
 > `viewDistanceLod0`, or distant-cache selection. Two low-frequency hooks fail open per pass and
 > become inert before exact-ID removal. The owner played 0.3.127 and accepted both required results:
 > the terrain radius is absent and vanilla atmosphere still looks right.
+
+
+## 0. Frame time, and what the renderer now lets a player give up
+
+**The regression was entirely GPU time.** The owner measured 360 fps on 0.3.127 against 285 on
+0.3.194 in one scene. Reproduced in the sandbox at a seam viewpoint with the ownership mask on
+and GPU timers armed:
+
+| Build / state | frame | GPU p95 | mod CPU callback |
+|---|---|---|---|
+| 0.3.127 | 1.64 ms | 450 us | 1250 us |
+| 0.3.194, everything on | 1.91 ms | 725 us | 925 us |
+| 0.3.194, five features off | 1.75 ms | 600 us | 1250 us |
+| **0.3.195, everything on** | **1.81 ms** | **625 us** | - |
+| **0.3.195, five features off** | **1.64 ms** | - | - |
+
++270 us of frame time against +275 us of GPU time, and the mod's own main-thread callback is
+*lower* at 0.3.194 than at 0.3.127. The five feature switches accounted for 160 us of it; the
+remaining 110 us was reachable by no switch, because it was not a feature. It was the shape of
+the vertex shader: a tint fallback that moved from a uniform array to a texel and so cost one
+scattered dependent fetch on each of 3.2 M vertices a frame; three unpacked block-table rows
+travelling as eleven floats of flat varying, written on both branches and therefore paid even
+with the blend pipeline off, for data only a fragment inside the seam band reads; and ownership
+testing that gained up to four texel fetches at chunk boundaries.
+
+0.3.195 puts the two per-vertex rows back in uniform arrays, moves the block table to the
+fragment stage behind a single flat integer slot, and fades the climate lookup by voxel size.
+**Identical geometry is drawn before and after** - 3.204 M vertices a frame in both - so the
+gain is less time per vertex, not less drawing. With every optional feature off it now measures
+exactly what 0.3.127 measured.
+
+Caveat that governs every number here: the sandbox viewpoint runs about 2.9x lighter than the
+owner's scene, so proportions transfer and absolute microseconds do not. Bench runs deploy
+**Debug** builds, which inflates the CPU figures and not the GPU ones.
+
+**Every measured feature is now a saved setting.** `.vhconfig` is one page: the LOD scale and
+draw distance above, and below them six rows - seam blending, close and far biome colours,
+varied tree colours, slab terrain, water effects - each with a switch, a coarse cost word, and
+its description on hover, plus Performance/Balanced/Quality presets in a drop-down whose
+selection doubles as a readout. They had been session-only. The `.vh*` commands that set the
+same values now save through the same path, so the window and the commands cannot disagree
+across a restart; the numeric dials deliberately do not save, because coarsening a typed
+fraction to on/off would silently change it.
+
+Close and Far biome colours are two ends of one shader threshold, not two independent switches,
+so Far implies Close. Far defaults **off**: it is the most expensive single thing the renderer
+can be asked to do, and not paying for it is most of what this work recovered.
+
+**Unproven:** the settings window has never been seen running, and the recovered frame time has
+not been re-measured in the owner's own scene. See `dev/TODO.md`.
 
 ## 1. Repository state
 

@@ -3001,3 +3001,48 @@ against a state that isolates it rather than concluding from a counter that did 
 
 **Found:** 2026-09-03, after a 40 fps regression from 0.3.187. Fixed in 0.3.192 and 0.3.193.
 See also G47, which is the reason the fade exists at all.
+
+### G149 - The bench harness pins the chunk mask in BOTH directions, so a default is not a default
+
+**Trigger:** reading any `bench-windows.ps1` result as "what the mod does", especially a
+performance sweep, and any sentence of the form "the run used the shipped configuration".
+
+**Trap:** `-ChunkMask` does not merely enable the mask when passed. The script writes
+`VINTAGEHORIZONS_CHUNK_MASK` unconditionally - `1` with the switch, `0` without it - and the
+renderer treats the variable as an override in both directions. So a run WITHOUT the switch
+measures the radial handoff path with no ownership mask and no seam field, which is not what
+any player has run since 0.3.17. The comment in the script says so and is easy to skim past,
+because every other switch there is additive.
+
+A whole sweep was measured this way in Session 77 before the readiness line's `mask off` gave
+it away. Its per-feature deltas were wrong in the one place it mattered: the seam band cannot
+cost anything when the field it reads was never built.
+
+**Safer action:** read the configuration back out of the run's own log before trusting it.
+`vanilla readiness:` carries `mask <state>` and `band <state>`; `mask off` means no mask and
+`band pending` means the field never built. Do not grep a bare substring for it - `mask
+[a-z]+` also matches `paints mask off`, the debug-paint field on the same line, which
+produced the opposite error minutes later. Anchor on the field's own delimiters.
+
+### G150 - A derived mirror has to be seeded everywhere the original is
+
+**Trigger:** publishing the same data in two shapes - a texture and a uniform array, a packed
+row and a decoded one - and filling the second one at the place the first is BUILT.
+
+**Trap:** the build is not the only place the original gets a value. `LodTintRegistry` seeds
+its slot table in the constructor, deliberately, so a slot registered but not yet sampled
+draws white instead of whatever zero dilutes to. `BuildSlotTable` then fills it properly at
+the first refresh. Mirroring only inside `BuildSlotTable` therefore left the uniform arrays at
+zero for every frame before that refresh completes - which the shader reads as a black
+fallback tint, and as climate map page 0, a real page it would then finish a tint from. Black
+ground on every world load, for a second or two, on a change whose entire purpose was to be
+invisible.
+
+The seed exists because this exact mistake has been made before in the other direction (see
+the constructor's own comment about 0.3.175): filling a gap with a value that looks like an
+answer.
+
+**Safer action:** mirror at every point the original is written, and hold it with a check that
+compares the two shapes on a FRESH instance rather than on a refreshed one. The check written
+for this change is what caught it, and it caught it because it constructed the registry and
+compared immediately.

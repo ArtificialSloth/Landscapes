@@ -13,6 +13,39 @@ section is recaptured and can receive its texture slot, but the zero neighbour-e
 currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
 remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
 
+## [0.4.0] - 2026-09-03
+
+Milestone promotion at owner direction. Source-identical to 0.3.197.
+
+**Distant terrain costs measurably less to draw, and what it draws is now yours to choose.**
+
+The owner measured 360 fps on 0.3.127 against 285 on 0.3.194 in the same scene, and about
+half of the difference could be found by switching features off. The other half could not,
+because it was not a feature: it was work every vertex of distant terrain paid whether or not
+anything on screen ended up showing it. A vertex fetched its fallback colour from a texture
+where an older build read it from a small table and paid nothing; it carried eleven extra
+numbers to the pixel stage for a block texture only a thin ring near the seam ever reads; and
+it did that three million times a frame.
+
+Measured in an isolated world at one viewpoint, with the same geometry drawn before and
+after: 1.91 ms a frame down to 1.81 ms, and with every optional feature switched off it now
+measures exactly what 0.3.127 did. What is left above that baseline is the features
+themselves.
+
+**`.vhconfig` is one page again, and every visual feature on it is remembered.** Seam
+blending, close and far biome colours, varied tree colours, slab terrain and water effects
+each have a switch, a cost, and an explanation on hover, with Performance, Balanced and
+Quality presets. These were session-only settings for several builds - anyone who turned one
+off to get frame time back had it on again at the next launch, which is the wrong default for
+the people they exist for. The `.vh*` commands that set the same values now save through the
+same path, so the window and the commands cannot disagree.
+
+**Far Biome Colors is off by default.** It is the single most expensive thing the renderer
+can be asked to do, and not paying for it is most of what this release recovers. Quality
+turns it on.
+
+Not yet seen in game: the settings window is source-traced and harness-tested only.
+
 ## [0.3.194] - 2026-09-03
 
 **Seam speckle returns to 0.15.** The per-block brightness variation at the seam was reduced to
