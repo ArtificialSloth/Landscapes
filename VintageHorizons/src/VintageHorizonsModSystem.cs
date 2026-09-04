@@ -94,6 +94,12 @@ public class VintageHorizonsConfig
     public int WaterSeamStripBlocks = 1;
 
     /// <summary>
+    /// Drop water walls against any uncaptured neighbour. See
+    /// LodTerrainRenderer.SuppressUnknownWaterWalls; false is the established behaviour.
+    /// </summary>
+    public bool SuppressUnknownWaterWalls = false;
+
+    /// <summary>
     /// Draw even when another LOD mod is installed and switched on. The escape hatch for
     /// the mods whose own switch we cannot read; see <see cref="OtherLodMods"/>. Read at
     /// startup only, because turning the mod on mid-session is not something the startup
@@ -260,6 +266,7 @@ public class VintageHorizonsModSystem : ModSystem
             WaterMaxAlpha = config.WaterMaxAlpha,
             WaterClarity = config.WaterClarity,
             WaterSeamStripBlocks = config.WaterSeamStripBlocks,
+            SuppressUnknownWaterWalls = config.SuppressUnknownWaterWalls,
             TextureSlotSourceReady = pipeline.TextureSlotsPrepared,
             BlendPipelineEnabled = config.BlendPipeline,
             OpaqueBackfaceCulling =
@@ -3066,7 +3073,8 @@ public class VintageHorizonsModSystem : ModSystem
         capi.ChatCommands.Create("vhwater")
             .WithDescription("How distant water meets the game's own. No argument reports the settings. "
                 + "off | a number of chunks | edge <chunks> | fresnel on|off | glint <0-1> | "
-                + "foam <0-1> | depth on|off | alpha <0-1> | clarity <blocks> | wave <blocks>.")
+                + "foam <0-1> | depth on|off | alpha <0-1> | clarity <blocks> | wave <blocks> | "
+                + "walls on|off.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
                       capi.ChatCommands.Parsers.OptionalWord("value"))
             .HandleWith(args =>
@@ -3183,6 +3191,26 @@ public class VintageHorizonsModSystem : ModSystem
                             + renderer.DescribeWaterAbsorption()
                             + ". Written to the log too.");
 
+                    case "walls":
+                        if (value != "on" && value != "off")
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] water walls "
+                                + $"{(renderer.SuppressUnknownWaterWalls ? "OFF at unknown edges" : "on")}. "
+                                + "Where the cache has no record of what is beside a body of "
+                                + "water, the mesher draws the SIDE of that water - a sheet "
+                                + "from the surface down to the seabed. It is meant for the "
+                                + "real edge of explored water, and it is also drawn against "
+                                + "any single column that was never captured, including inside "
+                                + "a loaded section. Off drops those. This is a diagnostic: it "
+                                + "is here to find out whether that is what the band at the "
+                                + "seam is. Rebuilds every loaded section.");
+                        renderer.SuppressUnknownWaterWalls = value == "off";
+                        SaveConfig();
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] water walls "
+                            + $"{(renderer.SuppressUnknownWaterWalls ? "OFF at unknown edges" : "on")}. "
+                            + "Rebuilding - give it a few seconds, then look at the seam.");
+
                     case "wave":
                         if (!int.TryParse(value, System.Globalization.NumberStyles.Integer,
                             System.Globalization.CultureInfo.InvariantCulture, out int strip))
@@ -3251,7 +3279,8 @@ public class VintageHorizonsModSystem : ModSystem
                             return TextCommandResult.Error(
                                 "[VintageHorizons] use: .vhwater off | a number of chunks | "
                                 + "edge <chunks> | fresnel on/off | glint 0-1 | foam 0-1 | "
-                                + "depth on/off | alpha 0-1 | clarity <blocks> | wave <blocks>");
+                                + "depth on/off | alpha 0-1 | clarity <blocks> | wave <blocks> | "
+                                + "walls on/off");
                         }
 
                         renderer.WaterNearChunks = chunks;
@@ -3708,6 +3737,7 @@ public class VintageHorizonsModSystem : ModSystem
             config.WaterMaxAlpha = renderer.WaterMaxAlpha;
             config.WaterClarity = renderer.WaterClarity;
             config.WaterSeamStripBlocks = renderer.WaterSeamStripBlocks;
+            config.SuppressUnknownWaterWalls = renderer.SuppressUnknownWaterWalls;
             WriteVisualSettings(CurrentVisualSettings());
 
             // The requested state, never the effective one, for the same reason the mask

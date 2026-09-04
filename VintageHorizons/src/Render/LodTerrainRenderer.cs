@@ -940,6 +940,24 @@ public class LodTerrainRenderer : IRenderer
 
     int waterSeamStripBlocks = 1;
 
+    /// <summary>
+    /// Drop water walls against any neighbour we have no capture for, not just an absent
+    /// section. A DIAGNOSTIC first: it exists so the seam band can be attributed by flipping
+    /// it. Default false, which is the established behaviour. See `.vhwater walls`.
+    /// </summary>
+    public bool SuppressUnknownWaterWalls
+    {
+        get => suppressUnknownWaterWalls;
+        set
+        {
+            if (suppressUnknownWaterWalls == value) return;
+            suppressUnknownWaterWalls = value;
+            RemeshAll();
+        }
+    }
+
+    bool suppressUnknownWaterWalls;
+
     /// <summary>Blocks past the handoff over which the wave fades to nothing.</summary>
     public float WaterWaveReachBlocks { get; set; } = 64f;
 
@@ -2701,6 +2719,7 @@ public class LodTerrainRenderer : IRenderer
                 CutoutBlocksCover = CutoutBlocksCover,
                 WaterAbsorption = WaterAbsorptionTable(),
                 WaterSeamStripBlocks = waterSeamStripBlocks,
+                SuppressUnknownWaterWalls = suppressUnknownWaterWalls,
                 EmitTextureSlots = includeTextureSlots,
                 TextureModeRevision = textureModeRevision,
             });

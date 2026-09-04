@@ -2264,6 +2264,21 @@ public static class StaticAssetChecks
         c.True(mod.Contains("ChatCommands.Create(\"vhblend\")", StringComparison.Ordinal),
             "the same saved master switch is available as a simple command");
 
+        // A water wall is drawn wherever nothing is known about what is beside the water, and
+        // the existing guard only answers an absent SECTION - a single uncaptured column, even
+        // inside a loaded section, still turns into a seabed-deep sheet. Whether that is the
+        // band the owner sees at the seam is not established; this switch exists so it can be
+        // answered by flipping rather than by argument, which is how the last three attributions
+        // in this area went wrong.
+        string mesherWalls = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot,
+            "VintageHorizons", "src", "Lod", "LodMesher.cs"));
+        c.True(mesherWalls.Contains("if (isTranslucent && job.SuppressUnknownWaterWalls",
+                StringComparison.Ordinal)
+            && mesherWalls.Contains("(nb == null || !nb.Captured[ncol])", StringComparison.Ordinal),
+            "water walls can be dropped at any uncaptured neighbour, not just an absent section");
+        c.True(mod.Contains("public bool SuppressUnknownWaterWalls = false;", StringComparison.Ordinal),
+            "and the established behaviour is what a fresh install still draws");
+
         // Water darkens what is under it, one light level per block, and cached terrain carries
         // no per-position light at all - so the bed has to be shaded when the mesh is built.
         string mesher = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons",

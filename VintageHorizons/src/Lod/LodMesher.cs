@@ -811,6 +811,26 @@ public static class LodMesher
         // it would open a see-through gap at a cliff for as long as the repair takes.
         if (isTranslucent && nb == null && (job.AssumedCoveredSides & (1 << dir)) != 0) return;
 
+        // The same argument, taken one step further, behind a switch.
+        //
+        // The guard above answers the case where a whole neighbouring SECTION is absent from
+        // RAM but the cache holds it. It does not answer the neighbouring COLUMN that was
+        // never captured - and the line below turns that into an empty run list, which the
+        // wall loop reads as "nothing covers this" and answers with a seabed-deep sheet of
+        // translucent water. That case is not restricted to section edges: a column inside
+        // this very section can be uncaptured, and NeighborColumn hands back `self` for it.
+        //
+        // Whether that is what the owner is seeing at the seam is not established. It is a
+        // mechanism that produces the artefact he describes - the drawn side of a water
+        // sheet, on the column grid, immune to every shader switch because it is geometry -
+        // and this exists so the question can be answered by flipping it rather than by
+        // reasoning. Default is the established behaviour: walls where nothing is known.
+        if (isTranslucent && job.SuppressUnknownWaterWalls
+            && (nb == null || !nb.Captured[ncol]))
+        {
+            return;
+        }
+
         Span<ulong> neighborRuns = nb != null && nb.Captured[ncol] ? nb.ColumnRuns(ncol) : Span<ulong>.Empty;
 
         // For W/E walls the strip axis is Z (fixed = cx); for N/S it's X (fixed = cz).

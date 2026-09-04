@@ -196,6 +196,13 @@ public class MeshJob
     public int WaterSeamStripBlocks;
 
     /// <summary>
+    /// Never emit a water wall against a neighbour whose column was not captured, rather than
+    /// only against an absent section. See <see cref="LodMesher.CollectSide"/>; false is the
+    /// established behaviour.
+    /// </summary>
+    public bool SuppressUnknownWaterWalls;
+
+    /// <summary>
     /// Apply half-block detail only to the highest solid run in each column. Water and
     /// thin cover do not disqualify the ground beneath them. This preserves outdoor terrain
     /// slabs while declining the much larger geometry cost of distant cave and overhang
