@@ -875,7 +875,7 @@ public class LodTerrainRenderer : IRenderer
     /// where vanilla's own fresnel would have saturated. A look setting, not a correction:
     /// vanilla has no answer at this range because it draws no water here.
     /// </summary>
-    public float WaterMaxAlpha { get; set; } = 0.7f;
+    public float WaterMaxAlpha { get; set; } = 1f;
 
     /// <summary>
     /// How many blocks of water the view ray travels before it has lost about two thirds of
@@ -889,7 +889,7 @@ public class LodTerrainRenderer : IRenderer
         get => waterClarity;
         set
         {
-            float wanted = Math.Clamp(value, 1f, 64f);
+            float wanted = value <= 0f ? 0f : Math.Clamp(value, 1f, 64f);
             if (Math.Abs(waterClarity - wanted) < 0.01f) return;
             waterClarity = wanted;
             waterAbsorption = null;
@@ -900,7 +900,7 @@ public class LodTerrainRenderer : IRenderer
     // Owner-reported twice now: vanilla still goes dark sooner than we do. 16 blocks was the
     // first guess with both light paths modelled; 10 keeps the shallows close and steepens the
     // middle, where the measured gap was - vanilla luma 40 against our 63 at mid depth.
-    float waterClarity = 10f;
+    float waterClarity;
 
     /// <summary>
     /// How many blocks either side of a 32-block vanilla chunk plane keep one water quad per
@@ -960,13 +960,20 @@ public class LodTerrainRenderer : IRenderer
         // The clarity is a LOOK setting and deliberately a dial: real water's extinction depends
         // on what is dissolved in it, the engine models none of that, and the only judge of
         // whether a lake reads right is a person looking at one.
-        float clarity = Math.Max(1f, WaterClarity);
+        // Zero clarity means the engine's own absorption ALONE, which is the honest default:
+        // vanilla has no return-path term of any kind. Its bed carries the sunlight that
+        // reached it and nothing else, and everything that looks like extinction comes from a
+        // transparent surface blended over that bed, per pixel. That is why this term could
+        // never be tuned to hold: it is a function of depth, and the real thing is a function
+        // of depth AND the angle you look through the water at, which is why a clarity that
+        // matched at one render distance stopped matching at another.
+        float clarity = Math.Max(0f, WaterClarity);
         var table = new float[LodMesher.MaxSubmergedDepth + 1];
         for (int depth = 0; depth < table.Length; depth++)
         {
             int level = GameMath.Clamp(sky - depth, 0, levels.Length - 1);
             float sunlight = Math.Clamp(levels[level] / open, 0f, 1f);
-            float viewPath = MathF.Exp(-depth / clarity);
+            float viewPath = clarity > 0f ? MathF.Exp(-depth / clarity) : 1f;
             table[depth] = Math.Clamp(sunlight * viewPath, 0f, 1f);
         }
 
@@ -1017,8 +1024,14 @@ public class LodTerrainRenderer : IRenderer
     public string DescribeWaterAbsorption()
     {
         if (!waterDepthShading) return "off";
-        float[]? table = waterAbsorption;
-        if (table == null) return "on, but no table resolved yet";
+
+        // RESOLVE it, do not report the cache. Every setter that changes the shading clears
+        // waterAbsorption and queues a rebuild, and the command then asked for a description
+        // in the same breath - so the answer was always "no table resolved yet", on every
+        // single call, which is exactly the line that was supposed to tell a real failure
+        // apart from a working one. It said nothing at all for a whole testing session.
+        float[]? table = WaterAbsorptionTable();
+        if (table == null) return "on, but the world has not answered with a light ramp yet";
         return $"clarity {waterClarity:0} blocks, sky level {capi.World.SunBrightness}, "
             + $"1 block {table[Math.Min(1, table.Length - 1)]:0.00}, "
             + $"4 {table[Math.Min(4, table.Length - 1)]:0.00}, "

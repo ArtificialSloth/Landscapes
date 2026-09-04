@@ -2319,10 +2319,26 @@ public static class StaticAssetChecks
         // eye is what vanilla's see-through surface does per pixel. Modelling only the first
         // made the ramp far too gradual - measured against the owner's screenshots, vanilla's
         // mid-depth water sat at luma 40 to our 63 while the shallows already matched at 76.
-        c.True(rend.Contains("float viewPath = MathF.Exp(-depth / clarity);", StringComparison.Ordinal)
-            && rend.Contains("table[depth] = Math.Clamp(sunlight * viewPath, 0f, 1f);",
+        // The return-path term is OFF by default, and that is the honest position: vanilla has
+        // no such term at all. Its bed carries the sunlight that reached it and nothing else,
+        // and everything resembling extinction comes from a transparent surface blended over
+        // that bed per pixel. A baked factor is a function of depth; the real thing is a
+        // function of depth AND view angle, which is why a clarity tuned at one render
+        // distance stopped matching at another - reported in play, twice.
+        c.True(rend.Contains("float viewPath = clarity > 0f ? MathF.Exp(-depth / clarity) : 1f;",
                 StringComparison.Ordinal),
-            "and carries the return path through the water as well as the sunlight down");
+            "the invented return-path term can be switched off entirely");
+        c.True(rend.Contains("float waterClarity;", StringComparison.Ordinal)
+            && mod.Contains("public float WaterClarity = 0f;", StringComparison.Ordinal),
+            "and off is what a fresh install draws");
+        c.True(rend.Contains("public float WaterMaxAlpha { get; set; } = 1f;",
+                StringComparison.Ordinal),
+            "and cached water is as opaque as vanilla's, so the two agree by the same formula");
+
+        // A diagnostic that answers from a cache its own setter just cleared says the same
+        // thing whether the feature works or not. It has to resolve.
+        c.True(rend.Contains("float[]? table = WaterAbsorptionTable();", StringComparison.Ordinal),
+            "the depth-shading report resolves the table rather than reporting the cache");
         c.True(rend.Contains("waterAbsorption = null;", StringComparison.Ordinal),
             "changing the clarity drops the cached table rather than shading with a stale one");
 
