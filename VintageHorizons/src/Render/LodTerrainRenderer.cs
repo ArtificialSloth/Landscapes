@@ -1552,8 +1552,9 @@ public class LodTerrainRenderer : IRenderer
     public LodStorageThread? ClimateStorage { get; set; }
     LoadedTexture? climateFieldTexture;
     LoadedTexture? climateMapTexture;
-    LoadedTexture? seasonMapTexture;
+    LoadedTexture? seasonColumnTexture;
     int uploadedSeasonMapVersion = -1;
+    int uploadedSeasonColumn = -1;
 
     /// <summary>
     /// How much of vanilla's per-position seasonal variation distant leaves carry, 0 to 1.
@@ -1581,6 +1582,20 @@ public class LodTerrainRenderer : IRenderer
     /// match. Defaults to 2 for that reason; `.vhtint leafwide on` restores the wider fade.
     /// </summary>
     public float LeafSeasonFadeBlocks { get; set; } = 2f;
+
+    /// <summary>
+    /// Swap the engine's value noise for a cheap position hash while leaving the seasonal map
+    /// fetch scattered. A MEASUREMENT INSTRUMENT: it draws the wrong rows on purpose.
+    ///
+    /// The per-tree variation costs about 10 fps at level 0, and it spends that on two things -
+    /// two value noises per vertex and one scattered fetch into the paged seasonal map. Baking
+    /// the row into the mesh at build time can only remove the first, so the split decides
+    /// whether that work is worth starting. Turning this on prices the noise alone.
+    ///
+    /// Session-only and deliberately unsaved: a wrong-coloured world must not survive a
+    /// restart. See `.vhtint leafcheap`.
+    /// </summary>
+    public bool LeafSeasonCheapRow { get; set; }
     LoadedTexture? slotTableTexture;
 
     /// <summary>
@@ -1791,6 +1806,7 @@ public class LodTerrainRenderer : IRenderer
         uploadedSlotTableVersion = -1;
         uploadedClimateMapVersion = -1;
         uploadedSeasonMapVersion = -1;
+        uploadedSeasonColumn = -1;
         WarnIfIncludeMissing(prog, "lodterrain");
         shaderOk = prog.Compile();
         if (!shaderOk && !ShaderLoadIsProvisional)
@@ -5341,7 +5357,7 @@ public class LodTerrainRenderer : IRenderer
     const int SlotTableUnit = 11;
     const int ClimateFieldUnit = 12;
     const int ClimateMapsUnit = 13;
-    const int SeasonMapsUnit = 14;
+    const int SeasonColumnUnit = 14;
 
     /// <summary>
     /// Upload one of this renderer's own CPU-built tables, with its destination unit made
@@ -5525,12 +5541,13 @@ public class LodTerrainRenderer : IRenderer
         {
             prog.BindTexture2D("climateField", climateFieldTexture!.TextureId, ClimateFieldUnit);
             prog.BindTexture2D("climateMaps", climateMapTexture!.TextureId, ClimateMapsUnit);
-            if (seasonMapTexture != null)
-                prog.BindTexture2D("seasonMaps", seasonMapTexture.TextureId, SeasonMapsUnit);
-            prog.Uniform("seasonRel", tints.SeasonRel);
+            if (seasonColumnTexture != null)
+                prog.BindTexture2D("seasonColumn", seasonColumnTexture.TextureId,
+                    SeasonColumnUnit);
             prog.Uniform("leafSeasonVariation",
-                seasonMapTexture != null ? Math.Clamp(LeafSeasonVariation, 0f, 1f) : 0f);
+                seasonColumnTexture != null ? Math.Clamp(LeafSeasonVariation, 0f, 1f) : 0f);
             prog.Uniform("leafSeasonFadeBlocks", Math.Max(2f, LeafSeasonFadeBlocks));
+            prog.Uniform("leafSeasonCheapRow", LeafSeasonCheapRow ? 1 : 0);
             // Zero means every level pays. Anything else is the voxel size past which a
             // vertex takes the flat fallback instead of working out its own climate.
             prog.Uniform("climateFadeBlocks", Math.Max(0f, ClimateFadeBlocks));
@@ -5647,17 +5664,38 @@ public class LodTerrainRenderer : IRenderer
             }
         }
 
-        if (uploadedSeasonMapVersion != seasonPages.Version && seasonPages.PageCount > 0)
+        // Only the live column reaches the GPU - two kilobytes rather than the whole 136 KiB
+        // store, because the column is a per-frame constant and only the row varies per vertex.
+        // The condition is therefore the COLUMN as well as the version: it moves 128 times a
+        // game year, and nothing is uploaded on the frames between.
+        int liveColumn = LodSeasonMapPages.ColumnFor(tints.SeasonRel);
+        if (seasonPages.PageCount > 0
+            && (uploadedSeasonColumn != liveColumn
+                || uploadedSeasonMapVersion != seasonPages.Version))
         {
-            var texture = new LoadedTexture(capi, 0, seasonPages.Width, seasonPages.Height);
-            UploadOwnTexture(seasonPages.Texels, SeasonMapsUnit, ref texture);
+            seasonPages.RefreshLiveColumn(liveColumn);
+
+            // A newly adopted page makes the table taller, so the LoadedTexture's stored size
+            // would disagree with the pixels and it has to be replaced. A column move keeps the
+            // size and updates in place.
+            bool resized = uploadedSeasonMapVersion != seasonPages.Version
+                || seasonColumnTexture == null;
+            LoadedTexture texture = resized
+                ? new LoadedTexture(capi, 0,
+                    seasonPages.LiveColumnWidth, seasonPages.LiveColumnHeight)
+                : seasonColumnTexture!;
+            UploadOwnTexture(seasonPages.LiveColumnTexels, SeasonColumnUnit, ref texture);
             if (texture.TextureId > 0)
             {
-                LoadedTexture? retiredSeason = seasonMapTexture;
-                seasonMapTexture = texture;
+                if (!ReferenceEquals(texture, seasonColumnTexture))
+                {
+                    LoadedTexture? retiredSeason = seasonColumnTexture;
+                    seasonColumnTexture = texture;
+                    try { retiredSeason?.Dispose(); }
+                    catch { /* the replacement is already live; retirement is best effort */ }
+                }
+                uploadedSeasonColumn = liveColumn;
                 uploadedSeasonMapVersion = seasonPages.Version;
-                try { retiredSeason?.Dispose(); }
-                catch { /* the replacement is already live; retirement is best effort */ }
             }
         }
 
@@ -6320,8 +6358,9 @@ public class LodTerrainRenderer : IRenderer
             target.BindTexture2D("climateField", climateFieldTexture.TextureId, ClimateFieldUnit);
         if (climateMapTexture != null)
             target.BindTexture2D("climateMaps", climateMapTexture.TextureId, ClimateMapsUnit);
-        if (seasonMapTexture != null)
-            target.BindTexture2D("seasonMaps", seasonMapTexture.TextureId, SeasonMapsUnit);
+        if (seasonColumnTexture != null)
+            target.BindTexture2D("seasonColumn", seasonColumnTexture.TextureId,
+                SeasonColumnUnit);
     }
 
     void DrawLegacyWater()

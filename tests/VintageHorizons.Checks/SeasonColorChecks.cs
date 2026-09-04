@@ -1,3 +1,6 @@
+using Vintagestory.API.Common;
+using Vintagestory.API.MathTools;
+
 namespace VintageHorizons.Checks;
 
 /// <summary>
@@ -21,6 +24,75 @@ public static class SeasonColorChecks
         PaddingIsSkipped(c);
         ChannelsComeOutRedFirst(c);
         UnusableMapsAreRefused(c);
+        TheLiveColumnMatchesTheWholeStore(c);
+    }
+
+    /// <summary>
+    /// The shader now reads a two-kilobyte table holding only the column of the year this frame
+    /// draws from, instead of a scattered texel out of the whole 136 KiB store. That is a
+    /// performance change and must not be a visual one, so the assertion is exact equality:
+    /// every page, every row, the same packed texel the full store holds at that column.
+    ///
+    /// The layout is transposed on the way - 16 rows across, one page per scanline down, so a
+    /// page's rows share a cache line - which is exactly the kind of swap that draws another
+    /// page's colours while still looking plausible.
+    /// </summary>
+    static void TheLiveColumnMatchesTheWholeStore(Check c)
+    {
+        const int w = LodSeasonMapPages.PageWidth;
+        const int h = LodSeasonMapPages.PageHeight;
+
+        // Every texel distinct, so a transposed or off-by-one read cannot coincide with a
+        // correct one: page, row and column each move a different byte.
+        Block PageBlock(int page)
+        {
+            var pixels = new int[w * h];
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++) pixels[y * w + x] = (page << 16) | (y << 8) | (x >> 1);
+            }
+            return new Block
+            {
+                SeasonColorMapResolved = new ColorMap
+                {
+                    Pixels = pixels,
+                    OuterSize = new Size2i(w, h),
+                    Padding = 0,
+                    ExtraFlags = 0,
+                },
+            };
+        }
+
+        var pages = new LodSeasonMapPages();
+        var blocks = new List<Block?> { PageBlock(1), PageBlock(2), PageBlock(3) };
+        c.True(pages.Adopt(blocks), "three synthetic seasonal maps are adopted");
+        c.Eq(3, pages.PageCount, "and each becomes its own page");
+        c.Eq(h, pages.LiveColumnWidth, "the live table is one row per texel across");
+        c.Eq(3, pages.LiveColumnHeight, "and one page per scanline down");
+
+        foreach (int column in new[] { 0, 1, 63, 64, 127 })
+        {
+            c.True(pages.RefreshLiveColumn(column), $"column {column} is a fresh extraction");
+            c.False(pages.RefreshLiveColumn(column), "and asking twice does no work");
+            for (int page = 0; page < pages.PageCount; page++)
+            {
+                for (int row = 0; row < h; row++)
+                {
+                    c.Eq(pages.Texels[page * w * h + row * w + column],
+                        pages.LiveColumnTexels[page * h + row],
+                        $"page {page} row {row} at column {column} is the store's own texel");
+                }
+            }
+        }
+
+        // A page adopted later makes the table taller, and the renderer replaces the texture on
+        // exactly this signal. If the extraction did not notice, the new page would draw
+        // whatever the old buffer's tail happened to hold.
+        c.True(pages.Adopt(new List<Block?> { PageBlock(4) }), "a fourth map is adopted");
+        c.Eq(4, pages.LiveColumnHeight, "the live table grows with it");
+        c.True(pages.RefreshLiveColumn(63), "and the same column is extracted again");
+        c.Eq(pages.Texels[3 * w * h + 5 * w + 63], pages.LiveColumnTexels[3 * h + 5],
+            "so the new page's rows are real rather than left over");
     }
 
     /// <summary>A map whose every pixel encodes its own column, so the average IS the column.</summary>

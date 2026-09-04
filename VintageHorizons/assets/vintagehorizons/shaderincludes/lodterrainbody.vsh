@@ -187,8 +187,11 @@ uniform vec4 tintPages[TINT_SLOTS];
 // autumn turn the sixteen rows run from clearly green to clearly yellow, which is what makes a
 // forest turn unevenly. Distant terrain averages them on purpose - one distant pixel covers many
 // blocks (G47) - so both are carried and blended by the voxel's own size.
-uniform sampler2D seasonMaps;
-uniform float seasonRel;
+// Only the column of the year this frame draws from: 16 rows per page, at most 32 pages, so
+// two kilobytes rather than the whole 136 KiB store. The column is a per-frame constant and
+// only the ROW varies per vertex, so this is everything any vertex can reach - and it fits in
+// texture cache, which the full map does not. Rebuilt on the CPU when the column moves.
+uniform sampler2D seasonColumn;
 uniform float leafSeasonVariation;
 
 // The voxel size at which the per-position seasonal variation reaches zero, in blocks.
@@ -201,6 +204,17 @@ uniform float leafSeasonVariation;
 // At 2 only level 0 carries it, where one voxel is one block and the noise means exactly what
 // it means in vanilla.
 uniform float leafSeasonFadeBlocks;
+
+// MEASUREMENT INSTRUMENT, not a look setting. Non-zero replaces the engine's value noise with
+// a cheap position hash of similar spread, leaving the scattered seasonMaps fetch and the whole
+// blend exactly as they are.
+//
+// It exists to answer one question the feature's total cost cannot: of the frame time the
+// per-tree variation spends, how much is the NOISE and how much is the FETCH. Baking the row
+// into the mesh removes only the first, so if that half is small there is nothing to bake for.
+// The picture it draws is wrong on purpose - the rows are a hash, not the game's - so this is
+// session-only and never saved. See `.vhtint leafcheap`.
+uniform int leafSeasonCheapRow;
 
 // The voxel size, in blocks, past which a vertex stops asking for its own climate and takes
 // the flat fallback instead. Zero means never - every level pays.
@@ -247,6 +261,10 @@ vec2 climateCell(int cellX, int cellZ)
 // The ROW is reproduced per vertex. The COLUMN JITTER is not, and that is the whole difference
 // between this costing two value noises and four.
 //
+// Dropping the jitter leaves the column a per-frame constant, which is why there is no column
+// axis here at all: the CPU takes it at the mean and uploads only that column's rows. See
+// LodSeasonMapPages.LiveColumnTexels.
+//
 // They are not equally worth their price. The row is a choice between sixteen colours that
 // during the autumn turn run from clearly green to clearly yellow - it is what makes a wood
 // turn unevenly, and it is the variation that is visible at LOD range. The jitter moves the
@@ -262,19 +280,30 @@ vec2 climateCell(int cellX, int cellZ)
 //
 // Nearest on both axes: a row is a choice, not a gradient, and interpolating between two rows
 // would draw a colour the map does not contain.
-const float MEAN_COLUMN_JITTER = 1.0 / 40.0;   // b averages 1.0 of its 0..2 range
-
 vec3 seasonAt(int page, vec3 p, bool leaves)
 {
-    float rowNoise = leaves
-        ? (valuenoise(p / 6.0) + valuenoise(p / 2.0) - 0.55) * 1.25
-        : (valuenoise(p / 24.0) + valuenoise(p / 12.0) - 0.55) * 1.25;
+    float rowNoise;
+    if (leafSeasonCheapRow != 0)
+    {
+        // A row that still varies across space at roughly the leaf noise's own scale, so the
+        // texelFetch below stays as scattered as it really is, for about five instructions
+        // instead of twelve perm() calls. Quantised to four blocks for the same reason: a
+        // per-vertex hash would scatter the fetch MORE than the real thing and understate what
+        // baking could win, which is the safe direction for this measurement to err in.
+        vec3 cell = floor(p * 0.25);
+        rowNoise = fract(dot(cell, vec3(0.1031, 0.0973, 0.1249)) * 13.0);
+    }
+    else
+    {
+        rowNoise = leaves
+            ? (valuenoise(p / 6.0) + valuenoise(p / 2.0) - 0.55) * 1.25
+            : (valuenoise(p / 24.0) + valuenoise(p / 12.0) - 0.55) * 1.25;
+    }
 
-    // Depends on uniforms alone, so it costs nothing per vertex.
-    float rel = clamp(seasonRel + MEAN_COLUMN_JITTER, 0.01, 0.99);
-    int column = clamp(int(rel * 128.0), 0, 127);
+    // Nearest, not interpolated: a row is a choice, and blending two of them would draw a
+    // colour the map does not contain.
     int row = clamp(int(rowNoise * 16.0), 0, 15);
-    return texelFetch(seasonMaps, ivec2(column, page * 16 + row), 0).rgb;
+    return texelFetch(seasonColumn, ivec2(row, page), 0).rgb;
 }
 
 // One climate map page, bilinear. The engine's CPU path truncates to a whole texel; this

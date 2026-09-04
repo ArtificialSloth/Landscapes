@@ -36,15 +36,86 @@ internal sealed class LodSeasonMapPages
     /// <summary>The base game ships seventeen; the tint table cannot hold more than its slots.</summary>
     public const int MaxPages = 32;
 
+    /// <summary>
+    /// The mean of the engine's column jitter, which is what the mod takes the column at.
+    ///
+    /// colormap.vsh moves the year by `b/40`, b being a value noise in 0..2, so the mean is
+    /// 1/40. Reproducing the jitter itself would cost two more value noises per vertex to
+    /// move the year by at most three columns of 128, and the flat colour this one is blended
+    /// against is integrated over the same range centred on this value - so taking the mean
+    /// also puts the two ends of that blend at the same point in the year.
+    /// </summary>
+    public const float MeanColumnJitter = 1f / 40f;
+
     readonly List<ColorMap> pages = new();
     readonly Dictionary<ColorMap, int> pageOf = new();
     int[] texels = Array.Empty<int>();
+    int[] liveColumn = Array.Empty<int>();
+    int liveColumnIndex = -1;
+    int liveColumnVersion = -1;
 
     public int PageCount => pages.Count;
     public int[] Texels => texels;
     public int Width => PageWidth;
     public int Height => Math.Max(1, pages.Count) * PageHeight;
     public int Version { get; private set; }
+
+    /// <summary>
+    /// The column of the year the shader draws from, from the engine's own season fraction.
+    ///
+    /// On the CPU rather than in the shader because it is the same value for every vertex in
+    /// the frame - see <see cref="LiveColumnTexels"/> for why that matters.
+    /// </summary>
+    public static int ColumnFor(float seasonRel)
+    {
+        float rel = Math.Clamp(seasonRel + MeanColumnJitter, 0.01f, 0.99f);
+        return Math.Clamp((int)(rel * PageWidth), 0, PageWidth - 1);
+    }
+
+    /// <summary>
+    /// Just the column the shader can actually reach this frame: 16 rows per page, no more
+    /// than <see cref="MaxPages"/> of them, so at most 512 texels - two kilobytes.
+    ///
+    /// The whole seasonal store is 136 KiB and a vertex fetched a scattered texel out of it,
+    /// which measured 14 microseconds of the feature's 35 at the bench viewpoint. But the
+    /// COLUMN is the point in the year, and that is one value for the entire frame - only the
+    /// ROW varies per vertex. So everything every vertex can possibly read is these two
+    /// kilobytes, which fits in texture cache instead of missing out of a 136 KiB map.
+    ///
+    /// Laid out row-across, page-down so that one page's sixteen rows share a scanline: the
+    /// row is what varies between neighbouring vertices, the page is fixed per block type.
+    ///
+    /// Rebuilt when the column moves, which is 128 times a game year, or when a page is
+    /// adopted. No mesh is touched either way.
+    /// </summary>
+    public int[] LiveColumnTexels => liveColumn;
+    public int LiveColumnWidth => PageHeight;
+    public int LiveColumnHeight => Math.Max(1, pages.Count);
+
+    /// <summary>Fills <see cref="LiveColumnTexels"/>. True when it changed.</summary>
+    public bool RefreshLiveColumn(int column)
+    {
+        column = Math.Clamp(column, 0, PageWidth - 1);
+        int wanted = PageHeight * Math.Max(1, pages.Count);
+        if (column == liveColumnIndex && Version == liveColumnVersion
+            && liveColumn.Length == wanted)
+        {
+            return false;
+        }
+        if (liveColumn.Length != wanted) liveColumn = new int[wanted];
+        for (int page = 0; page < pages.Count; page++)
+        {
+            int from = page * PageWidth * PageHeight + column;
+            int into = page * PageHeight;
+            for (int row = 0; row < PageHeight; row++)
+            {
+                liveColumn[into + row] = texels[from + row * PageWidth];
+            }
+        }
+        liveColumnIndex = column;
+        liveColumnVersion = Version;
+        return true;
+    }
 
     public bool TryPageOf(ColorMap? map, out int page)
     {

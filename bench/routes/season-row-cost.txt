@@ -1,0 +1,41 @@
+# What the per-tree seasonal variation actually spends its frame time on.
+#
+# The feature costs about 10 fps at level 0 (owner-measured: 300 with it on at one level,
+# 310 with it off). That bill has two items and they have different futures:
+#
+#   1. Two of the engine's value noises per vertex, to pick which of sixteen rows of the
+#      seasonal colour map belongs at this position.
+#   2. One scattered texelFetch into the 136 KiB paged seasonal map, at that row.
+#
+# Baking the row into the mesh at build time can remove ONLY the first. The row is a pure
+# function of world position - the season lives in the COLUMN, which is a uniform - so a
+# baked row needs no rebuild when the season moves, which is the objection dev/TODO.md
+# raises against baking and which applies to a baked colour rather than a baked row.
+#
+# So the number that decides whether that work is worth starting is the split, and no
+# switch on the shipped build reports it: `.vhtint leaves off` removes both items at once.
+# `.vhtint leafcheap on` is the instrument - a cheap position hash in place of the noise,
+# with the fetch left as scattered as it really is.
+#
+#   s0 -> s1  is the noise.        This is the ceiling for baking the row.
+#   s1 -> s2  is the fetch.        Only a baked COLOUR could reach this, at a rebuild cost.
+#   s0 -> s2  is the whole feature, and has to come out near the owner's 10 fps or the
+#             viewpoint is not the one the number came from.
+#
+#   pwsh -File scripts/bench-windows.ps1 -Label season-row-split `
+#     -Route bench/routes/season-row-cost.txt `
+#     -Settle 20 -SettleMax 45 -Measure 10 -Laps 1 -WarmupLaps 0 -GpuStats -ChunkMask
+#
+# -ChunkMask is not optional: without it the harness pins the mask OFF and measures the
+# radial handoff path rather than the one the mod ships. See G149.
+#
+# Same viewpoint and camera as regression-127-194.txt, so these numbers sit beside that
+# sweep's. Nothing here re-meshes - every switch is a uniform - so the settle window is
+# measuring the same geometry throughout, and s3 has to return to s0 or the run is drift.
+
+warm1        512020  190  512010    0   -8
+warm2        512020  190  512010    0   -8
+s0-base      512020  190  512010    0   -8
+s1-cheaprow  512020  190  512010    0   -8  ! .vhtint leafcheap on
+s2-leavesoff 512020  190  512010    0   -8  ! .vhtint leaves off
+s3-restore   512020  190  512010    0   -8  ! .vhtint leafcheap off; .vhtint leaves on

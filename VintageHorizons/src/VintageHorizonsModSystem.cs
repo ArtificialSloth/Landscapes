@@ -9,8 +9,16 @@ namespace VintageHorizons;
 
 public class VintageHorizonsConfig
 {
-    /// <summary>0 = unlimited.</summary>
-    public int FarViewDistanceCap = 0;
+    /// <summary>
+    /// Hard cap on how far cached terrain is drawn, in blocks. 0 = unlimited.
+    ///
+    /// A fresh install starts at 4,096 rather than unlimited. Unlimited draws every cached
+    /// section a player has ever collected, so the cost of a first launch is set by how much
+    /// world happens to be on disk rather than by anything the mod chose, and the mask's
+    /// benefit scales with the vanilla render distance underneath it. An existing config file
+    /// carries its own value - including a saved 0 - so this changes new installs only.
+    /// </summary>
+    public int FarViewDistanceCap = 4096;
 
     /// <summary>Legacy first threshold used to migrate configs without LodThresholds.</summary>
     public int DetailDistance = 512;
@@ -2233,6 +2241,8 @@ public class VintageHorizonsModSystem : ModSystem
                 + "'.vhtint field on|off' switches per-area distant climate. "
                 + "'.vhtint leaves on|off' switches per-tree seasonal variation. "
                 + "'.vhtint leafwide on|off' spends it out to level 2 instead of level 0. "
+                + "'.vhtint leafcheap on|off' prices the noise alone - WRONG COLOURS, for a "
+                + "measurement only. "
                 + "Written to the client log, which is the only copy long enough to read.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("blockCode"),
                       capi.ChatCommands.Parsers.OptionalBool("on"))
@@ -2341,6 +2351,29 @@ public class VintageHorizonsModSystem : ModSystem
                         + "measured view meant 97 of 110 drawn sections paying for it instead "
                         + "of 31 - level 1 alone had more sections in view than level 0. "
                         + "Needs .vhtint leaves on to show at all.");
+                }
+
+                // The instrument for whether baking the season row is worth building. Not
+                // saved and not restored: it draws rows the game would never pick, so the only
+                // safe lifetime for it is the session it was typed in.
+                if (!args.Parsers[0].IsMissing
+                    && ((string)args[0]).Equals("leafcheap", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (renderer == null)
+                        return TextCommandResult.Success(
+                            "[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    if (!args.Parsers[1].IsMissing)
+                        renderer.LeafSeasonCheapRow = (bool)args[1];
+                    return TextCommandResult.Success(
+                        "[VintageHorizons] leaf season row "
+                        + (renderer.LeafSeasonCheapRow
+                            ? "CHEAP HASH - the colours are wrong on purpose"
+                            : "the engine's own noise")
+                        + ". The variation costs two value noises per vertex plus one scattered "
+                        + "fetch into the seasonal map. On keeps the fetch and drops the noise, "
+                        + "so the difference between the two is what baking the row into the "
+                        + "mesh could win, and the rest is what only a baked COLOUR could. "
+                        + "Session-only: it is never saved and a restart clears it.");
                 }
 
                 // Aim first, feet second. A player comparing cached ground against the game's

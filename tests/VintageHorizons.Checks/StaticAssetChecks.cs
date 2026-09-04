@@ -190,11 +190,15 @@ public static class StaticAssetChecks
         c.Eq(128, LodSeasonMapPages.PageWidth, "a seasonal map is 128 columns of the year");
         c.Eq(16, LodSeasonMapPages.PageHeight, "and 16 rows of per-position variation");
         c.Eq(255, LodSeasonMapPages.NoPage, "255 means this slot has no paged seasonal map");
-        c.True(vertex.Contains("ivec2(column, page * 16 + row)", StringComparison.Ordinal),
-            "the shader stacks seasonal pages 16 rows apart, as the C# writes them");
-        c.True(vertex.Contains("int column = clamp(int(rel * 128.0), 0, 127);",
+        // Only the live column is uploaded, so the shader has no column axis: 16 rows across,
+        // one page per scanline down. Getting these two out of step would read another page's
+        // rows, which is a wrong colour rather than a crash.
+        c.True(vertex.Contains("texelFetch(seasonColumn, ivec2(row, page), 0)",
                 StringComparison.Ordinal),
-            "and indexes 128 columns");
+            "the shader reads a row and a page out of the live column table");
+        c.False(vertex.Contains("uniform sampler2D seasonMaps;", StringComparison.Ordinal)
+            || vertex.Contains("uniform float seasonRel;", StringComparison.Ordinal),
+            "and no longer samples the whole 136 KiB store, nor needs the season fraction");
 
         // The slot table's page row carries three things and the shader reads each from its own
         // channel. Swapping two would send a slot to another map's page.
@@ -237,14 +241,19 @@ public static class StaticAssetChecks
         // LodSeasonColor centres its average on: this colour and that one are mixed together, so
         // a disagreement here would put the two ends of the blend at different points in the
         // year and the terrain's colour would depend on how coarse its voxels were.
-        c.True(vertex.Contains("const float MEAN_COLUMN_JITTER = 1.0 / 40.0;",
-                StringComparison.Ordinal),
-            "the shader takes the column at the jitter's mean");
-        c.True(vertex.Contains("clamp(seasonRel + MEAN_COLUMN_JITTER, 0.01, 0.99)",
-                StringComparison.Ordinal),
-            "and applies it where the engine applies b/40");
-        c.Eq(LodSeasonColor.MaxColumnJitter / 2f, 1f / 40f,
-            "and that mean is the centre of the range LodSeasonColor integrates over");
+        c.Eq(LodSeasonColor.MaxColumnJitter / 2f, LodSeasonMapPages.MeanColumnJitter,
+            "the column is taken at the centre of the range LodSeasonColor integrates over");
+        // The column moved to the CPU when the table shrank to one column, so the arithmetic
+        // that used to be pinned in the shader is pinned here instead. Same clamps, same
+        // truncation, same 128 columns - a drift would move the whole world's season.
+        // The YEAR FRACTION is clamped to 0.01..0.99 before it becomes a column, so the ends
+        // are 1 and 126 - the 0..127 clamp after it never binds. Pinned at the values the
+        // shader actually produced rather than the round ones, because those are what four
+        // accepted builds drew.
+        c.Eq(1, LodSeasonMapPages.ColumnFor(-1f), "the year fraction clamps low at 0.01");
+        c.Eq(126, LodSeasonMapPages.ColumnFor(1f), "and high at 0.99");
+        c.Eq((int)((0.5f + 1f / 40f) * 128f), LodSeasonMapPages.ColumnFor(0.5f),
+            "and mid-year lands where the engine's own jittered fraction does");
         c.False(vertex.Contains("float b = valuenoise(p)", StringComparison.Ordinal),
             "so the two noises only the jitter needed are not evaluated per vertex");
 
@@ -2163,6 +2172,13 @@ public static class StaticAssetChecks
         c.True(dialog.Contains("const int MaxDrawDistance = 32768", StringComparison.Ordinal)
             && dialog.Contains("const int DrawDistanceStep = 512", StringComparison.Ordinal),
             "the cached draw-distance slider stops at 32,768 in 512-block increments");
+        // Defaults has to restore what a fresh install actually draws. They were different
+        // numbers - the button said 32,768 while a new config said unlimited - so pressing it
+        // changed the setting rather than resetting it.
+        c.True(dialog.Contains("const int DefaultDrawDistance = 4096", StringComparison.Ordinal)
+            && dialog.Contains("pendingFarCap = DefaultDrawDistance;", StringComparison.Ordinal)
+            && mod.Contains("public int FarViewDistanceCap = 4096;", StringComparison.Ordinal),
+            "a new install and the Defaults button agree on a 4,096-block cached draw distance");
         c.True(dialog.Contains("ToString(\"N0\", CultureInfo.InvariantCulture)", StringComparison.Ordinal),
             "the config window displays full block values instead of abbreviated thousands");
         // Every optional visual feature has to survive a restart, which means it has to exist
@@ -2224,6 +2240,11 @@ public static class StaticAssetChecks
             "and each feature explains itself on hover");
         c.True(dialog.Contains("AddDropDown(PresetCodes, PresetNames", StringComparison.Ordinal),
             "the presets are a drop-down carrying the current combination as its selection");
+        c.True(dialog.Contains("composer.AddStaticText(\"Cost\", CairoFont.WhiteDetailText()",
+                StringComparison.Ordinal)
+            && dialog.Contains("ElementBounds.Fixed(SwitchX - 110, 358, 100, 22)",
+                StringComparison.Ordinal),
+            "the per-row cost words carry a column heading over the same box they use");
 
         // Far biome colour is the far half of ONE shader threshold, so it cannot be on with
         // the near half off. Both directions of that are enforced where the switch is written,

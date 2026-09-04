@@ -112,6 +112,12 @@ public static class Program
             return CutoutField.Run(args);
         }
 
+        // And again: it reports what it costs to darken submerged ground by its water depth.
+        if (string.Equals(only, "waterdepthfield", StringComparison.OrdinalIgnoreCase))
+        {
+            return WaterDepthField.Run(args);
+        }
+
         Console.WriteLine();
         Console.WriteLine("  VintageHorizons fast checks");
         Console.WriteLine("  game: " + GameAssemblies.GamePath);

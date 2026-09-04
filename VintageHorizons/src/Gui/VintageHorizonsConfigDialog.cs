@@ -27,6 +27,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     const int MaxDrawDistance = 32768;
     const int DrawDistanceStep = 512;
 
+    /// <summary>
+    /// What Defaults restores, and the same number a fresh install starts at - see
+    /// <see cref="VintageHorizonsConfig.FarViewDistanceCap"/>. The two have to agree or
+    /// Defaults means something the mod has never done.
+    /// </summary>
+    const int DefaultDrawDistance = 4096;
+
     const double Width = 800;
     const double Height = 700;
     const double Margin = 30;
@@ -171,9 +178,15 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             ElementBounds.Fixed(635, 300, 130, 22), "draw-distance-label");
 
         composer.AddStaticText("Visual features", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, 344, 300, 30));
+            ElementBounds.Fixed(Margin, 344, 190, 30));
         composer.AddDropDown(PresetCodes, PresetNames, PresetIndex(), OnPresetSelected,
-            ElementBounds.Fixed(Width - Margin - 224, 342, 224, 32), "preset");
+            ElementBounds.Fixed(Margin + 190, 342, 224, 32), "preset");
+
+        // The cost words are a column, so they get a column heading. It sits over the same box
+        // the words themselves use and shares their right edge, because a right-aligned word
+        // under a left-aligned heading does not read as one column.
+        composer.AddStaticText("Cost", CairoFont.WhiteDetailText(),
+            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 110, 358, 100, 22));
 
         double y = 386;
         foreach (VisualRow row in Rows)
@@ -287,7 +300,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         Array.Copy(LodWorld.DefaultLevelThresholds, pendingThresholds,
             pendingThresholds.Length);
-        pendingFarCap = MaxDrawDistance;
+        pendingFarCap = DefaultDrawDistance;
         pendingVisuals = LodVisualSettings.Default;
 
         scale?.SetValues(pendingThresholds);
