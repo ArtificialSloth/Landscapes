@@ -626,6 +626,16 @@ void main()
     int band = int(vertexColor.a * 255.0 + 0.5) / TINT_SLOTS;  // 0 opaque, 1 water, 2 thin
     bool translucent = band > 0;
 
+    // WATER IS NOT SHADED BY ITS NORMAL, because vanilla's is not - chunkliquid.fsh has no
+    // normal term at all, which the comment above already says. It made no difference while
+    // cached water was a flat plane and every normal was the same, and it made a very visible
+    // one the moment the surface started carrying vanilla's wave: a tilted quad picked up a
+    // different shade from a flat one, and the boundary between them drew a bright crease.
+    // Measured off an owner screenshot at a chunk edge, a 20-pixel band went from luma 29 to
+    // 49 and back - a 70% step across three rows, where the geometry either side is the same
+    // water at the same depth.
+    if (band == 1) shade = 1.0;
+
     vec3 albedo = vertexColor.rgb * tint;
     float outAlpha = band == 2 ? THIN_ALPHA : (band == 1 ? WATER_ALPHA : 1.0);
 

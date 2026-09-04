@@ -897,7 +897,10 @@ public class LodTerrainRenderer : IRenderer
         }
     }
 
-    float waterClarity = 16f;
+    // Owner-reported twice now: vanilla still goes dark sooner than we do. 16 blocks was the
+    // first guess with both light paths modelled; 10 keeps the shallows close and steepens the
+    // middle, where the measured gap was - vanilla luma 40 against our 63 at mid depth.
+    float waterClarity = 10f;
 
     /// <summary>
     /// How many blocks either side of a 32-block vanilla chunk plane keep one water quad per

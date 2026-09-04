@@ -2359,6 +2359,13 @@ public static class StaticAssetChecks
         c.False(rend.Contains("vhWaveStart", StringComparison.Ordinal),
             "and not to the near-suppression floor, which is zero by default");
 
+        // Vanilla's liquid shader has no normal term at all. Ours shared the ground's, which
+        // was invisible while cached water was one flat plane and drew a bright crease the
+        // moment the surface started to tilt: a 20-pixel band measured luma 29 -> 49 -> 31
+        // across a chunk edge with the same water at the same depth either side.
+        c.True(water.Contains("if (band == 1) shade = 1.0;", StringComparison.Ordinal),
+            "water takes no shading from its normal, as vanilla's liquid shader takes none");
+
         // Vanilla's foam is a shallow-water term; substituting zero depth pinned it on over
         // every ocean and is most of why cached water measured 1.7x vanilla's across a seam.
         c.True(water.Contains("uniform float waterShallowness;", StringComparison.Ordinal)

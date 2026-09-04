@@ -84,7 +84,7 @@ public class VintageHorizonsConfig
     public float WaterMaxAlpha = 0.7f;
 
     /// <summary>Blocks of water the view ray survives. See LodTerrainRenderer.WaterClarity.</summary>
-    public float WaterClarity = 16f;
+    public float WaterClarity = 10f;
 
     /// <summary>
     /// Blocks either side of a vanilla chunk plane where water keeps one quad per block, so it
