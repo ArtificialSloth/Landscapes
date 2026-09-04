@@ -3,8 +3,9 @@
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
 **Status date:** 2026-09-03
-**Mod version:** `0.4.0`, built, verified, packaged and copy-installed; **not yet seen in game**.
-Promoted from 0.3.197 at owner direction and source-identical to it. 0.3.183 is **human-tested
+**Mod version:** `0.4.1`, built, verified, packaged and copy-installed; **not yet seen in game**.
+0.4.0 was the milestone promotion of 0.3.197 at owner direction; 0.4.1 reverts one constant
+in it, restoring Close Biome Colors to L0-L2 (G151). 0.3.183 is **human-tested
 and accepted** ("Much better, Excellent!") and carries the substance of the colour work below.
 0.3.185 is **human-tested and accepted** as well, carrying the retired height table and remembered
 climate. 0.3.193 is **human-tested and accepted** on its numbers - the owner measured the seasonal
@@ -184,9 +185,12 @@ same values now save through the same path, so the window and the commands canno
 across a restart; the numeric dials deliberately do not save, because coarsening a typed
 fraction to on/off would silently change it.
 
-Close and Far biome colours are two ends of one shader threshold, not two independent switches,
-so Far implies Close. Far defaults **off**: it is the most expensive single thing the renderer
-can be asked to do, and not paying for it is most of what this work recovered.
+Close (L0-L2) and Far (L3-L6) biome colours are two ends of one shader threshold, not two
+independent switches, so Far implies Close. Far defaults **off**: it is the most expensive single
+thing the renderer can be asked to do, and not paying for it is most of what this work recovered.
+Close was briefly L0 alone in 0.3.197-0.4.0, because the settings window's description was
+treated as a specification rather than as a label; that halved the range and is reverted in
+0.4.1 (G151).
 
 **Unproven:** the settings window has never been seen running, and the recovered frame time has
 not been re-measured in the owner's own scene. See `dev/TODO.md`.

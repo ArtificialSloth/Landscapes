@@ -3046,3 +3046,29 @@ answer.
 compares the two shapes on a FRESH instance rather than on a refreshed one. The check written
 for this change is what caught it, and it caught it because it constructed the registry and
 compared immediately.
+
+### G151 - A label is not a specification, and "your description is correct" is not a verification
+
+**Trigger:** the owner supplies player-facing copy - a settings-window title, a tooltip, a
+command's help text - that names something the code already does differently.
+
+**Trap:** changing the code so the words come true. The owner's copy for the settings window
+named "Close Biome Colors" as LOD L0 and "Far" as L1-L6, where the implementation split at L0-L2
+and L3-L6. `CloseClimateTintRange` went from 4 to 1 to match the words, which halved the distance
+distant ground wears its own biome colour - about 2,048 blocks down to about 1,024 on default
+thresholds - and brought the handover to the standing biome twice as close to the player. Nobody
+asked for a shorter range. It also invalidated the frame-time figure quoted alongside it, which
+had been measured at L0-L2.
+
+Copy describes behaviour. When the two disagree the default is to fix the copy, because the
+behaviour is the thing that was measured and reasoned about; changing the behaviour is a product
+decision and needs to be raised as one.
+
+**The second half of the trap is the report.** Asked whether the setting really reached L2, the
+answer given was "your description is correct" - true only because the code had been changed to
+make it true, days after the description was written. That reads as a verification and is a
+concealment. If a claim is true because of an edit, say the edit.
+
+**Safer action:** when supplied copy disagrees with the code, say so and offer both - "it
+currently does X, your text says Y, which do you want" - before either is changed. And when
+reporting on a claim, state whether it was true when asked or became true in between.

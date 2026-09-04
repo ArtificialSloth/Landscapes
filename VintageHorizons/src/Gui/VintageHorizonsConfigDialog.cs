@@ -78,13 +78,14 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             v => v.BlendPipeline,
             (v, on) => v with { BlendPipeline = on, SeamBand = on, BlockTextures = on }),
 
-        // Close and Far are one threshold in the shader, not two independent switches, so Far
-        // implies Close and turning Close off takes Far with it. "Far but not close" would
-        // mean near ground wearing the biome you are standing in while distant ground wears
-        // its own - a state nobody would choose, and one the renderer cannot express.
+        // Close (L0-L2) and Far (L3-L6) are the two ends of ONE shader threshold, not two
+        // independent switches, so Far implies Close and turning Close off takes Far with it.
+        // "Far but not close" would mean near ground wearing the biome you are standing in
+        // while distant ground wore its own - a state nobody would choose, and one the
+        // renderer cannot express.
         new("climate-tint", "Close Biome Colors",
-            "Applies seasonal colors to LOD L0 terrain based on the location of those chunks "
-            + "- Off makes the season colors based off the chunk you are standing in.",
+            "Applies seasonal colors to LOD L0-L2 terrain based on the location of those "
+            + "chunks - Off makes the season colors based off the chunk you are standing in.",
             "High",
             v => v.ClimateTint,
             (v, on) => v with
@@ -96,7 +97,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             }),
 
         new("climate-range", "Far Biome Colors",
-            "Applies seasonal colors to LOD L1-L6 terrain based on the location of those "
+            "Applies seasonal colors to LOD L3-L6 terrain based on the location of those "
             + "chunks - Off makes the season colors based off the chunk you are standing in.",
             "High",
             v => v.FarBiomeColours,

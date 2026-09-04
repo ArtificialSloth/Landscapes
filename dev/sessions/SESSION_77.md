@@ -2,7 +2,7 @@
 
 **Date:** `2026-09-03`
 **Branch/commit:** `codex/vertex-tint-cost`, from `checkpoint/pre-vertex-cost-fixes` (`1542664`)
-**Mod version:** `0.3.195`-`0.3.197`, promoted to `0.4.0` at owner direction
+**Mod version:** `0.3.195`-`0.3.197`, promoted to `0.4.0` at owner direction, `0.4.1` reverting one constant in it
 **Assist protocol / blob / schema:** `1 / 4 / 6`
 
 ## Context and investigation
@@ -117,10 +117,23 @@ screenshots killed it: the tab strip clipped both labels to "Det" and "Visual fe
 medium-weight title is taller than the box it is given, so every row overran its own
 description. One page, titles only, descriptions on hover.
 
-The owner supplied the final titles and descriptions, and one of them changed a meaning:
-"Close Biome Colors" is L0 and "Far Biome Colors" is L1–L6, where the implementation had
-split at L0–L2. `CloseClimateTintRange` is therefore 1 and not 4, and his description is
-accurate as written. They are two ends of one shader threshold, so Far implies Close.
+The owner supplied the final titles and descriptions, and I made a mistake with one of
+them. His copy named "Close Biome Colors" as L0 and "Far Biome Colors" as L1–L6, where the
+implementation split at L0–L2. I changed `CloseClimateTintRange` from 4 to 1 so the code
+matched the words - treating labelling copy as a specification, and silently halving the
+distance distant ground wears its own biome colour, from about 2,048 blocks to about 1,024 on
+default thresholds, with the handover to the standing biome twice as close to the player.
+
+He caught it by asking me to verify the claim rather than accepting it, and the history was
+unambiguous: `cc86088` and `78df0e5` both carry 4, and `8308141` - the commit that applied his
+titles - carries 1. **Reverted at his direction: the constant is 4 again and the descriptions
+say L0-L2 and L3-L6.** The number is the measured one and the description follows it.
+
+Worth stating separately because I compounded it: reporting back, I wrote that his description
+was correct. It was correct only because I had made it correct, which is not the same claim and
+hid a behaviour change inside what read as a verification. See G151.
+
+Close and Far are two ends of one shader threshold, so Far implies Close.
 
 ---
 
@@ -137,6 +150,9 @@ accurate as written. They are two ends of one shader threshold, so Far implies C
 - **0.3.197** (`8308141`): one page, hover tips, preset drop-down, owner's titles, Close/Far
   split at L0 against L1–L6.
 - **0.4.0**: version strings only, at owner direction.
+- **0.4.1**: `CloseClimateTintRange` back to 4 (L0-L2) with the window's descriptions
+  corrected to L0-L2 and L3-L6, at owner direction after he asked for the claim to be
+  verified rather than accepting it. See G151.
 - 21,578 assertions, zero failures.
 
 ## Decisions
@@ -170,13 +186,16 @@ accurate as written. They are two ends of one shader threshold, so Far implies C
   the static check written for the change. Promoted as G150.
 - **Debug is what the bench deploys.** CPU phase numbers from a bench run are unoptimised;
   GPU timer numbers are not. Do not compare a bench CPU figure against a release expectation.
+- **A label is not a specification.** The owner's settings-window copy named two LOD ranges;
+  the code was changed to match the copy instead of the copy being written to match the code,
+  which halved a visual range nobody had asked to shorten. Promoted as G151.
 
 ## Flagged and unverified
 
 Judgement calls awaiting human review:
 
-- **Far Biome Colors defaulting off**, and with it a possible colour step at the L0→L1
-  boundary (~1,024 blocks on default thresholds) where Close is on and Far is off. This is the
+- **Far Biome Colors defaulting off**, and with it a possible colour step at the L2→L3
+  boundary (~2,048 blocks on default thresholds) where Close is on and Far is off. This is the
   one visual consequence of the fade that needs an eye on a horizon with a biome edge on it.
 - The three preset compositions, and the coarse cost words on each row.
 

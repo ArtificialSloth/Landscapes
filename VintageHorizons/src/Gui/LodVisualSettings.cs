@@ -43,17 +43,24 @@ internal readonly record struct LodVisualSettings(
         WaterEffects: true);
 
     /// <summary>
-    /// Biome colour on level 0 alone - one voxel, one block. The window calls this "Close
-    /// Biome Colors" and it is what <see cref="ClimateTint"/> buys on its own.
+    /// Biome colour out to four blocks per voxel - levels L0, L1 and L2. The window calls this
+    /// "Close Biome Colors" and it is what <see cref="ClimateTint"/> buys on its own.
     ///
-    /// The units are blocks per voxel, and the level is what actually matters: a section costs
-    /// the same per vertex whatever level it holds, so the bill is set by how many LEVELS pay
-    /// rather than by how much area they cover.
+    /// The units are blocks per voxel; the LEVEL is what actually matters, because a section
+    /// costs the same per vertex whatever level it holds, so the bill is set by how many levels
+    /// pay rather than by how much area they cover.
+    ///
+    /// It was briefly 1 - level 0 alone - which halved the distance distant ground wore its own
+    /// biome colour, from about 2,048 blocks to about 1,024 on default thresholds, and brought
+    /// the handover to the standing biome twice as close to the player. That was not a decision;
+    /// it was the settings window's description being treated as a specification. The number is
+    /// the measured one and the description follows it, not the other way round.
     /// </summary>
-    public const float CloseClimateTintRange = 1f;
+    public const float CloseClimateTintRange = 4f;
 
     /// <summary>
-    /// Every level works out its own biome colour - "Far Biome Colors", L1 to L6 on top of L0.
+    /// Every level works out its own biome colour - "Far Biome Colors", L3 to L6 on top of
+    /// L0-L2.
     /// Zero means the fade never applies. This is the 0.3.179-0.3.194 behaviour, and it is the
     /// single most expensive thing the renderer can be asked to do.
     /// </summary>

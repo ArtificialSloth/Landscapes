@@ -19,11 +19,12 @@ before touching this.
   the mechanism does not depend on the scene, but the number in his world is inference. **The
   tell: the same spot that read 285 fps on 0.3.194.**
 - **Far Biome Colors defaults off, and the colour step that implies is unexamined.** With Close
-  on and Far off, ground past the L0 boundary - about 1,024 blocks on default thresholds -
+  on and Far off, ground past the L2 boundary - about 2,048 blocks on default thresholds -
   wears the biome colour from where the player stands rather than its own. Whether that reads
   as a ring depends on how different the two biomes are. **The tell: stand where a biome edge
   crosses the horizon and compare Far on against Far off.** If it shows, the answer is a wider
-  Close range, not a wider fade: `LodVisualSettings.CloseClimateTintRange`.
+  Close range, not a wider fade: `LodVisualSettings.CloseClimateTintRange`. That constant was
+  briefly 1 (L0 alone) in 0.3.197-0.4.0 and is 4 again from 0.4.1; see G151 for why.
 - **The three preset compositions are a judgement call.** Balanced keeps the features paid by
   the fragments that show them and gives up the two paid by every vertex; that split follows
   the measurement, but which features a player would rather keep does not.

@@ -13,6 +13,18 @@ section is recaptured and can receive its texture slot, but the zero neighbour-e
 currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
 remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
 
+## [0.4.1] - 2026-09-03
+
+**Close Biome Colors covers LOD L0-L2 again, as it did before 0.3.197.** It was narrowed to L0
+alone in 0.3.197 because the settings window's own description said "L0 terrain", and the code
+was changed to match the description rather than the description written to match the code. The
+effect was to halve the distance distant ground wears its own biome colour - roughly 2,048 blocks
+down to 1,024 on default thresholds - and to bring the point where it hands over to the biome you
+are standing in twice as close. Nobody asked for that.
+
+The window now reads "L0-L2" and "L3-L6", which is what the renderer does and what the frame-time
+measurements were taken against.
+
 ## [0.4.0] - 2026-09-03
 
 Milestone promotion at owner direction. Source-identical to 0.3.197.
