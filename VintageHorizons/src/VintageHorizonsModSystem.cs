@@ -81,7 +81,10 @@ public class VintageHorizonsConfig
     public bool WaterDepthShading = true;
 
     /// <summary>How solid distant water may become. See LodTerrainRenderer.WaterMaxAlpha.</summary>
-    public float WaterMaxAlpha = 0.85f;
+    public float WaterMaxAlpha = 0.7f;
+
+    /// <summary>Blocks of water the view ray survives. See LodTerrainRenderer.WaterClarity.</summary>
+    public float WaterClarity = 16f;
 
     /// <summary>
     /// Draw even when another LOD mod is installed and switched on. The escape hatch for
@@ -248,6 +251,7 @@ public class VintageHorizonsModSystem : ModSystem
             FarViewDistanceCap = config.FarViewDistanceCap,
             WaterDepthShading = config.WaterDepthShading,
             WaterMaxAlpha = config.WaterMaxAlpha,
+            WaterClarity = config.WaterClarity,
             TextureSlotSourceReady = pipeline.TextureSlotsPrepared,
             BlendPipelineEnabled = config.BlendPipeline,
             OpaqueBackfaceCulling =
@@ -3054,7 +3058,7 @@ public class VintageHorizonsModSystem : ModSystem
         capi.ChatCommands.Create("vhwater")
             .WithDescription("How distant water meets the game's own. No argument reports the settings. "
                 + "off | a number of chunks | edge <chunks> | fresnel on|off | glint <0-1> | "
-                + "foam <0-1> | depth on|off | alpha <0-1>.")
+                + "foam <0-1> | depth on|off | alpha <0-1> | clarity <blocks>.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
                       capi.ChatCommands.Parsers.OptionalWord("value"))
             .HandleWith(args =>
@@ -3171,6 +3175,26 @@ public class VintageHorizonsModSystem : ModSystem
                             + renderer.DescribeWaterAbsorption()
                             + ". Written to the log too.");
 
+                    case "clarity":
+                        if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out float clarity))
+                        {
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] clarity {renderer.WaterClarity:0} blocks. "
+                                + "How far light gets back UP through the water to your eye. "
+                                + "The game's own light only models the sunlight going DOWN, one "
+                                + "level a block; the trip back is what its see-through surface "
+                                + "does per pixel and a shaded bed cannot. Smaller is murkier and "
+                                + "goes dark sooner. Rebuilds every loaded section.");
+                        }
+                        renderer.WaterClarity = clarity;
+                        SaveConfig();
+                        capi.Logger.Notification("[VintageHorizons] water depth shading: "
+                            + renderer.DescribeWaterAbsorption());
+                        return TextCommandResult.Success(
+                            $"[VintageHorizons] clarity {renderer.WaterClarity:0} blocks. "
+                            + "Rebuilding. " + renderer.DescribeWaterAbsorption());
+
                     case "alpha":
                         if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
                             System.Globalization.CultureInfo.InvariantCulture, out float maxAlpha))
@@ -3197,7 +3221,7 @@ public class VintageHorizonsModSystem : ModSystem
                             return TextCommandResult.Error(
                                 "[VintageHorizons] use: .vhwater off | a number of chunks | "
                                 + "edge <chunks> | fresnel on/off | glint 0-1 | foam 0-1 | "
-                                + "depth on/off | alpha 0-1");
+                                + "depth on/off | alpha 0-1 | clarity <blocks>");
                         }
 
                         renderer.WaterNearChunks = chunks;
@@ -3652,6 +3676,7 @@ public class VintageHorizonsModSystem : ModSystem
             config.ChunkMask = renderer.ChunkMaskRequested;
             config.WaterDepthShading = renderer.WaterDepthShading;
             config.WaterMaxAlpha = renderer.WaterMaxAlpha;
+            config.WaterClarity = renderer.WaterClarity;
             WriteVisualSettings(CurrentVisualSettings());
 
             // The requested state, never the effective one, for the same reason the mask

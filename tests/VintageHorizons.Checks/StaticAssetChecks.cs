@@ -2314,6 +2314,18 @@ public static class StaticAssetChecks
             && rend.Contains("levels[level] / open", StringComparison.Ordinal),
             "the absorption table is read from the world's own light ramp");
 
+        // Light makes TWO trips through the water and the engine only models one. Its
+        // illuminator knows the sunlight going down, a level a block; the trip back up to the
+        // eye is what vanilla's see-through surface does per pixel. Modelling only the first
+        // made the ramp far too gradual - measured against the owner's screenshots, vanilla's
+        // mid-depth water sat at luma 40 to our 63 while the shallows already matched at 76.
+        c.True(rend.Contains("float viewPath = MathF.Exp(-depth / clarity);", StringComparison.Ordinal)
+            && rend.Contains("table[depth] = Math.Clamp(sunlight * viewPath, 0f, 1f);",
+                StringComparison.Ordinal),
+            "and carries the return path through the water as well as the sunlight down");
+        c.True(rend.Contains("waterAbsorption = null;", StringComparison.Ordinal),
+            "changing the clarity drops the cached table rather than shading with a stale one");
+
         // Vanilla's foam is a shallow-water term; substituting zero depth pinned it on over
         // every ocean and is most of why cached water measured 1.7x vanilla's across a seam.
         c.True(water.Contains("uniform float waterShallowness;", StringComparison.Ordinal)

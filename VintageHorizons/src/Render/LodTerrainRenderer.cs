@@ -877,6 +877,28 @@ public class LodTerrainRenderer : IRenderer
     public float WaterMaxAlpha { get; set; } = 0.7f;
 
     /// <summary>
+    /// How many blocks of water the view ray travels before it has lost about two thirds of
+    /// what it carried, in blocks. Smaller is murkier and darkens with depth faster.
+    ///
+    /// Changing it rebuilds every resident mesh, because the factor is baked in when the mesh
+    /// is built. See `.vhwater clarity`.
+    /// </summary>
+    public float WaterClarity
+    {
+        get => waterClarity;
+        set
+        {
+            float wanted = Math.Clamp(value, 1f, 64f);
+            if (Math.Abs(waterClarity - wanted) < 0.01f) return;
+            waterClarity = wanted;
+            waterAbsorption = null;
+            RemeshAll();
+        }
+    }
+
+    float waterClarity = 16f;
+
+    /// <summary>
     /// Brightness under n blocks of water as a share of open air, read from the world's own
     /// ramp. Rebuilt only when the ramp or the maximum sun level changes, which is a world
     /// load rather than a frame.
@@ -892,11 +914,29 @@ public class LodTerrainRenderer : IRenderer
         float open = levels[sky];
         if (open <= 0f) return null;
 
+        // TWO paths through the water, not one. The engine's light absorption is the sunlight
+        // going DOWN - one level per block - and it is the whole of what the illuminator knows.
+        // It is not the whole of what the eye sees: the light then travels back UP through the
+        // same water to reach the camera, and that second pass is what vanilla's semi-
+        // transparent surface does per pixel and a shaded bed does not.
+        //
+        // Modelling only the downward half made the ramp far too gradual, which is what the
+        // owner saw: at the same viewpoint, vanilla's mid-depth water measured luma 40 against
+        // our 63, while the shallows already matched at 76. Beer-Lambert on the return path
+        // costs nothing here - same merge key, same baked colour - and is the physically
+        // sensible shape rather than a curve fitted to a screenshot.
+        //
+        // The clarity is a LOOK setting and deliberately a dial: real water's extinction depends
+        // on what is dissolved in it, the engine models none of that, and the only judge of
+        // whether a lake reads right is a person looking at one.
+        float clarity = Math.Max(1f, WaterClarity);
         var table = new float[LodMesher.MaxSubmergedDepth + 1];
         for (int depth = 0; depth < table.Length; depth++)
         {
             int level = GameMath.Clamp(sky - depth, 0, levels.Length - 1);
-            table[depth] = Math.Clamp(levels[level] / open, 0f, 1f);
+            float sunlight = Math.Clamp(levels[level] / open, 0f, 1f);
+            float viewPath = MathF.Exp(-depth / clarity);
+            table[depth] = Math.Clamp(sunlight * viewPath, 0f, 1f);
         }
 
         // A table of ones darkens nothing while still splitting the merge, so the feature
@@ -948,7 +988,7 @@ public class LodTerrainRenderer : IRenderer
         if (!waterDepthShading) return "off";
         float[]? table = waterAbsorption;
         if (table == null) return "on, but no table resolved yet";
-        return $"sky level {capi.World.SunBrightness}, "
+        return $"clarity {waterClarity:0} blocks, sky level {capi.World.SunBrightness}, "
             + $"1 block {table[Math.Min(1, table.Length - 1)]:0.00}, "
             + $"4 {table[Math.Min(4, table.Length - 1)]:0.00}, "
             + $"8 {table[Math.Min(8, table.Length - 1)]:0.00}, "
