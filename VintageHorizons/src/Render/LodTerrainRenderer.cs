@@ -875,7 +875,20 @@ public class LodTerrainRenderer : IRenderer
     /// where vanilla's own fresnel would have saturated. A look setting, not a correction:
     /// vanilla has no answer at this range because it draws no water here.
     /// </summary>
-    public float WaterMaxAlpha { get; set; } = 1f;
+    /// <summary>
+    /// REVERTED to 0.7 after 0.4.8 shipped 1.0 and the owner reported the water worse.
+    ///
+    /// The reasoning for 1.0 was sound and the result was not: vanilla's formula does saturate
+    /// at range, so an opaque sheet is what vanilla would draw there - but at that range
+    /// vanilla draws no water at all, and a flat opaque sheet beside vanilla's near water, which
+    /// visibly grades from luma 82 down to 55 as it approaches, reads as wrong however
+    /// defensible the derivation. Measured off the owner's screenshot: cached water flat at 80
+    /// against that gradient.
+    ///
+    /// The real defect the 1.0 change was chasing - that a baked, depth-only darkening cannot
+    /// follow the view angle - is still open and is not fixed by either value.
+    /// </summary>
+    public float WaterMaxAlpha { get; set; } = 0.7f;
 
     /// <summary>
     /// How many blocks of water the view ray travels before it has lost about two thirds of
@@ -900,7 +913,9 @@ public class LodTerrainRenderer : IRenderer
     // Owner-reported twice now: vanilla still goes dark sooner than we do. 16 blocks was the
     // first guess with both light paths modelled; 10 keeps the shallows close and steepens the
     // middle, where the measured gap was - vanilla luma 40 against our 63 at mid depth.
-    float waterClarity;
+    // Reverted with the ceiling above, for the same reason: this is the value the owner had
+    // tuned and accepted at one render distance before 0.4.8 replaced it with zero.
+    float waterClarity = 10f;
 
     /// <summary>
     /// How many blocks either side of a 32-block vanilla chunk plane keep one water quad per

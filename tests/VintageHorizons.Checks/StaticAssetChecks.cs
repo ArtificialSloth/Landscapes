@@ -2328,12 +2328,13 @@ public static class StaticAssetChecks
         c.True(rend.Contains("float viewPath = clarity > 0f ? MathF.Exp(-depth / clarity) : 1f;",
                 StringComparison.Ordinal),
             "the invented return-path term can be switched off entirely");
-        c.True(rend.Contains("float waterClarity;", StringComparison.Ordinal)
-            && mod.Contains("public float WaterClarity = 0f;", StringComparison.Ordinal),
-            "and off is what a fresh install draws");
-        c.True(rend.Contains("public float WaterMaxAlpha { get; set; } = 1f;",
-                StringComparison.Ordinal),
-            "and cached water is as opaque as vanilla's, so the two agree by the same formula");
+        // Both reverted after 0.4.8: the derivation said match vanilla's formula exactly, the
+        // owner's eye said the result was worse, and the owner's eye is the acceptance
+        // evidence for anything visual. What 0.4.8 was chasing - a baked depth-only darkening
+        // cannot follow the view angle - is still open and neither value fixes it.
+        c.True(mod.Contains("public float WaterClarity = 10f;", StringComparison.Ordinal)
+            && mod.Contains("public float WaterMaxAlpha = 0.7f;", StringComparison.Ordinal),
+            "a fresh install draws the settings the owner accepted, not the derived ones");
 
         // A diagnostic that answers from a cache its own setter just cleared says the same
         // thing whether the feature works or not. It has to resolve.

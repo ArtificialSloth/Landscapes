@@ -81,10 +81,10 @@ public class VintageHorizonsConfig
     public bool WaterDepthShading = true;
 
     /// <summary>How solid distant water may become. See LodTerrainRenderer.WaterMaxAlpha.</summary>
-    public float WaterMaxAlpha = 1f;
+    public float WaterMaxAlpha = 0.7f;
 
     /// <summary>Blocks of water the view ray survives. See LodTerrainRenderer.WaterClarity.</summary>
-    public float WaterClarity = 0f;
+    public float WaterClarity = 10f;
 
     /// <summary>
     /// Blocks either side of a vanilla chunk plane where water keeps one quad per block, so it
