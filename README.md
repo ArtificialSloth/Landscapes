@@ -42,7 +42,7 @@ in advance.
 | Command | Purpose |
 | --- | --- |
 | `.vhinfo` | Status: cached/resident sections, meshes, current far edge, settings |
-| `.vhconfig` | Open the settings window. One logarithmic scale holds labeled, individually adjustable L1-L6 transition markers up to 32,768 blocks, constrained by their neighbours; a separate slider controls cached-terrain draw distance up to 32,768 in 512-block increments. `Defaults` restores the accepted 512-to-16,384 sequence and a 32,768-block draw distance. |
+| `.vhconfig` | Open the settings window. One logarithmic scale holds labeled, individually adjustable L1-L6 transition markers up to 32,768 blocks, constrained by their neighbours; a separate slider controls cached-terrain draw distance up to 32,768 in 512-block increments. `Defaults` restores the accepted 512-to-16,384 sequence and a 4,096-block draw distance, which is also what a fresh install starts at. The lower half of the page switches the optional visual passes and offers Performance / Balanced / Quality presets. |
 | `.vhdetail [blocks]` | Without an argument, report all six transition distances. With a value, reset them to a doubling sequence beginning there; `.vhconfig` edits them individually. |
 | `.vhfar <blocks>` | Cap the LOD render distance. `0` means unlimited, which is the default. |
 | `.vhmask [on\|off]` | Hand each loaded vanilla chunk its own ground instead of using one distance, and skip cached terrain that is entirely replaced. On by default since 0.3.17; the setting is saved. Turn it off to fall back to a single measured distance. |
@@ -61,6 +61,48 @@ in advance.
 | `.vhtemporal [on\|off]` | Stop submitting cached solid meshes that a completed GPU test found fully hidden. On by default with the aggressive profile and not saved; requires `.vhocclusion on`. |
 | `.vhtemporalprofile [safe\|aggressive\|extreme]` | Tune delayed occlusion live. `safe` discards results on camera turns, `aggressive` keeps the accepted performance while protecting seams and turning screen edges, and `extreme` exposes the maximum-performance/artifact limit. Not saved. |
 | `.vhdefer [on\|off]` | Stay idle when another LOD mod draws (on by default). A change applies at the next start, not at once. |
+| `.vhnear <blocks>` | How close to you distant terrain stops being drawn. `0` draws it right up to the camera, which is what you want when the game's own view distance is turned down far enough to see it. |
+| `.vhexact [map\|audit]` | Use the game's own measurement of how far it draws each chunk instead of a safe estimate. `map` writes the measurement to the log; `audit` checks the mask against what the game is actually drawing, chunk by chunk. |
+| `.vhcavecull [on\|off]` | Stop building cavities outside the surface-light and straight-sight envelope. On by default. Rebuilds distant terrain, which takes a few seconds. |
+| `.vhsubtree [on\|off\|heights\|reset]` | Cull whole quadtree branches by how tall the terrain under them really is. On by default. No argument reports what it rejected. |
+| `.vhslabs [surface\|near\|off]` | Draw terrain slabs at half height. `surface` is the default. Rebuilds distant terrain. |
+| `.vhcutout [on\|off]` | Let crops, tall grass and vines hide the terrain behind them again. Off by default, which is correct — on reopens the holes at the seam it was added to fix. Rebuilds distant terrain. |
+
+### Making distant terrain match the game's
+
+| Command | Purpose |
+| --- | --- |
+| `.vhblend [on\|off]` | The master switch for seam blending and level-0 block textures. Saved; also in `.vhconfig`. |
+| `.vhband ...` | Blend the seam between game terrain and distant terrain. No argument reports the settings. `on \| off \| shape \| map \| speckle \| width \| step \| inner \| strength \| darken \| saturate \| sink \| overlap`. |
+| `.vhtexture ...` | Draw distant ground with the game's own block textures inside the blending band instead of one flat colour per block. `on \| off \| strength \| detail \| mips`. |
+| `.vhlight <part> [on\|off]` | Match cached terrain lighting to the game's. `sun \| moondir \| ramp \| ambient \| boost \| sky \| all`. All on by default. |
+| `.vhtoplight [on\|off]` | Light flat cached ground the way the game lights flat ground, rather than by sun angle. On by default. |
+| `.vhtint [block] ...` | Take one block's distant colour apart against the game's own answer for it, written to the log. Also carries the switches for per-area climate (`field`), per-tree seasonal variation (`leaves`, `leafwide`), and `leafcheap`, a measurement instrument that draws deliberately wrong colours. |
+| `.vhclimate` | How far the client actually has climate data and how fast climate changes once it does. Decides whether distant terrain can be given its own biome colour or only the one under your feet. Written to the log. |
+| `.vhwater ...` | How distant water meets the game's own. No argument reports the settings. See the table below. |
+
+### Distant water
+
+`.vhwater` with no argument reports everything below and writes it to the log.
+
+| Part | Purpose |
+| --- | --- |
+| `off` / `<chunks>` | Suppress cached water within this many chunks of you. `off` is the default. |
+| `edge <chunks>` | How far water's own footprint is grown past the ground's. Derived when unset. |
+| `fresnel [on\|off]` | Give distant water the game's own opacity, which changes with the angle you look at it. On by default. |
+| `alpha <0-1>` | The most solid distant water is allowed to get. Below 1 the shaded bed underneath shows through. |
+| `depth [on\|off]` | Darken ground under water by how deep it is, as the game's own light does — a bed under eight blocks draws at 70% of the shore beside it, one under twenty at 26%. On by default. **Rebuilds every loaded section.** |
+| `clarity <blocks>` | How far light gets back UP through the water to your eye. Smaller is murkier and darkens sooner. **This has no counterpart in the game** and cannot follow your viewing angle; see the caveat below. `0` turns it off. |
+| `wave <blocks>` | How wide a strip of water keeps one quad per block so it can carry the game's own wave where the two surfaces meet. `1` is the default; `0` turns the wave off. **Rebuilds every loaded section.** |
+| `walls [on\|off]` | Diagnostic. `off` drops the side faces drawn where the cache has no record of what is beside a body of water. |
+| `glint <0-1>` / `foam <0-1>` | How much of the game's sun reflection and surface noise distant water carries. |
+
+**A caveat on `clarity`.** The game's own light only models sunlight travelling DOWN through
+water, one level per block, and this mod reproduces that exactly. `clarity` is an extra term
+with no equivalent in the game, added to compensate for holding cached water less opaque than
+the game's formula would. Because it is baked in per block it cannot know the angle you are
+looking through the water at, so a value that matches at one render distance will not
+necessarily match at another. Treat it as a taste setting, not a correction.
 
 ### If your server runs Farseer, ChunkLOD or TopoHorizon
 

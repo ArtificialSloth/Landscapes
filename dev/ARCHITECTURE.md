@@ -360,6 +360,33 @@ The server must answer every accepted section request, including explicit refusa
     tables refresh one slot per frame on a 30-second cadence. Full periodic sweeps are not
     reintroduced merely for exact reclamation timing.
 
+22. **Cached terrain carries no per-position light, and water is the one exception.** One
+    sky-exposed level from the world's own ramp multiplies every cached surface; nothing in
+    the capture format stores a light value. Submerged ground is shaded anyway, because water
+    absorbs one light level per block and the depth is arithmetic on water runs the cache
+    already holds - so it needs no capture change and no re-exploration. The factor is baked
+    into the stored colour at mesh time, which is exact rather than an approximation:
+    `SunBrightness` is the world's MAXIMUM sun level rather than the clock, and with no block
+    light vanilla's own light maths is linear in that level. Overhangs, cave mouths and
+    foliage remain unshaded; only water is derivable this way.
+23. **A seam can only land on a 32-block vanilla chunk plane**, because ownership is decided
+    per chunk. That makes it a STATIC, section-local property available when a mesh is built,
+    unlike the blend band, which is a distance field rebuilt per frame from vanilla's current
+    footprint and moves with the player. Mesh detail that only matters at a seam is therefore
+    confined to that grid rather than paid for everywhere or gated on the band: cached water
+    keeps one quad per block within a block of it so the surface can carry the engine's own
+    liquid warp, which measured +0.99% of the mesh against +16.32% for doing it everywhere.
+24. **Water is not shaded by its normal, because vanilla's is not.** `chunkliquid.fsh` has no
+    normal term at all. This is invisible while cached water is a flat plane and becomes a
+    bright crease along every quad boundary the moment the surface is displaced, so the two
+    must stay in step: any future change that tilts cached water must leave its shading alone.
+25. **Vanilla's shoreline foam is a shallow-water term and must not be applied to open water.**
+    The engine reads its depth buffer, caps the reading and multiplies by 1500, so anything
+    more than a block or two deep drives the term to exactly zero. A shader with no depth
+    buffer to read has to supply the DEEP answer, not the shallow one; substituting zero depth
+    pins the effect at maximum and adds roughly a third of the water's own brightness to every
+    lake and sea.
+
 ## Concurrency invariants
 
 - No worker mutates `LodWorld` or a live section.
