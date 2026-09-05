@@ -8,10 +8,51 @@ first.
 
 ## [Unreleased]
 
-**Known placed-block refresh defect:** a newly placed block in the interior of an established L0
-section is recaptured and can receive its texture slot, but the zero neighbour-edge mask is
-currently mistaken for “nothing changed.” Its existing L0 mesh, persistent row and mip chain may
-remain stale after vanilla terrain leaves the area. This is documented and not fixed in 0.3.166.
+**Known open:** a chunk-aligned band along the water seam, brighter than the water either side of
+it, is not attributed. Four explanations have been tried; the seam blend band and fog
+interpolation are ruled out by source and measurement, water walls at uncaptured edges tested
+negative, and the remaining candidate - our seabed seen through vanilla's water, darker than
+vanilla's own bed beside it - is untested.
+
+**Known open:** `.vhwater clarity` has no counterpart in the game. It was added to compensate for
+capping cached water's opacity below vanilla's, and because it is baked per block it cannot
+follow the angle you look through the water at - so a value tuned at one render distance stops
+matching at another.
+
+## [0.4.10] - 2026-09-04
+
+**Ground under water is darkened by how deep it is.** Water swallows one light level per block,
+so the game draws a lakebed under eight blocks at 70% of the shore beside it and one under
+twenty at 26%. Cached terrain stores no per-position light at all - one sky-exposed brightness
+multiplies every surface in the world - so distant water read as flat paint over a bed as bright
+as an open field. The depth comes out of the cache you already have, so an existing world gains
+it with no re-exploration, and it costs +0.33% of the mesh. `.vhwater depth on|off`.
+
+**Distant water carries the game's own wave where it meets the game's water.** Vanilla pushes
+every liquid vertex up and down - a tenth of a block on a pond, up to a whole one on the open
+sea - and ours was flat, so where the two met the game's surface dipped below ours and left an
+opening. Water now keeps one quad per block within a block of every vanilla chunk edge, which is
+the only place a seam can land, and takes the engine's own displacement there. +0.99% of the
+mesh, against +16% for doing it everywhere. `.vhwater wave <blocks>`.
+
+**Water is no longer shaded by which way it faces**, because vanilla's water is not. It made no
+difference while cached water was a flat plane and drew a bright crease along every chunk edge
+once the surface started to move.
+
+**Cached water no longer paints permanent shoreline foam over every ocean.** The game's foam is
+a shallow-water effect that switches itself off past a block or two of depth; ours had no way to
+read depth and assumed the shallowest case everywhere, adding about a third of the water's own
+brightness to every lake and sea.
+
+**A fresh install now draws cached terrain to 4,096 blocks**, and the settings window's Defaults
+button agrees with it. A new config said unlimited while the button said 32,768, so pressing
+Defaults changed the setting rather than resetting it. Existing configs keep their own value.
+
+**Settings window:** the preset drop-down moved off the right edge and the cost words gained a
+"Cost" column heading.
+
+**Seasonal colour maps upload one column instead of the whole store** - two kilobytes rather than
+136. It measured no frame-time change; kept for the memory and a simpler shader.
 
 ## [0.4.1] - 2026-09-03
 

@@ -3072,3 +3072,93 @@ concealment. If a claim is true because of an edit, say the edit.
 **Safer action:** when supplied copy disagrees with the code, say so and offer both - "it
 currently does X, your text says Y, which do you want" - before either is changed. And when
 reporting on a claim, state whether it was true when asked or became true in between.
+
+### G152 - A switch whose cost lands in BOTH halves of an A/B cannot be measured at all
+
+**Trigger:** adding a feature that changes the MESH, and gating only the part of it you think
+of as the feature - the colour, the shading, the visible half - while the part that changes
+the geometry runs unconditionally.
+
+**Trap:** shading submerged ground by depth splits the greedy merge, because quads at
+different depths must not merge and take one colour. The water surface derived its depth from
+its own run rather than from the absorption table, so it split the merge with the feature
+switched OFF as well as on. The harness measured `water off 104,428 vertices, water on
+104,428, +0, 0.00%` and the obvious reading - it costs nothing - is exactly wrong: it cost
++75% of the water buffer in both halves and the subtraction cancelled it. An A/B can only see
+what one side does and the other does not.
+
+**Safer action:** gate the whole change on one flag, including the parts that only affect
+geometry, and be suspicious of a delta of exactly zero. A feature that is genuinely free
+usually measures as noise, not as nothing.
+
+### G153 - A diagnostic that reads a cache its own setter just cleared answers the same way forever
+
+**Trigger:** a setting whose setter invalidates a derived value and queues a rebuild, and a
+command that sets it and then describes the result in the same breath.
+
+**Trap:** `.vhwater clarity` cleared the absorption table and called `RemeshAll`, then printed
+`DescribeWaterAbsorption()`, which read the field it had just set to null and reported "no
+table resolved yet". Every call. In every case, working or broken. That line exists precisely
+to tell a real failure from a working one, and it sat in the owner's chat log through a whole
+testing session saying nothing at all - while he tried five clarity values and reported back
+on a picture the diagnostic could not describe.
+
+**Safer action:** a description RESOLVES, it does not read. Call the builder, not the field.
+And when a report can only produce one string, that is a bug in the report even if the code it
+describes is correct.
+
+### G154 - A textured quad has no colour word, so a colour written there is read as an index
+
+**Trigger:** writing a colour into a packed quad at level 0, where block textures live.
+
+**Trap:** `LodPackedQuadFormat` spends word 2 on a block texture SLOT instead of an RGB colour
+whenever the textured flag is set, and the vertex shader recovers the colour from the block
+table by that slot: `vhBlockSlot = int(vhColor & 0x00FFFFFFu)`. Texture slots are emitted at
+level 0 only. So depth shading baked into the colour worked at level 1 and beyond and was
+silently discarded at level 0 - while still paying its whole geometry bill there.
+
+The owner named the cause from the outside without seeing any code: the bed darkened at
+distance, un-darkened as he walked toward it, and the boundary followed his L0/L1 threshold
+when he moved it.
+
+**Safer action:** anything written into word 2 has to say which of the two meanings it is. A
+submerged quad now gives its texture slot up. The spare room is real if both are ever wanted -
+real slot values are twelve bits of the twenty-four - but using it is a shader change on every
+render path.
+
+### G155 - The blend band moves with the player; the vanilla chunk grid does not
+
+**Trigger:** wanting to confine expensive mesh detail to "the seam" or "the band".
+
+**Trap:** the answer given was that it could not be done, because the blend band is derived
+per frame from vanilla's current footprint and the mesh is built once and cached, so gating on
+it would mean re-meshing as the player walks. All true, and it answers the wrong question.
+Ownership is decided per 32-BLOCK VANILLA CHUNK, so a seam can land nowhere except a 32-block
+plane - which is static, section-local, and known when the mesh is built. The owner pushed
+back on the refusal and was right.
+
+Measured: per-block water everywhere costs +16.32% of the whole mesh, 2x2 patches everywhere
++4.24% with worse fidelity at the seam, and a one-block strip on the chunk grid **+0.99%** with
+full fidelity in the only place a seam can be.
+
+**Safer action:** before refusing a request as view-dependent, ask what the boundary is
+actually made of. The blend band is a distance field and moves; the ownership grid is chunk
+arithmetic and does not.
+
+### G156 - A screenshot is evidence of a moment, not of a state
+
+**Trigger:** being handed an image to look at, and reading everything in it as deliberate.
+
+**Trap:** a frame sent to show one thin band also contained a wide expanse of bare seabed with
+straight edges. That was read as a rendering defect, traced to vanilla's liquid shader fading
+its own water out over the last fifth of the view distance, written up as G124 returning, and
+half-implemented as an ownership change - before the owner said the terrain simply had not
+finished loading when he took it. The whole finding was retracted and the change discarded.
+
+This is the third attribution in one session argued before it was evidenced. The other two
+were the seam blend band and vanilla's foam; both were ruled out afterwards, and one shipped
+as a build the owner reported worse.
+
+**Safer action:** ask what the frame was taken to show and what state the world was in before
+reading anything else in it as a defect. And when a screenshot suggests a mechanism, look for
+a switch that tests it before writing the mechanism down as the cause.

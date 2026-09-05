@@ -2,8 +2,47 @@
 
 > Tier 2: current state, regenerated as a coherent document at session close. Durable design lives in `dev/ARCHITECTURE.md`; open work lives in `dev/TODO.md`.
 
-**Status date:** 2026-09-03
-**Mod version:** `0.4.1`, built, verified, packaged and copy-installed; **not yet seen in game**.
+**Status date:** 2026-09-04
+**Mod version:** `0.4.10`, built, verified, packaged and copy-installed. **Human-tested in
+part**: the owner has played 0.4.2 through 0.4.10 and reported on distant water at each step,
+which is what drove the whole of Session 78. No build after 0.4.1 has been bench-measured.
+
+**Distant water gained the depth the engine gives it, and one seam defect is still open.**
+Water absorbs one light level per block, so vanilla draws a lakebed under eight blocks at 70%
+of the shore beside it; cached terrain stores no per-position light at all and drew it as
+brightly as an open field. The depth is arithmetic on water runs an existing cache already
+holds, so no re-exploration was needed, and it costs +0.33% of the mesh. Cached water also
+carries vanilla's own liquid warp now, on a one-block strip either side of every 32-block
+chunk plane - the only place a seam can land, since ownership is decided per vanilla chunk -
+for +0.99% against +16% for doing it everywhere. Two defects fell out of the same work: water
+was being shaded by its normal where vanilla's is not, which drew a bright crease along every
+chunk edge once the surface moved; and cached water was painting vanilla's shallow-water foam
+over every ocean, because it had no way to read depth and assumed the shallowest case.
+
+**What is open is a chunk-aligned band along the seam, brighter than the water either side,
+and it is NOT attributed.** Four explanations have been tried: the seam blend band is ruled
+out by source, fog interpolation is measured and an order of magnitude too small, vanilla's
+own foam was argued and never tested, and water walls at uncaptured edges tested negative in
+play. The remaining candidate is the owner's own reading - our seabed seen through vanilla's
+water, mismatched against vanilla's own bed beside it - and it is untested. See
+`dev/sessions/SESSION_78.md` and `dev/TODO.md`.
+
+**One term in the water has no counterpart in the engine.** `.vhwater clarity` was invented to
+compensate for capping cached water's opacity below vanilla's, and being baked per block it is
+a function of depth alone where the real quantity depends on the angle light travels back
+through the water at. The owner found the consequence directly: a clarity tuned at one render
+distance stops matching at another. 0.4.8 tried removing both the cap and the term on that
+reasoning and was reported worse; 0.4.9 restored the settings he had accepted.
+
+**The season row is priced and closed.** Baking it into the mesh reaches only the value-noise
+half of its cost - about 5.5 fps of 300 - for +33% packed geometry memory and a transcription
+of the engine's noise. Rejected on measurement. The seasonal map now uploads its live column
+alone, 2 KiB rather than 136; that measured no frame-time change and is kept for the memory.
+
+Previous status follows.
+
+**Mod version (0.4.1):** built, verified, packaged and copy-installed; **not yet seen in
+game**.
 0.4.0 was the milestone promotion of 0.3.197 at owner direction; 0.4.1 reverts one constant
 in it, restoring Close Biome Colors to L0-L2 (G151). 0.3.183 is **human-tested
 and accepted** ("Much better, Excellent!") and carries the substance of the colour work below.

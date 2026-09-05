@@ -2,6 +2,79 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
+## Distant water: the seam band is unattributed, and one term has no vanilla counterpart
+
+Branch `codex/water-depth-light`, `0.4.10`. Session 78. The depth gradient and the wave are
+owner-accepted as better; what follows is what is not settled. Read `dev/sessions/SESSION_78.md`
+before touching this.
+
+- **A chunk-aligned band along the water seam is not attributed, and it is the open item.**
+  Measured brighter than the water on both sides - luma 93 against 80 beyond and 82
+  approaching - and it overshoots AWAY from vanilla in both a dark and a bright scene rather
+  than sitting between the two, so it is cached water with something extra applied rather than
+  a blend of the two surfaces. Four explanations tried:
+  1. The seam blend band. **Ruled out by source**: `!translucent` gated, land only.
+  2. Fog interpolated per vertex across quads far longer than vanilla's. **Real and measured
+     but too small**: 0.022 fog units worst case, about 1 luma, peaking where `min(250, depth)`
+     clamps. Worth fixing on its own merits; not this.
+  3. Vanilla's own foam firing because our depth writes sit behind its water. **Argued, never
+     tested, superseded.**
+  4. Water walls at uncaptured edges. A real gap in the mesher's guard, which covers an absent
+     SECTION but not an uncaptured COLUMN. `.vhwater walls off` exists to test it and the owner
+     **tested it: it did not fix the seam.** The gap in the guard is still real.
+
+  The remaining candidate is the owner's own reading: it is our seabed seen THROUGH vanilla's
+  water, mismatched against vanilla's own seabed beside it. That is consistent with the clarity
+  term below - ours draws a bed at 0.32 of shore brightness at eight blocks where vanilla's
+  carries only the light absorption, 0.70. **The tell is `.vhwater clarity 0`**, which strips
+  only that term and leaves the opacity alone. Untested: the bisection left `.vhwater depth off`
+  saved in the owner's config, which disables clarity silently.
+
+- **`.vhwater clarity` has no counterpart in the engine, and cannot follow the view angle.**
+  Vanilla's bed carries the sunlight that reached it and nothing else; everything resembling
+  extinction comes from a transparent surface blended over that bed, per pixel, with an alpha
+  that already depends on view angle. This term was invented to compensate for capping our
+  opacity below vanilla's, and being baked per block it is a function of depth alone. The owner
+  found the consequence: a clarity tuned at one render distance stops matching at another,
+  because the path light takes back through the water is the depth divided by the cosine of the
+  angle you look at it. Doing it properly means carrying the DEPTH to the fragment rather than
+  the factor, so the shader can raise the baked value to the power `1/cos`. The packed record
+  has no room today; the spare high bits of the texture-slot field are the candidate, at the
+  cost of a shader change on every render path.
+
+- **0.4.8 shipped a derivation and was worse.** Ceiling 1.0 and clarity 0, on the argument that
+  vanilla's own fresnel saturates at range. It does, and at that range vanilla draws no water at
+  all, so a flat opaque sheet has nothing to agree with and sits beside vanilla's near water,
+  which visibly grades. Reverted in 0.4.9. Recorded so it is not re-derived.
+
+- **Water walls are still drawn against any uncaptured COLUMN**, not just an absent section, and
+  the mesher's own comment calls a spurious one "the worst artefact this mesher can produce".
+  `.vhwater walls off` drops them and is off by default. It did not fix the seam, but the gap is
+  real and unaddressed.
+
+- **Nothing after 0.4.1 has been bench-measured.** Every frame-time number in Session 78 is
+  either the season-row runs or offline geometry. The depth gradient, the wave and the crease
+  fix have no measured cost in a running game.
+
+- **No shader this session was compile-verified offline.** There is still no GLSL validator in
+  the toolchain; the builds loading is the only proof.
+
+- **The wave's reach and strip width are judgement calls.** 64 blocks past vanilla's view
+  distance, +/-1 block on the chunk grid. `.vhwater wave <blocks>` widens the strip; +/-2 costs
+  +2.86% of the mesh against +0.99%.
+
+## Season row and seasonal map: closed, with one thing not to re-propose
+
+- **Baking the season row into the mesh is rejected on measurement.** The feature splits into
+  20 us of value noise and 14 us of scattered fetch at the bench viewpoint; baking reaches only
+  the noise half, about 5.5 fps of the owner's 300, for +33% packed geometry memory and a C#
+  transcription of noise whose own authors warn about float drift. Do not re-propose without new
+  evidence. `.vhtint leafcheap` is the instrument that split it and is still available.
+- **The seasonal map now uploads its live column alone**, 2 KiB rather than 136. It measured no
+  frame-time change - the full map was already resident in L2 - and is kept at the owner's
+  direction for the memory and the simpler shader. Equivalence is pinned by exact texel equality
+  at five columns over every page and row.
+
 ## Frame-time regression and the settings window: what Session 77 has not proven
 
 Branch `codex/vertex-tint-cost`, `0.4.0`. The regression is measured and its unreachable half
@@ -295,22 +368,13 @@ The base pipeline shipped and was human-tested through 0.3.139. Forest Floor's t
 source/check verified only. The five findings from the 0.3.165 review are complete and recorded in
 `dev/history/DONE.md` and Session 72.
 
-### Placed-block recapture invalidation is open
+### Placed-block recapture invalidation: FIXED, entry removed
 
-- **Interior changes can skip all publication.** `LodSection.ReplaceColumns` returns an edge mask;
-  zero means either “changed, but no section edge was touched” or “nothing changed.”
-  `ApplyOneCaptureResult` currently calls `World.MarkChanged` only for a nonzero mask. Most block
-  placements in an established 64x64 L0 section therefore update resident runs and can retrieve a
-  texture slot, yet fail to dirty the existing mesh, persistent row or mip chain. Once vanilla
-  relinquishes the area, stale cached geometry may remain. A later edge-touching mutation can
-  incidentally publish the accumulated RAM state; leaving first can lose it.
-- **Required correction:** return changed/not-changed separately from the edge mask. Every content
-  change must call `MarkChanged(key, touchedEdges)`, including `EdgeNone`; only neighbour fan-out
-  should depend on the mask. Add focused coverage proving an interior recapture dirties the section,
-  save and mip without dirtying neighbours, while a byte-identical recapture dirties nothing.
-- **Acceptance after correction:** place and remove a visually distinct solid block well inside an
-  established L0 section, leave vanilla range, and confirm the textured L0 mesh updates and survives
-  a world reload. Repeat once with blending off to confirm the averaged-colour fallback updates.
+The correction this section asked for - return changed/not-changed separately from the edge
+mask, and call MarkChanged for every content change including EdgeNone - is implemented in
+`LodPipeline.ApplyOneCaptureResult` and carries G138 in its comment. Verified against the
+source on 2026-09-04; the section duplicated one the top of this file already marked fixed in
+0.3.189. Recorded rather than silently deleted so the next reader does not re-derive it.
 
 ### Blend-toggle acceptance still open
 
