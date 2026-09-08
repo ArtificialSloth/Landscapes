@@ -36,6 +36,12 @@ public sealed class LodAssistClient
     /// <summary>One line for .vhinfo. Always set to something a player can act on.</summary>
     public string Status { get; private set; } = "not connected yet";
 
+    /// <summary>
+    /// Complete server-side settings from the welcome packet. Null means the server does
+    /// not have VintageHorizons or predates the diagnostic snapshot field.
+    /// </summary>
+    public AssistServerSettings? ServerSettings { get; private set; }
+
     public LodAssistClient(ICoreClientAPI capi, ILogger logger, string modVersion)
     {
         this.capi = capi;
@@ -98,6 +104,7 @@ public sealed class LodAssistClient
     internal void OnWelcome(AssistWelcome msg)
     {
         // Deserialized, so every reference field is whatever the wire produced.
+        ServerSettings = msg.ServerSettings;
         string reason = msg.Status ?? "";
         string version = msg.ModVersion ?? "unknown";
         ManifestExpected = msg.ManifestKeyCount;
@@ -420,6 +427,7 @@ public sealed class LodAssistClient
     {
         NegotiatedProtocol = 0;
         Status = "not connected yet";
+        ServerSettings = null;
         RemoteKeys.Clear();
         ManifestComplete = false;
         ManifestExpected = 0;

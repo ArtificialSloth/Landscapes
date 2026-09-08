@@ -132,6 +132,7 @@ public class LodAssistServerSystem : ModSystem
             Enabled = enabled,
             Status = status,
             ManifestKeyCount = keys.Length,
+            ServerSettings = AssistServerSettings.From(config),
         }, player);
 
         if (keys.Length > 0) SendManifest(player, keys);

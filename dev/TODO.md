@@ -2,78 +2,43 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Distant water: the seam band is unattributed, and one term has no vanilla counterpart
+## Distant water: validate the required renderer, then solve the residual seam
 
-Branch `codex/water-depth-light`, `0.4.10`. Session 78. The depth gradient and the wave are
-owner-accepted as better; what follows is what is not settled. Read `dev/sessions/SESSION_78.md`
-before touching this.
+Current work is `0.4.27` on `codex/water-depth-light`. Read
+[the current handoff](plans/HANDOFF_WATER_SEAM.md) and
+[Session 80](sessions/SESSION_80.md). Remain at Phase 2 of
+[the dedicated water plan](plans/PLAN_LOD_WATER_RENDERER.md).
 
-- **A chunk-aligned band along the water seam is not attributed, and it is the open item.**
-  Measured brighter than the water on both sides - luma 93 against 80 beyond and 82
-  approaching - and it overshoots AWAY from vanilla in both a dark and a bright scene rather
-  than sitting between the two, so it is cached water with something extra applied rather than
-  a blend of the two surfaces. Four explanations tried:
-  1. The seam blend band. **Ruled out by source**: `!translucent` gated, land only.
-  2. Fog interpolated per vertex across quads far longer than vanilla's. **Real and measured
-     but too small**: 0.022 fog units worst case, about 1 luma, peaking where `min(250, depth)`
-     clamps. Worth fixing on its own merits; not this.
-  3. Vanilla's own foam firing because our depth writes sit behind its water. **Argued, never
-     tested, superseded.**
-  4. Water walls at uncaptured edges. A real gap in the mesher's guard, which covers an absent
-     SECTION but not an uncaptured COLUMN. `.vhwater walls off` exists to test it and the owner
-     **tested it: it did not fix the seam.** The gap in the guard is still real.
-
-  The remaining candidate is the owner's own reading: it is our seabed seen THROUGH vanilla's
-  water, mismatched against vanilla's own seabed beside it. That is consistent with the clarity
-  term below - ours draws a bed at 0.32 of shore brightness at eight blocks where vanilla's
-  carries only the light absorption, 0.70. **The tell is `.vhwater clarity 0`**, which strips
-  only that term and leaves the opacity alone. Untested: the bisection left `.vhwater depth off`
-  saved in the owner's config, which disables clarity silently.
-
-- **`.vhwater clarity` has no counterpart in the engine, and cannot follow the view angle.**
-  Vanilla's bed carries the sunlight that reached it and nothing else; everything resembling
-  extinction comes from a transparent surface blended over that bed, per pixel, with an alpha
-  that already depends on view angle. This term was invented to compensate for capping our
-  opacity below vanilla's, and being baked per block it is a function of depth alone. The owner
-  found the consequence: a clarity tuned at one render distance stops matching at another,
-  because the path light takes back through the water is the depth divided by the cosine of the
-  angle you look at it. Doing it properly means carrying the DEPTH to the fragment rather than
-  the factor, so the shader can raise the baked value to the power `1/cos`. The packed record
-  has no room today; the spare high bits of the texture-slot field are the candidate, at the
-  cost of a shader change on every render path.
-
-- **0.4.8 shipped a derivation and was worse.** Ceiling 1.0 and clarity 0, on the argument that
-  vanilla's own fresnel saturates at range. It does, and at that range vanilla draws no water at
-  all, so a flat opaque sheet has nothing to agree with and sits beside vanilla's near water,
-  which visibly grades. Reverted in 0.4.9. Recorded so it is not re-derived.
-
-- **Water walls are still drawn against any uncaptured COLUMN**, not just an absent section, and
-  the mesher's own comment calls a spurious one "the worst artefact this mesher can produce".
-  `.vhwater walls off` drops them and is off by default. It did not fix the seam, but the gap is
-  real and unaddressed.
-
-- **Nothing after 0.4.1 has been bench-measured.** Every frame-time number in Session 78 is
-  either the season-row runs or offline geometry. The depth gradient, the wave and the crease
-  fix have no measured cost in a running game.
-
-- **No shader this session was compile-verified offline.** There is still no GLSL validator in
-  the toolchain; the builds loading is the only proof.
-
-- **The wave's reach and strip width are judgement calls.** 64 blocks past vanilla's view
-  distance, +/-1 block on the chunk grid. `.vhwater wave <blocks>` widens the strip; +/-2 costs
-  +2.86% of the mesh against +0.99%.
-
-## Season row and seasonal map: closed, with one thing not to re-propose
-
-- **Baking the season row into the mesh is rejected on measurement.** The feature splits into
-  20 us of value noise and 14 us of scattered fetch at the bench viewpoint; baking reaches only
-  the noise half, about 5.5 fps of the owner's 300, for +33% packed geometry memory and a C#
-  transcription of noise whose own authors warn about float drift. Do not re-propose without new
-  evidence. `.vhtint leafcheap` is the instrument that split it and is still available.
-- **The seasonal map now uploads its live column alone**, 2 KiB rather than 136. It measured no
-  frame-time change - the full map was already resident in L2 - and is kept at the owner's
-  direction for the memory and the simpler shader. Equivalence is pinned by exact texel equality
-  at five columns over every page and row.
+- **Run 0.4.27 and prove the intended paths are active before judging the picture.** The log
+  should positively report the packed terrain path and all requested dedicated water shaders,
+  depth/junction/repair stages and OIT as ready/running, with no `REQUIRED ... FAILED`. A failure
+  should now remove cached terrain or water visibly. Preserve the first log either way.
+- **Re-establish the residual seam baseline on 0.4.27.** The 0.4.26 picture is not valid evidence
+  for the intended dedicated renderer: the water shaders did not compile and an older renderer
+  was silently selected. Capture a stationary and moving view after the terrain settles, with
+  the effective water state in the log. The broad rectangular band is already closed.
+- **Explain any remaining blips under the active dedicated path.** The owner last reported the
+  scattered blips gone with repair enabled. Junction depth had removed seam blips with repair
+  disabled in 0.4.18, but that result predates later shader work. Keep raw/repaired captures
+  separate and do not widen the repair without a demonstrated coverage cause.
+- **Complete the continuity matrix:** stationary and moving views, both sides of the junction,
+  same seabed through each surface, shallow/deep shores, below water, chunk/LOD corners,
+  loading/unloading and stale cache. Dry ground and genuine openings must retain their behavior.
+- **Finish required-path lifecycle coverage:** overlapping transparency, resize/fullscreen,
+  shader reload, world changes, transparency disabled and deliberate resource failures. Expected
+  behavior is a named failure and missing cached output, never plausible output from an older path.
+- **Physically retire opaque fallback scaffolding.** The per-section opaque `RenderMesh` call and
+  all runtime selection are gone. Remove its remaining `MeshRef` allocation, publication and
+  disposal lifecycle once the required packed path is accepted, then update tests and telemetry
+  whose names still imply a complete legacy renderer.
+- **Rework old Phase 9 failure-injection expectations.** Tests and benchmark notes that expect a
+  same-frame or next-frame legacy fallback are superseded for product renderer failures. Retain
+  explicit diagnostic A/B modes only where they cannot be mistaken for automatic recovery.
+- **Later appearance work:** clarity has no vanilla counterpart; near opacity, sunlight
+  absorption, projection scaling and distant continuation need separate acceptance. Preserve
+  0.4.8's rejected opaque-sheet result. No foam/shadows/extra waves before continuity passes.
+- **Retain earlier geometry debt:** unknown-column water walls, wave strip/reach tradeoffs and
+  shoreline detail need their own evidence. A negative seam toggle did not resolve those issues.
 
 ## Frame-time regression and the settings window: what Session 77 has not proven
 
@@ -318,28 +283,6 @@ sink experiment and default decision are closed. Two non-blocking measurements r
 - No controlled frame-time benchmark isolates the packed shader early exit. The owner did test the
   complete surface-mode 0.3.142 build in the scene that exposed the regression and reported very
   little performance cost; paired cache geometry supplies the quantitative result.
-
-## Distant water: what 0.3.152 has not proven
-
-Cached water no longer writes depth, obeys the ownership mask at every distance, and has its own
-footprint one chunk tighter than ground's. No distance-from-camera term remains in the water path.
-
-- **0.3.152 is not human-tested.** The owner tested 0.3.151, which derived a two-chunk dilation,
-  and reported a chunk-wide strip of missing water. The corrected derivation subtracts the chunk
-  the refusal already covers (G132). `.vhwater edge <chunks>` overrides it live: raise it if water
-  reaches into vanilla's, lower it if the gap is back.
-- **G124 may return.** Water is under ownership everywhere now. The argument that vanilla's liquid
-  fade cannot produce a dry ring rests on this mod's own horizon hook moving that fade out of
-  range, which is source-traced and fails open per pass. The failure to watch for is a riverbed
-  with no water in it at distance.
-- **No shader edited this session was compile-verified offline.** There is no GLSL validator in the
-  toolchain; the only proof is the game loading it. 0.3.144 through 0.3.151 did load, 0.3.152 has
-  not been run.
-- **Glint and foam are untuned.** Both default to 1.00 and were never adjusted in play.
-- **No benchmark.** Cached water now evaluates roughly six `gnoise` calls per water fragment where
-  it previously evaluated none, on every water fragment rather than inside the band.
-- **Vanilla's shoreline rim is not reproduced.** It comes from the depth texture during OIT, which
-  this shader cannot sample from the opaque stage; it needs mesh-side data instead.
 
 ## The blend band is circular by construction
 

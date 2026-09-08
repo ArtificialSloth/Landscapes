@@ -90,6 +90,57 @@ public class AssistWelcome
     /// no manifest follows.
     /// </summary>
     [ProtoMember(5)] public int ManifestKeyCount;
+
+    /// <summary>
+    /// Diagnostic-only copy of every server config value. Optional so a new client can
+    /// still join an older server; protobuf leaves it null when that peer does not know
+    /// about the field.
+    /// </summary>
+    [ProtoMember(6)] public AssistServerSettings? ServerSettings;
+}
+
+/// <summary>
+/// The complete server configuration as it was sanitized and applied. This travels only
+/// in the welcome packet so the development diagnostics window can report server-only
+/// settings truthfully. It does not grant control over them.
+/// </summary>
+[ProtoContract]
+public class AssistServerSettings
+{
+    [ProtoMember(1)] public bool EnableCapture;
+    [ProtoMember(2)] public bool EnableServing;
+    [ProtoMember(3)] public int ServeRadiusBlocks;
+    [ProtoMember(4)] public int MaxSectionsPerSecondPerPlayer;
+    [ProtoMember(5)] public int MaxSectionsPerSecondTotal;
+    [ProtoMember(6)] public bool SweepSavegame;
+    [ProtoMember(7)] public int SweepRadiusChunks;
+    [ProtoMember(8)] public int SweepColumnsPerSecond;
+    [ProtoMember(9)] public bool EnableGenerateCommand;
+    [ProtoMember(10)] public int GenerateMaxRadiusChunks;
+    [ProtoMember(11)] public int GenerateDefaultRadiusChunks;
+    [ProtoMember(12)] public int GenerateColumnsPerSecond;
+    [ProtoMember(13)] public int GenerateMaxInFlight;
+    [ProtoMember(14)] public int PregenRadiusChunks;
+    [ProtoMember(15)] public int PregenColumnsPerSecond;
+
+    public static AssistServerSettings From(LodServerConfig config) => new()
+    {
+        EnableCapture = config.EnableCapture,
+        EnableServing = config.EnableServing,
+        ServeRadiusBlocks = config.ServeRadiusBlocks,
+        MaxSectionsPerSecondPerPlayer = config.MaxSectionsPerSecondPerPlayer,
+        MaxSectionsPerSecondTotal = config.MaxSectionsPerSecondTotal,
+        SweepSavegame = config.SweepSavegame,
+        SweepRadiusChunks = config.SweepRadiusChunks,
+        SweepColumnsPerSecond = config.SweepColumnsPerSecond,
+        EnableGenerateCommand = config.EnableGenerateCommand,
+        GenerateMaxRadiusChunks = config.GenerateMaxRadiusChunks,
+        GenerateDefaultRadiusChunks = config.GenerateDefaultRadiusChunks,
+        GenerateColumnsPerSecond = config.GenerateColumnsPerSecond,
+        GenerateMaxInFlight = config.GenerateMaxInFlight,
+        PregenRadiusChunks = config.PregenRadiusChunks,
+        PregenColumnsPerSecond = config.PregenColumnsPerSecond,
+    };
 }
 
 /// <summary>

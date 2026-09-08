@@ -2,6 +2,42 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-07-08 - Broad water band attributed and visible renderer fallbacks retired
+
+The broad rectangular band is closed. After it survived at the edge of LOD coverage, the owner
+reproduced it in pure vanilla. The engine was tessellating vertical liquid sides against missing
+neighbour chunks. Version 0.4.23 suppresses only those false outward faces, and the owner confirmed
+the band disappeared. The narrower vanilla/cached-water seam remains open.
+
+The startup OpenGL uncertainty is also closed for this machine: isolated probes validate the
+advanced entry points, compute/SSBO work and private depth-copy/mip path, and runtime telemetry
+reported complete packed clustered command coverage. Version 0.4.26 then exposed the reason the
+new water work looked unchanged: the dedicated vertex and OIT shaders had compile errors and the
+renderer silently selected plausible older output.
+
+Version 0.4.27 repairs those shader contracts and retires visible automatic substitution. Packed
+clustered terrain and dedicated water now suppress their cached output and report a required-path
+failure when unavailable. The per-section opaque draw call, expanded-indirect fallback and legacy
+water selector have no visible authority. Physical per-section `MeshRef` lifecycle removal remains
+open, as do runtime validation of 0.4.27 and the residual water seam.
+
+## 2026-09-06 - Water renderer foundation and bounded junction result
+
+Moved out of TODO at Session 79 close. Dedicated shader extraction (0.4.16) and OIT-stage
+comparison (0.4.17) were visually unchanged in the owner's tested view. 0.4.18 junction depth
+removes seam blips with repair disabled. Broad-band attribution, scattered-blip repair
+dependence and full continuity/runtime acceptance remain open; this is not a completed water fix.
+
+The earlier 0.3.152 water TODO is superseded by the current water gate: source/runtime evidence
+now includes dedicated OIT, separate liquid depth and captures. Its old claims that water
+cannot access depth in its draw stage or that the later shader has never loaded are obsolete.
+Historical appearance/geometry limits remain in sessions and the current plan.
+
+The Session 78 season-row items were also completed narrative in TODO: baking the row was
+rejected on measurement (about 5.5 fps of a 300-fps scene for +33% packed geometry); uploading
+only the live seasonal column reduced 136 KiB to 2 KiB with no measured frame-time gain.
+Do not re-propose baking without new evidence. See Session 78 and G152.
+
 ## 2026-09-03 - Three colour entries closed in 0.3.185-0.3.193
 
 Retired from `dev/TODO.md` at Session 76 close. See `dev/sessions/SESSION_76.md`.

@@ -311,16 +311,27 @@ public static class ServerAssistChecks
             ModVersion = "0.1.1",
             Enabled = true,
             ManifestKeyCount = 1234,
+            ServerSettings = new AssistServerSettings
+            {
+                EnableCapture = true,
+                ServeRadiusBlocks = 4096,
+                SweepRadiusChunks = 64,
+            },
         });
         c.True(client.Available, "a matching protocol makes the assist available");
         c.Eq(LodAssist.Protocol, client.NegotiatedProtocol, "the negotiated protocol is ours");
         c.Eq(1234, client.ManifestExpected, "the announced key count is remembered for comparison");
+        c.Eq(4096, client.ServerSettings?.ServeRadiusBlocks ?? -1,
+            "the server diagnostic snapshot is remembered");
         c.True(client.Status.Contains("connected"), "a working assist says so");
 
         // A newer server: take the lower of the two, so neither side needs to know what the
         // other added.
         client.Reset();
+        c.True(client.ServerSettings == null, "reset drops the previous world's server settings");
         client.OnWelcome(new AssistWelcome { Protocol = 99, ModVersion = "9.9", Enabled = true });
+        c.True(client.ServerSettings == null,
+            "a welcome from an older server leaves settings visibly unavailable");
         c.Eq(LodAssist.Protocol, client.NegotiatedProtocol, "a newer server negotiates down to ours");
         c.True(client.Available, "a newer server is still usable");
 

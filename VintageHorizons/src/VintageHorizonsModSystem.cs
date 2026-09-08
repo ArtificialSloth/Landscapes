@@ -84,7 +84,7 @@ public class VintageHorizonsConfig
     public float WaterMaxAlpha = 0.7f;
 
     /// <summary>Blocks of water the view ray survives. See LodTerrainRenderer.WaterClarity.</summary>
-    public float WaterClarity = 10f;
+    public float WaterClarity = 25f;
 
     /// <summary>
     /// Blocks either side of a vanilla chunk plane where water keeps one quad per block, so it
@@ -117,13 +117,8 @@ public class VintageHorizonsConfig
     /// cached terrain - was answered by the same-frame near/far split and by the measured
     /// far-command suppression that followed it.
     ///
-    /// Off is still reachable and still remembered: `.vhgpu off` clears GpuArenas, and because
-    /// every other stage is nested under it that one switch returns the whole client to the
-    /// established renderer for good. An environment variable set to "0" wins over both, which
-    /// is what keeps a scripted A/B honest.
-    ///
-    /// These are NOT a capability claim. A driver that fails the probe, a refused shader, a
-    /// refused allocation or any draw failure still selects the legacy path in the same frame.
+    /// Off remains reachable as an explicit failure test. It releases the arenas and leaves
+    /// cached opaque terrain absent; the retired per-section renderer is never selected.
     /// </summary>
     public bool GpuArenas = true;
     public bool IndirectDraw = true;
@@ -144,7 +139,7 @@ public class VintageHorizonsConfig
 /// pipeline, which does the capture, mip and persistence work.
 /// See DESIGN.md at the repo root.
 /// </summary>
-public class VintageHorizonsModSystem : ModSystem
+public partial class VintageHorizonsModSystem : ModSystem
 {
 
     ICoreClientAPI capi = null!;
@@ -217,6 +212,7 @@ public class VintageHorizonsModSystem : ModSystem
         // must not do is defer to a mod that is installed but switched off, which leaves
         // the player with nothing at all.
         deferringTo = ChooseDeferralTarget();
+        InstallDiagnostics();
         if (deferringTo != null)
         {
             Mod.Logger.Notification(
@@ -885,7 +881,12 @@ public class VintageHorizonsModSystem : ModSystem
         return $"{near} and stops at the game's own chunk edges at every distance, "
             + "the same rule distant ground follows | "
             + $"opacity {(renderer.WaterFresnel ? "the game's own, by view angle" : "flat")} "
-            + $"| glint {renderer.WaterGlint:0.00} | foam {renderer.WaterFoam:0.00}";
+            + $"| texture {renderer.WaterSurfaceTextureStatus} "
+            + $"| glint {renderer.WaterGlint:0.00} | foam {renderer.WaterFoam:0.00}"
+            + $" | ground murk {(renderer.WaterGroundMurk ? "on" : "off")}"
+            + $" | cached surface {(renderer.WaterSurfaceVisible ? "on" : "off")}"
+            + $" | depth coverage {(renderer.WaterDepthCoverage ? "on" : "off")}"
+            + $" ({renderer.WaterDepthDraws} water sections)";
     }
 
     /// <summary>How many detail levels draw half-block terrain, in words.</summary>
@@ -1442,6 +1443,7 @@ public class VintageHorizonsModSystem : ModSystem
         unknownTextureColor = capi.BlockTextureAtlas.UnknownTexturePosition.AvgColor;
         Mod.Logger.Debug("Missing-texture colour is {0:X8}{1}", unknownTextureColor,
             unknownTextureColor == 0 ? " (zero: magenta-block salvage disabled)" : "");
+        ResolveWaterSurfaceTexture();
         renderer.ApplyZFar();
         pipeline.Open("ModData/vintagehorizons");
 
@@ -1514,6 +1516,45 @@ public class VintageHorizonsModSystem : ModSystem
             exploreZ = capi.World.Player.Entity.Pos.Z;
             capi.Event.RegisterGameTickListener(_ => ExploreHop(), 60000);
             Mod.Logger.Notification("Auto-explore active (spiral teleports every 60s)");
+        }
+    }
+
+    /// <summary>
+    /// Resolve the one ordinary-water atlas tile used by the first dedicated texture
+    /// comparison. The translucent mesh also contains lava and ice, so its tint slot travels
+    /// beside the texture slot and prevents the shader from applying water detail to them.
+    /// </summary>
+    void ResolveWaterSurfaceTexture()
+    {
+        try
+        {
+            Block? water = capi.World.Blocks.FirstOrDefault(block =>
+                block?.Code?.Domain == "game" && block.Code.Path == "water-still-7")
+                ?? capi.World.Blocks.FirstOrDefault(block =>
+                    block?.Code?.Domain == "game"
+                    && block.Code.Path.StartsWith("water-still-", StringComparison.Ordinal));
+            if (water == null)
+            {
+                renderer.WaterSurfaceTextureSlot = 0;
+                renderer.WaterSurfaceTintSlot = -1;
+                Mod.Logger.Warning(
+                    "[VintageHorizons] standard water texture unavailable; cached water keeps its averaged surface colour.");
+                return;
+            }
+
+            renderer.WaterSurfaceTextureSlot = blockTextures.SlotFor(water, StableColorOf(water));
+            renderer.WaterSurfaceTintSlot = TintSlotOf(water);
+            Mod.Logger.Notification(
+                "[VintageHorizons] standard water surface texture: {0}, atlas slot {1}, tint slot {2}.",
+                water.Code, renderer.WaterSurfaceTextureSlot, renderer.WaterSurfaceTintSlot);
+        }
+        catch (Exception e)
+        {
+            renderer.WaterSurfaceTextureSlot = 0;
+            renderer.WaterSurfaceTintSlot = -1;
+            Mod.Logger.Warning(
+                "[VintageHorizons] standard water texture could not be resolved; cached water keeps its averaged surface colour: {0}",
+                e.Message);
         }
     }
 
@@ -2853,8 +2894,9 @@ public class VintageHorizonsModSystem : ModSystem
         // The one in-game switch for the whole GPU terrain path, and since 0.3.103 that path
         // is the default rather than a measurement. Every other stage is nested under the
         // regional arenas this controls - batching draws from them, culling zeroes the
-        // commands batching writes, the split needs something to cull - so turning this off
-        // returns the client to the established renderer completely, and the choice is saved.
+        // commands batching writes, the split needs something to cull. Turning this off is
+        // now a deliberate fail-loud test: cached opaque terrain disappears and no retired
+        // renderer substitutes for it.
         //
         // It is deliberately the ONLY remaining switch. The staging commands it used to sit
         // beside could each select a half-built configuration, which is a way to collect a
@@ -2877,7 +2919,7 @@ public class VintageHorizonsModSystem : ModSystem
                 SaveConfig();
                 bool off = mode.Equals("off", StringComparison.OrdinalIgnoreCase);
                 return TextCommandResult.Success(off
-                    ? "[VintageHorizons] GPU terrain renderer switching off; buffers released next frame and cached terrain returns to the established renderer."
+                    ? "[VintageHorizons] GPU terrain renderer switching off; buffers release next frame and cached opaque terrain will disappear. No legacy fallback exists."
                     : "[VintageHorizons] GPU terrain renderer switching on"
                         + (mode.Equals("verify", StringComparison.OrdinalIgnoreCase)
                             ? " with content verification" : "")
@@ -3074,7 +3116,9 @@ public class VintageHorizonsModSystem : ModSystem
             .WithDescription("How distant water meets the game's own. No argument reports the settings. "
                 + "off | a number of chunks | edge <chunks> | fresnel on|off | glint <0-1> | "
                 + "foam <0-1> | depth on|off | alpha <0-1> | clarity <blocks> | wave <blocks> | "
-                + "walls on|off.")
+                + "walls on|off | murk on|off | surface on|off | coverage on|off | "
+                + "texture on|off | pipeline oit|opaque | "
+                + "junction on|off | log | capture.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
                       capi.ChatCommands.Parsers.OptionalWord("value"))
             .HandleWith(args =>
@@ -3099,13 +3143,121 @@ public class VintageHorizonsModSystem : ModSystem
                         return TextCommandResult.Success(
                             $"[VintageHorizons] {DescribeWater(renderer)}. Use: .vhwater off |"
                             + " a number of CHUNKS | edge <chunks> | fresnel on/off |"
-                            + " glint 0-1 | foam 0-1."
+                            + " glint 0-1 | foam 0-1 | murk on/off."
                             + " Distant water hands over to the game's water at the game's own"
                             + " chunk edges and nowhere else - there is no radius any more, in"
                             + " either direction. The chunk count is an off-by-default fallback"
                             + " for water right at your feet, and it steps along chunk edges."
                             + " Glint and foam are the game's own sun reflection and surface"
                             + " noise, carried everywhere distant water is drawn.");
+
+                    case "log":
+                        string waterLogReply = "[VintageHorizons] " + DescribeWater(renderer)
+                            + "; absorption " + renderer.DescribeWaterAbsorption()
+                            + "; shader " + renderer.WaterShaderStatus
+                            + "; " + (horizonEffects?.DescribeLiquidBoundary()
+                                ?? "vanilla missing-neighbour water-wall guard unavailable")
+                            + "; cached depth draws " + renderer.WaterDepthDraws
+                            + "; depth skip " + renderer.WaterDepthSkipReason
+                            + "; " + renderer.DescribeWaterPipeline();
+                        capi.Logger.Notification(waterLogReply);
+                        return TextCommandResult.Success(waterLogReply);
+
+                    case "pipeline":
+                        if (value == "oit" || value == "opaque")
+                        {
+                            renderer.WaterOitEnabled = value == "oit";
+                        }
+                        string pipelineReply = "[VintageHorizons] requested water pipeline "
+                            + (renderer.WaterOitEnabled ? "oit" : "opaque")
+                            + "; " + renderer.DescribeWaterPipeline()
+                            + ". Changes next frame, no rebuild. Use .vhwater pipeline oit|opaque; .vhwater log after a short comparison.";
+                        capi.Logger.Notification(pipelineReply);
+                        return TextCommandResult.Success(pipelineReply);
+
+                    case "shader":
+                        return TextCommandResult.Error(
+                            "[VintageHorizons] the legacy water shader is retired. Dedicated "
+                            + "water is required; use .vhwater pipeline oit|opaque to compare its stages.");
+
+                    case "junction":
+                        if (value != "on" && value != "off")
+                            return TextCommandResult.Success($"[VintageHorizons] junction depth {(renderer.WaterJunctionDepth ? "on" : "off")}, last frame {renderer.WaterJunctionStatus}. Use .vhwater junction on/off. Fills missing boundary depth from cached water geometry. Needs murk, coverage and surface on. Session only.");
+                        renderer.WaterJunctionDepth = value == "on";
+                        string junctionReply = "[VintageHorizons] junction depth "
+                            + (renderer.WaterJunctionDepth ? "on" : "off")
+                            + ". Changes next frame; no rebuild. Depth timing restarted. Session only.";
+                        capi.Logger.Notification(junctionReply);
+                        return TextCommandResult.Success(junctionReply);
+
+                    case "repair":
+                        if (value != "on" && value != "off")
+                            return TextCommandResult.Success($"[VintageHorizons] water-depth hole repair {(renderer.WaterDepthRepair ? "on" : "off")}. Use .vhwater repair on/off. Needs murk and coverage on.");
+                        renderer.WaterDepthRepair = value == "on";
+                        string repairReply = "[VintageHorizons] water-depth hole repair "
+                            + (renderer.WaterDepthRepair ? "on" : "off") + ". Immediate, no rebuild. Session only.";
+                        capi.Logger.Notification(repairReply);
+                        return TextCommandResult.Success(repairReply);
+
+                    case "capture":
+                        renderer.RequestWaterCapture();
+                        return TextCommandResult.Success("[VintageHorizons] Capturing the next frame's water depth and rendering stages. A brief pause is expected. The saved folder will be written to the client log.");
+
+                    case "murk":
+                        if (value != "on" && value != "off")
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] ground murk {(renderer.WaterGroundMurk ? "on" : "off")}. "
+                                + "Use .vhwater murk on/off to compare the game's underwater "
+                                + "colour and fog on cached ground. Immediate; "
+                                + "independent of depth, clarity and water effects. Session only.");
+                        renderer.WaterGroundMurk = value == "on";
+                        string murkReply = "[VintageHorizons] ground murk "
+                            + (renderer.WaterGroundMurk ? "on" : "off")
+                            + ". Look at the seam now; no rebuild needed. Session only.";
+                        capi.Logger.Notification(murkReply);
+                        return TextCommandResult.Success(murkReply);
+
+                    case "coverage":
+                        if (value != "on" && value != "off")
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] cached water depth coverage {(renderer.WaterDepthCoverage ? "on" : "off")}. "
+                                + "Use .vhwater coverage on/off. On extends the game's underwater "
+                                + "depth image through cached water; off uses vanilla water only. "
+                                + $"Last frame: {renderer.WaterDepthDraws} water sections. Needs murk on. Session only.");
+                        renderer.WaterDepthCoverage = value == "on";
+                        string coverageReply = "[VintageHorizons] cached water depth coverage "
+                            + (renderer.WaterDepthCoverage ? "on" : "off")
+                            + ". Takes effect next frame. Needs murk on. Session only.";
+                        capi.Logger.Notification(coverageReply);
+                        return TextCommandResult.Success(coverageReply);
+
+                    case "surface":
+                        if (value != "on" && value != "off")
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] cached water surface {(renderer.WaterSurfaceVisible ? "on" : "off")}. "
+                                + "Use .vhwater surface on/off to remove only Horizons water. "
+                                + "Ground, plants and the game's water keep drawing. Session only.");
+                        renderer.WaterSurfaceVisible = value == "on";
+                        string surfaceReply = "[VintageHorizons] cached water surface "
+                            + (renderer.WaterSurfaceVisible ? "on" : "off")
+                            + ". Look at the band now; no rebuild needed. Session only.";
+                        capi.Logger.Notification(surfaceReply);
+                        return TextCommandResult.Success(surfaceReply);
+
+                    case "texture":
+                        if (value != "on" && value != "off")
+                            return TextCommandResult.Success(
+                                $"[VintageHorizons] cached water texture {renderer.WaterSurfaceTextureStatus}. "
+                                + "Use .vhwater texture on/off. This applies the game's live "
+                                + "water tile and its alpha to ordinary cached water. Immediate; "
+                                + "dedicated shader only; session only.");
+                        renderer.WaterSurfaceTexture = value == "on";
+                        string textureReply = "[VintageHorizons] cached water texture "
+                            + renderer.WaterSurfaceTextureStatus
+                            + ". Look at the broad boundary band now; no rebuild needed. "
+                            + "Dedicated shader only; session only.";
+                        capi.Logger.Notification(textureReply);
+                        return TextCommandResult.Success(textureReply);
 
                     case "edge":
                         if (!int.TryParse(value, System.Globalization.NumberStyles.Integer,
@@ -3788,6 +3940,7 @@ public class VintageHorizonsModSystem : ModSystem
         Quietly(() => pipeline?.Dispose());
         Quietly(() => renderer?.Dispose());
         Quietly(() => configDialog?.Dispose());
+        Quietly(DisposeDiagnostics);
     }
 
     /// <summary>

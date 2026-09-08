@@ -10,7 +10,8 @@ internal readonly record struct LodGpuDepthCopyValidation(
     int Height,
     int MipLevels,
     int InternalFormat,
-    string FailureReason)
+    string FailureReason,
+    string Advisory = "")
 {
     public bool Succeeded => CopyValidated && MipAllocationValidated && StateRestored;
 }
@@ -47,16 +48,14 @@ internal static class LodGpuDepthCopyProbe
         int height = 0;
         int levels = 0;
         int internalFormat = 0;
+        string advisory = "";
         var result = Failure("private depth-copy probe did not run");
 
         try
         {
-            ErrorCode existingError = GL.GetError();
-            if (existingError != ErrorCode.NoError)
-            {
-                throw new InvalidOperationException(
-                    $"pre-existing OpenGL error {existingError} prevented an isolated depth probe");
-            }
+            if (!LodGlErrorIsolation.TryEstablishBaseline(
+                    () => (int)GL.GetError(), out advisory, out string baselineFailure))
+                throw new InvalidOperationException(baselineFailure);
 
             state = LodGlStateGuard.Capture(
                 stateApi,
@@ -172,12 +171,13 @@ internal static class LodGpuDepthCopyProbe
                 height,
                 levels,
                 internalFormat,
-                FailureReason: "");
+                FailureReason: "",
+                Advisory: advisory);
         }
         catch (Exception e)
         {
             result = Failure("private depth-copy probe failed: " + e.Message,
-                width, height, levels, internalFormat);
+                width, height, levels, internalFormat, advisory);
         }
         finally
         {
@@ -187,7 +187,7 @@ internal static class LodGpuDepthCopyProbe
             if (!restored)
             {
                 result = Failure("private depth-copy state restore failed: " + restoreFailure,
-                    width, height, levels, internalFormat);
+                    width, height, levels, internalFormat, advisory);
             }
             else if (result.CopyValidated && result.MipAllocationValidated)
             {
@@ -227,6 +227,7 @@ internal static class LodGpuDepthCopyProbe
         int width = 0,
         int height = 0,
         int levels = 0,
-        int internalFormat = 0) =>
-        new(false, false, false, width, height, levels, internalFormat, reason);
+        int internalFormat = 0,
+        string advisory = "") =>
+        new(false, false, false, width, height, levels, internalFormat, reason, advisory);
 }

@@ -20,8 +20,9 @@ internal readonly record struct LodRenderPathSelection(
 }
 
 /// <summary>
-/// Phase 1 selection policy. Every outcome deliberately keeps legacy as the visible
-/// renderer; a validated opt-in may only activate the CPU-only metadata shadow.
+/// The outer coordinator still owns resident resource lifecycle while that code is removed.
+/// Visible opaque drawing is allowed only from validated regional packed resources; the
+/// coordinator's per-section callback no longer submits opaque MeshRefs.
 /// </summary>
 internal static class LodRenderPathPolicy
 {
@@ -61,7 +62,7 @@ internal static class LodRenderPathPolicy
         }
 
         return new(preference, true, LodRenderPathSelection.LegacyPath,
-            "validated CPU-only GPU renderer shadow enabled; visible drawing remains legacy");
+            "validated regional GPU resources enabled; visible packed rendering is required");
     }
 }
 
@@ -307,10 +308,11 @@ internal sealed class LodGpuShadowRenderPath : ILodRenderPath
 }
 
 /// <summary>
-/// The dual-path seam. Visible calls always go to legacy: <see cref="DrawOpaque"/> and
-/// <see cref="DrawWater"/> name the visible path directly, so no configuration can route a
-/// frame to the shadow. Shadow failures are isolated and permanently disable mirroring for
-/// the world rather than affecting visible terrain.
+/// The dual-path seam. Visible calls enter the established coordinator through
+/// <see cref="DrawOpaque"/> and <see cref="DrawWater"/>. The opaque callback may submit
+/// mirrored regional geometry indirectly, then draws every uncovered section through the
+/// packed command path. Regional failures disable publication and therefore make cached
+/// opaque terrain visibly absent; no per-section fallback is submitted.
 /// </summary>
 internal sealed class LodRenderPathCoordinator : IDisposable
 {
@@ -347,8 +349,8 @@ internal sealed class LodRenderPathCoordinator : IDisposable
     /// <summary>
     /// Turns mirroring on or off after selection, for the in-game diagnostic switch. The
     /// selection still has to say the shadow is allowed, so a context that failed capability
-    /// validation cannot be talked into mirroring by a chat command. Visible drawing is
-    /// unaffected either way: this only decides whether the shadow is fed.
+    /// validation cannot be talked into mirroring by a chat command. This decides whether
+    /// regional geometry is fed. Turning it off deliberately leaves cached opaque terrain absent.
     /// </summary>
     public bool SetShadowEnabled(bool enabled, LodRenderPathSelection selection)
     {
@@ -365,8 +367,8 @@ internal sealed class LodRenderPathCoordinator : IDisposable
         try { shadow.Clear(identities.WorldEpoch); }
         catch (Exception e)
         {
-            warn("[VintageHorizons] GPU renderer shadow did not clear cleanly; visible legacy "
-                + "rendering is unchanged: " + e.Message);
+            warn("[VintageHorizons] GPU regional resources did not clear cleanly; the required "
+                + "packed renderer is unavailable: " + e.Message);
         }
     }
 
@@ -445,8 +447,8 @@ internal sealed class LodRenderPathCoordinator : IDisposable
             ShadowEnabled = false;
             try { shadow.Clear(identities.WorldEpoch); }
             catch { /* The failed CPU-only shadow has no visible authority or GL state. */ }
-            warn($"[VintageHorizons] GPU renderer shadow disabled after {operation} failed; "
-                + "visible legacy rendering is unchanged: " + e.Message);
+            warn($"[VintageHorizons] GPU regional resources disabled after {operation} failed; "
+                + "cached opaque terrain will be suppressed: " + e.Message);
         }
     }
 

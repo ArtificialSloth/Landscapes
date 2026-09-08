@@ -7,6 +7,7 @@ public static class GpuRendererChecks
         CapabilityPolicy(c);
         DepthConvention(c);
         RuntimeEntryPoints(c);
+        GlErrorIsolation(c);
         DepthCopyPolicy(c);
         RenderPathPolicy(c);
         RenderPathLifecycle(c);
@@ -77,6 +78,38 @@ public static class GpuRendererChecks
 
         c.False(LodGpuRuntimeProbe.ValidateEntryPoints(required, loaded[..^1], out missing),
             "mismatched OpenTK binding tables reject runtime validation");
+    }
+
+    static void GlErrorIsolation(Check c)
+    {
+        var errors = new Queue<int>([
+            0x0501, // GL_INVALID_VALUE
+            0x0502, // GL_INVALID_OPERATION
+            0,
+        ]);
+        c.True(LodGlErrorIsolation.TryEstablishBaseline(
+                errors.Dequeue, out string advisory, out string failure),
+            "stale OpenGL flags are drained before an isolated runtime probe");
+        c.Eq("", failure,
+            "a drained OpenGL baseline has no failure");
+        c.True(advisory.Contains("2 pre-existing", StringComparison.Ordinal)
+                && advisory.Contains("InvalidValue", StringComparison.Ordinal)
+                && advisory.Contains("InvalidOperation", StringComparison.Ordinal),
+            "the clean baseline reports every stale OpenGL flag it consumed");
+
+        int reads = 0;
+        c.False(LodGlErrorIsolation.TryEstablishBaseline(
+                () =>
+                {
+                    reads++;
+                    return 0x0501;
+                },
+                out advisory, out failure),
+            "an OpenGL error state that cannot be cleared still rejects validation");
+        c.Eq(LodGlErrorIsolation.MaxPreexistingErrors + 1, reads,
+            "the error baseline drain has a strict bound");
+        c.True(failure.Contains("did not clear", StringComparison.Ordinal),
+            "a saturated error state explains why validation was rejected");
     }
 
     static void BenchmarkWiring(Check c)

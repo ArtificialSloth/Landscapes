@@ -8,7 +8,8 @@ internal readonly record struct LodGpuRuntimeValidation(
     bool MinimalComputeValidated,
     uint ExpectedValue,
     uint ObservedValue,
-    string FailureReason)
+    string FailureReason,
+    string Advisory = "")
 {
     public bool Succeeded => RequiredEntryPointsValidated && MinimalComputeValidated;
 }
@@ -131,16 +132,14 @@ internal static class LodGpuRuntimeProbe
         int buffer = 0;
         uint observed = 0;
         bool stateCaptured = false;
+        string advisory = "";
         LodGpuRuntimeValidation result = Failure("minimal compute/SSBO probe did not run", 0);
 
         try
         {
-            ErrorCode existingError = GL.GetError();
-            if (existingError != ErrorCode.NoError)
-            {
-                throw new InvalidOperationException(
-                    $"pre-existing OpenGL error {existingError} prevented an isolated probe");
-            }
+            if (!LodGlErrorIsolation.TryEstablishBaseline(
+                    () => (int)GL.GetError(), out advisory, out string baselineFailure))
+                throw new InvalidOperationException(baselineFailure);
 
             state = LodGlStateGuard.Capture(
                 stateApi,
@@ -200,11 +199,13 @@ internal static class LodGpuRuntimeProbe
                     $"minimal compute/SSBO probe returned 0x{observed:X8}, expected 0x{ProbeValue:X8}");
             }
 
-            result = new LodGpuRuntimeValidation(true, true, ProbeValue, observed, "");
+            result = new LodGpuRuntimeValidation(
+                true, true, ProbeValue, observed, "", advisory);
         }
         catch (Exception e)
         {
-            result = Failure("minimal compute/SSBO probe failed: " + e.Message, observed);
+            result = Failure(
+                "minimal compute/SSBO probe failed: " + e.Message, observed, advisory);
         }
         finally
         {
@@ -212,7 +213,7 @@ internal static class LodGpuRuntimeProbe
                     stateApi, state, out string restoreFailure))
             {
                 result = Failure("minimal compute/SSBO state restore failed: "
-                    + restoreFailure, observed);
+                    + restoreFailure, observed, advisory);
             }
             try { if (buffer != 0) GL.DeleteBuffer(buffer); }
             catch { /* Context teardown must continue. */ }
@@ -225,6 +226,7 @@ internal static class LodGpuRuntimeProbe
         return result;
     }
 
-    static LodGpuRuntimeValidation Failure(string reason, uint observed) =>
-        new(true, false, ProbeValue, observed, reason);
+    static LodGpuRuntimeValidation Failure(
+        string reason, uint observed, string advisory = "") =>
+        new(true, false, ProbeValue, observed, reason, advisory);
 }

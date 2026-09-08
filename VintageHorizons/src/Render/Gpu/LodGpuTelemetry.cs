@@ -286,6 +286,7 @@ internal sealed class LodGpuTelemetry : IDisposable
     readonly LodGpuTimerRing splitNearTimer;
     readonly LodGpuTimerRing splitFarTimer;
     readonly LodGpuTimerRing waterTimer;
+    readonly LodGpuTimerRing waterDepthTimer;
     readonly LodGpuTimerRing hzbTimer;
     readonly LodGpuTimerRing splitHzbTimer;
     readonly LodGpuTimerRing classifyTimer;
@@ -308,6 +309,7 @@ internal sealed class LodGpuTelemetry : IDisposable
     public LodPhaseCost SplitNearCost;
     public LodPhaseCost SplitFarCost;
     public LodPhaseCost WaterCost;
+    public LodPhaseCost WaterDepthCost;
 
     /// <summary>
     /// GPU time to copy the depth buffer and reduce the whole pyramid. This is the number
@@ -331,17 +333,17 @@ internal sealed class LodGpuTelemetry : IDisposable
 
     public int PendingResults =>
         opaqueTimer.PendingCount + splitNearTimer.PendingCount + splitFarTimer.PendingCount
-        + waterTimer.PendingCount + hzbTimer.PendingCount + splitHzbTimer.PendingCount
+        + waterTimer.PendingCount + waterDepthTimer.PendingCount + hzbTimer.PendingCount + splitHzbTimer.PendingCount
         + classifyTimer.PendingCount + ordinaryCullTimer.PendingCount
         + splitNearCullTimer.PendingCount + splitFarCullTimer.PendingCount;
     public int UnavailableSlots =>
         opaqueTimer.UnavailableSlots + splitNearTimer.UnavailableSlots
-        + splitFarTimer.UnavailableSlots + waterTimer.UnavailableSlots + hzbTimer.UnavailableSlots
+        + splitFarTimer.UnavailableSlots + waterTimer.UnavailableSlots + waterDepthTimer.UnavailableSlots + hzbTimer.UnavailableSlots
         + splitHzbTimer.UnavailableSlots + classifyTimer.UnavailableSlots
         + ordinaryCullTimer.UnavailableSlots + splitNearCullTimer.UnavailableSlots
         + splitFarCullTimer.UnavailableSlots;
     public int TargetBusy => opaqueTimer.TargetBusy + splitNearTimer.TargetBusy
-        + splitFarTimer.TargetBusy + waterTimer.TargetBusy + hzbTimer.TargetBusy
+        + splitFarTimer.TargetBusy + waterTimer.TargetBusy + waterDepthTimer.TargetBusy + hzbTimer.TargetBusy
         + splitHzbTimer.TargetBusy
         + classifyTimer.TargetBusy;
 
@@ -361,6 +363,7 @@ internal sealed class LodGpuTelemetry : IDisposable
         splitNearTimer = new LodGpuTimerRing(timerApi);
         splitFarTimer = new LodGpuTimerRing(timerApi);
         waterTimer = new LodGpuTimerRing(timerApi);
+        waterDepthTimer = new LodGpuTimerRing(timerApi);
         hzbTimer = new LodGpuTimerRing(timerApi);
         splitHzbTimer = new LodGpuTimerRing(timerApi);
         classifyTimer = new LodGpuTimerRing(timerApi);
@@ -437,6 +440,7 @@ internal sealed class LodGpuTelemetry : IDisposable
             splitNearTimer.Poll(ref SplitNearCost);
             splitFarTimer.Poll(ref SplitFarCost);
             waterTimer.Poll(ref WaterCost);
+            waterDepthTimer.Poll(ref WaterDepthCost);
             hzbTimer.Poll(ref HzbGpuCost);
             splitHzbTimer.Poll(ref SplitHzbGpuCost);
             classifyTimer.Poll(ref ClassifyGpuCost);
@@ -458,6 +462,18 @@ internal sealed class LodGpuTelemetry : IDisposable
     public void EndSplitFar() => End(splitFarTimer);
     public bool BeginWater() => Begin(waterTimer);
     public void EndWater() => End(waterTimer);
+    public bool BeginWaterDepth() => Begin(waterDepthTimer);
+    public void EndWaterDepth() => End(waterDepthTimer);
+    public void ResetWaterInterval()
+    {
+        WaterCost.Reset();
+        waterTimer.ResetInterval();
+    }
+    public void ResetWaterDepthInterval()
+    {
+        WaterDepthCost.Reset();
+        waterDepthTimer.ResetInterval();
+    }
     public bool BeginHzb() => Begin(hzbTimer);
     public void EndHzb() => End(hzbTimer);
     public bool BeginSplitHzb() => Begin(splitHzbTimer);
@@ -490,6 +506,7 @@ internal sealed class LodGpuTelemetry : IDisposable
         SplitNearCost.Reset();
         SplitFarCost.Reset();
         WaterCost.Reset();
+        WaterDepthCost.Reset();
         HzbGpuCost.Reset();
         SplitHzbGpuCost.Reset();
         ClassifyGpuCost.Reset();
@@ -500,6 +517,7 @@ internal sealed class LodGpuTelemetry : IDisposable
         splitNearTimer.ResetInterval();
         splitFarTimer.ResetInterval();
         waterTimer.ResetInterval();
+        waterDepthTimer.ResetInterval();
         hzbTimer.ResetInterval();
         splitHzbTimer.ResetInterval();
         classifyTimer.ResetInterval();
@@ -554,13 +572,21 @@ internal sealed class LodGpuTelemetry : IDisposable
                         + $"{DepthCopyValidation.MipLevels} levels/0x{DepthCopyValidation.InternalFormat:X}"
                     : "not validated")}; "
                 + $"depth {depth}; GPU timing {(TimingActive ? "on" : "off")}. "
-                + $"Fast path remains legacy: {Decision.Reason}."
+                + (Decision.Tier1RuntimeValidated
+                    ? "Fast-path prerequisites validated."
+                    : $"Fast path unavailable: {Decision.Reason}.")
                 + (string.IsNullOrEmpty(RuntimeValidation.FailureReason)
                     ? ""
                     : " Runtime probe: " + RuntimeValidation.FailureReason + ".")
+                + (string.IsNullOrEmpty(RuntimeValidation.Advisory)
+                    ? ""
+                    : " Runtime probe isolation: " + RuntimeValidation.Advisory + ".")
                 + (string.IsNullOrEmpty(DepthCopyValidation.FailureReason)
                     ? ""
-                    : " Depth probe: " + DepthCopyValidation.FailureReason + "."));
+                    : " Depth probe: " + DepthCopyValidation.FailureReason + ".")
+                + (string.IsNullOrEmpty(DepthCopyValidation.Advisory)
+                    ? ""
+                    : " Depth probe isolation: " + DepthCopyValidation.Advisory + "."));
         }
         catch (Exception e)
         {
@@ -634,6 +660,7 @@ internal sealed class LodGpuTelemetry : IDisposable
         splitNearTimer.Dispose();
         splitFarTimer.Dispose();
         waterTimer.Dispose();
+        waterDepthTimer.Dispose();
         hzbTimer.Dispose();
         splitHzbTimer.Dispose();
         classifyTimer.Dispose();

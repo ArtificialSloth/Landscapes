@@ -21,8 +21,13 @@ namespace VintageHorizons;
 /// matrices, fog + transition handling in the shaders) adapted from Farseer
 /// (https://github.com/ViciousBadger/VSMod-Farseer, MIT, (c) Badgerson).
 /// </summary>
-public class LodTerrainRenderer : IRenderer
+public partial class LodTerrainRenderer : IRenderer
 {
+    // Development contract: the shipping candidate must exercise the renderer being built.
+    // A missing prerequisite produces missing cached geometry and an error instead of quietly
+    // substituting the per-section renderer and making a broken path look healthy.
+    internal const bool RequirePackedTerrainRenderer = true;
+
     internal const double PreVanillaRenderOrder = 0.36;
     internal const double PostVanillaRenderOrder = 0.38;
     public double RenderOrder => postVanillaDepthCulling
@@ -208,6 +213,7 @@ public class LodTerrainRenderer : IRenderer
 
     /// <summary>Plain-language state of the GPU timers, for any report that prints their figures.</summary>
     public string DescribeGpuTiming() => gpuTelemetry.DescribeTiming();
+
     public LodPhaseCost GpuOpaqueCost => gpuTelemetry.OpaqueCost;
     public LodPhaseCost GpuSplitNearCost => gpuTelemetry.SplitNearCost;
     public LodPhaseCost GpuSplitFarCost => gpuTelemetry.SplitFarCost;
@@ -863,6 +869,45 @@ public class LodTerrainRenderer : IRenderer
     bool waterAbsorptionDeferred;
 
     /// <summary>
+    /// Apply the engine's screen-space murk and fog removal to cached ground beneath
+    /// water. A session-only comparison switch, independent of baked depth shading.
+    /// </summary>
+    public bool WaterGroundMurk { get; set; } = true;
+
+    public bool WaterDepthCoverage { get; set; } = true;
+
+    /// <summary>Session-only isolation of cached water, preserving ground and thin cover.</summary>
+    public bool WaterSurfaceVisible { get; set; } = true;
+
+    /// <summary>
+    /// Sample the standard water tile from the game's live terrain atlas in the dedicated
+    /// surface shader. This is session-only while the boundary comparison is open.
+    /// </summary>
+    public bool WaterSurfaceTexture { get; set; } = true;
+
+    /// <summary>The live block-table slot for game:water-still-7, resolved per world.</summary>
+    public int WaterSurfaceTextureSlot { get; set; }
+
+    /// <summary>
+    /// The tint slot carried by standard water. The water buffer also contains lava and ice;
+    /// comparing this value keeps the standard water texture off those materials without
+    /// adding another vertex attribute.
+    /// </summary>
+    public int WaterSurfaceTintSlot { get; set; } = -1;
+
+    bool WaterSurfaceTextureReady => WaterSurfaceTexture
+        && WaterSurfaceTextureSlot > 0 && WaterSurfaceTintSlot > 0
+        && BlockTextureTableCurrent && blockTextures != null
+        && blockTextures.AtlasTextureId > 0;
+
+    public string WaterSurfaceTextureStatus => !WaterSurfaceTexture ? "off"
+        : WaterSurfaceTextureSlot <= 0 || WaterSurfaceTintSlot <= 0
+            ? "on (standard water tile unavailable)"
+            : WaterSurfaceTextureReady
+                ? $"on (live atlas slot {WaterSurfaceTextureSlot})"
+                : $"on (atlas slot {WaterSurfaceTextureSlot} pending upload)";
+
+    /// <summary>
     /// How shallow the water shader assumes cached water is, 0 to 1. Zero is vanilla's answer
     /// for open water and the default; 1 is the "infinitely shallow" substitution every build
     /// before this one made, which pinned vanilla's shoreline foam on over every ocean.
@@ -910,12 +955,10 @@ public class LodTerrainRenderer : IRenderer
         }
     }
 
-    // Owner-reported twice now: vanilla still goes dark sooner than we do. 16 blocks was the
-    // first guess with both light paths modelled; 10 keeps the shallows close and steepens the
-    // middle, where the measured gap was - vanilla luma 40 against our 63 at mid depth.
-    // Reverted with the ceiling above, for the same reason: this is the value the owner had
-    // tuned and accepted at one render distance before 0.4.8 replaced it with zero.
-    float waterClarity = 10f;
+    // The owner selected 25 after comparing the rebuilt depth-shaded seabed through the
+    // required dedicated OIT surface. Earlier values were judged while surface alpha,
+    // atmospheric opacity and, in one build, the active shader path were different.
+    float waterClarity = 25f;
 
     /// <summary>
     /// How many blocks either side of a 32-block vanilla chunk plane keep one water quad per
@@ -1634,7 +1677,7 @@ public class LodTerrainRenderer : IRenderer
     /// <summary>Keys written into this frame's command list, kept for the same reason.</summary>
     readonly List<long> indirectRecorded = new();
 
-    /// <summary>Keys recorded into the far command list, retained for fail-open redraw.</summary>
+    /// <summary>Keys recorded into the far command list, retained for failure accounting.</summary>
     readonly List<long> indirectFarRecorded = new();
 
     /// <summary>True only inside the walk of an indirect opaque pass.</summary>
@@ -1646,6 +1689,7 @@ public class LodTerrainRenderer : IRenderer
     /// resolved under one path would be applied under the other.
     /// </summary>
     bool indirectDrawingThisFrame;
+    string? reportedRequiredTerrainFailure;
 
     /// <summary>
     /// Fixed once per frame. The split is meaningful only when both indirect drawing and
@@ -1953,7 +1997,7 @@ public class LodTerrainRenderer : IRenderer
         {
             capi.Logger.Warning(
                 "[VintageHorizons] Phase 9 GPU failure injection armed for {0}; this is a "
-                + "test-only session and rendering must fail back safely.",
+                + "test-only session and cached opaque terrain must fail visibly.",
                 gpuFailureInjection.Stage);
         }
         gpuTelemetry = new LodGpuTelemetry(
@@ -1967,8 +2011,8 @@ public class LodTerrainRenderer : IRenderer
                 PublishLegacy,
                 RemoveMeshesLegacy,
                 PrepareLegacyFrame,
-                DrawLegacyOpaque,
-                DrawLegacyWater,
+                DrawPackedOpaque,
+                DrawWaterSurface,
                 ClearMeshesLegacy),
             gpuShadow,
             message => capi.Logger.Warning("{0}", message));
@@ -1985,6 +2029,7 @@ public class LodTerrainRenderer : IRenderer
         capi.Event.ChunkDirty += OnReadinessChunkDirty;
         LoadShader();
         RegisterRenderer();
+        RegisterWaterDepthStages();
     }
 
     void RegisterRenderer()
@@ -2046,13 +2091,12 @@ public class LodTerrainRenderer : IRenderer
         uploadedSeasonColumn = -1;
         WarnIfIncludeMissing(prog, "lodterrain");
         shaderOk = prog.Compile();
+        if (shaderOk) LodTerrainSamplerLayout.Configure(prog);
         if (!shaderOk && !ShaderLoadIsProvisional)
             capi.Logger.Error("[VintageHorizons] lodterrain shader failed to compile; LOD rendering disabled");
 
-        // The indirect variant. Its .vsh and .fsh are three lines each: a version, a
-        // define, and an include of the same body this program compiled. A driver that
-        // refuses it costs the fast path and nothing else, so this is a warning rather
-        // than an error and the established renderer never notices.
+        // The expanded indirect variant remains a diagnostic while its old representation
+        // is removed. It is compiled for comparison but is no longer a visible fallback.
         indirectProg = capi.Shader.NewShaderProgram();
         indirectProg.AssetDomain = "vintagehorizons";
         indirectProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
@@ -2085,25 +2129,30 @@ public class LodTerrainRenderer : IRenderer
                 + "occlusion is unavailable and nothing else changes");
 
         indirectShaderOk = indirectProg.Compile();
+        if (indirectShaderOk) LodTerrainSamplerLayout.Configure(indirectProg);
         if (!indirectShaderOk && !ShaderLoadIsProvisional)
             capi.Logger.Warning(
                 "[VintageHorizons] the indirect lodterrain variant failed to compile; "
-                + "cached terrain keeps drawing through the established path");
+                + "the retired expanded diagnostic is unavailable");
 
         packedShaderOk = packedProg.Compile();
+        if (packedShaderOk) LodTerrainSamplerLayout.Configure(packedProg);
+        LoadWaterDepthShader();
+        LoadWaterSurfaceShader();
+        LoadWaterOitShader();
         if (!ShaderLoadIsProvisional
             && gpuFailureInjection.Take(LodGpuFailureStage.FastShaders))
         {
             indirectShaderOk = false;
             packedShaderOk = false;
-            capi.Logger.Warning(
-                "[VintageHorizons] Phase 9 injected the fast terrain shader failure; cached "
-                + "terrain stays on the established renderer until a later successful reload.");
+            capi.Logger.Error(
+                "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED: Phase 9 injected "
+                + "a shader failure; cached opaque terrain will be suppressed until reload.");
         }
         if (!packedShaderOk && !ShaderLoadIsProvisional)
-            capi.Logger.Warning(
-                "[VintageHorizons] the packed lodterrain variant failed to compile; "
-                + "the expanded regional path remains available");
+            capi.Logger.Error(
+                "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED: the packed shader "
+                + "did not compile; cached opaque terrain will be suppressed.");
 
         // Said once, when it actually worked, so the log carries positive evidence rather
         // than only the absence of a complaint.
@@ -4016,6 +4065,7 @@ public class LodTerrainRenderer : IRenderer
     void MaybeReleaseBlockTextureTable()
     {
         if (textureSlotsReady || liveTexturedMeshes > 0) return;
+        if (WaterSurfaceTexture && WaterSurfaceTextureSlot > 0 && !blockTableFailed) return;
         if (blendPipelineEnabled && !blockTableFailed) return;
         DisposeBlockTableTexture();
     }
@@ -4042,20 +4092,21 @@ public class LodTerrainRenderer : IRenderer
     /// </summary>
     void PublishBlockTextureTable()
     {
-        if (!blendPipelineEnabled)
+        bool waterNeedsTable = WaterSurfaceTexture && WaterSurfaceTextureSlot > 0;
+        if (!blendPipelineEnabled && !waterNeedsTable)
         {
             MaybeReleaseBlockTextureTable();
             return;
         }
-        if (!textureSlotSourceReady)
+        if (blendPipelineEnabled && !textureSlotSourceReady)
         {
             SetTextureSlotEmission(false);
-            return;
+            if (!waterNeedsTable) return;
         }
         if (blockTextures == null || blockTableFailed) return;
         if (BlockTextureTableCurrent)
         {
-            SetTextureSlotEmission(true);
+            SetTextureSlotEmission(blendPipelineEnabled && textureSlotSourceReady);
             return;
         }
 
@@ -4111,7 +4162,7 @@ public class LodTerrainRenderer : IRenderer
                 try { GL.DeleteTexture(retiredTexture); }
                 catch { /* the replacement is already live; retirement is best effort */ }
             }
-            SetTextureSlotEmission(true);
+            SetTextureSlotEmission(blendPipelineEnabled && textureSlotSourceReady);
         }
         catch (Exception e)
         {
@@ -5344,14 +5395,19 @@ public class LodTerrainRenderer : IRenderer
     /// </summary>
     public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
     {
-        long frameStart = frameTimeline.Begin();
+        // Normally prepared before vanilla's liquid-depth pass. A missing Before callback
+        // can still draw normally, without extending liquid depth for that frame.
+        if (!beforeStageRan) PrepareBeforeFrame(deltaTime);
+        long drawStart = Stopwatch.GetTimestamp();
         try
         {
             RenderFrame(deltaTime, stage);
         }
         finally
         {
-            frameTimeline.End(frameStart);
+            beforeStageTicks += Stopwatch.GetTimestamp() - drawStart;
+            waterFrame.FinishOpaque(frameCounter, currentWorldEpoch());
+            beforeStageRan = false;
         }
     }
 
@@ -5360,8 +5416,10 @@ public class LodTerrainRenderer : IRenderer
 
     readonly LodFrameTimeline frameTimeline = new();
 
-    void RenderFrame(float deltaTime, EnumRenderStage stage)
+    void PrepareRenderFrame(float deltaTime)
     {
+        waterFrame.Invalidate();
+        drawList.Clear();
         if (AutoUnpause && capi.IsGamePaused) capi.PauseGame(false);
 
         var rapi = capi.Render;
@@ -5378,9 +5436,13 @@ public class LodTerrainRenderer : IRenderer
         // Fixed before anything reads it, and before the occlusion queries are resolved:
         // the two paths disagree about whether per-section queries are issued at all, so
         // the choice must not change between resolving a query and acting on it.
-        bool packedWanted = PackedDrawAvailable;
-        bool clustersWanted = packedWanted && ClusterDrawAvailable;
-        bool indirectWanted = packedWanted || IndirectDrawAvailable;
+        // The packed renderer is the product path under development. Expanded indirect and
+        // per-section MeshRef drawing are retained only as source scaffolding while their
+        // resource ownership is removed; neither is allowed to become a visible fallback.
+        bool packedWanted = PackedDrawAvailable
+            && (!ClusterDrawEnabled || ClusterDrawAvailable);
+        bool clustersWanted = packedWanted && ClusterDrawEnabled;
+        bool indirectWanted = packedWanted;
         if (indirectWanted != indirectDrawingThisFrame)
         {
             // Entering the batched path also gives up the query objects themselves. They are
@@ -5476,18 +5538,6 @@ public class LodTerrainRenderer : IRenderer
         ResolveTemporalOcclusionQueries();
         PrepareTemporalOcclusionQueries();
 
-        // Here, and not later, because "after vanilla terrain" is what makes the depth
-        // buffer worth copying: this renderer runs in the opaque stage after the engine has
-        // drawn its own world, so what sits in the depth attachment right now is exactly
-        // the set of near occluders a distant section would have to be behind. Copied
-        // before we draw a single cached section, so cached terrain cannot occlude itself
-        // by accident - that is Phase 6 and it is a separate decision.
-        // The split still needs this first picture for its near bucket. A second build after
-        // the near draw adds cached occluders for the far bucket; both are same-frame.
-        BuildDepthPyramid();
-        hzbBoxes.Clear();
-        hzbCollecting = DepthPyramidEnabled;
-
         traversalCulledThisFrame = 0;
         subtreeCulledThisFrame = 0;
         subtreeCulledMeshesThisFrame = 0;
@@ -5514,6 +5564,35 @@ public class LodTerrainRenderer : IRenderer
             LastVerticalCulledCount = 0;
             return;
         }
+
+        PrepareWaterSurfaceStage();
+    }
+
+    void RenderFrame(float deltaTime, EnumRenderStage stage)
+    {
+        if (!preparedFrameReady || prog == null) return;
+        var rapi = capi.Render;
+        float viewDistance = ApprovedViewDistance();
+        LodPhaseStart phaseStart;
+        // The water capture already separated opaque ground from cached water, but that
+        // still left two possible authors for a band in the opaque image: vanilla terrain
+        // that was present before this callback, and cached ground added below. Freeze both
+        // colour and depth here, before either the HZB copy or a cached draw, so one requested
+        // frame can attribute that difference without relying on two screenshots or a moving
+        // water surface.
+        CaptureWaterImage("02b-before-cached-ground-depth", EnumFrameBuffer.Primary, depth: true);
+        CaptureWaterImage("02c-before-cached-ground-color", EnumFrameBuffer.Primary, depth: false);
+        // Here, and not later, because "after vanilla terrain" is what makes the depth
+        // buffer worth copying: this renderer runs in the opaque stage after the engine has
+        // drawn its own world, so what sits in the depth attachment right now is exactly
+        // the set of near occluders a distant section would have to be behind. Copied
+        // before we draw a single cached section, so cached terrain cannot occlude itself
+        // by accident - that is Phase 6 and it is a separate decision.
+        // The split still needs this first picture for its near bucket. A second build after
+        // the near draw adds cached occluders for the far bucket; both are same-frame.
+        BuildDepthPyramid();
+        hzbBoxes.Clear();
+        hzbCollecting = DepthPyramidEnabled;
 
         prog.Use();
         if (OpaqueBackfaceCulling)
@@ -5550,11 +5629,16 @@ public class LodTerrainRenderer : IRenderer
         // command submission and is read only after a later frame reports it available.
         renderPaths.DrawOpaque();
 
+        CaptureWaterImage("03-ground-depth", EnumFrameBuffer.Primary, depth: true);
+        CaptureWaterImage("04-before-cached-water", EnumFrameBuffer.Primary, depth: false);
+
         LastCulledCount = culledThisFrame; // opaque pass only: water covers a subset
 
         // Pass 2: water and thin cover remain two-sided. Water must be visible from below,
         // and a plant mat has no opposite face to take over when the camera is underneath.
         renderPaths.DrawWater();
+        CaptureWaterImage(waterFrame.UseOit ? "05-opaque-stage-end" : "05-after-cached-water",
+            EnumFrameBuffer.Primary, depth: false);
 
         // The split's mid-frame picture deliberately excludes water. It excluded it because
         // water was blended and still wrote depth, so treating it as an occluder could remove
@@ -5587,17 +5671,17 @@ public class LodTerrainRenderer : IRenderer
     /// below binds to whichever unit is current. Both are answered by one place saying which
     /// unit a texture belongs to.
     ///
-    /// 6 upward keeps clear of the sampler slots the shared includes already use for glow, sky,
-    /// liquid depth, and the two shadow maps.
+    /// The engine's automatic bindings are explicitly assigned by LodTerrainSamplerLayout;
+    /// their declaration-order defaults do NOT reserve the low units for shared includes.
     /// </summary>
-    const int ReadinessMaskUnit = 6;
-    const int SeamFieldUnit = 7;
-    const int BlockTableUnit = 8;
-    const int BlockAtlasUnit = 9;
-    const int SlotTableUnit = 11;
-    const int ClimateFieldUnit = 12;
-    const int ClimateMapsUnit = 13;
-    const int SeasonColumnUnit = 14;
+    const int ReadinessMaskUnit = LodTerrainSamplerLayout.ReadinessMask;
+    const int SeamFieldUnit = LodTerrainSamplerLayout.SeamField;
+    const int BlockTableUnit = LodTerrainSamplerLayout.BlockTable;
+    const int BlockAtlasUnit = LodTerrainSamplerLayout.BlockAtlas;
+    const int SlotTableUnit = LodTerrainSamplerLayout.SlotTable;
+    const int ClimateFieldUnit = LodTerrainSamplerLayout.ClimateField;
+    const int ClimateMapsUnit = LodTerrainSamplerLayout.ClimateMaps;
+    const int SeasonColumnUnit = LodTerrainSamplerLayout.SeasonColumn;
 
     /// <summary>
     /// Upload one of this renderer's own CPU-built tables, with its destination unit made
@@ -5669,6 +5753,12 @@ public class LodTerrainRenderer : IRenderer
         prog.Uniform("camChunkX", (int)VanillaRenderReadiness.ChunkCoordinate((double)camPos.X));
         prog.Uniform("camChunkZ", (int)VanillaRenderReadiness.ChunkCoordinate((double)camPos.Z));
         prog.Uniform("waterFresnel", WaterFresnel ? 1 : 0);
+        prog.Uniform("waterGroundMurk", WaterGroundMurk ? 1 : 0);
+        prog.Uniform("waterSurfaceVisible", WaterSurfaceVisible ? 1 : 0);
+        bool waterSurfaceTextureOn = WaterSurfaceTextureReady;
+        prog.Uniform("waterTextureEnabled", waterSurfaceTextureOn ? 1 : 0);
+        prog.Uniform("waterTextureSlot", WaterSurfaceTextureSlot);
+        prog.Uniform("waterTextureTintSlot", WaterSurfaceTintSlot);
         prog.Uniform("waterGlint", waterGlint);
         prog.Uniform("waterFoam", waterFoam);
         prog.Uniform("waterShallowness", Math.Clamp(WaterShallowness, 0f, 1f));
@@ -5682,6 +5772,7 @@ public class LodTerrainRenderer : IRenderer
         prog.Uniform("vhReflectColor", capi.World.Calendar.ReflectColor);
         prog.Uniform("vhSunSpecular", engineUniforms.SunSpecularIntensity);
         prog.Uniform("vhWaterWave", engineUniforms.WaterWaveCounter);
+        prog.Uniform("vhWaterStill", engineUniforms.WaterStillCounter);
         prog.Uniform("vhWindWave", engineUniforms.WindWaveCounter);
         prog.Uniform("vhWaterFlow", engineUniforms.WaterFlowCounter);
         prog.Uniform("vhWindSpeed", engineUniforms.WindSpeed);
@@ -5770,13 +5861,16 @@ public class LodTerrainRenderer : IRenderer
         bool blockTexturesOn = blendPipelineEnabled && blockTexturesLive && blockTextures != null
             && blockTextures.AtlasTextureId > 0 && BlockTexturesEnabled;
         prog.Uniform("blockTextureEnabled", blockTexturesOn ? 1 : 0);
+        if (blockTexturesOn || waterSurfaceTextureOn)
+        {
+            prog.Uniform("blockAtlasSize", (float)capi.BlockTextureAtlas.Size.Width);
+            prog.BindTexture2D("blockAtlas", blockTextures!.AtlasTextureId, BlockAtlasUnit);
+        }
         if (blockTexturesOn)
         {
             prog.Uniform("blockTextureStrength", Math.Clamp(BlockTextureStrength, 0f, 1f));
             prog.Uniform("blockTextureMipLimit", Math.Max(0f, BlockTextureMipLimit));
             prog.Uniform("blockTextureDetail", Math.Max(0f, BlockTextureDetail));
-            prog.Uniform("blockAtlasSize", (float)capi.BlockTextureAtlas.Size.Width);
-            prog.BindTexture2D("blockAtlas", blockTextures!.AtlasTextureId, BlockAtlasUnit);
         }
 
         UploadClimateTables();
@@ -5999,8 +6093,8 @@ public class LodTerrainRenderer : IRenderer
             gpuRendererPreference, gpuTelemetry.Decision);
         renderPaths.Configure(selection);
         capi.Logger.Notification(
-            "[VintageHorizons] Renderer path: visible {0}; {1}.",
-            selection.VisiblePath,
+            "[VintageHorizons] Opaque renderer: packed GPU path required; per-section and "
+            + "expanded fallbacks disabled. Capability result: {0}.",
             selection.Reason);
         if (selection.ShadowEnabled) AttachShadowArenas();
     }
@@ -6015,8 +6109,9 @@ public class LodTerrainRenderer : IRenderer
             Environment.GetEnvironmentVariable("VINTAGEHORIZONS_GPU_ARENA"));
         if (mode is LodGpuArenaMode.Off or LodGpuArenaMode.Invalid)
         {
-            capi.Logger.Notification(
-                "[VintageHorizons] GPU regional arenas off; cached terrain stays on the established renderer.");
+            capi.Logger.Error(
+                "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED: GPU regional arenas "
+                + "are off; cached opaque terrain will be suppressed.");
             return;
         }
 
@@ -6093,9 +6188,9 @@ public class LodTerrainRenderer : IRenderer
         }
         catch (Exception e)
         {
-            capi.Logger.Warning(
-                "[VintageHorizons] GPU arena shadow could not start; visible legacy rendering "
-                + "is unchanged: {0}", e.Message);
+            capi.Logger.Error(
+                "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED: GPU arenas could "
+                + "not start; cached opaque terrain will be suppressed: {0}", e.Message);
         }
     }
 
@@ -6240,8 +6335,17 @@ public class LodTerrainRenderer : IRenderer
         renderCullDistanceSquared = frame.CullDistanceSquared;
     }
 
-    void DrawLegacyOpaque()
+    void DrawPackedOpaque()
     {
+        if (!indirectDrawingThisFrame)
+        {
+            LastIndirectBatches = 0;
+            LastIndirectCommands = 0;
+            LastIndirectLeftovers = drawList.Count;
+            ReportRequiredTerrainFailure(DescribeRequiredTerrainFailure());
+            return;
+        }
+
         if (!depthSplitThisFrame) gpuTelemetry.BeginOpaque();
         ActiveNearBuilder?.Begin();
         if (depthSplitThisFrame) ActiveFarBuilder?.Begin();
@@ -6282,10 +6386,18 @@ public class LodTerrainRenderer : IRenderer
             // the next frame's Begin.
             indirectPassActive = false;
             EndShadowCommands();
-            // The real walk already recorded every box the classifier should see. Legacy
-            // fallback redraws must not add the same section a second time.
+            // The real walk already recorded every box the classifier should see. Failure
+            // accounting must not add the same section a second time.
             hzbCollecting = false;
-            if (indirectDrawingThisFrame) DrawIndirectOpaque();
+            if (indirectDrawingThisFrame)
+            {
+                DrawIndirectOpaque();
+                if (LastIndirectLeftovers > 0)
+                    ReportRequiredTerrainFailure(
+                        "one or more selected sections were absent from or rejected by the packed arenas");
+                else
+                    reportedRequiredTerrainFailure = null;
+            }
         }
         finally
         {
@@ -6295,7 +6407,7 @@ public class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
-    /// Issues this frame's multi-draws, then draws whatever they could not cover.
+    /// Issues this frame's multi-draws. Anything they cannot cover remains visibly absent.
     ///
     /// The established program keeps its own uniform state while it is not in use, so the
     /// switch costs one Use/Stop pair plus this frame's frame-uniforms for the second
@@ -6315,8 +6427,8 @@ public class LodTerrainRenderer : IRenderer
         {
             indirectLeftovers.AddRange(indirectRecorded);
             indirectFarLeftovers.AddRange(indirectFarRecorded);
-            DrawIndirectLeftovers(indirectLeftovers);
-            DrawIndirectLeftovers(indirectFarLeftovers);
+            RejectIndirectLeftovers(indirectLeftovers);
+            RejectIndirectLeftovers(indirectFarLeftovers);
             LastIndirectLeftovers = indirectLeftovers.Count + indirectFarLeftovers.Count;
             return;
         }
@@ -6329,15 +6441,15 @@ public class LodTerrainRenderer : IRenderer
 
         DrawIndirectBucket(nearBuilder, indirectRecorded, indirectLeftovers,
             applyFrameUniforms: true);
-        DrawIndirectLeftovers(indirectLeftovers);
+        RejectIndirectLeftovers(indirectLeftovers);
         LastIndirectLeftovers = indirectLeftovers.Count;
     }
 
     /// <summary>
     /// Draws near terrain, refreshes the pyramid while the terrain shader is released,
     /// then draws the far bucket against that same-frame picture. Each bucket has its own
-    /// fail-open list, so a refused or partially issued multi-draw is repaired before the
-    /// frame leaves this method.
+    /// missing list, so a refused or partially issued multi-draw is reported before the
+    /// frame leaves this method and never concealed by another renderer.
     /// </summary>
     void DrawSplitIndirectOpaque()
     {
@@ -6357,7 +6469,7 @@ public class LodTerrainRenderer : IRenderer
             {
                 DrawIndirectBucket(nearBuilder, indirectRecorded, indirectLeftovers,
                     applyFrameUniforms: true);
-                DrawIndirectLeftovers(indirectLeftovers);
+                RejectIndirectLeftovers(indirectLeftovers);
             }
             finally
             {
@@ -6389,7 +6501,7 @@ public class LodTerrainRenderer : IRenderer
             {
                 DrawIndirectBucket(farBuilder, indirectFarRecorded, indirectFarLeftovers,
                     applyFrameUniforms: true);
-                DrawIndirectLeftovers(indirectFarLeftovers);
+                RejectIndirectLeftovers(indirectFarLeftovers);
             }
             finally
             {
@@ -6400,7 +6512,7 @@ public class LodTerrainRenderer : IRenderer
         LastIndirectLeftovers = indirectLeftovers.Count + indirectFarLeftovers.Count;
     }
 
-    /// <summary>Issues one complete command bucket or repairs it through legacy draws.</summary>
+    /// <summary>Issues one complete command bucket and reports any uncovered geometry.</summary>
     void DrawIndirectBucket(
         LodGpuIndirectBuilder builder,
         List<long> recorded,
@@ -6428,9 +6540,9 @@ public class LodTerrainRenderer : IRenderer
         }
         catch (Exception e)
         {
-            capi.Logger.Warning(
-                "[VintageHorizons] the indirect opaque pass threw; this frame's cached "
-                + "terrain is drawn the established way: {0}", e.Message);
+            capi.Logger.Error(
+                "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED during draw; "
+                + "cached opaque terrain is suppressed: {0}", e.Message);
         }
         finally
         {
@@ -6470,9 +6582,8 @@ public class LodTerrainRenderer : IRenderer
         }
         else
         {
-            // Nothing was drawn from the arenas, so every section that was batched still
-            // has to reach the screen. Falling back within the same frame is what keeps a
-            // driver failure invisible rather than a frame of missing horizon.
+            // Keep the failed candidates only so the missing coverage and its count are
+            // reported. The retired per-section renderer must never conceal this failure.
             leftovers.AddRange(recorded);
         }
     }
@@ -6519,20 +6630,37 @@ public class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
-    /// Draws the sections the batches did not cover, exactly as the established path
-    /// draws them. Their per-section uniforms were deliberately not uploaded during the
-    /// walk, so the transform is set up again here - for these sections only.
+    /// Rejects sections the required packed draw did not cover. Missing terrain is the
+    /// deliberate development signal; substituting MeshRef draws here hid broken paths.
     /// </summary>
-    void DrawIndirectLeftovers(List<long> leftovers)
+    void RejectIndirectLeftovers(List<long> _)
     {
-        if (leftovers.Count == 0) return;
-        foreach (long key in leftovers)
-        {
-            if (!sectionMeshes.TryGetValue(key, out MeshRef? mesh)) continue;
-            if (!SetupSectionTransform(key, renderCullDistanceSquared)) continue;
-            OpaqueDrawCalls++;
-            capi.Render.RenderMesh(mesh);
-        }
+        // Deliberately empty. The caller retains the count for status and reports the
+        // aggregate failure after both near and far buckets have finished.
+    }
+
+    void ReportRequiredTerrainFailure(string reason)
+    {
+        if (reportedRequiredTerrainFailure == reason) return;
+        reportedRequiredTerrainFailure = reason;
+        capi.Logger.Error(
+            "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED; cached opaque terrain "
+            + "is suppressed and no legacy/expanded fallback will run: {0}.", reason);
+    }
+
+    string DescribeRequiredTerrainFailure()
+    {
+        if (!renderPaths.ShadowEnabled) return "regional GPU publication is disabled";
+        if (!IndirectDrawEnabled) return "GPU drawing was explicitly disabled";
+        if (!PackedDrawEnabled) return "packed drawing was explicitly disabled";
+        if (!packedShaderOk || packedProg == null || packedProg.LoadError)
+            return "the packed terrain shader is unavailable";
+        if (packedDrawer is not { Ready: true }) return "the packed indirect drawer is unavailable";
+        if (gpuShadow.Mirror == null || packedBuilder == null)
+            return "the packed regional arenas are unavailable";
+        if (ClusterDrawEnabled && clusterBuilder == null)
+            return "clustered packed drawing was requested but its builder is unavailable";
+        return "the required packed renderer did not become ready";
     }
 
     /// <summary>
@@ -6573,9 +6701,9 @@ public class LodTerrainRenderer : IRenderer
             packedFarBuilder = null;
             clusterBuilder = null;
             clusterFarBuilder = null;
-            capi.Logger.Warning(
-                "[VintageHorizons] Shadow indirect command building disabled; visible legacy "
-                + "rendering is unchanged: {0}", e.Message);
+            capi.Logger.Error(
+                "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED: indirect command "
+                + "building stopped; uncovered cached terrain will remain absent: {0}", e.Message);
         }
     }
 
@@ -6606,9 +6734,10 @@ public class LodTerrainRenderer : IRenderer
             target.BindTexture2D("seamField", seamFieldTexture.TextureId, SeamFieldUnit);
         if (blockTexturesLive && blockTableTexture != 0)
             target.BindTexture2D("blockTable", blockTableTexture, BlockTableUnit);
-        if (blendPipelineEnabled && blockTexturesLive
-            && blockTextures != null && blockTextures.AtlasTextureId > 0
-            && BlockTexturesEnabled)
+        if (((blendPipelineEnabled && BlockTexturesEnabled) || WaterSurfaceTextureReady)
+            && blockTexturesLive
+            && blockTextures != null
+            && blockTextures.AtlasTextureId > 0)
         {
             target.BindTexture2D("blockAtlas", blockTextures.AtlasTextureId, BlockAtlasUnit);
         }
@@ -6623,7 +6752,7 @@ public class LodTerrainRenderer : IRenderer
                 SeasonColumnUnit);
     }
 
-    void DrawLegacyWater()
+    void DrawWaterMeshes()
     {
         var rapi = capi.Render;
 
@@ -6677,8 +6806,8 @@ public class LodTerrainRenderer : IRenderer
         {
             gpuTelemetry.EndWater();
             GL.DepthMask(true);
+            rapi.GlToggleBlend(false);
         }
-        rapi.GlToggleBlend(false);
     }
 
     /// <summary>
@@ -6794,7 +6923,7 @@ public class LodTerrainRenderer : IRenderer
         if (mirror == null || packedDrawer == null)
             return "unavailable: the regional arenas are not attached. Turn them on with .vhgpu on";
         if (packedDrawer.Failed)
-            return "failed; established per-section rendering remains active: "
+            return "FAILED; cached opaque terrain is suppressed: "
                 + packedDrawer.FailureReason;
         if (!mirror.RetainsPacked)
             return "on through clustered packed geometry; whole-section packed and expanded "
@@ -6802,7 +6931,7 @@ public class LodTerrainRenderer : IRenderer
         return $"on: 12-byte quads, {mirror.PackedLiveBytes / (1024.0 * 1024.0):0.0} MiB; "
             + "the expanded regional copy is not retained. "
             + $"Last frame {LastIndirectBatches} multi-draws covered {LastIndirectCommands} sections, "
-            + $"{LastIndirectLeftovers} used the established fallback";
+            + $"{LastIndirectLeftovers} missing with no fallback";
     }
 
     public string DescribeClusterDraw()
@@ -6818,7 +6947,7 @@ public class LodTerrainRenderer : IRenderer
             return "unavailable: the regional arenas are not attached. Turn them on with .vhgpu on";
         return $"on: each section is up to {LodPackedClusterBuilder.CellCount} exact draw clusters. "
             + $"Last frame {LastIndirectCommands} cluster commands in {LastIndirectBatches} "
-            + $"multi-draws, {LastIndirectLeftovers} whole sections used the established fallback. "
+            + $"multi-draws, {LastIndirectLeftovers} whole sections missing with no fallback. "
             + $"Cluster geometry uses {mirror.ClusteredPackedLiveBytes / (1024.0 * 1024.0):0.0} MiB; "
             + "other regional geometry copies are not retained";
     }
@@ -6866,10 +6995,10 @@ public class LodTerrainRenderer : IRenderer
             return "unavailable: the regional arenas are not attached. Turn them on with .vhgpu on";
         if (indirectDrawer.Failed) return indirectDrawer.Describe();
         if (!IndirectDrawEnabled)
-            return "off: every visible section is drawn on its own, as before";
+            return "off: cached opaque terrain is suppressed; no per-section renderer runs";
         return "on: " + indirectDrawer.Describe()
             + $". Last frame {LastIndirectBatches} multi-draws covered {LastIndirectCommands} "
-            + $"sections, {LastIndirectLeftovers} drawn the established way. "
+            + $"sections, {LastIndirectLeftovers} missing with no fallback. "
             + "Delayed occlusion is suspended while this is on"
             + (GpuCullEnabled
                 ? "; depth culling has taken over suppression."
@@ -6992,7 +7121,7 @@ public class LodTerrainRenderer : IRenderer
         }
     }
 
-    void SubmitOpaqueMesh(long key, MeshRef mesh)
+    void SubmitOpaqueMesh(long key, MeshRef _)
     {
         if (liveMeshStats.TryGetValue(key, out LodLiveMeshStats stats))
         {
@@ -7000,22 +7129,20 @@ public class LodTerrainRenderer : IRenderer
             OpaqueDrawIndices += stats.OpaqueIndices;
         }
 
-        // In an indirect pass a section is submitted by writing its command; the draws
-        // happen once, after the walk. A section the arenas do not hold produces no
-        // command, so it falls through to the second sub-pass and is drawn the
-        // established way - which is why partial coverage costs submissions, not terrain.
+        // In the required packed pass a section is submitted by writing its command; the
+        // draws happen once, after the walk. A section the arenas do not hold is recorded
+        // as missing and stays missing instead of silently changing renderer.
         bool recorded = RecordShadowCommand(key, out bool farBucket);
         if (indirectPassActive)
         {
             List<long> target = farBucket ? indirectFarRecorded : indirectRecorded;
-            List<long> fallback = farBucket ? indirectFarLeftovers : indirectLeftovers;
+            List<long> missing = farBucket ? indirectFarLeftovers : indirectLeftovers;
             if (recorded) target.Add(key);
-            else fallback.Add(key);
+            else missing.Add(key);
             return;
         }
 
-        OpaqueDrawCalls++;
-        capi.Render.RenderMesh(mesh);
+        ReportRequiredTerrainFailure("a per-section opaque draw was requested outside the packed pass");
     }
 
     void SubmitWaterMesh(long key, MeshRef mesh)
@@ -7444,8 +7571,8 @@ public class LodTerrainRenderer : IRenderer
         LodGpuIndirectBuilder? nearBuilder = ActiveNearBuilder;
         if (nearBuilder == null) return false;
 
-        // Fail open before even choosing a bucket. A stale distance is no safer than stale
-        // box facts, and could otherwise put the fallback on the wrong side of the rebuild.
+        // Reject before even choosing a bucket. A stale distance is no safer than stale
+        // box facts, and could otherwise put the missing command on the wrong side of the rebuild.
         if (lastSectionFacts.SectionKey != key)
         {
             nearBuilder.AddMissing();
@@ -7476,9 +7603,8 @@ public class LodTerrainRenderer : IRenderer
         // would be scattered terrain missing in some views - the exact fault this renderer
         // has already spent two sessions chasing once.
         //
-        // The packed representation is optional during Phase 7 publication. A section whose
-        // packed span was refused must enter this frame's legacy leftovers, not disappear from
-        // both lists merely because the expanded mirror record exists.
+        // A refused packed span must enter this frame's missing list. It must not disappear
+        // from accounting merely because an unused expanded mirror record exists.
         return builder.Add(section, lastSectionFacts);
     }
 
@@ -8302,6 +8428,8 @@ public class LodTerrainRenderer : IRenderer
     /// </summary>
     public void ResetBlockTextureStateForWorld()
     {
+        WaterSurfaceTextureSlot = 0;
+        WaterSurfaceTintSlot = -1;
         textureSlotSourceReady = false;
         SetTextureSlotEmission(false);
         DisposeBlockTableTexture();
@@ -8385,6 +8513,7 @@ public class LodTerrainRenderer : IRenderer
         world.SectionBecameResident -= OnSectionBecameResident;
         capi.Event.ChunkDirty -= OnReadinessChunkDirty;
         capi.Event.ReloadShader -= LoadShader;
+        UnregisterWaterDepthStages();
         if (rendererRegistered)
         {
             capi.Event.UnregisterRenderer(this, EnumRenderStage.Opaque);

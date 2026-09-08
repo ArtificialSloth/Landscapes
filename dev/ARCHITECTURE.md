@@ -163,16 +163,23 @@ The renderer uses a quadtree over section levels. Distance selects the desired d
 
 Renderer resource publication/removal, frame preparation, opaque/water drawing, clear and
 disposal cross one path coordinator. The default visible path mirrors CPU-approved opaque terrain
-into regional GPU arenas and submits it through indirect multi-draw; the established per-section
-renderer remains the complete fail-open fallback. Arena setup selects exactly one regional geometry
-representation for the session: expanded when packing is disabled, whole-packed when packing is
-enabled without clusters, or clustered-packed for the product default. Unselected arenas receive
-no allocations or uploads. Missing selected data or any allocation, upload, shader, or draw failure
-leaves that section/frame to the established renderer, so correctness does not depend on retaining
-intermediate regional copies. Direct OpenGL probes share exact capture, ordered restoration and
-verification of every binding they touch.
+into regional GPU arenas and submits it through indirect multi-draw. Clustered packed geometry is
+the required product opaque representation. Missing packed data or any arena, upload, shader or
+draw failure suppresses the affected cached opaque draw and reports a required-path failure; the
+expanded-indirect and per-section opaque renderers cannot silently substitute. This deliberate
+development invariant keeps a broken product path visually obvious. An explicit diagnostic mode
+may disable the packed path, but it must name the failure and leave cached opaque terrain absent.
+The old per-section `MeshRef` allocation/publication lifecycle remains transitional scaffolding;
+it has no visible opaque draw authority and is scheduled for physical removal. Direct OpenGL
+probes share exact capture, ordered restoration and verification of every binding they touch.
 
 Opaque and translucent terrain use separate mesh buffers and passes. Seasonal/climate tint data is refreshed from live game color maps and applied in the shader. The camera uses relative section transforms so large world coordinates do not enter mesh vertex data. Cosmetic terrain noise combines section-local vertices with a stable section world origin; it must not sample camera-relative geometry coordinates.
+
+Cached water uses dedicated surface and depth programs. OIT is the normal product stage; the
+named opaque pipeline is retained only as an explicit dedicated-shader comparison. The legacy
+water shader selector is retired. When a requested surface, liquid-depth, junction, repair or OIT
+stage is unavailable or fails, cached water and thin cover are suppressed and the required-path
+failure is logged. No older water renderer is selected automatically.
 
 The settled near handoff is exclusive per-vanilla-render-chunk ownership. Cached terrain
 covers uncertain/unready cells, vanilla owns confirmed render-ready cells, fully replaced
@@ -386,6 +393,15 @@ The server must answer every accepted section request, including explicit refusa
     buffer to read has to supply the DEEP answer, not the shallow one; substituting zero depth
     pins the effect at maximum and adds roughly a third of the water's own brightness to every
     lake and sea.
+26. **Required renderer paths fail visibly during development.** Clustered packed terrain and
+    dedicated water suppress cached output and report a named required-path failure when their
+    selected resources or stages are unavailable. Expanded-indirect, per-section opaque and
+    legacy water rendering cannot activate automatically. An explicit diagnostic comparison
+    must say which path it selects.
+27. **A missing vanilla neighbour is not an ocean shoreline.** The liquid tessellator may emit
+    a vertical side against a substitute empty chunk when real neighbour data is absent. Only an
+    outward horizontal liquid face at such a genuinely missing client chunk is suppressed. A
+    loaded empty neighbour, top/bottom face or interior liquid face remains engine-owned.
 
 ## Concurrency invariants
 

@@ -47,7 +47,20 @@ public static class WireFormatChecks
         {
             "1:Protocol:Int32", "2:ModVersion:String", "3:Enabled:Boolean",
             "4:Status:String", "5:ManifestKeyCount:Int32",
+            "6:ServerSettings:AssistServerSettings",
         }, Layout(typeof(AssistWelcome)), "AssistWelcome field numbers");
+
+        c.SeqEq(new[]
+        {
+            "10:GenerateMaxRadiusChunks:Int32", "11:GenerateDefaultRadiusChunks:Int32",
+            "12:GenerateColumnsPerSecond:Int32", "13:GenerateMaxInFlight:Int32",
+            "14:PregenRadiusChunks:Int32", "15:PregenColumnsPerSecond:Int32",
+            "1:EnableCapture:Boolean", "2:EnableServing:Boolean",
+            "3:ServeRadiusBlocks:Int32", "4:MaxSectionsPerSecondPerPlayer:Int32",
+            "5:MaxSectionsPerSecondTotal:Int32", "6:SweepSavegame:Boolean",
+            "7:SweepRadiusChunks:Int32", "8:SweepColumnsPerSecond:Int32",
+            "9:EnableGenerateCommand:Boolean",
+        }, Layout(typeof(AssistServerSettings)), "AssistServerSettings field numbers");
 
         c.SeqEq(new[] { "1:Sequence:Int32", "2:Last:Boolean", "3:Keys:Int64[]" },
             Layout(typeof(AssistKeyManifest)), "AssistKeyManifest field numbers");
@@ -81,10 +94,32 @@ public static class WireFormatChecks
         {
             Protocol = 1, ModVersion = "0.2.0", Enabled = true,
             Status = "serving from 5 cached sections", ManifestKeyCount = 5,
+            ServerSettings = new AssistServerSettings
+            {
+                EnableCapture = true,
+                EnableServing = true,
+                ServeRadiusBlocks = 8192,
+                MaxSectionsPerSecondPerPlayer = 8,
+                MaxSectionsPerSecondTotal = 32,
+                SweepSavegame = true,
+                SweepRadiusChunks = 128,
+                SweepColumnsPerSecond = 16,
+                EnableGenerateCommand = true,
+                GenerateMaxRadiusChunks = 128,
+                GenerateDefaultRadiusChunks = 32,
+                GenerateColumnsPerSecond = 16,
+                GenerateMaxInFlight = 64,
+                PregenRadiusChunks = 0,
+                PregenColumnsPerSecond = 8,
+            },
         });
         c.Eq(true, welcome.Enabled, "welcome enabled flag survives");
         c.Eq(5, welcome.ManifestKeyCount, "welcome manifest count survives");
         c.Eq("serving from 5 cached sections", welcome.Status, "welcome status survives");
+        c.Eq(8192, welcome.ServerSettings?.ServeRadiusBlocks ?? -1,
+            "welcome server settings survive");
+        c.Eq(64, welcome.ServerSettings?.GenerateMaxInFlight ?? -1,
+            "welcome generation settings survive");
 
         var keys = new[] { 0L, 1L, -1L, long.MaxValue, long.MinValue };
         var manifest = Roundtrip(new AssistKeyManifest { Sequence = 2, Last = true, Keys = keys });

@@ -11,6 +11,7 @@ public static class StaticAssetChecks
 {
     public static void Run(Check c)
     {
+        WaterGroundMurkWiring(c);
         AsciiOnly(c);
         TextFilesAreUtf8(c);
         TintSlotAgreement(c);
@@ -29,6 +30,7 @@ public static class StaticAssetChecks
         VersionAgreement(c);
         AssistServeLoopDoesNotLogProgress(c);
         ChatCommandNamesAreUnique(c);
+        ConfigurationPanelStaysVisibleAndStable(c);
         ConfigDialogWiring(c);
         NoIntegerVectorUniforms(c);
         SourceHasNoControlCharacters(c);
@@ -40,6 +42,120 @@ public static class StaticAssetChecks
         EveryDocumentedSwitchIsReachable(c);
         TopFaceOverlayComesFromTheStrip(c);
         ClimateStorageIsWiredInTheRightOrder(c);
+    }
+
+    /// <summary>
+    /// The temporary development panel is intentionally a low-churn inventory of Vintage
+    /// Horizons configuration. Keep the reflection/counter dashboard and hidden scrollback
+    /// from returning: a troubleshooting screenshot must capture every current input.
+    /// </summary>
+    static void ConfigurationPanelStaysVisibleAndStable(Check c)
+    {
+        string sourceRoot = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src");
+        string hud = File.ReadAllText(Path.Combine(sourceRoot, "Gui",
+            "VintageHorizonsDiagnosticsHud.cs"));
+        string inventory = File.ReadAllText(Path.Combine(sourceRoot,
+            "VintageHorizonsModSystem.Diagnostics.cs"));
+
+        c.True(hud.Contains("const double Width = 400;", StringComparison.Ordinal)
+            && hud.Contains("const double PreferredHeight = 800;", StringComparison.Ordinal)
+            && hud.Contains("EnumDialogArea.RightMiddle", StringComparison.Ordinal)
+            && hud.Contains("capi.Render.FrameHeight", StringComparison.Ordinal)
+            && hud.Contains("const int MaxVisibleRows = 72;", StringComparison.Ordinal),
+            "the configuration inventory is a compact right-side panel capped to the screen height");
+        c.True(!hud.Contains("AddVerticalScrollbar", StringComparison.Ordinal)
+            && hud.Contains("if (text == previous[i]) continue;", StringComparison.Ordinal),
+            "all configuration stays visible and unchanged snapshots perform no text redraw");
+        c.True(!inventory.Contains("BindingFlags", StringComparison.Ordinal)
+            && !inventory.Contains("LodPhaseCost", StringComparison.Ordinal)
+            && !inventory.Contains("FrameWidth", StringComparison.Ordinal)
+            && !inventory.Contains("GPU adapter", StringComparison.Ordinal),
+            "the panel does not reflect counters, game state or hardware diagnostics");
+        c.True(inventory.Contains("string[] BuildConfigurationColumns()", StringComparison.Ordinal)
+            && inventory.Contains(".vhband speckle", StringComparison.Ordinal)
+            && inventory.Contains(".vhwater glint", StringComparison.Ordinal)
+            && inventory.Contains("static void Entry(List<string> lines, string name, bool enabled)",
+                StringComparison.Ordinal),
+            "the panel includes numeric .vh configuration as well as boolean switches");
+
+        string commands = File.ReadAllText(Path.Combine(sourceRoot,
+            "VintageHorizonsModSystem.cs"));
+        int registerStart = commands.IndexOf("void RegisterCommands()", StringComparison.Ordinal);
+        int registerEnd = commands.IndexOf("void ApplyGuiConfig(", registerStart,
+            StringComparison.Ordinal);
+        c.True(registerStart >= 0 && registerEnd > registerStart,
+            "the client command registration block is identifiable");
+        if (registerStart < 0 || registerEnd <= registerStart) return;
+
+        string registerCommands = commands[registerStart..registerEnd];
+        string[] commandSettingMembers = Regex.Matches(registerCommands,
+                @"renderer\.(?<member>[A-Za-z0-9_]+)\s*=(?!=)")
+            .Select(match => match.Groups["member"].Value)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        foreach (string member in commandSettingMembers)
+        {
+            string displayRead = member switch
+            {
+                "HalfBlockLevels" or "SurfaceHalfBlocksOnly" => "HalfBlockMode(renderer)",
+                _ => "renderer." + member,
+            };
+            c.True(inventory.Contains(displayRead, StringComparison.Ordinal),
+                $"the side panel displays the .vh command setting backed by {member}");
+        }
+        c.True(inventory.Contains("renderer.GpuShadowRequested", StringComparison.Ordinal)
+            && inventory.Contains("renderer.BlendPipelineEnabled", StringComparison.Ordinal)
+            && inventory.Contains("renderer.TemporalOcclusionProfileName", StringComparison.Ordinal)
+            && inventory.Contains("!config.IgnoreOtherLodMods", StringComparison.Ordinal)
+            && inventory.Contains("AddThresholds(lines, thresholds)", StringComparison.Ordinal),
+            "method-backed GPU, blend, profile, deferral and LOD settings are displayed too");
+    }
+
+    static void WaterGroundMurkWiring(Check c)
+    {
+        string fragment = ShaderBody("fsh").Replace("\r\n", "\n");
+        string renderer = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot,
+            "VintageHorizons", "src", "Render", "LodTerrainRenderer.cs"));
+        string gameAssets = Path.Combine(GameAssemblies.GamePath, "assets", "game");
+        string vanillaGround = File.ReadAllText(Path.Combine(gameAssets, "shaders", "chunkopaque.fsh"));
+        string vanillaMurk = File.ReadAllText(Path.Combine(gameAssets, "shaderincludes", "underwatereffects.fsh"));
+
+        // Compare against the installed engine, not a second copy of our shader math.
+        // A changed engine contract must reopen this comparison rather than silently pass.
+        string compactGround = Regex.Replace(vanillaGround, @"\s+", "");
+        c.True(compactGround.Contains("floatmurkiness=getUnderwaterMurkiness();")
+            && compactGround.Contains("clamp(fogAmount-50*murkiness,0,1)"),
+            "the installed vanilla ground shader removes atmospheric fog using liquid depth");
+        int vanillaFog = compactGround.IndexOf("applyFogAndShadowFromBrightness(");
+        int vanillaTint = compactGround.IndexOf("applyUnderwaterEffects(outColor.rgb,murkiness)");
+        c.True(vanillaFog >= 0 && vanillaTint > vanillaFog,
+            "vanilla applies underwater colour after its fog and shadow operation");
+        c.True(vanillaMurk.Contains("texture(liquidDepth,")
+            && vanillaMurk.Contains("linearDepth(gl_FragCoord.z)")
+            && vanillaMurk.Contains("cameraUnderwater > 0.7"),
+            "the shared helper uses screen-space water depth and the engine's submerged-camera guard");
+        c.True(fragment.Contains("#include underwatereffects.fsh")
+            && fragment.Contains("groundMurk = getUnderwaterMurkiness();"),
+            "cached ground calls the same engine helper instead of approximating optical depth");
+        c.True(fragment.Contains("if (!translucent && waterGroundMurk == 1)\n    {\n        groundMurk = getUnderwaterMurkiness();"),
+            "the extra depth reads apply to ground alone and remain independently switchable");
+        c.True(fragment.Contains("groundFog = clamp(fogAmount - 50.0 * groundMurk, 0.0, 1.0);"),
+            "cached ground uses vanilla's fog-removal coefficient");
+        int fog = fragment.IndexOf("terraColor = applyFog(terraColor, groundFog);");
+        int spheres = fragment.IndexOf("terraColor = applySpheresFog(terraColor, groundFog, worldPos.xyz);");
+        int murk = fragment.IndexOf("terraColor.rgb = applyUnderwaterEffects(terraColor.rgb, groundMurk);");
+        c.True(fog >= 0 && spheres > fog && murk > spheres,
+            "cached ground preserves vanilla's atmospheric fog, sphere fog, then underwater colour order");
+        c.True(fragment.Contains("float groundMurk = 0.0;")
+            && fragment.Contains("float groundFog = fogAmount;"),
+            "water, thin cover and the disabled comparison retain their original fog");
+        c.True(renderer.Contains("public bool WaterGroundMurk { get; set; } = true;")
+            && renderer.Contains("prog.Uniform(\"waterGroundMurk\", WaterGroundMurk ? 1 : 0);"),
+            "the owner-observed murk treatment is enabled and uses common render-path uniforms");
+        c.True(fragment.Contains("if (ownershipBand == 1 && waterSurfaceVisible == 0) discard;")
+            && renderer.Contains("prog.Uniform(\"waterSurfaceVisible\", WaterSurfaceVisible ? 1 : 0);"),
+            "surface isolation hides water only, preserving ground and thin cover on all render paths");
     }
 
     /// <summary>
@@ -547,6 +663,8 @@ public static class StaticAssetChecks
         string renderer = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons",
             "src", "Render", "LodTerrainRenderer.cs"));
         string fragment = ShaderBody("fsh");
+        string shaders = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "assets",
+            "vintagehorizons", "shaders");
 
         // The opacity term. Vanilla grades water by view angle; cached water was one flat
         // constant, which at the seam let the cached lakebed show through a surface vanilla
@@ -558,9 +676,9 @@ public static class StaticAssetChecks
         // of the view distance. This mod draws it to the horizon, where a saturated sheet hides
         // the depth-shaded bed that now sits under it. The angle term itself is still vanilla's,
         // exactly.
-        c.True(fragment.Contains("float fresnel = max(0.2, 0.01 + 4.5 * rise * rise * rise);",
+        c.True(fragment.Contains("waterFresnelValue = max(0.2, 0.01 + 4.5 * rise * rise * rise);",
                 StringComparison.Ordinal)
-            && fragment.Contains("outAlpha = clamp(0.8 * fresnel, 0.0, max(0.0, waterMaxAlpha));",
+            && fragment.Contains("0.8 * waterFresnelValue, 0.0, max(0.0, waterMaxAlpha)",
                 StringComparison.Ordinal),
             "cached water carries the engine's own view-angle opacity under a settable ceiling");
         // A dot product one ulp below -1 would cube a negative number. Vanilla writes the
@@ -573,6 +691,47 @@ public static class StaticAssetChecks
             && fragment.Contains("bandWeight * clamp(bandStrength, 0.0, 1.0) * waterFresnel",
                 StringComparison.Ordinal),
             "opacity is never weighted by the blend band");
+
+        // The capture after cached-ground drawing proved that depth, ground colour and murk
+        // are already continuous at the source boundary; the visible difference first enters
+        // in OIT composition. Vanilla contributes both RGB variation and alpha from its live
+        // 32x32 water tile, while the cache previously carried only the tile's average RGB.
+        string vanillaLiquid = File.ReadAllText(Path.Combine(
+            GameAssemblies.GamePath, "assets", "game", "shaders", "chunkliquid.fsh"));
+        string compactLiquid = Regex.Replace(vanillaLiquid, @"\s+", "");
+        c.True(compactLiquid.Contains("rgbaFinal.a=rgba.a+max(0,texColor.a-0.4);")
+            && compactLiquid.Contains("rgbaFinal.a=rgba.a+texColor.a;")
+            && compactLiquid.Contains("texColor*=vec4(rgbaFinal.rgb*shadowBright,rgbaFinal.a);")
+            && compactLiquid.Contains("texColor.a=clamp(texColor.a+fogAmount,0,1);"),
+            "the installed liquid shader still contributes texture alpha to final water opacity");
+        string dedicated = ModShaderSource.Read(Path.Combine(shaders, "lodwater.fsh"));
+        c.True(File.ReadAllText(Path.Combine(shaders, "lodwater.fsh"))
+                .Contains("#define VH_WATER_SURFACE 1", StringComparison.Ordinal)
+            && File.ReadAllText(Path.Combine(shaders, "lodwateroit.fsh"))
+                .Contains("#define VH_WATER_SURFACE 1", StringComparison.Ordinal),
+            "both dedicated surface pipelines enable the same water-texture path");
+        c.True(dedicated.Contains("textureGrad(", StringComparison.Ordinal)
+            && dedicated.Contains("blockAtlas, waterRect.xy + localUv * rectSize", StringComparison.Ordinal)
+            && dedicated.Contains("waterTexel.rgb / max(waterMean, vec3(0.02))", StringComparison.Ordinal)
+            && dedicated.Contains("waterTexel.a * (outAlpha + textureAlphaAddition)", StringComparison.Ordinal),
+            "dedicated water uses the live tile's stable RGB detail and vanilla alpha product");
+        c.True(dedicated.Contains(
+                "if (band == 1) terraColor.a = clamp(terraColor.a + fogAmount, 0.0, 1.0);",
+                StringComparison.Ordinal),
+            "dedicated water adds atmospheric fog to opacity at the same point as vanilla");
+        foreach (string uniform in new[]
+        {
+            "waterTextureEnabled", "waterTextureSlot", "waterTextureTintSlot", "vhWaterStill",
+        })
+        {
+            c.True(dedicated.Contains($" {uniform};", StringComparison.Ordinal),
+                $"the dedicated water shader declares {uniform}");
+            c.True(renderer.Contains($"prog.Uniform(\"{uniform}\"", StringComparison.Ordinal),
+                $"and the renderer uploads {uniform}");
+        }
+        c.True(renderer.Contains("blockTexturesOn || waterSurfaceTextureOn", StringComparison.Ordinal)
+            && renderer.Contains("WaterSurfaceTextureReady", StringComparison.Ordinal),
+            "water atlas binding remains independent of the land texture switch");
 
         // Carried on every cached water fragment, NOT faded across the band. Band-weighting
         // them was tried for one build to bound the per-pixel cost and produced the defect it
@@ -775,10 +934,24 @@ public static class StaticAssetChecks
                 $"the retired staging command .{retired} is gone");
         }
 
-        // One in-game way back to the established renderer, and it is saved, so a client that
-        // misbehaves can be returned to the legacy path without editing a file or restarting.
+        // The one GPU switch remains as a deliberate failure test. It may disable the product
+        // path, but must not reactivate the retired renderer.
         c.True(mod.Contains("ChatCommands.Create(\"vhgpu\")", StringComparison.Ordinal),
-            "the fast path keeps exactly one in-game off switch");
+            "the packed path keeps one explicit fail-loud off switch");
+        c.True(renderer.Contains("bool indirectWanted = packedWanted;", StringComparison.Ordinal)
+            && renderer.Contains("void RejectIndirectLeftovers", StringComparison.Ordinal)
+            && !renderer.Contains("void DrawIndirectLeftovers", StringComparison.Ordinal),
+            "visible opaque drawing requires packed arenas and has no expanded/per-section fallback");
+        int submitOpaque = renderer.IndexOf("void SubmitOpaqueMesh", StringComparison.Ordinal);
+        int submitWater = renderer.IndexOf("void SubmitWaterMesh", submitOpaque, StringComparison.Ordinal);
+        string submitOpaqueBody = submitOpaque >= 0 && submitWater > submitOpaque
+            ? renderer.Substring(submitOpaque, submitWater - submitOpaque)
+            : string.Empty;
+        c.False(submitOpaqueBody.Contains("RenderMesh", StringComparison.Ordinal),
+            "the retired per-section opaque submitter cannot draw a MeshRef");
+        c.True(renderer.Contains("REQUIRED PACKED TERRAIN PATH FAILED", StringComparison.Ordinal)
+            && mod.Contains("No legacy fallback exists", StringComparison.Ordinal),
+            "missing packed prerequisites fail visibly in both log and command response");
         c.True(mod.Contains("ChatCommands.Create(\"vhhzb\")", StringComparison.Ordinal),
             "and the depth report the owner reads stays available");
         c.True(bench.Contains("VINTAGEHORIZONS_GPU_INDIRECT", StringComparison.Ordinal)
@@ -940,16 +1113,12 @@ public static class StaticAssetChecks
             "the vertex body branches on the variant exactly twice");
         c.Eq(1, Occurrences(fragment, "#ifdef VH_INDIRECT"),
             "the fragment body branches on the variant exactly once");
-        c.Eq(1, Occurrences(vertex, "#ifndef VH_PACKED"),
-            "only the vertex inputs change for packed pulling");
-        // Two now: one decodes the pulled quad, one declares the block texture table the
-        // pulled path alone can address - only a packed quad carries a block slot. The count
-        // is pinned rather than left open so the file cannot drift back into being two
-        // shaders written in one place.
-        c.Eq(2, Occurrences(vertex, "#ifdef VH_PACKED"),
-            "the vertex body has one block to decode the pulled quad and one to declare its table");
-        c.Eq(2, Occurrences(fragment, "#ifdef VH_PACKED"),
-            "the fragment body has one block to declare the atlas and one to sample it");
+        c.Eq(2, Occurrences(vertex, "#ifndef VH_PACKED"),
+            "vertex inputs and expanded texture payloads are the only established-path branches");
+        c.Eq(1, Occurrences(vertex, "#ifdef VH_PACKED"),
+            "the vertex body branches once to decode pulled packed quads");
+        c.Eq(0, Occurrences(fragment, "#ifdef VH_PACKED"),
+            "block texture sampling is shared by the visible legacy and optional packed paths");
         c.True(vertex.Contains("uint vhQuad = uint(gl_VertexID) / 4u;", StringComparison.Ordinal)
             && vertex.Contains("uint vhLogicalCorner = uint(gl_VertexID) % 4u;", StringComparison.Ordinal)
             && vertex.Contains("uint vhBase = vhQuad * 3u;", StringComparison.Ordinal)
@@ -988,7 +1157,8 @@ public static class StaticAssetChecks
         // includes bring in are #if, not #ifdef, so they are not counted here.
         c.Eq(2, Occurrences(vertex, "#else"),
             "only the input and per-section declaration blocks have two halves");
-        c.Eq(1, Occurrences(fragment, "#else"), "and the same in the fragment body");
+        c.Eq(4, Occurrences(fragment, "#else"),
+            "fragment alternatives also map the shared water-coverage sample in depth and OIT coordinates");
     }
 
     /// <summary>Non-blank, non-comment lines: what a wrapper actually compiles.</summary>
@@ -1011,7 +1181,7 @@ public static class StaticAssetChecks
     /// with VH_INDIRECT defined. Checks read the body rather than a wrapper, because a
     /// rule that held in only one variant would be worse than no rule at all.
     /// </summary>
-    static string ShaderBody(string stage) => File.ReadAllText(Path.Combine(
+    static string ShaderBody(string stage) => ModShaderSource.Read(Path.Combine(
         GameAssemblies.RepoRoot, "VintageHorizons", "assets", "vintagehorizons",
         "shaderincludes", "lodterrainbody." + stage));
 
@@ -1165,8 +1335,8 @@ public static class StaticAssetChecks
             if (m.Success) found[Path.GetFileName(path)] = int.Parse(m.Groups[1].Value);
         }
 
-        c.True(found.ContainsKey("lodterrainbody.vsh"), "the vertex body declares TINT_SLOTS");
-        c.True(found.ContainsKey("lodterrainbody.fsh"), "the fragment body declares TINT_SLOTS");
+        c.True(found.ContainsKey("lodvertexinputs.vsh"), "shared vertex inputs declare TINT_SLOTS");
+        c.True(found.ContainsKey("lodfragmentinputs.fsh"), "shared fragment inputs declare TINT_SLOTS");
 
         foreach ((string file, int value) in found)
         {
@@ -1328,6 +1498,13 @@ public static class StaticAssetChecks
             "the vertex stage declares the block table it reads a textured quad's colour from");
         c.True(vertex.Contains("(vhGeometry & 0x80000000u) != 0u", StringComparison.Ordinal),
             "the vertex stage tests the flag that says word two is a slot");
+        c.Eq(192, LodMesher.LegacyTextureBase,
+            "the expanded mesh marker occupies the one alpha band no material uses");
+        c.True(vertex.Contains("if (vhEncodedAlpha >= 192)", StringComparison.Ordinal)
+            && vertex.Contains("vhEncodedAlpha - 192", StringComparison.Ordinal)
+            && vertex.Contains("vhSlotBytes.r | (vhSlotBytes.g << 8) | (vhSlotBytes.b << 16)",
+                StringComparison.Ordinal),
+            "the visible legacy shader decodes the texture slot and restores its opaque tint");
         // The SLOT is carried, not the rows unpacked from it. Three unpacked rows meant
         // eleven floats of flat varying and three table fetches on every vertex, written on
         // both branches and so paid in full even with the blend pipeline off - for data only
@@ -1479,6 +1656,9 @@ public static class StaticAssetChecks
         c.True(fragment.Contains("1.0 + max(0.0, shadowIntensity * 2.0 - 1.66) / 1.5",
                 StringComparison.Ordinal),
             "the daylight brightening matches vanilla's");
+        c.True(fragment.Contains("if (lightDayBoost == 1 && band != 1)",
+                StringComparison.Ordinal),
+            "the daylight brightening stays off liquid, whose vanilla shader never applies it");
 
         // SystemRenderSky.OnRenderFrame3D, transcribed. DefaultShaderUniforms.SkyDaylight is
         // internal, so the value the engine computed cannot be read; only rebuilt. Every
@@ -1642,7 +1822,7 @@ public static class StaticAssetChecks
         // waterMaskRadius, because the engine's liquid alpha can reach zero before its ground
         // stops drawing and cached water has to keep filling that outer ring - G124's dry
         // riverbeds. A whole-section decision cannot express that; the per-fragment test can.
-        int waterMethod = renderer.IndexOf("void DrawLegacyWater()", StringComparison.Ordinal);
+        int waterMethod = renderer.IndexOf("void DrawWaterMeshes()", StringComparison.Ordinal);
         c.True(waterMethod > 0, "the water pass has its own submission loop");
         string waterBody = waterMethod > 0
             ? renderer.Substring(waterMethod, Math.Min(3200, renderer.Length - waterMethod))
@@ -2334,20 +2514,17 @@ public static class StaticAssetChecks
         // eye is what vanilla's see-through surface does per pixel. Modelling only the first
         // made the ramp far too gradual - measured against the owner's screenshots, vanilla's
         // mid-depth water sat at luma 40 to our 63 while the shallows already matched at 76.
-        // The return-path term is OFF by default, and that is the honest position: vanilla has
-        // no such term at all. Its bed carries the sunlight that reached it and nothing else,
-        // and everything resembling extinction comes from a transparent surface blended over
-        // that bed per pixel. A baked factor is a function of depth; the real thing is a
-        // function of depth AND view angle, which is why a clarity tuned at one render
-        // distance stopped matching at another - reported in play, twice.
+        // Vanilla has no separate return-path term: its bed carries the sunlight that reached
+        // it and the surface supplies the view-dependent appearance. The setting can still be
+        // disabled with zero; 25 is now the owner-selected default under the dedicated OIT
+        // surface. It remains independently tunable because a baked factor is a function of
+        // depth while the visible result also changes with view angle.
         c.True(rend.Contains("float viewPath = clarity > 0f ? MathF.Exp(-depth / clarity) : 1f;",
                 StringComparison.Ordinal),
             "the invented return-path term can be switched off entirely");
-        // Both reverted after 0.4.8: the derivation said match vanilla's formula exactly, the
-        // owner's eye said the result was worse, and the owner's eye is the acceptance
-        // evidence for anything visual. What 0.4.8 was chasing - a baked depth-only darkening
-        // cannot follow the view angle - is still open and neither value fixes it.
-        c.True(mod.Contains("public float WaterClarity = 10f;", StringComparison.Ordinal)
+        // The owner's eye is the acceptance evidence for these appearance defaults. Keep both
+        // values pinned so a new configuration cannot silently return to an older comparison.
+        c.True(mod.Contains("public float WaterClarity = 25f;", StringComparison.Ordinal)
             && mod.Contains("public float WaterMaxAlpha = 0.7f;", StringComparison.Ordinal),
             "a fresh install draws the settings the owner accepted, not the derived ones");
 
@@ -2401,14 +2578,19 @@ public static class StaticAssetChecks
         // Vanilla's foam is a shallow-water term; substituting zero depth pinned it on over
         // every ocean and is most of why cached water measured 1.7x vanilla's across a seam.
         c.True(water.Contains("uniform float waterShallowness;", StringComparison.Ordinal)
-            && water.Contains("clamp(waterShallowness - noise1 / 2.0", StringComparison.Ordinal),
-            "the foam term asks how shallow the water is instead of assuming the waterline");
+            && water.Contains("float diff = waterShallowness > 0.0", StringComparison.Ordinal)
+            && water.Contains("waterShallowness - noise1 / 2.0 + noise2 / 2.0",
+                StringComparison.Ordinal)
+            && water.Contains(": 0.0;", StringComparison.Ordinal),
+            "the foam term asks how shallow the water is and pins deep open water to zero");
         c.True(rend.Contains("public float WaterShallowness { get; set; }", StringComparison.Ordinal),
             "and open water - zero - is the default");
         c.True(water.Contains("uniform float waterMaxAlpha;", StringComparison.Ordinal)
-            && water.Contains("clamp(0.8 * fresnel, 0.0, max(0.0, waterMaxAlpha))",
+            && water.Contains("0.8 * waterFresnelValue, 0.0, max(0.0, waterMaxAlpha)",
+                StringComparison.Ordinal)
+            && water.Contains("/ clamp(waterFresnelValue, 0.5, 1.0)",
                 StringComparison.Ordinal),
-            "and distant water keeps enough transparency to show the shaded bed");
+            "and water retains a tunable material-opacity ceiling before atmospheric fog");
     }
 
     /// <summary>

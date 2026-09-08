@@ -8,16 +8,91 @@ first.
 
 ## [Unreleased]
 
-**Known open:** a chunk-aligned band along the water seam, brighter than the water either side of
-it, is not attributed. Four explanations have been tried; the seam blend band and fog
-interpolation are ruled out by source and measurement, water walls at uncaptured edges tested
-negative, and the remaining candidate - our seabed seen through vanilla's water, darker than
-vanilla's own bed beside it - is untested.
+**Known open:** the broad rectangular water band is fixed. A narrower visual handoff between
+vanilla and cached water remains, and 0.4.27 has not yet been run in game. Its dedicated water
+programs and fail-loud renderer policy are built and harness-tested only. Physical retirement
+of the old per-section opaque resource lifecycle also remains; it can no longer draw terrain.
 
-**Known open:** `.vhwater clarity` has no counterpart in the game. It was added to compensate for
-capping cached water's opacity below vanilla's, and because it is baked per block it cannot
-follow the angle you look through the water at - so a value tuned at one render distance stops
-matching at another.
+## [0.4.27] - 2026-09-08
+
+Private test build. The dedicated water vertex and OIT shaders now repair the shared contracts
+identified by the owner's AMD compile log: water initializes the surface-color and texture-slot
+values consumed by the common vertex body, and OIT composition is called directly instead of
+through a macro-renamed fragment entry point. Successful 0.4.27 runtime compilation is pending.
+
+Required renderer failures now stay visible during development. Packed clustered terrain is
+the only product opaque path; missing packed data, shader failure, upload failure or draw
+failure suppresses cached terrain and logs a `REQUIRED ... FAILED` error. The per-section
+opaque and expanded-indirect paths cannot silently substitute. Dedicated water is likewise
+mandatory: its surface, depth, repair, junction or requested OIT failure suppresses cached
+water and thin cover. The legacy water shader selector is retired. `.vhgpu off` remains an
+explicit failure test and `.vhwater pipeline opaque` remains a named dedicated-stage A/B.
+
+Release build: zero warnings/errors. Fast checks: 22,576 assertions, zero failures. The
+32-entry package was verified and copy-installed with SHA-256
+`FE9B34EEEF57837F4D4EEF7A6AE3762BF7D50E06C1C1A07A6F50320870070727`. It has not yet been
+human-tested or runtime-compiled in game.
+
+## [0.4.26] - 2026-09-07
+
+Private diagnostic build. OpenGL error isolation showed that the advanced entry points,
+compute/SSBO work and the private depth-copy/mip probe all pass on the owner's machine; packed
+clustered terrain also reported complete command coverage. The same log exposed the real
+water-path failure: all dedicated water vertex programs failed because `vhSurfaceColor` was
+undeclared, and the OIT fragment failed to resolve `vhShadeWater`. Silent legacy/opaque
+selection had made the resulting picture look like a valid new-renderer result.
+
+## [0.4.24-0.4.25] - 2026-09-07
+
+Private test builds extended the dedicated water shader with its junction, texture and lighting
+inputs, and made expanded level-zero terrain carry the texture slots previously available only
+to the packed representation. The owner's visual comparisons did not show the expected texture
+or seam improvement; the later 0.4.26 shader log established that the water comparison had been
+running through a fallback rather than the intended program.
+
+## [0.4.23] - 2026-09-07
+
+**The broad rectangular water band is gone.** The owner reproduced it in pure vanilla and at a
+vanilla water chunk on the edge of the loaded world with no adjacent LOD chunk. Vanilla treats a
+missing neighbouring chunk as empty and tessellates a vertical liquid side against that invented
+air. Vintage Horizons now rejects only an outward horizontal liquid side whose neighbouring
+client chunk is genuinely absent. Loaded shorelines, top/bottom faces and interior faces retain
+the engine behavior. The owner confirmed the band disappeared; the narrower vanilla/cached-water
+handoff remains.
+
+## [0.4.19-0.4.22] - 2026-09-06-07
+
+Private diagnostic builds separated surface texture/light experiments, depth coverage and the
+remaining moving marks. Repair removed the scattered blips in the tested view while the broad
+band remained exactly unchanged. Moving to the cache edge and then testing pure vanilla broke
+the assumption that the broad band was produced by cached water.
+
+## [0.4.18] - 2026-09-06
+
+Private test build. Cached water geometry now supplies missing liquid depth at the ownership
+junction, only where vanilla's frozen depth image is empty. The owner reports seam blips gone
+with `.vhwater junction on`, even with repair off. Scattered blips away from the seam remain
+when repair is off, and the broad band is unchanged. Surface color and ownership are preserved.
+Captures can compare mask-only, junction and repaired depths within one frame.
+
+## [0.4.17] - 2026-09-05
+
+Private test build. Dedicated cached water uses vanilla's OIT transparency stage, with
+`.vhwater pipeline opaque|oit` for comparison and an opaque fallback. Frame identity, render
+state restoration, stage-aware captures and water/depth GPU timing accompany the move.
+The owner saw no visual difference and logs confirmed both paths ran. This did not fix the seam.
+
+## [0.4.16] - 2026-09-05
+
+Private test build. Extracted dedicated water shaders and shared geometry/appearance includes.
+The owner found `.vhwater shader legacy|dedicated` visually identical in the tested view.
+
+## [0.4.15] - 2026-09-05
+
+Private test builds 0.4.11–0.4.15 established ground murk, cached liquid-depth coverage,
+explicit sampler registration, intermediate captures and bounded depth-hole repair. The
+owner found murk through cached water useful; repair removed scattered pale blips but left
+the seam pattern. The broad band survived. See Session 79 for evidence and rejected hypotheses.
 
 ## [0.4.10] - 2026-09-04
 

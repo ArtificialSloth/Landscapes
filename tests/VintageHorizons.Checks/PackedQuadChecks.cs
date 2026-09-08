@@ -151,6 +151,27 @@ public static class PackedQuadChecks
         c.Eq(21L, plain.WorldEpoch, "the plain result carries its world identity");
         c.Eq(22L, textured.WorldEpoch, "the textured result carries its world identity");
 
+        for (int vertex = 0; vertex < textured.VertexCount; vertex++)
+        {
+            int at = vertex * 4;
+            c.Eq((byte)(517 & 0xFF), textured.Rgba[at],
+                "the visible legacy mesh carries the texture slot low byte");
+            c.Eq((byte)(517 >> 8), textured.Rgba[at + 1],
+                "the visible legacy mesh carries the texture slot high byte");
+            c.Eq((byte)0, textured.Rgba[at + 2],
+                "the visible legacy mesh retains all twenty-four slot bits");
+            c.Eq((byte)(LodMesher.LegacyTextureBase + 63), textured.Rgba[at + 3],
+                "the unused fourth alpha band marks a texture while preserving tint 63");
+        }
+        for (int vertex = 0; vertex < plain.VertexCount; vertex++)
+        {
+            int at = vertex * 4;
+            c.Eq((byte)0x11, plain.Rgba[at], "plain legacy red remains the stored colour");
+            c.Eq((byte)0x22, plain.Rgba[at + 1], "plain legacy green remains the stored colour");
+            c.Eq((byte)0x33, plain.Rgba[at + 2], "plain legacy blue remains the stored colour");
+            c.Eq((byte)63, plain.Rgba[at + 3], "plain legacy alpha/tint remains unchanged");
+        }
+
         for (int quad = 0; quad < textured.PackedOpaqueQuadCount; quad++)
         {
             int word = quad * LodPackedQuadFormat.WordsPerQuad;

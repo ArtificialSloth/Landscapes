@@ -14,6 +14,7 @@ public static class HorizonEffectsChecks
         HookTargets(c);
         HookInstallation(c);
         FadeDistance(c);
+        LiquidBoundaryFacePolicy(c);
         PerPassFailureIsolation(c);
     }
 
@@ -24,11 +25,11 @@ public static class HorizonEffectsChecks
         bool installed = false;
 
         c.NoThrow(() => installed = effects.Install(logger),
-            "the two terrain-wall hooks install against the current game assembly without an OpenGL context");
+            "the terrain-edge hooks install against the current game assembly without an OpenGL context");
         c.True(installed,
-            "Harmony accepts the shader-use postfix and liquid-distance prefix");
-        c.Eq(2, effects.PatchedMethods.Count,
-            "the installed hook set contains exactly the two terrain-distance seams");
+            "Harmony accepts the shader and liquid-tessellation hooks");
+        c.Eq(3, effects.PatchedMethods.Count,
+            "the installed hook set contains exactly the three terrain-edge seams");
         c.True(effects.PatchedMethods.Any(method =>
                 method.DeclaringType == typeof(ShaderProgramBase)
                 && method.Name == nameof(ShaderProgramBase.Use)),
@@ -37,6 +38,10 @@ public static class HorizonEffectsChecks
                 method == typeof(ShaderProgramChunkliquiddepth).GetProperty(
                     nameof(ShaderProgramChunkliquiddepth.ViewDistance))?.SetMethod),
             "the hook set contains the liquid-depth late distance upload");
+        c.True(effects.PatchedMethods.Any(method =>
+                method.DeclaringType == typeof(LiquidTesselator)
+                && method.Name == "DrawLiquidBlockFace"),
+            "the hook set contains the missing-neighbour liquid side-face seam");
         c.False(effects.PatchedMethods.Any(method =>
                 method.DeclaringType?.Name.Contains("Ambient", StringComparison.Ordinal) == true),
             "the actual hook set contains no ambient update patch");
@@ -82,6 +87,43 @@ public static class HorizonEffectsChecks
         c.True(typeof(ShaderProgramChunkliquiddepth).GetProperty(
                 nameof(ShaderProgramChunkliquiddepth.ViewDistance))?.SetMethod != null,
             "the installed engine exposes the liquid-depth late distance upload");
+        MethodInfo? liquidFace = typeof(LiquidTesselator).GetMethod(
+            "DrawLiquidBlockFace", BindingFlags.Instance | BindingFlags.NonPublic);
+        c.True(liquidFace != null,
+            "the installed engine exposes the liquid face-emission seam");
+        c.True(liquidFace?.GetParameters() is { Length: 12 } parameters
+                && parameters[0].ParameterType == typeof(TCTCache)
+                && parameters[1].ParameterType == typeof(int),
+            "the liquid face-emission seam still begins with TCTCache and tileSide");
+    }
+
+    static void LiquidBoundaryFacePolicy(Check c)
+    {
+        CheckBoundary(c, tileSide: 0, localX: 17, localZ: 0, dx: 0, dz: -1, "north");
+        CheckBoundary(c, tileSide: 1, localX: 31, localZ: 9, dx: 1, dz: 0, "east");
+        CheckBoundary(c, tileSide: 2, localX: 4, localZ: 31, dx: 0, dz: 1, "south");
+        CheckBoundary(c, tileSide: 3, localX: 0, localZ: 21, dx: -1, dz: 0, "west");
+
+        foreach ((int side, int x, int z) in new[]
+        {
+            (0, 17, 1), (1, 30, 9), (2, 4, 30), (3, 1, 21),
+            (4, 0, 0), (5, 31, 31), (-1, 0, 0), (6, 31, 31),
+        })
+        {
+            c.False(VanillaHorizonEffects.TryOutwardLiquidNeighborOffset(
+                    side, x, z, out _, out _),
+                $"tile side {side} at local {x},{z} is not an outward horizontal chunk face");
+        }
+    }
+
+    static void CheckBoundary(
+        Check c, int tileSide, int localX, int localZ, int dx, int dz, string name)
+    {
+        c.True(VanillaHorizonEffects.TryOutwardLiquidNeighborOffset(
+                tileSide, localX, localZ, out int actualDx, out int actualDz),
+            $"the {name} liquid side on its chunk boundary checks the adjacent chunk");
+        c.Eq(dx, actualDx, $"the {name} liquid side selects the correct X neighbour");
+        c.Eq(dz, actualDz, $"the {name} liquid side selects the correct Z neighbour");
     }
 
     static void ProgramAllowlist(Check c)

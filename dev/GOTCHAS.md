@@ -3162,3 +3162,75 @@ as a build the owner reported worse.
 **Safer action:** ask what the frame was taken to show and what state the world was in before
 reading anything else in it as a defect. And when a screenshot suggests a mechanism, look for
 a switch that tests it before writing the mechanism down as the cause.
+
+### G157 - Chunk water ownership is not proof of depth coverage
+
+**Trigger:** using the water chunk mask to discard depth fragments as well as surface color.
+
+**Trap:** the owner saw pale moving marks at the junction even after the water shader moved
+into OIT. Captured marks were already in ground color, at clear liquid-depth texels. Cached
+geometry was discarded by chunk ownership despite absent vanilla coverage at those pixels.
+
+**Safer action:** distinguish color ownership from actual depth coverage. In 0.4.18 a frozen
+vanilla-only snapshot permits real cached geometry to supply clear junction pixels in owned
+columns touching the cache; valid vanilla depth and interior ownership remain authoritative.
+The owner confirms seam blips gone with repair off, but scattered blips remain and the broad
+band is unchanged. This is not proof of complete surface continuity or a repair-free solution.
+
+### G158 - Shader sampler registration must agree with explicit binds
+
+**Trigger:** sharing engine includes between mod terrain, water and depth programs.
+
+**Trap:** the engine assigns texture units by source declaration order, including inactive
+conditional branches. An engine liquid-depth sampler aliased a mod climate-field unit;
+correct-looking explicit binds alone did not reserve those units for later program activation.
+
+**Safer action:** configure the engine's sampler table for every compiled variant, use the
+same fixed layout for explicit binds, and restore/rebind units after program switches. Exercise
+actual engine include expansion and collection. Depth shaders must sample immutable copies,
+never an executable path to the image attached as their destination. See Session 79.
+
+### G159 - A world-edge water band can be vanilla geometry
+
+**Trigger:** a rectangular water artifact lines up with the vanilla/cache boundary in the view.
+
+**Trap:** repeated cached-water toggles left the broad band unchanged, but its position made it
+look like a handoff defect. The decisive test put a vanilla water chunk at the loaded-world edge
+with no adjacent LOD chunk, and the band remained; pure vanilla reproduced it. The liquid
+tessellator substitutes an empty chunk for a missing neighbour and emits a vertical water side
+against the invented air. Seen nearly edge-on, that side becomes the pale chunk-stepped band.
+
+**Safer action:** test the same geometry at a vanilla streaming boundary and in pure vanilla
+before assigning a screen-space band to the mod. Suppress only outward horizontal liquid faces
+whose neighbouring client chunk is genuinely absent. A loaded empty neighbour may be a real
+shoreline and must remain authoritative. The owner confirmed this correction in 0.4.23.
+
+### G160 - A plausible renderer fallback invalidates visual development evidence
+
+**Trigger:** a new renderer looks unchanged, or a regression resembles an older renderer.
+
+**Trap:** 0.4.26's dedicated water vertex programs failed on an undeclared shared value and its
+OIT fragment failed to resolve a macro-renamed function. Automatic legacy/opaque selection still
+drew believable water, so screenshots and A/B commands appeared to exercise the new renderer.
+The log, read later, was the only proof that they had not. The same risk applies to packed terrain:
+a per-section fallback can make a broken product path look healthy.
+
+**Safer action:** required development paths must produce positive active-path diagnostics and
+must fail visibly. As of 0.4.27 packed clustered terrain and dedicated water suppress cached output
+and log `REQUIRED ... FAILED`; the per-section opaque, expanded-indirect and legacy water paths
+cannot substitute. Keep a comparison path only when its command and status name it explicitly.
+
+### G161 - A shared shader body has an interface even when GLSL cannot declare one
+
+**Trigger:** extracting terrain and water shader code into common includes.
+
+**Trap:** terrain's wrapper used to initialize `vhSurfaceColor` and `vhBlockSlot` before entering
+the common vertex body. Water reused that body without supplying both values, so every dedicated
+water vertex program failed at runtime. The OIT wrapper also renamed a function through macros;
+the owner's AMD compiler did not resolve the resulting overload. Source-shape checks passed
+because this workflow has no offline compiler for the engine-expanded GLSL.
+
+**Safer action:** write down and initialize every value a shared body consumes in every wrapper,
+check the expanded source, and prefer direct composition calls over macro-renamed entry points.
+Treat the game's successful runtime compile message as a separate acceptance gate from C# and
+static-source checks.

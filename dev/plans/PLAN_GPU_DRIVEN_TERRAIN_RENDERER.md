@@ -1,5 +1,14 @@
 # Plan - GPU-driven cached-terrain renderer
 
+> **Current development policy, 2026-09-08:** clustered packed terrain is the required visible
+> opaque path. Automatic substitution by expanded-indirect or per-section opaque drawing is
+> retired. A required arena, upload, shader or draw failure suppresses cached opaque terrain and
+> logs `REQUIRED PACKED TERRAIN PATH FAILED`. `.vhgpu off` remains an explicit failure test and
+> leaves cached terrain absent. Earlier fallback language in this plan records the path by which
+> the renderer was developed; it is superseded as current product behavior. The old per-section
+> `MeshRef` lifecycle still exists as non-drawing scaffolding and should be removed after the
+> required path passes current runtime acceptance. See Session 80.
+
 **Status:** Phases 0-5 are implemented and have drawn on the primary AMD driver. Phase 6's
 same-frame near/far depth split is packaged in 0.3.84 and removed the obvious previous-frame
 motion flicker. Later play found a few normally shaped pieces still alternating at precise angles;
@@ -13,13 +22,13 @@ multi-draw backend, controls and deterministic checks are source-complete on 202
 0.3.86's indexed path is human-accepted on the primary AMD driver: it looks identical and
 holds the exact same FPS as expanded batching in the same scene, recovering all of 0.3.85's
 draw-arrays regression. A controlled 0.3.104 ABBA route later measured packed/expanded timing
-parity, and 0.3.105 retains only the selected regional representation. The GL 3.3 renderer remains
-the complete fallback. Phase 8
+parity, and 0.3.105 retained only the selected regional representation. At that checkpoint the
+GL 3.3 renderer remained the complete fallback; the 2026-09-08 policy above supersedes it. Phase 8
 cluster subdivision is source- and harness-complete in 0.3.87 behind `.vhclusters`: workers
 produce a separate 4x4 stream of exact contiguous packed ranges, the GPU mirror retains
 conservative per-cluster bounds, and the indirect builder emits one cullable command per
-populated cluster. Whole-section packed, expanded indirect and GL 3.3 rendering remain
-same-frame fallbacks. The first owner scene measured 360 to 390 FPS with clusters enabled, about
+populated cluster. Whole-section packed, expanded indirect and GL 3.3 rendering were then
+same-frame fallbacks; the 2026-09-08 policy above retires them. The first owner scene measured 360 to 390 FPS with clusters enabled, about
 0.21 ms saved, but clusters also exposed more of the shared depth-cull flicker described above.
 Visual stability and paired GPU metadata/dispatch/saving gates are open.
 
@@ -169,7 +178,8 @@ The fast path should produce the following player-facing result:
   edge flashes, delayed terrain, coarse replacement storms, or periodic stalls.
 - Visible open-horizon views should benefit from lower submission and geometry overhead
   even when little terrain is occluded.
-- Unsupported or problematic systems should continue to render through the current path.
+- A required-path failure should remove cached opaque terrain visibly and name the failed
+  invariant in the log, so development evidence cannot come from an unintended renderer.
 
 The engineering outcomes are:
 
@@ -180,8 +190,8 @@ The engineering outcomes are:
 - Keep the CPU as the initial authority for section availability and hole-free parent/child
   coverage.
 - Reduce live geometry bytes and upload bandwidth after the regional path is proven.
-- Preserve explicit diagnostics and a live comparison path until the new default has been
-  accepted on real hardware.
+- Preserve explicit diagnostics; any live comparison must be named and unable to activate as
+  automatic recovery.
 
 ## 4. Non-goals
 
@@ -195,14 +205,16 @@ The first complete fast path will not:
 - Make visibility control CPU/GPU residency or persistence.
 - Start with GPU-owned quadtree traversal or LOD selection.
 - Add a full cached-terrain depth prepass.
-- Delete the legacy renderer.
+- Delete every legacy resource structure in the first implementation; physical retirement
+  follows after the required packed path passes runtime acceptance.
 - Promise a default-on rollout from source or harness evidence alone.
 
 ## 5. Governing invariants
 
 These are acceptance constraints, not implementation preferences.
 
-1. The GL 3.3 renderer remains complete and visually correct.
+1. Clustered packed terrain is the sole visible product opaque path. Missing required state
+   suppresses cached opaque output and is reported; retired renderers do not substitute.
 2. OpenGL object creation, upload, dispatch, draw, fence, and disposal remain on the render
    thread.
 3. Workers may produce immutable CPU arrays or packed records but never touch OpenGL or
@@ -580,38 +592,34 @@ Later, water may use a regional arena and CPU-ordered indirect commands solely t
 submission overhead. GPU compaction must not reorder blended commands. It is accepted only
 if water submission is measured as material.
 
-## 14. Failure and fallback model
+## 14. Failure model
 
 ### Startup selection
 
-Proposed controls during development:
-
-- `auto`: use the fast path only after capability/resource/shader checks pass.
-- `off`: force the existing renderer.
-- `on`: request the fast path but still fail safely to the existing renderer.
-- Independent development switches for regional drawing, HZB, GPU culling, packed quads,
-  and cached-on-cached strategy.
-
-Exact command and environment-variable names should be chosen when the first path exists.
-They remain session-only until product acceptance decides otherwise.
+The former `auto`/legacy-selection design is retired. Packed clustered terrain is required.
+`.vhgpu off` deliberately releases/disables the arenas and leaves cached opaque terrain absent;
+it is a failure test, not a renderer comparison. Lower-level culling and diagnostic controls may
+remain when they do not change which geometry representation owns visible output.
 
 ### Resource publication
 
 - Build new regional resources completely before publishing them.
-- Keep the old section resource or legacy mesh usable until publication succeeds.
+- Keep the current packed allocation usable until its replacement publishes; a failed replacement
+  does not authorize a per-section draw.
 - Tag section table entries and retire records with a generation.
 - A stale queued update cannot revive a freed allocation.
 - World clear advances identity before any resource queue is drained.
 
 ### Frame failure
 
-- Failure before any fast draw submits: use the legacy opaque draw that frame.
-- Driver/resource failure after submission: record it once, disable the fast path for
-  subsequent frames, and avoid an unbounded recovery operation inside the failing frame.
-- HZB copy/reduction failure: draw the indirect candidate set without HZB or fall back to
-  legacy, depending on which stage has already been proven safe.
-- Shader reload: build and validate the replacement program before swapping; retain the old
-  working path on compile failure.
+- Failure before any packed draw submits: suppress cached opaque terrain for that frame and log
+  `REQUIRED PACKED TERRAIN PATH FAILED` once per distinct reason.
+- Driver/resource failure after submission: record it, suppress subsequent cached opaque work,
+  and avoid an unbounded recovery operation inside the failing frame.
+- HZB copy/reduction failure may use an explicitly supported unculled packed command set only if
+  that behavior is named in diagnostics and already validated; it cannot select an older renderer.
+- Shader reload: build and validate the replacement program before swapping. If no valid required
+  program remains, cached opaque terrain disappears and the error is visible.
 - Never persist a failed capability decision across game or driver updates without
   re-probing.
 
@@ -625,8 +633,7 @@ Telemetry must be cheap when disabled and delayed when reading GPU results.
 - Candidate-buffer preparation/upload time and bytes.
 - Regional allocation, upload, retirement, and reclamation time.
 - Indirect submission CPU time and call count.
-- Legacy draw submission time when used as comparison.
-- Fast-path fallback count and reason.
+- Required-path suppression count and reason.
 - Arena live/committed/free/pending-retire bytes and fragmentation.
 
 ### GPU timer stages
@@ -944,7 +951,7 @@ Work:
 - Emit one fixed indirect command per candidate.
 - Supply per-section metadata through a proven multi-draw-compatible indexing mechanism.
 - Render opaque terrain from regional buffers with no HZB suppression.
-- Keep legacy water rendering.
+- At this historical terrain-only phase, leave the then-current water renderer unchanged.
 - Add a live legacy/indirect comparison switch and screenshot/checkpoint route.
 
 Gate:
@@ -1219,7 +1226,8 @@ Gate:
 the default in 0.4.0, ahead of this phase's own gates, on the owner's explicit product call. He
 played it and accepted the picture and the performance on the primary AMD driver. Phase 8's
 correctness defect was found and fixed in 0.3.101, the staging switches and diagnostics were retired
-through 0.3.103, and `.vhgpu off` remains as one saved in-game route back to the legacy renderer.
+through 0.3.103. `.vhgpu off` now deliberately leaves cached opaque terrain absent; it no longer
+routes back to the legacy renderer.
 
 **First hardening slice, 0.3.104:**
 `VINTAGEHORIZONS_GPU_INJECT_FAILURE=arena|shader|depth-copy|draw` injects one named boundary once,
@@ -1247,8 +1255,9 @@ clusters off so only format selection changed. Expanded averaged 2.4392 ms and p
 the -0.10% packed delta is below repeat variation, establishing parity rather than a speedup. The
 selected 12-byte format keeps its 86.4% representation reduction without measurable frame-time
 regression. The product-default clustered copy measured about 90.33 MiB live against about 833.7
-MiB for all three former regional copies. The mirror now retains exactly the selected expanded,
-whole-packed, or clustered-packed form and uses the ordinary legacy mesh as its complete fallback.
+MiB for all three former regional copies. At that checkpoint the mirror retained exactly the
+selected expanded, whole-packed, or clustered-packed form while the ordinary mesh remained a
+fallback. Version 0.4.27 supersedes that fallback policy and requires clustered packed drawing.
 The roughly 89% reduction applies only to duplicate regional live bytes, not total game RSS.
 
 **What the default decision still did NOT close, and what this phase owns:** MSAA/SSAO settings,
@@ -1258,8 +1267,8 @@ also remain open with the path default-on. Human acceptance is one machine, one 
 and qualitative.
 
 **Purpose:** Originally, decide whether the fast path was ready for ordinary users. Since the owner
-made that decision ahead of the gate, finish the hardening and fallback coverage for the path that
-is now the default.
+made that decision ahead of the gate, finish lifecycle hardening and fail-loud coverage for the
+required product path.
 
 Work:
 
@@ -1270,9 +1279,10 @@ Work:
   deferral.
 - Exercise allocation pressure. The named arena, shader, depth-copy and draw injections are
   complete in 0.3.104 on the primary system.
-- Verify that the fallback path remains current rather than becoming an untested museum
-  path.
-- Decide `auto` policy and whether any control persists in configuration.
+- Remove remaining per-section opaque `MeshRef` allocation/publication/disposal scaffolding after
+  the required packed path passes runtime acceptance.
+- Keep `.vhgpu off` only as an explicit missing-terrain failure test; do not restore `auto` or a
+  legacy selector.
 - Update architecture, gotchas, TODO, status, history/session notes, README commands, and
   changelog only when implementation evidence settles those facts.
 
@@ -1283,8 +1293,9 @@ Gate:
   above measured run-to-run noise; overall 0.4.0 performance remains qualitatively accepted rather
   than newly quantified.
 - No unresolved correctness defect can expose a hole or corrupt renderer/cache state.
-- Unsupported and injected-failure cases demonstrably retain complete rendering: legacy for
-  arena/shader/draw refusal, and unculled indirect drawing for a depth-copy refusal.
+- Unsupported and injected required-path failures demonstrably suppress cached opaque terrain and
+  emit the named error. An unculled packed draw after depth-copy refusal is allowed only if it is
+  explicit, tested and cannot select an older representation.
 - Full checks, packaging rules, and documentation ritual pass.
 
 ## 17. Verification strategy
@@ -1391,10 +1402,10 @@ noise floor is recorded; any revision must be written before the affected A/B re
 | GPU culling breaks mixed ownership seam | Visible ring or holes near vanilla handoff | Initial unconditional mixed-section bypass and mask diagnostics |
 | Camera motion exposes stale depth | Edge flashes or delayed terrain | Current-view vanilla HZB first; fail-open bias/edge guards for any temporal reuse |
 | GPU LOD disagrees with no-holes CPU policy | Missing terrain or coarse oscillation | Defer GPU LOD; shadow coverage comparison before authority transfer |
-| Packed decode adds too much shader work | Memory drops but frame time rises | Compare several formats and retain expanded regional path |
-| Water order changes | Incorrect transparency and shore artifacts | Keep legacy water until separately measured; never unordered compact it |
-| Driver feature claims are incomplete | Compile, entry-point, or runtime failure | Probe functions/limits/resources, not version string; retain Tier 0 |
-| Fast path becomes the only tested path | Compatibility regressions go unnoticed | Include forced-legacy checks and periodic legacy A/B in release validation |
+| Packed decode adds too much shader work | Memory drops but frame time rises | Compare formats explicitly; reject an unacceptable product path rather than silently selecting expanded drawing |
+| Water order changes | Incorrect transparency and shore artifacts | Keep dedicated water in its ordered OIT stage; never unordered compact it |
+| Driver feature claims are incomplete | Compile, entry-point, or runtime failure | Probe functions/limits/resources, not version string; suppress cached output and name a failed requirement |
+| Required path regresses | Cached output disappears | Keep targeted failure injection and positive active-path diagnostics; do not conceal it with periodic legacy A/B |
 
 ## 19. Rejected or deferred alternatives
 
@@ -1483,15 +1494,15 @@ The vision is complete when all of the following are true:
   commands without CPU visibility readback.
 - The accepted cached-on-cached strategy is either implemented with a measured net win or
   explicitly rejected with preserved evidence.
-- Per-section temporal queries are absent from the active fast path and remain functional in
-  the legacy path.
+- Per-section temporal queries are absent from the active fast path.
 - Geometry packing has produced a measured worthwhile regional reduction without a frame-time
   regression above repeat variation.
 - Parent/child coverage, ownership seams, motion, water, shaders, and extreme coordinates
   meet current visual behavior.
 - Visibility remains independent from residency and persistence.
 - Resource publication is generation-safe; retirement never stalls an ordinary frame.
-- Unsupported and failure cases fall back to the complete legacy renderer.
+- Unsupported and failure cases fail visibly without selecting the per-section or
+  expanded-indirect renderer.
 - Overall performance and visual behavior retain the owner's qualitative 0.4.0 acceptance. The
   owner retired a corrected-mapping effect-size re-measurement, so no new numeric overall gate is
   required; the paired packed-memory decision keeps its own controlled primary-driver gate.

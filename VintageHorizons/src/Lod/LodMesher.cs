@@ -38,6 +38,12 @@ public static class LodMesher
     // water and flowers can be see-through by different amounts.
     const byte WaterBase = LodTintRegistry.MaxSlots;
     const byte ThinBase = LodTintRegistry.MaxSlots * 2;
+    // The fourth 64-value alpha band is unused by material/tint encoding. Solid L0
+    // vertices use it as a legacy-mesh texture marker: RGB carries the 24-bit block
+    // texture slot and alpha - 192 recovers the original opaque tint slot. This gives
+    // the established expanded renderer the same material identity as packed quads
+    // without adding another vertex stream.
+    public const byte LegacyTextureBase = LodTintRegistry.MaxSlots * 3;
 
     static byte AlphaFor(byte paletteFlags, byte tintSlot)
     {
@@ -985,10 +991,10 @@ public static class LodMesher
         int textureSlot = 0)
     {
         int baseVert = buf.Xyz.Count / 3;
-        AddVert(buf, color, alpha, x0, y0, z0);
-        AddVert(buf, color, alpha, x1, y1, z1);
-        AddVert(buf, color, alpha, x2, y2, z2);
-        AddVert(buf, color, alpha, x3, y3, z3);
+        AddVert(buf, color, alpha, textureSlot, x0, y0, z0);
+        AddVert(buf, color, alpha, textureSlot, x1, y1, z1);
+        AddVert(buf, color, alpha, textureSlot, x2, y2, z2);
+        AddVert(buf, color, alpha, textureSlot, x3, y3, z3);
         buf.Indices.Add(baseVert);
         buf.Indices.Add(baseVert + 1);
         buf.Indices.Add(baseVert + 2);
@@ -996,9 +1002,9 @@ public static class LodMesher
         buf.Indices.Add(baseVert + 2);
         buf.Indices.Add(baseVert + 3);
 
+        if (textureSlot > 0) buf.HasTextureSlots = true;
         if (buf.Pack)
         {
-            if (textureSlot > 0) buf.HasTextureSlots = true;
             float minX = Math.Min(Math.Min(x0, x1), Math.Min(x2, x3));
             float maxX = Math.Max(Math.Max(x0, x1), Math.Max(x2, x3));
             float minY = Math.Min(Math.Min(y0, y1), Math.Min(y2, y3));
@@ -1061,16 +1067,32 @@ public static class LodMesher
             ? self.PaletteTextureSlots[pid]
             : 0;
 
-    static void AddVert(Buffers buf, int color, byte alpha, float x, float y, float z)
+    static void AddVert(Buffers buf, int color, byte alpha, int textureSlot,
+        float x, float y, float z)
     {
         if (y < buf.MinY) buf.MinY = y;
         if (y > buf.MaxY) buf.MaxY = y;
         buf.Xyz.Add(x);
         buf.Xyz.Add(y);
         buf.Xyz.Add(z);
-        buf.Rgba.Add((byte)(color & 0xFF));
-        buf.Rgba.Add((byte)((color >> 8) & 0xFF));
-        buf.Rgba.Add((byte)((color >> 16) & 0xFF));
-        buf.Rgba.Add(alpha);
+        if (textureSlot > 0)
+        {
+            // TextureSlotFor admits only opaque L0 faces, whose alpha is 0..63.
+            // 192..255 can therefore mark the alternate RGB payload without losing
+            // any material band or tint information.
+            if (alpha >= WaterBase || textureSlot > LodPackedQuadFormat.MaximumTextureSlot)
+                throw new InvalidOperationException("legacy texture payload is out of range");
+            buf.Rgba.Add((byte)(textureSlot & 0xFF));
+            buf.Rgba.Add((byte)((textureSlot >> 8) & 0xFF));
+            buf.Rgba.Add((byte)((textureSlot >> 16) & 0xFF));
+            buf.Rgba.Add((byte)(LegacyTextureBase + alpha));
+        }
+        else
+        {
+            buf.Rgba.Add((byte)(color & 0xFF));
+            buf.Rgba.Add((byte)((color >> 8) & 0xFF));
+            buf.Rgba.Add((byte)((color >> 16) & 0xFF));
+            buf.Rgba.Add(alpha);
+        }
     }
 }
