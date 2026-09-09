@@ -2,6 +2,27 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-08 - Distant-water material and settled seam accepted in 0.4.36
+
+The dedicated water path is runtime-proven on the owner's machine and the narrow settled handoff
+is closed for the tested scene. Successive comparisons matched the live animated vanilla water
+tile, preserved climate-map alpha, reproduced the view-angle opacity response and brought foam
+and seabed clarity into the same composite. The owner selected alpha 1.3, foam 1.6 and clarity 40
+as the defaults.
+
+A staged capture converted the last dotted seam from a visual hypothesis into a measured overlap:
+960 full-resolution pixels received both vanilla and cached OIT water and averaged about 21%
+brighter than either adjacent surface. Quarter-resolution liquid depth had been allowed to admit
+cached water despite full-resolution revealage proving vanilla coverage. Version 0.4.36 makes
+revealage authoritative for the OIT surface while retaining liquid depth for underwater murk.
+The owner then reported that he could not tell where vanilla water ended and LOD began.
+
+Release build completed without warnings or errors, 22,651 checks passed, and the verified
+32-entry package was copy-installed with SHA-256
+`E971ADFACE300CE9EB897C055A5DAF518467EA32152DB293EC1505C388454904`. Accepted source is committed
+at `049d0c5`. The newly observed split-second light patch while a vanilla water chunk appears is
+separate open movement work, not part of this completed settled-seam result.
+
 ## 2026-09-07-08 - Broad water band attributed and visible renderer fallbacks retired
 
 The broad rectangular band is closed. After it survived at the edge of LOD coverage, the owner

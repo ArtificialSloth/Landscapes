@@ -3234,3 +3234,43 @@ because this workflow has no offline compiler for the engine-expanded GLSL.
 check the expanded source, and prefer direct composition calls over macro-renamed entry points.
 Treat the game's successful runtime compile message as a separate acceptance gate from C# and
 static-source checks.
+
+### G162 - Color-map parity includes alpha, not only the color you can see
+
+**Trigger:** matching a translucent atlas texture by reproducing its tile and RGB tint while
+packing the color map as an opaque RGB value.
+
+**Trap:** vanilla's `getColorMapped` path multiplies the sampled water texture alpha by the
+climate-water tint alpha. The cached path matched the live tile and visible tint but discarded
+that map channel, leaving water roughly 1.5 times too opaque in the measured scene. Seabed,
+clarity and Fresnel tuning then compensated for a material input that was simply missing.
+
+**Safer action:** trace and preserve RGBA through climate pages, fallbacks, vertex interfaces and
+the final texture operation. For translucent materials, an RGB match is not a material match.
+
+### G163 - Full-resolution coverage must replace a coarser answer for a full-resolution stage
+
+**Trigger:** combining a quarter-resolution liquid-depth target with full-resolution OIT
+revealage to decide whether one surface pixel is missing.
+
+**Trap:** ORing the two "clear" answers looked conservative but let a coarse depth texel admit
+cached water where the full-resolution revealage proved vanilla water already drew. One capture
+found 960 double-drawn pixels exactly along the pale dotted seam; they averaged about 21% brighter
+than adjacent vanilla-only or cached-only water.
+
+**Safer action:** use the signal whose resolution and meaning match the output stage. In 0.4.36
+the immutable full-resolution revealage copy replaces quarter-depth for OIT surface coverage;
+quarter-depth remains the authority for underwater depth. Do not broaden one into the other.
+
+### G164 - Height and render distance can both be disguises for water viewing angle
+
+**Trigger:** water matching at one camera height or render distance and diverging at another.
+
+**Trap:** treating the change as a low-altitude color response or a render-distance fade creates
+two correction curves for a single physical variable. Raising the camera and moving the handoff
+farther away both change the eye ray's angle to a horizontal surface, which is the input vanilla's
+Fresnel opacity actually uses.
+
+**Safer action:** compare the surface viewing angle first and reproduce vanilla's angle response.
+Use height and render distance only as convenient ways to sample that response, not as independent
+causes. Then tune one ceiling across steep and shallow views.

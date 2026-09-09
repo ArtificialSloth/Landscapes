@@ -2,43 +2,47 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Distant water: validate the required renderer, then solve the residual seam
+## Distant water: preserve the accepted seam, close movement handoff
 
-Current work is `0.4.27` on `codex/water-depth-light`. Read
+Current accepted source is `0.4.36` at `049d0c5` on `codex/water-depth-light`. Read
 [the current handoff](plans/HANDOFF_WATER_SEAM.md) and
-[Session 80](sessions/SESSION_80.md). Remain at Phase 2 of
-[the dedicated water plan](plans/PLAN_LOD_WATER_RENDERER.md).
+[Session 81](sessions/SESSION_81.md). The settled Phase 2 visual handoff is human-accepted in the
+tested scene; movement and lifecycle coverage remain before the renderer plan's continuity gate
+can be called complete.
 
-- **Run 0.4.27 and prove the intended paths are active before judging the picture.** The log
-  should positively report the packed terrain path and all requested dedicated water shaders,
-  depth/junction/repair stages and OIT as ready/running, with no `REQUIRED ... FAILED`. A failure
-  should now remove cached terrain or water visibly. Preserve the first log either way.
-- **Re-establish the residual seam baseline on 0.4.27.** The 0.4.26 picture is not valid evidence
-  for the intended dedicated renderer: the water shaders did not compile and an older renderer
-  was silently selected. Capture a stationary and moving view after the terrain settles, with
-  the effective water state in the log. The broad rectangular band is already closed.
-- **Explain any remaining blips under the active dedicated path.** The owner last reported the
-  scattered blips gone with repair enabled. Junction depth had removed seam blips with repair
-  disabled in 0.4.18, but that result predates later shader work. Keep raw/repaired captures
-  separate and do not widen the repair without a demonstrated coverage cause.
-- **Complete the continuity matrix:** stationary and moving views, both sides of the junction,
-  same seabed through each surface, shallow/deep shores, below water, chunk/LOD corners,
-  loading/unloading and stale cache. Dry ground and genuine openings must retain their behavior.
-- **Finish required-path lifecycle coverage:** overlapping transparency, resize/fullscreen,
-  shader reload, world changes, transparency disabled and deliberate resource failures. Expected
-  behavior is a named failure and missing cached output, never plausible output from an older path.
+- **Fix the split-second light patch when a new vanilla water chunk first draws.** The screenshot
+  and source lifecycle fit a one-frame overlap: vanilla OIT water can appear before the readiness
+  tracker completes two rendered observations and publishes vanilla ownership, so cached water
+  is still allowed underneath. Keep conservative chunk readiness for terrain. In cached OIT
+  water only, test the existing same-frame vanilla revealage and liquid-depth snapshots before
+  shading: suppress cached surface where BOTH prove vanilla liquid actually contributed. The
+  liquid-depth gate prevents unrelated transparent objects from hiding water. This diagnosis and
+  correction are not yet human-proven.
+- **Do not regress the settled seam.** The 0.4.36 rule is stage-specific: full-resolution OIT
+  revealage replaces quarter-resolution liquid depth for junction SURFACE coverage, while liquid
+  depth remains authoritative for underwater murk. New loading logic must preserve that split and
+  the accepted alpha 1.3 / foam 1.6 / clarity 40 defaults.
+- **Watch, do not tune, the movement-only open-water blips.** They were briefly reported away
+  from the seam and then could not be reproduced. If they return, capture while moving and locate
+  the mark in vanilla revealage, combined revealage, raw/repaired depth and final color before
+  changing repair, foam or glint.
+- **Complete the continuity matrix:** repeated movement and chunk streaming, both sides of the
+  junction, corners and LOD joins, same seabed through each surface, shallow/deep shores, below
+  water, stale cache, resize/fullscreen, shader reload and world changes. Include unrelated OIT
+  transparencies after the same-frame veto is built.
+- **Finish required-path lifecycle coverage:** transparency disabled and deliberate resource
+  failures must produce a named failure and missing cached output, never plausible output from an
+  older path.
 - **Physically retire opaque fallback scaffolding.** The per-section opaque `RenderMesh` call and
   all runtime selection are gone. Remove its remaining `MeshRef` allocation, publication and
-  disposal lifecycle once the required packed path is accepted, then update tests and telemetry
-  whose names still imply a complete legacy renderer.
+  disposal lifecycle after water continuity, then update tests and telemetry whose names still
+  imply a complete legacy renderer.
 - **Rework old Phase 9 failure-injection expectations.** Tests and benchmark notes that expect a
   same-frame or next-frame legacy fallback are superseded for product renderer failures. Retain
   explicit diagnostic A/B modes only where they cannot be mistaken for automatic recovery.
-- **Later appearance work:** clarity has no vanilla counterpart; near opacity, sunlight
-  absorption, projection scaling and distant continuation need separate acceptance. Preserve
-  0.4.8's rejected opaque-sheet result. No foam/shadows/extra waves before continuity passes.
 - **Retain earlier geometry debt:** unknown-column water walls, wave strip/reach tradeoffs and
-  shoreline detail need their own evidence. A negative seam toggle did not resolve those issues.
+  shoreline detail need their own evidence. The owner's current wave-strip value of zero is a
+  separate saved choice, not part of the accepted material defaults.
 
 ## Frame-time regression and the settings window: what Session 77 has not proven
 

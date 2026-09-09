@@ -8,10 +8,42 @@ first.
 
 ## [Unreleased]
 
-**Known open:** the broad rectangular water band is fixed. A narrower visual handoff between
-vanilla and cached water remains, and 0.4.27 has not yet been run in game. Its dedicated water
-programs and fail-loud renderer policy are built and harness-tested only. Physical retirement
-of the old per-section opaque resource lifecycle also remains; it can no longer draw terrain.
+**Known open:** the settled vanilla/cached-water handoff is human-accepted in 0.4.36. When a newly
+loaded vanilla water chunk first appears during movement, it can show a lighter chunk-sized patch
+for a split second. Source tracing points to one frame of double surface composition before the
+conservative readiness mask transfers ownership; the proposed per-pixel correction is not yet
+built or human-tested. Movement-only open-water blips were reported once and then could not be
+reproduced. Physical retirement of the old non-drawing per-section opaque resource lifecycle
+also remains.
+
+## [0.4.36] - 2026-09-08
+
+**The owner can no longer tell where vanilla water ends and distant water begins in the tested
+settled scene.** A staged capture proved the last pale dotted line was overlap rather than a hole:
+960 full-resolution pixels received both vanilla and cached OIT water, averaging about 21%
+brighter than either adjacent surface. Quarter-resolution liquid depth could say "clear" where
+full-resolution revealage proved vanilla had drawn. For the visible OIT surface, revealage now
+replaces that coarse answer; liquid depth remains the authority for underwater absorption.
+
+Water material matching now includes the live animated standard-water tile, its mapped alpha,
+the climate-water tint's alpha channel and vanilla's view-angle opacity curve. Owner comparisons
+selected **1.3 maximum alpha, 1.6 foam and 40-block clarity** as the current defaults. The
+preferred clarity changed after the surface-alpha and foam composite became correct.
+
+Release build: zero warnings/errors. Fast checks: 22,651 assertions, zero failures. The verified
+32-entry package was copy-installed with SHA-256
+`E971ADFACE300CE9EB897C055A5DAF518467EA32152DB293EC1505C388454904`. The accepted source is
+checkpointed at `049d0c5`.
+
+## [0.4.28-0.4.35] - 2026-09-08
+
+Private comparison builds established the repaired dedicated renderer on the owner's GPU and
+reduced the remaining handoff to a narrow line. They added live water-tile animation, preserved
+RGBA through climate-map and fallback tint paths, widened the diagnostic opacity and foam ranges
+to vanilla's real working range, and separated view-angle behavior from camera height and render
+distance. High and shallow views, seabed clarity, foam and alpha were compared repeatedly before
+the accepted defaults were chosen. A brief movement-only blip report was not reproducible and
+did not receive a speculative fix.
 
 ## [0.4.27] - 2026-09-08
 

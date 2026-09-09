@@ -1,84 +1,118 @@
-# Handoff - water renderer at 0.4.27
+# Handoff - accepted water seam at 0.4.36; transient loading overlap next
 
-**Updated:** `2026-09-08`, Session 80
-**Branch/HEAD:** `codex/water-depth-light`, `bc9309c`; implementation uncommitted
-**Installed, not yet played:** `0.4.27` private test build
+**Updated:** `2026-09-08`, Session 81
+**Branch/source checkpoint:** `codex/water-depth-light`, `049d0c5`
+**Installed and human-accepted:** `0.4.36` private test build
 **Compatibility:** assist protocol / blob / schema `1 / 4 / 6`, unchanged
 
-Read [Session 80](../sessions/SESSION_80.md) for the full investigation and
-[the renderer plan](PLAN_LOD_WATER_RENDERER.md) for the acceptance gates. Sessions
-[78](../sessions/SESSION_78.md) and [79](../sessions/SESSION_79.md) preserve the earlier
-water-depth, repair, shader-extraction and OIT work.
+Read [Session 81](../sessions/SESSION_81.md) for the material and seam investigation,
+[Session 80](../sessions/SESSION_80.md) for the broad-band/required-renderer work, and
+[the renderer plan](PLAN_LOD_WATER_RENDERER.md) for the remaining acceptance matrix.
 
 ## Current result
 
-The broad rectangular band is fixed. It was vanilla geometry, not cached water: the owner
-reproduced it in pure vanilla and at a loaded-world edge where a vanilla water chunk had no
-neighbour and no LOD chunk beside it. The engine substituted an empty neighbour and emitted a
-vertical liquid wall. Version 0.4.23 suppresses only that false outward side, and the owner
-confirmed the band disappeared.
+The broad rectangular band is closed; it was vanilla's false vertical liquid wall at a genuinely
+missing neighbour and was suppressed in 0.4.23. The narrower settled vanilla/cache handoff is now
+closed in the owner's tested scene too. Version 0.4.36 is the accepted checkpoint: the owner
+reports that he cannot tell where vanilla water ends and LOD begins.
 
-A narrower visual seam between vanilla and cached water remains. The most recent screenshot
-cannot be used to judge the intended dedicated renderer because the 0.4.26 log showed its water
-programs did not compile. Automatic fallback drew plausible older water and hid the failure.
-Version 0.4.27 repairs the known shader defects and makes required path failures visually obvious,
-but it has not yet been run in game.
+The accepted material defaults are:
 
-## What 0.4.27 changes
+| Setting | Value | Evidence |
+|---|---:|---|
+| Maximum pre-texture alpha | 1.3 | Owner A/B across steep and shallow viewing angles |
+| Foam strength | 1.6 | Owner A/B against vanilla's white surface texture |
+| Clarity | 40 blocks | Owner seabed comparison after alpha and foam were corrected |
 
-1. The shared water vertex wrapper initializes `vhSurfaceColor` and `vhBlockSlot` before the
-   common vertex body consumes them. This fixes the `vhSurfaceColor undeclared` failures in the
-   dedicated surface, depth and OIT vertex programs.
-2. The OIT fragment calls `OIT(outColor, vhWaterGlow.r)` directly. It no longer macro-renames a
-   fragment entry point, which fixes the AMD compiler's unresolved `vhShadeWater` overload.
-3. Packed clustered terrain is the required visible opaque path. Missing packed data or any
-   arena, upload, shader or draw failure suppresses cached opaque terrain and logs
-   `REQUIRED PACKED TERRAIN PATH FAILED`. Expanded-indirect and per-section opaque rendering
-   cannot substitute. The per-section opaque `RenderMesh` call is gone.
-4. Dedicated water is required. A requested surface, depth, junction, repair or OIT failure
-   suppresses cached water and thin cover and logs `REQUIRED WATER PATH FAILED`. The legacy water
-   shader selector is retired; `.vhwater shader ...` now reports an error.
-5. `.vhwater pipeline oit|opaque` remains a deliberate comparison of draw stages using the
-   dedicated shader body. `.vhgpu off` remains a deliberate failure test that makes cached opaque
-   terrain disappear. Neither command activates a retired renderer.
+The owner's current wave-strip value was zero during some comparisons. That is a separate saved
+choice, not one of the accepted material defaults above.
 
-The old per-section opaque `MeshRef` allocation/publication/disposal lifecycle still exists as
-transitional scaffolding. It has no visible opaque draw authority. Physical removal is a separate
-open task after the packed path passes current runtime acceptance.
+## What closed the material mismatch
 
-## Evidence to preserve
+1. The repaired dedicated surface/OIT path compiled and ran, so later screenshots no longer came
+   from a plausible fallback.
+2. Cached water samples and animates the live standard-water atlas tile at world-block scale.
+3. Climate pages and fallback tints retain RGBA. Vanilla multiplies the sampled water texture
+   alpha by climate-water tint alpha; omitting that channel made cached water about 1.5 times too
+   opaque in the measured comparison.
+4. Cached opacity follows vanilla's view-angle formula. Camera height and render distance only
+   changed the angle; they are not separate response inputs.
+5. Diagnostic alpha and foam ranges extend to 2.0. The owner selected 1.3 and 1.6 rather than
+   accepting the former artificial cap of 1.0.
+6. Clarity 25 looked best before the material corrections. With the final composite in place,
+   the owner retested and selected 40. Preserve that ordering when interpreting old screenshots.
 
-- `depth on` followed by `clarity 0`, after rebuilding: the old seam stayed.
-- `surface off`: the broad band stayed while the cached surface and its thin junction vanished.
-- `wave 0`, after rebuilding: neither pale blips nor the repeating seam pattern changed.
-- Earlier `walls`, depth, Fresnel and land-blend toggles did not remove the broad band.
-- 0.4.14-0.4.17 captures located sampled pale blips in seabed color at clear liquid-depth
-  texels before surface composition. This did not explain the broad band.
-- 0.4.18 junction depth removed seam blips with repair off; scattered blips elsewhere remained.
-- Later, with repair on, the owner reported scattered blips gone while the broad band remained.
-- Moving to the edge of LOD coverage left the broad band beside vanilla water. Pure vanilla then
-  reproduced it. This was the decisive attribution test.
-- 0.4.23 removed the broad band according to the owner. The narrower water handoff remained.
-- 0.4.26's isolated GPU log validated advanced entry points, compute/SSBO, private depth copy and
-  mip generation. Packed clustered terrain reported complete command coverage.
-- The same 0.4.26 log reported the exact dedicated water shader failures above. Any visual claim
-  made after that refactor must be repeated on a positively identified required path.
+## What closed the dotted seam
 
-## First 0.4.27 test
+The final staged capture under
+`.testdata/water-captures/20260909-004837-302-22ebc07a` identified 960 full-resolution pixels where
+both vanilla and cached OIT water contributed, exactly tracing the pale dotted seam. Their mean
+luminance was 0.2155, versus 0.1782 for adjacent vanilla-only water and 0.1761 for cached-only
+water—about 21% brighter.
 
-1. Start normally with the highest installed version and let terrain settle.
-2. Run `.vhwater log` and preserve the game log. Before judging the picture, require positive
-   dedicated surface/depth/OIT readiness and the packed clustered terrain path. There must be no
-   `REQUIRED PACKED TERRAIN PATH FAILED` or `REQUIRED WATER PATH FAILED` message.
-3. If cached terrain or water is absent, stop visual comparison and use the named failure from the
-   log. That absence is intentional and prevents another false success through fallback.
-4. If all required paths are active, inspect the narrower vanilla/cache seam while stationary and
-   while moving. Record whether texture, lighting, murk, thin-line behavior or blips differ.
-5. Run `.vhwater capture` at the same settled view if the seam remains. Keep raw junction and
-   repaired depth distinct from surface color.
+Vanilla's liquid-depth target is quarter-resolution and its OIT revealage is full-resolution.
+The surface rule allowed a coarse "clear" depth answer to admit cached water even where
+full-resolution revealage proved vanilla had drawn. In 0.4.36, the immutable revealage copy
+**replaces** the depth answer for OIT surface coverage. Quarter-resolution liquid depth remains
+the authority for underwater murk. Do not merge these answers back together.
 
-Do not repeat the pure-vanilla broad-band investigation unless the broad rectangle returns. The
-current target is the narrower handoff under a confirmed dedicated renderer.
+The capture also confirmed the depth path was active: junction geometry added 102 pixels and
+bounded repair added 23 in that frame. The accepted seam fix is therefore surface ownership, not
+a claim that depth repair did nothing.
+
+## New issue: split-second light chunk during streaming
+
+After accepting 0.4.36, the owner supplied a screenshot of a light chunk-sized water patch that
+appears only for a split second as movement makes vanilla draw a newly loaded water chunk. This is
+separate from the settled seam.
+
+The current diagnosis is source-traced and **not yet human-proven**:
+
+1. The cached water mesh remains resident; ownership masks its fragments rather than evicting it.
+2. A chunk-dirty event queues readiness after the engine installs the chunk but before its render
+   mesh is guaranteed ready.
+3. Vanilla ownership is committed only after two `IsChunkRendered` observations in distinct
+   render frames and successful mask publication. The delay is deliberate protection against a
+   hole.
+4. Vanilla OIT water can therefore draw for one frame while the mask still says cache-owned.
+   Two translucent surfaces produce the temporary lighter square; the next ownership publication
+   hides cached water and the color settles.
+
+Do not shorten the readiness rule globally. Ground and long-lived ownership still need the
+two-frame proof.
+
+## Next implementation
+
+Use the immutable same-frame images already available in the dedicated OIT water pass:
+
+- full-resolution vanilla OIT revealage proves that vanilla contributed a transparent pixel;
+- vanilla liquid depth proves that the contribution belongs to liquid rather than glass, smoke or
+  another unrelated transparent object.
+
+Before cached OIT water shades an otherwise cache-owned pixel, suppress it only when **both**
+signals indicate vanilla liquid is present. Keep 0.4.36's owned-junction rule unchanged:
+full-resolution revealage alone remains authoritative when deciding whether an owned surface pixel
+is missing. These are two related but different questions.
+
+Tests should pin at least four cases:
+
+- pending/cache-owned cell + vanilla liquid depth + non-clear revealage: cached surface suppressed;
+- pending/cache-owned cell + non-clear revealage but no liquid depth: cached surface retained;
+- pending/cache-owned cell + liquid depth but clear revealage: cached surface retained;
+- vanilla-owned junction behavior remains exactly the 0.4.36 replacement rule.
+
+Once source is ready, advance the private test artifact exactly once to 0.4.37, run the Release
+build and fast checks, verify the archive, copy-install beside older zips, and ask the owner to
+cross newly loading water chunks while moving. The essential verdicts are whether the flash is
+gone and whether any dark hole replaces it.
+
+## Watch item: open-water moving blips
+
+The owner briefly saw small marks while moving, including away from the seam. A later capture
+placed one white mark in surface composition/glint rather than seabed/depth, but the owner then
+could not reproduce the symptom and asked not to hold the seam work for it. Do not tune glint,
+foam or repair from that one observation. If it returns, capture while moving and compare vanilla
+revealage, combined revealage, raw/repaired liquid depth and final color at the marked pixel.
 
 ## Current controls
 
@@ -93,42 +127,42 @@ current target is the narrower handoff under a confirmed dedicated renderer.
 | `.vhwater coverage on|off` | Cached liquid-depth extension |
 | `.vhwater surface on|off` | Cached water visibility; also gates its depth extension |
 | `.vhwater texture on|off` | Dedicated water surface texture contribution |
+| `.vhwater alpha <0.05-2>` | Maximum pre-texture view-angle opacity; default 1.3 |
+| `.vhwater foam <0-2>` | White surface texture strength; default 1.6 |
+| `.vhwater clarity <blocks>` | Underwater absorption distance; default 40 |
 | `.vhgpu off` | Explicit fail test; cached opaque terrain should disappear |
 
-`.vhwater shader dedicated|legacy` is retired and must not be used as a comparison. Existing
-wave, clarity, depth and appearance settings remain separate; record effective values because
-some commands persist them.
+`.vhwater shader dedicated|legacy` remains retired. Record effective values in captures because
+some appearance commands persist.
 
 ## Remaining engineering work
 
-- Prove 0.4.27's shaders compile and the required paths draw on the owner's GPU.
-- Re-establish the seam baseline and complete the Phase 2 continuity matrix: both sides of the
-  boundary, movement, corners, LOD joins, shore/deep water, above/below water, loading and reload.
-- Explain any remaining raw depth gaps before broadening repair. Color concealment is not closure.
-- Test overlapping transparency, resize/fullscreen, shader reload, world changes and intentional
-  resource failures under the fail-loud policy.
-- After required packed rendering is accepted, remove the remaining per-section opaque `MeshRef`
-  lifecycle and revise old Phase 9 failure fixtures that still assume fail-open rendering.
-- Defer foam, shadows, extra waves and general opacity tuning until the residual seam gate passes.
+- Build and human-test the same-frame streaming-overlap correction without regressing the settled
+  seam or creating holes around unrelated transparency.
+- Complete the Phase 2 matrix: repeated loading/unloading, movement on both sides, corners, LOD
+  joins, shallow/deep shores, above/below water, stale cache, resize/fullscreen, shader reload and
+  world change.
+- Capture movement-only open-water blips if they become reproducible.
+- Exercise transparency-disabled and deliberate required-resource failure cases.
+- Physically remove remaining non-drawing per-section opaque `MeshRef` lifecycle scaffolding and
+  update old Phase 9 fail-open fixtures after water continuity closes.
 
 ## Source and artifact map
 
-- `Render/LodTerrainRenderer.cs`: required packed selection and remaining MeshRef scaffolding.
-- `Render/LodTerrainRenderer.WaterSurface.cs`: dedicated surface and required-path checks.
-- `Render/LodTerrainRenderer.WaterOit.cs`: OIT selection/composition and stage lifecycle.
+- `Render/LodTerrainRenderer.WaterOit.cs`: vanilla revealage snapshot, OIT uniforms and draw stage.
 - `Render/LodTerrainRenderer.WaterDepth.cs`, `WaterRepair.cs`: liquid depth, junction and repair.
 - `Render/LodTerrainRenderer.WaterCapture.cs`: staged captures and metadata.
-- `Render/VanillaHorizonEffects.cs`: false missing-neighbour liquid-wall suppression.
-- `assets/vintagehorizons/shaderincludes/lodwaterbody.vsh`: water wrapper initialization.
-- `assets/vintagehorizons/shaderincludes/lodwaterfragment.fsh`: direct surface/OIT composition.
+- `Render/VanillaRenderReadiness.cs`: two-frame vanilla ownership stabilization/publication.
+- `assets/vintagehorizons/shaderincludes/lodownershiptest.fsh`: surface/depth ownership decisions.
+- `assets/vintagehorizons/shaderincludes/lodsurfacecolor.fsh`: texture, mapped alpha and Fresnel.
+- `Render/LodClimateMapPages.cs`, `LodTintRegistry.cs`: RGBA climate/fallback tint transport.
 
 Paths above are relative to `VintageHorizons/src`, except `assets`, relative to
-`VintageHorizons`. The installed artifact is `dist/vintagehorizons_0.4.27.zip`, 32 entries,
-with DLL and LICENSE, no PDB, SHA-256
-`FE9B34EEEF57837F4D4EEF7A6AE3762BF7D50E06C1C1A07A6F50320870070727`.
-Release build passed with zero warnings/errors and fast checks passed 22,576 assertions.
+`VintageHorizons`. The installed artifact is `dist/vintagehorizons_0.4.36.zip`, 32 entries, with
+DLL, manifest and LICENSE, no PDB or game DLLs, SHA-256
+`E971ADFACE300CE9EB897C055A5DAF518467EA32152DB293EC1505C388454904`.
 
-Read `CLAUDE.md` before work. Do not launch the game, commit, push or publish without owner
-authorization. Test artifacts advance the patch exactly once and are copy-installed without
-removing old zips. Shader sources stay ASCII. Runtime GLSL compilation remains a separate gate
-from C# and static-source checks.
+Read `CLAUDE.md` before work. Do not launch the game, push or publish without owner authorization.
+Test artifacts advance the patch exactly once and are copy-installed without removing old zips.
+Shader sources stay ASCII. Runtime GLSL compilation and the owner's visual test remain separate
+gates from C# and static-source checks.
