@@ -110,16 +110,20 @@
             vec4 waterTexel = mix(reverseTexel, forwardTexel, stillBlend);
 
             // The palette colour is already the texture's mean with climate tint applied, so
-            // RGB contributes variation around that mean. Alpha follows chunkliquid.fsh:
-            // sampled alpha multiplies the sum of vertex opacity and the foam-mode addition.
+            // RGB contributes variation around that mean. Vanilla's getColorMapped multiplies
+            // the sampled texture's alpha by climateWaterTint alpha as well; omitting that one
+            // channel made cached water about 1.5x as opaque at the measured handoff. The
+            // climate-mapped alpha then multiplies the sum of vertex opacity and the foam-mode
+            // addition, exactly where chunkliquid.fsh applies it.
             vec3 waterMean = texelFetch(blockTable, ivec2(waterTextureSlot, 2), 0).rgb;
             albedo *= waterTexel.rgb / max(waterMean, vec3(0.02));
-            float textureAlphaAddition = waterTexel.a;
+            float mappedWaterAlpha = waterTexel.a * tintAlpha;
+            float textureAlphaAddition = mappedWaterAlpha;
 #if FOAMEFFECT > 0
-            textureAlphaAddition = max(0.0, waterTexel.a - 0.4);
+            textureAlphaAddition = max(0.0, mappedWaterAlpha - 0.4);
 #endif
             outAlpha = clamp(
-                waterTexel.a * (outAlpha + textureAlphaAddition), 0.0, 1.0);
+                mappedWaterAlpha * (outAlpha + textureAlphaAddition), 0.0, 1.0);
         }
     }
 #endif

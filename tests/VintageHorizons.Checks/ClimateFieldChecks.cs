@@ -75,24 +75,25 @@ public static class ClimateFieldChecks
     static void ColourMapPixelsAreRepackedRedHigh(Check c)
     {
         // A stored pixel with red in the low byte, as ColorMap.Pixels holds it.
-        const int red = 200, green = 120, blue = 30;
-        int stored = (blue << 16) | (green << 8) | red;
+        const int red = 200, green = 120, blue = 30, alpha = 111;
+        int stored = (alpha << 24) | (blue << 16) | (green << 8) | red;
 
         int packed = LodClimateMapPages.PackTexel(stored);
         c.Eq(red, (packed >> 16) & 0xFF, "red comes out at bits 16-23, where the shader reads it");
         c.Eq(green, (packed >> 8) & 0xFF, "green does not move");
         c.Eq(blue, packed & 0xFF, "and blue takes red's old place");
-        c.Eq(255, (packed >> 24) & 0xFF, "alpha is forced opaque");
+        c.Eq(alpha, (packed >> 24) & 0xFF,
+            "alpha stays intact for vanilla liquid color mapping");
 
         // Swapping twice is the identity, which is what makes the direction the whole point.
-        c.Eq(stored | unchecked((int)0xFF000000),
+        c.Eq(stored,
             LodClimateMapPages.PackTexel(LodClimateMapPages.PackTexel(stored))
                 & unchecked((int)0xFFFFFFFF),
             "the swap is its own inverse, so the direction is the only thing that can be wrong");
 
         // Grey survives either way, so a grey test would have passed with the bug in place.
-        int grey = (99 << 16) | (99 << 8) | 99;
-        c.Eq(grey | unchecked((int)0xFF000000), LodClimateMapPages.PackTexel(grey),
+        int grey = (alpha << 24) | (99 << 16) | (99 << 8) | 99;
+        c.Eq(grey, LodClimateMapPages.PackTexel(grey),
             "a grey pixel is unchanged, which is why the bug needed a coloured one to show");
     }
 

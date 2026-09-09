@@ -369,7 +369,7 @@ public partial class LodTerrainRenderer : IRenderer
 
 
     float waterGlint = 1f;
-    float waterFoam = 1f;
+    float waterFoam = 1.6f;
 
     /// <summary>
     /// How much of vanilla's specular sun reflection cached water carries, 0 to 1.
@@ -390,7 +390,9 @@ public partial class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
-    /// How much of vanilla's open-water surface noise cached water carries, 0 to 1. Carried
+    /// How much of vanilla's open-water surface noise cached water carries, 0 to 2. One is
+    /// the literal vanilla term; values above one are a bounded diagnostic gain for matching
+    /// the small residual difference at the renderer handoff. Carried
     /// everywhere for the same reason as <see cref="WaterGlint"/>, and resting on the same
     /// argument <see cref="BandSpeckle"/> makes for ground: vanilla's water is never one flat
     /// colour, and no adjustment to an average can close a difference not in the average.
@@ -402,7 +404,7 @@ public partial class LodTerrainRenderer : IRenderer
     public float WaterFoam
     {
         get => waterFoam;
-        set => waterFoam = Math.Clamp(value, 0f, 1f);
+        set => waterFoam = Math.Clamp(value, 0f, 2f);
     }
 
     /// <summary>
@@ -916,24 +918,20 @@ public partial class LodTerrainRenderer : IRenderer
     public float WaterShallowness { get; set; }
 
     /// <summary>
-    /// The most opaque cached water becomes, 0 to 1. Below 1 the depth-shaded bed shows through
-    /// where vanilla's own fresnel would have saturated. A look setting, not a correction:
-    /// vanilla has no answer at this range because it draws no water here.
-    /// </summary>
-    /// <summary>
-    /// REVERTED to 0.7 after 0.4.8 shipped 1.0 and the owner reported the water worse.
+    /// The highest pre-texture Fresnel alpha cached water may reach, 0.05 to 2. Vanilla clamps
+    /// this exact intermediate value to 2 before climate-mapped texture alpha and foam reduce or
+    /// raise it into the final 0..1 material alpha. Lower values deliberately expose more of the
+    /// depth-shaded bed beneath distant water.
     ///
-    /// The reasoning for 1.0 was sound and the result was not: vanilla's formula does saturate
-    /// at range, so an opaque sheet is what vanilla would draw there - but at that range
-    /// vanilla draws no water at all, and a flat opaque sheet beside vanilla's near water, which
-    /// visibly grades from luma 82 down to 55 as it approaches, reads as wrong however
-    /// defensible the derivation. Measured off the owner's screenshot: cached water flat at 80
-    /// against that gradient.
+    /// Version 0.4.8 briefly used 1.0 before the dedicated OIT surface and climate-map alpha
+    /// existed, and looked worse. Under the corrected material path the owner compared the same
+    /// scene across viewing angles and selected 1.3: 1.0 remained too transparent at a shallow
+    /// angle, while higher values overshot before reaching vanilla's theoretical 2.0 ceiling.
     ///
-    /// The real defect the 1.0 change was chasing - that a baked, depth-only darkening cannot
-    /// follow the view angle - is still open and is not fixed by either value.
+    /// This is deliberately a material control rather than a final-alpha clamp: applying it after
+    /// texture mapping would no longer be the same quantity the vanilla vertex shader limits.
     /// </summary>
-    public float WaterMaxAlpha { get; set; } = 0.7f;
+    public float WaterMaxAlpha { get; set; } = 1.3f;
 
     /// <summary>
     /// How many blocks of water the view ray travels before it has lost about two thirds of
@@ -958,7 +956,7 @@ public partial class LodTerrainRenderer : IRenderer
     // The owner selected 25 after comparing the rebuilt depth-shaded seabed through the
     // required dedicated OIT surface. Earlier values were judged while surface alpha,
     // atmospheric opacity and, in one build, the active shader path were different.
-    float waterClarity = 25f;
+    float waterClarity = 40f;
 
     /// <summary>
     /// How many blocks either side of a 32-block vanilla chunk plane keep one water quad per
@@ -5762,7 +5760,7 @@ public partial class LodTerrainRenderer : IRenderer
         prog.Uniform("waterGlint", waterGlint);
         prog.Uniform("waterFoam", waterFoam);
         prog.Uniform("waterShallowness", Math.Clamp(WaterShallowness, 0f, 1f));
-        prog.Uniform("waterMaxAlpha", Math.Clamp(WaterMaxAlpha, 0.05f, 1f));
+        prog.Uniform("waterMaxAlpha", Math.Clamp(WaterMaxAlpha, 0.05f, 2f));
 
         // Everything the engine's own liquid shader reads, under mod-owned names so no
         // engine-managed uniform can be shadowed. All public API: nothing here reaches into

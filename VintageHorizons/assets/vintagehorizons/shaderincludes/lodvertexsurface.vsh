@@ -18,6 +18,7 @@
     // paged climate map, the tropical season weight this mod does not reproduce, or no climate
     // field at all - and it is what every build before the field drew everywhere.
     tint = tintFallback[slot].rgb;
+    tintAlpha = tintFallback[slot].a;
 
     // The climate field, where this slot can be finished from it. A page of 255 means it
     // cannot be, and the fallback above stands.
@@ -108,13 +109,16 @@
             season = mix(season, seasonAt(seasonPage, terrainPos, leaves), amount);
         }
 
-        vec3 blended = mix(climateColor(tintPage, adjusted, rainfall),
-                           season, seasonWeight * seasonRow.a);
+        vec4 climateTint = climateColor(tintPage, adjusted, rainfall);
+        vec3 blended = mix(climateTint.rgb, season, seasonWeight * seasonRow.a);
 
         // The share of the stored colour the tint must not touch - bare dirt showing through
         // a grass overlay - exactly as the ramp already carries it.
         vec3 share = texelFetch(slotTable, ivec2(slot, 1), 0).rgb;
         tint = clamp(share + (1.0 - share) * blended, 0.0, 1.0);
+        // Vanilla's getColorMapped multiplies all four channels. Opaque terrain ignores this,
+        // but ordinary water's climate map uses alpha to control its material opacity.
+        tintAlpha = climateTint.a;
     }
 
     sectionLocal = vertexPositionIn;

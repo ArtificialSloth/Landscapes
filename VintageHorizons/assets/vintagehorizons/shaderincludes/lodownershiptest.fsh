@@ -107,15 +107,18 @@
 #endif
         bool junctionCoverageMissing = vanillaWaterClear;
 #ifdef VH_WATER_OIT
-        // Liquid depth is quarter resolution and can say "covered" for a four-by-four area
-        // even when vanilla's warped surface missed one full-resolution OIT pixel. Read the
-        // immutable revealage copy made immediately before this draw and admit cached water
-        // only where vanilla contributed no transparent surface at all.
+        // Liquid depth is quarter resolution. It can say either "covered" for a four-by-four
+        // area where vanilla missed this full-resolution pixel, or "clear" where another
+        // pixel in the same area did receive vanilla water. The latter disagreement produced
+        // 960 double-drawn pixels in the owner's capture, exactly tracing the pale broken seam.
+        // When the immutable full-resolution revealage copy is available it therefore REPLACES
+        // the depth answer for surface coverage: admit cached water only where vanilla
+        // contributed no transparent surface at all.
         if (waterJunctionSurface == 1)
         {
             float vanillaRevealage = texelFetch(
                 vanillaOitRevealage, ivec2(gl_FragCoord.xy), 0).r;
-            junctionCoverageMissing = junctionCoverageMissing || vanillaRevealage >= 0.9999;
+            junctionCoverageMissing = vanillaRevealage >= 0.9999;
         }
 #endif
         if (owned && ownershipBand == 1 && waterJunctionDepth == 1

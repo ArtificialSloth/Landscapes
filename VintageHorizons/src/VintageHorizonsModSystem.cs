@@ -81,10 +81,10 @@ public class VintageHorizonsConfig
     public bool WaterDepthShading = true;
 
     /// <summary>How solid distant water may become. See LodTerrainRenderer.WaterMaxAlpha.</summary>
-    public float WaterMaxAlpha = 0.7f;
+    public float WaterMaxAlpha = 1.3f;
 
     /// <summary>Blocks of water the view ray survives. See LodTerrainRenderer.WaterClarity.</summary>
-    public float WaterClarity = 25f;
+    public float WaterClarity = 40f;
 
     /// <summary>
     /// Blocks either side of a vanilla chunk plane where water keeps one quad per block, so it
@@ -3115,7 +3115,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         capi.ChatCommands.Create("vhwater")
             .WithDescription("How distant water meets the game's own. No argument reports the settings. "
                 + "off | a number of chunks | edge <chunks> | fresnel on|off | glint <0-1> | "
-                + "foam <0-1> | depth on|off | alpha <0-1> | clarity <blocks> | wave <blocks> | "
+                + "foam <0-2> | depth on|off | alpha <0.05-2> | clarity <blocks> | wave <blocks> | "
                 + "walls on|off | murk on|off | surface on|off | coverage on|off | "
                 + "texture on|off | pipeline oit|opaque | "
                 + "junction on|off | log | capture.")
@@ -3143,7 +3143,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                         return TextCommandResult.Success(
                             $"[VintageHorizons] {DescribeWater(renderer)}. Use: .vhwater off |"
                             + " a number of CHUNKS | edge <chunks> | fresnel on/off |"
-                            + " glint 0-1 | foam 0-1 | murk on/off."
+                            + " glint 0-1 | foam 0-2 | murk on/off."
                             + " Distant water hands over to the game's water at the game's own"
                             + " chunk edges and nowhere else - there is no radius any more, in"
                             + " either direction. The chunk count is an off-by-default fallback"
@@ -3311,10 +3311,10 @@ public partial class VintageHorizonsModSystem : ModSystem
                             System.Globalization.CultureInfo.InvariantCulture, out float foam))
                         {
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] foam {renderer.WaterFoam:0.00}. 0 to 1. The game's "
+                                $"[VintageHorizons] foam {renderer.WaterFoam:0.00}. 0 to 2. One is the game's "
                                 + "own surface noise on open water, carried everywhere distant water "
-                                + "is drawn. The game's water is never one flat colour, and this is "
-                                + "what stops ours meeting it as a flat sheet. 0 turns it off.");
+                                + "is drawn; values above one amplify it to compare a small residual "
+                                + "handoff mismatch. 0 turns it off.");
                         }
                         renderer.WaterFoam = foam;
                         return TextCommandResult.Success(
@@ -3410,14 +3410,12 @@ public partial class VintageHorizonsModSystem : ModSystem
                             System.Globalization.CultureInfo.InvariantCulture, out float maxAlpha))
                         {
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] alpha {renderer.WaterMaxAlpha:0.00}. 0 to 1. The "
-                                + "most solid distant water is allowed to get. The game's own rule "
-                                + "makes water fully solid past a couple of hundred blocks, and it "
-                                + "gets away with that by not drawing water that far; we do, so "
-                                + "holding a little back is what lets the darkened bed underneath "
-                                + "show through. 1 is the game's own saturating value.");
+                                $"[VintageHorizons] alpha {renderer.WaterMaxAlpha:0.00}. 0.05 to 2. "
+                                + "This caps the pre-texture Fresnel alpha. 2 is vanilla's own "
+                                + "ceiling; lower values deliberately leave more of the darkened "
+                                + "distant bed visible.");
                         }
-                        renderer.WaterMaxAlpha = maxAlpha;
+                        renderer.WaterMaxAlpha = GameMath.Clamp(maxAlpha, 0.05f, 2f);
                         SaveConfig();
                         return TextCommandResult.Success(
                             $"[VintageHorizons] alpha {renderer.WaterMaxAlpha:0.00}. Look now.");
@@ -3430,8 +3428,8 @@ public partial class VintageHorizonsModSystem : ModSystem
                         {
                             return TextCommandResult.Error(
                                 "[VintageHorizons] use: .vhwater off | a number of chunks | "
-                                + "edge <chunks> | fresnel on/off | glint 0-1 | foam 0-1 | "
-                                + "depth on/off | alpha 0-1 | clarity <blocks> | wave <blocks> | "
+                                + "edge <chunks> | fresnel on/off | glint 0-1 | foam 0-2 | "
+                                + "depth on/off | alpha 0.05-2 | clarity <blocks> | wave <blocks> | "
                                 + "walls on/off");
                         }
 
@@ -3847,7 +3845,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         renderer.SurfaceHalfBlocksOnly = true;
         renderer.WaterFresnel = v.WaterEffects;
         renderer.WaterGlint = v.WaterEffects ? 1f : 0f;
-        renderer.WaterFoam = v.WaterEffects ? 1f : 0f;
+        renderer.WaterFoam = v.WaterEffects ? 1.6f : 0f;
 
         if (shapeChanged) renderer.RemeshAll();
     }

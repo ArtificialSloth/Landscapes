@@ -24,16 +24,16 @@ public static class WaterJunctionChecks
         return cells;
     }
 
-    // OIT uses the same ownership exception, but augments the quarter-resolution
-    // depth signal with an immutable full-resolution revealage signal. A cached
-    // surface is kept only when its geometry really rasterized at a boundary.
+    // OIT uses the same ownership exception, but replaces the quarter-resolution
+    // depth signal with immutable full-resolution revealage when that copy is available.
+    // A cached surface is kept only when its geometry really rasterized at a boundary.
     static bool KeepCachedSurface(bool rasterized, int band, bool owned,
         bool[,] neighbours, bool depthClear, bool revealageClear,
         bool depthEnabled, bool surfaceEnabled)
     {
         if (!rasterized || band != 1) return false;
         bool reject = owned;
-        bool coverageMissing = depthClear || (surfaceEnabled && revealageClear);
+        bool coverageMissing = surfaceEnabled ? revealageClear : depthClear;
         if (owned && depthEnabled && coverageMissing)
             for (int z = 0; z < 3; z++)
                 for (int x = 0; x < 3; x++)
@@ -87,6 +87,10 @@ public static class WaterJunctionChecks
                 depthEnabled: true, surfaceEnabled: true),
             "an existing vanilla OIT surface remains authoritative at the boundary");
         c.False(KeepCachedSurface(true, 1, true, junction,
+                depthClear: true, revealageClear: false,
+                depthEnabled: true, surfaceEnabled: true),
+            "full-resolution vanilla coverage overrides a false-clear quarter-depth sample");
+        c.False(KeepCachedSurface(true, 1, true, junction,
                 depthClear: false, revealageClear: true,
                 depthEnabled: true, surfaceEnabled: false),
             "the full-resolution exception is inactive when its immutable copy is unavailable");
@@ -111,8 +115,9 @@ public static class WaterJunctionChecks
         c.True(ownership.Contains("texelFetch(")
             && ownership.Contains("vanillaOitRevealage, ivec2(gl_FragCoord.xy), 0).r")
             && ownership.Contains("waterJunctionSurface == 1")
-            && ownership.Contains("vanillaRevealage >= 0.9999"),
-            "OIT augments quarter-resolution depth with exact full-resolution vanilla coverage");
+            && ownership.Contains("junctionCoverageMissing = vanillaRevealage >= 0.9999")
+            && !ownership.Contains("junctionCoverageMissing = junctionCoverageMissing ||"),
+            "OIT replaces quarter-resolution depth with exact full-resolution vanilla coverage");
         c.True(!ownership.Contains("liquidDepth,") && !ownership.Contains("gl_FragDepth")
             && ownership.Contains("dz = -1; dz <= 1") && ownership.Contains("dx = -1; dx <= 1"),
             "the exception uses immutable coverage and adjacent cells without synthesizing depth");

@@ -340,23 +340,24 @@ vec3 seasonAt(int page, vec3 p, bool leaves)
 // interpolates, because the temperature axis moves one texel per 1.5 blocks of height and a
 // nearest lookup would draw the map's own texel grid as steps up every slope. The two agree
 // to within one texel either way.
-vec3 climateColor(int page, float temperature, float rainfall)
+vec4 climateColor(int page, float temperature, float rainfall)
 {
     float u = clamp(temperature, 0.0, 255.0);
     float v = clamp(rainfall, 0.0, 255.0);
     int x0 = clamp(int(u), 0, 254);
     int y0 = clamp(int(v), 0, 254);
     int row = page * 256;
-    vec3 c00 = texelFetch(climateMaps, ivec2(x0, row + y0), 0).rgb;
-    vec3 c10 = texelFetch(climateMaps, ivec2(x0 + 1, row + y0), 0).rgb;
-    vec3 c01 = texelFetch(climateMaps, ivec2(x0, row + y0 + 1), 0).rgb;
-    vec3 c11 = texelFetch(climateMaps, ivec2(x0 + 1, row + y0 + 1), 0).rgb;
+    vec4 c00 = texelFetch(climateMaps, ivec2(x0, row + y0), 0);
+    vec4 c10 = texelFetch(climateMaps, ivec2(x0 + 1, row + y0), 0);
+    vec4 c01 = texelFetch(climateMaps, ivec2(x0, row + y0 + 1), 0);
+    vec4 c11 = texelFetch(climateMaps, ivec2(x0 + 1, row + y0 + 1), 0);
     float fx = u - float(x0);
     float fy = v - float(y0);
     return mix(mix(c00, c10, fx), mix(c01, c11, fx), fy);
 }
 
 out vec3 tint;
+out float tintAlpha;
 out vec4 worldPos;
 out vec4 vertexColor;
 out float yLevel;

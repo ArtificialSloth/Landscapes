@@ -178,8 +178,9 @@ public class LodTintRegistry
     readonly float[] sampledSeason = new float[MaxSlots * 3];
 
     /// <summary>
-    /// The engine's own blended answer at the reference height, per slot, published as the slot
-    /// table's fourth row.
+    /// The engine's own blended RGBA answer at the reference height, per slot, published as the
+    /// slot table's fourth row. Opaque terrain reads RGB; cached water also needs the alpha because
+    /// vanilla's <c>getColorMapped</c> multiplies it into the liquid texture.
     ///
     /// This is what a slot draws when the shader cannot finish it - no paged climate map, the
     /// tropical season weight this mod does not reproduce, or no climate field at all. It is
@@ -187,7 +188,7 @@ public class LodTintRegistry
     /// being a summary; the alternative was a 96-step height ramp kept alive purely for these
     /// few cases, and two parallel ways to compute one colour is a standing tax. See Session 76.
     /// </summary>
-    readonly float[] sampledFallback = new float[MaxSlots * 3];
+    readonly float[] sampledFallback = new float[MaxSlots * 4];
     readonly bool[] slotReferenceTaken = new bool[MaxSlots];
     readonly bool[] slotCorrectable = new bool[MaxSlots];
 
@@ -476,13 +477,14 @@ public class LodTintRegistry
         {
             LodUntintedShare share = slot < untintedShare.Count
                 ? untintedShare[slot] : LodUntintedShare.None;
-            int at = slot * 3;
+            int seasonAt = slot * 3;
+            int fallbackAt = slot * 4;
 
             bool hasSeason = slot > SlotNone && slot < representative.Count
                 && slotCorrectable[slot];
-            int seasonR = hasSeason ? Byte(sampledSeason[at + 0]) : 0;
-            int seasonG = hasSeason ? Byte(sampledSeason[at + 1]) : 0;
-            int seasonB = hasSeason ? Byte(sampledSeason[at + 2]) : 0;
+            int seasonR = hasSeason ? Byte(sampledSeason[seasonAt + 0]) : 0;
+            int seasonG = hasSeason ? Byte(sampledSeason[seasonAt + 1]) : 0;
+            int seasonB = hasSeason ? Byte(sampledSeason[seasonAt + 2]) : 0;
             slotTable[SlotTableTexel(slot, SeasonRow)] =
                 (hasSeason ? unchecked((int)0xFF000000) : 0)
                 | (seasonR << 16) | (seasonG << 8) | seasonB;
@@ -511,10 +513,14 @@ public class LodTintRegistry
             // answer, diluted by the same share, flat in height. Slot 0 is the identity tint and
             // has no sampled colour, so it stays white.
             if (slot == SlotNone || slot >= representative.Count) continue;
-            slotTable[SlotTableTexel(slot, FallbackRow)] = unchecked((int)0xFF000000)
-                | (Byte(255f * LodTopSoil.Dilute(share.R, sampledFallback[at + 0] / 255f)) << 16)
-                | (Byte(255f * LodTopSoil.Dilute(share.G, sampledFallback[at + 1] / 255f)) << 8)
-                | Byte(255f * LodTopSoil.Dilute(share.B, sampledFallback[at + 2] / 255f));
+            slotTable[SlotTableTexel(slot, FallbackRow)] =
+                (Byte(sampledFallback[fallbackAt + 3]) << 24)
+                | (Byte(255f * LodTopSoil.Dilute(
+                    share.R, sampledFallback[fallbackAt + 0] / 255f)) << 16)
+                | (Byte(255f * LodTopSoil.Dilute(
+                    share.G, sampledFallback[fallbackAt + 1] / 255f)) << 8)
+                | Byte(255f * LodTopSoil.Dilute(
+                    share.B, sampledFallback[fallbackAt + 2] / 255f));
         }
 
         // After every row is final, never inside the loop: the `continue` above skips the
@@ -571,7 +577,7 @@ public class LodTintRegistry
         int maxX = world.BlockAccessor.MapSizeX - 1;
         int maxZ = world.BlockAccessor.MapSizeZ - 1;
         double temp = 0;
-        double fr = 0, fg = 0, fb = 0;
+        double fr = 0, fg = 0, fb = 0, fa = 0;
         int tempSamples = 0, fullSamples = 0;
         var pos = new BlockPos(0, y, 0);
 
@@ -595,27 +601,33 @@ public class LodTintRegistry
                 int full = world.ApplyColorMapOnRgba(
                     block.ClimateColorMapResolved, block.SeasonColorMapResolved, white, sx, y, sz);
                 fr += (full >> 16) & 0xFF; fg += (full >> 8) & 0xFF; fb += full & 0xFF;
+                fa += (full >> 24) & 0xFF;
                 fullSamples++;
             }
         }
 
-        int at = slot * 3;
+        int fallbackAt = slot * 4;
         if (fullSamples > 0)
         {
-            sampledFallback[at + 0] = (float)(fr / fullSamples);
-            sampledFallback[at + 1] = (float)(fg / fullSamples);
-            sampledFallback[at + 2] = (float)(fb / fullSamples);
+            sampledFallback[fallbackAt + 0] = (float)(fr / fullSamples);
+            sampledFallback[fallbackAt + 1] = (float)(fg / fullSamples);
+            sampledFallback[fallbackAt + 2] = (float)(fb / fullSamples);
+            sampledFallback[fallbackAt + 3] = (float)(fa / fullSamples);
         }
         // The season colour comes off the map itself, at the column the SHADER reads rather
         // than the one the engine's CPU call reads. Those differ by up to 0.05 of a year, and
         // through the autumn turn that is worth about ten counts of red - which is exactly the
         // 5 to 6 percent excess red the owner measured against vanilla.
         ColorMap? season = block.SeasonColorMapResolved;
+        int seasonAt = slot * 3;
         bool haveSeason = season == null || LodSeasonColor.TryAverage(
             season.Pixels, season.OuterSize?.Width ?? 0, season.OuterSize?.Height ?? 0,
             season.Padding, SeasonRel,
-            out sampledSeason[at + 0], out sampledSeason[at + 1], out sampledSeason[at + 2]);
-        if (season == null) sampledSeason[at + 0] = sampledSeason[at + 1] = sampledSeason[at + 2] = 0f;
+            out sampledSeason[seasonAt + 0], out sampledSeason[seasonAt + 1],
+            out sampledSeason[seasonAt + 2]);
+        if (season == null)
+            sampledSeason[seasonAt + 0] = sampledSeason[seasonAt + 1]
+                = sampledSeason[seasonAt + 2] = 0f;
 
         // Everything the shader needs from the CPU, or none of it. A slot that cannot answer
         // publishes NoPage and draws the engine's own answer flat, which is what every build

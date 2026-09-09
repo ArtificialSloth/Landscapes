@@ -21,7 +21,9 @@ namespace VintageHorizons;
 /// read of these pixels swaps the two channels on the way out, which is why the tint the mod
 /// has always got from `ApplyColorMapOnRgba` has red at bits 16-23 while the array behind it
 /// does not. Copying the array verbatim drew autumn forest deep blue - orange is high red and
-/// low blue, so a swap is maximally visible and unmistakably a swap.
+/// low blue, so a swap is maximally visible and unmistakably a swap. Alpha stays in the high
+/// byte. Vanilla's liquid shader multiplies its sampled water alpha by the climate-water map's
+/// alpha, so forcing these pages opaque makes cached water systematically too solid.
 ///
 /// Pages are stacked down the Y axis, one map per page, and read with texelFetch, so nothing
 /// filters across a page boundary and no padding between them is needed.
@@ -123,11 +125,11 @@ internal sealed class LodClimateMapPages
     /// <summary>
     /// One stored pixel, in the layout the upload path and every other table here use: red at
     /// bits 16-23. `ColorMap.Pixels` keeps red in the low byte, so red and blue trade places.
-    /// Alpha is forced opaque - a colour map's own alpha is not part of the tint, and a zero
-    /// would upload the whole page transparent.
+    /// Alpha remains in the high byte. Opaque terrain consumes only RGB, while water consumes
+    /// the climate map's alpha exactly as <c>getColorMapped</c> does in the vanilla liquid shader.
     /// </summary>
     public static int PackTexel(int pixel) =>
-        unchecked((int)0xFF000000)
+        pixel & unchecked((int)0xFF000000)
         | ((pixel & 0xFF) << 16)
         | (pixel & 0x00FF00)
         | ((pixel >> 16) & 0xFF);

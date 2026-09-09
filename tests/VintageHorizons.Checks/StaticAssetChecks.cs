@@ -713,8 +713,11 @@ public static class StaticAssetChecks
         c.True(dedicated.Contains("textureGrad(", StringComparison.Ordinal)
             && dedicated.Contains("blockAtlas, waterRect.xy + localUv * rectSize", StringComparison.Ordinal)
             && dedicated.Contains("waterTexel.rgb / max(waterMean, vec3(0.02))", StringComparison.Ordinal)
-            && dedicated.Contains("waterTexel.a * (outAlpha + textureAlphaAddition)", StringComparison.Ordinal),
-            "dedicated water uses the live tile's stable RGB detail and vanilla alpha product");
+            && dedicated.Contains("float mappedWaterAlpha = waterTexel.a * tintAlpha;",
+                StringComparison.Ordinal)
+            && dedicated.Contains("mappedWaterAlpha * (outAlpha + textureAlphaAddition)",
+                StringComparison.Ordinal),
+            "dedicated water uses the live tile's stable RGB detail and climate-mapped vanilla alpha product");
         c.True(dedicated.Contains(
                 "if (band == 1) terraColor.a = clamp(terraColor.a + fogAmount, 0.0, 1.0);",
                 StringComparison.Ordinal),
@@ -2524,8 +2527,10 @@ public static class StaticAssetChecks
             "the invented return-path term can be switched off entirely");
         // The owner's eye is the acceptance evidence for these appearance defaults. Keep both
         // values pinned so a new configuration cannot silently return to an older comparison.
-        c.True(mod.Contains("public float WaterClarity = 25f;", StringComparison.Ordinal)
-            && mod.Contains("public float WaterMaxAlpha = 0.7f;", StringComparison.Ordinal),
+        c.True(mod.Contains("public float WaterClarity = 40f;", StringComparison.Ordinal)
+            && mod.Contains("public float WaterMaxAlpha = 1.3f;", StringComparison.Ordinal)
+            && mod.Contains("renderer.WaterFoam = v.WaterEffects ? 1.6f : 0f;",
+                StringComparison.Ordinal),
             "a fresh install draws the settings the owner accepted, not the derived ones");
 
         // A diagnostic that answers from a cache its own setter just cleared says the same
@@ -2585,12 +2590,18 @@ public static class StaticAssetChecks
             "the foam term asks how shallow the water is and pins deep open water to zero");
         c.True(rend.Contains("public float WaterShallowness { get; set; }", StringComparison.Ordinal),
             "and open water - zero - is the default");
+        c.True(rend.Contains("set => waterFoam = Math.Clamp(value, 0f, 2f);",
+                StringComparison.Ordinal)
+            && mod.Contains("foam <0-2>", StringComparison.Ordinal),
+            "the live foam diagnostic can amplify the vanilla term beyond its literal strength");
         c.True(water.Contains("uniform float waterMaxAlpha;", StringComparison.Ordinal)
             && water.Contains("0.8 * waterFresnelValue, 0.0, max(0.0, waterMaxAlpha)",
                 StringComparison.Ordinal)
             && water.Contains("/ clamp(waterFresnelValue, 0.5, 1.0)",
+                StringComparison.Ordinal)
+            && rend.Contains("Math.Clamp(WaterMaxAlpha, 0.05f, 2f)",
                 StringComparison.Ordinal),
-            "and water retains a tunable material-opacity ceiling before atmospheric fog");
+            "and water can reach vanilla's pre-texture alpha ceiling before atmospheric fog");
     }
 
     /// <summary>

@@ -12,6 +12,7 @@ in float radialDistance;
 in float fogAmount;
 in float edgeFade;
 in vec3 tint;
+in float tintAlpha;
 in vec3 terrainPos;
 in vec3 sectionLocal;
 
@@ -118,8 +119,9 @@ uniform float waterFoam;
 // right about the open water is better than being wrong about all of it.
 uniform float waterShallowness;
 
-// The most opaque cached water's material is allowed to become, 0 to 1. Atmospheric fog is
-// added afterwards, exactly as chunkliquid.fsh does, and can still make distant water opaque.
+// The highest PRE-TEXTURE Fresnel alpha cached water may reach, 0.05 to 2. Vanilla clamps
+// this intermediate value to 2 before climate-mapped texture alpha, foam and atmospheric fog
+// turn it into the final 0..1 material alpha.
 //
 // Vanilla's own fresnel saturates: past roughly 200 blocks its water is fully opaque, and ours
 // agrees with it because it is the same formula. Vanilla gets away with that because it stops
