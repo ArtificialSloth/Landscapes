@@ -3274,3 +3274,20 @@ Fresnel opacity actually uses.
 **Safer action:** compare the surface viewing angle first and reproduce vanilla's angle response.
 Use height and render distance only as convenient ways to sample that response, not as independent
 causes. Then tune one ceiling across steep and shallow views.
+
+### G165 - A water-only consumer does not make shared terrain state water-only
+
+**Trigger:** fixing a one-frame water overlap by adding a weaker fact to the shared terrain
+readiness mask, even in a spare channel that ground shaders do not intentionally read.
+
+**Trap:** 0.4.38 recorded engine-announced chunk presence in the readiness mask and carried it
+through shared rebuild, publication and ring-slot paths so cached OIT water could combine it with
+same-frame revealage. All focused checks passed and the water looked fine, but the owner found
+severe holes in terrain and the seabed. The exact statement inside that bundle was not isolated;
+the before/after result rejects the shared-state extension as a whole.
+
+**Safer action:** keep transient water corrections inside the dedicated water stage and leave
+terrain readiness, ownership and mask-publication semantics unchanged. Preserve 0.4.37's local
+depth-plus-revealage veto and accept its barely perceptible residual flicker. If terrain ownership
+ever needs to change, treat it as separately authorized terrain work with a terrain-first runtime
+regression case. Version 0.4.39 is the complete rollback and the accepted checkpoint.

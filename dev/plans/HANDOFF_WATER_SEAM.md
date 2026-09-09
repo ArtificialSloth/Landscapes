@@ -1,20 +1,26 @@
-# Handoff - accepted water seam at 0.4.36; transient loading overlap next
+# Handoff - accepted water seam and terrain-safe streaming guard at 0.4.39
 
-**Updated:** `2026-09-08`, Session 81
-**Branch/source checkpoint:** `codex/water-depth-light`, `049d0c5`
-**Installed and human-accepted:** `0.4.36` private test build
+**Updated:** `2026-09-09`, Session 82
+**Branch/source checkpoint:** `codex/water-depth-light`, accepted 0.4.39 source in Session 82 commit
+**Installed and human-accepted:** `0.4.39` private test build
 **Compatibility:** assist protocol / blob / schema `1 / 4 / 6`, unchanged
 
-Read [Session 81](../sessions/SESSION_81.md) for the material and seam investigation,
+Read [Session 82](../sessions/SESSION_82.md) for the streaming correction and terrain-safe rollback,
+[Session 81](../sessions/SESSION_81.md) for the material and seam investigation,
 [Session 80](../sessions/SESSION_80.md) for the broad-band/required-renderer work, and
 [the renderer plan](PLAN_LOD_WATER_RENDERER.md) for the remaining acceptance matrix.
 
 ## Current result
 
 The broad rectangular band is closed; it was vanilla's false vertical liquid wall at a genuinely
-missing neighbour and was suppressed in 0.4.23. The narrower settled vanilla/cache handoff is now
-closed in the owner's tested scene too. Version 0.4.36 is the accepted checkpoint: the owner
-reports that he cannot tell where vanilla water ends and LOD begins.
+missing neighbour and was suppressed in 0.4.23. The narrower settled vanilla/cache handoff is
+closed too: since 0.4.36, the owner cannot tell where vanilla water ends and LOD begins in the
+tested scene.
+
+Version 0.4.39 is the current accepted checkpoint. It keeps 0.4.37's water-only reduction of the
+split-second new-chunk light patch and completely removes 0.4.38's rejected changes to shared
+terrain readiness. The owner reports the remaining flicker is acceptable and terrain/seabed
+continuity is restored.
 
 The accepted material defaults are:
 
@@ -60,51 +66,34 @@ The capture also confirmed the depth path was active: junction geometry added 10
 bounded repair added 23 in that frame. The accepted seam fix is therefore surface ownership, not
 a claim that depth repair did nothing.
 
-## New issue: split-second light chunk during streaming
+## Streaming result and rejected extension
 
-After accepting 0.4.36, the owner supplied a screenshot of a light chunk-sized water patch that
-appears only for a split second as movement makes vanilla draw a newly loaded water chunk. This is
-separate from the settled seam.
+Version 0.4.37 implemented the narrow correction proposed in Session 81. Before durable ownership
+catches up, cached OIT water is suppressed only when the current frame's liquid-depth and
+full-resolution revealage images both prove vanilla liquid at the pixel. Revealage alone could be
+another transparent material; coarse liquid depth alone cannot prove full-resolution coverage.
 
-The current diagnosis is source-traced and **not yet human-proven**:
+The owner saw no holes and found the light patch much shorter—barely perceptible, though still
+present. Version 0.4.38 then tried to bridge the remaining frame by carrying engine-announced
+chunk presence through a spare channel of the shared readiness mask. The water looked fine, but
+terrain and seabed developed severe holes. Focused checks had all passed; the owner's visual test
+was the decisive regression evidence.
 
-1. The cached water mesh remains resident; ownership masks its fragments rather than evicting it.
-2. A chunk-dirty event queues readiness after the engine installs the chunk but before its render
-   mesh is guaranteed ready.
-3. Vanilla ownership is committed only after two `IsChunkRendered` observations in distinct
-   render frames and successful mask publication. The delay is deliberate protection against a
-   hole.
-4. Vanilla OIT water can therefore draw for one frame while the mask still says cache-owned.
-   Two translucent surfaces produce the temporary lighter square; the next ownership publication
-   hides cached water and the color settles.
+Version 0.4.39 removes the entire presence-channel experiment from the tracker, readiness mask,
+publication path and shared ownership shader. Apart from version identity it restores 0.4.37
+behavior, and the owner accepts that result.
 
-Do not shorten the readiness rule globally. Ground and long-lived ownership still need the
-two-frame proof.
+## Hard boundary for future water work
 
-## Next implementation
+Do not shorten, extend or reinterpret the two-frame terrain readiness rule, and do not add
+water-specific facts to the shared readiness mask. Water development may not change opaque terrain
+ownership, mask publication, or terrain/seabed continuity. A residual water flicker is preferable
+to any missing ground.
 
-Use the immutable same-frame images already available in the dedicated OIT water pass:
-
-- full-resolution vanilla OIT revealage proves that vanilla contributed a transparent pixel;
-- vanilla liquid depth proves that the contribution belongs to liquid rather than glass, smoke or
-  another unrelated transparent object.
-
-Before cached OIT water shades an otherwise cache-owned pixel, suppress it only when **both**
-signals indicate vanilla liquid is present. Keep 0.4.36's owned-junction rule unchanged:
-full-resolution revealage alone remains authoritative when deciding whether an owned surface pixel
-is missing. These are two related but different questions.
-
-Tests should pin at least four cases:
-
-- pending/cache-owned cell + vanilla liquid depth + non-clear revealage: cached surface suppressed;
-- pending/cache-owned cell + non-clear revealage but no liquid depth: cached surface retained;
-- pending/cache-owned cell + liquid depth but clear revealage: cached surface retained;
-- vanilla-owned junction behavior remains exactly the 0.4.36 replacement rule.
-
-Once source is ready, advance the private test artifact exactly once to 0.4.37, run the Release
-build and fast checks, verify the archive, copy-install beside older zips, and ask the owner to
-cross newly loading water chunks while moving. The essential verdicts are whether the flash is
-gone and whether any dark hole replaces it.
+If the residual flicker is ever revisited, the experiment must remain inside the dedicated water
+stage and preserve the exact shared terrain state used by 0.4.39. A proposal that truly needs a
+terrain-ownership change is separate work: stop, explain the terrain risk, obtain explicit owner
+authorization, and build a terrain-first runtime regression case before implementation.
 
 ## Watch item: open-water moving blips
 
@@ -137,30 +126,31 @@ some appearance commands persist.
 
 ## Remaining engineering work
 
-- Build and human-test the same-frame streaming-overlap correction without regressing the settled
-  seam or creating holes around unrelated transparency.
+- Preserve the accepted 0.4.39 baseline. The residual new-chunk flicker is not a blocker at its
+  current barely perceptible severity.
 - Complete the Phase 2 matrix: repeated loading/unloading, movement on both sides, corners, LOD
   joins, shallow/deep shores, above/below water, stale cache, resize/fullscreen, shader reload and
   world change.
 - Capture movement-only open-water blips if they become reproducible.
 - Exercise transparency-disabled and deliberate required-resource failure cases.
-- Physically remove remaining non-drawing per-section opaque `MeshRef` lifecycle scaffolding and
-  update old Phase 9 fail-open fixtures after water continuity closes.
+- Keep physical removal of non-drawing per-section opaque `MeshRef` lifecycle scaffolding and old
+  Phase 9 fail-open fixture updates separate from water development; they are terrain-renderer work.
 
 ## Source and artifact map
 
 - `Render/LodTerrainRenderer.WaterOit.cs`: vanilla revealage snapshot, OIT uniforms and draw stage.
 - `Render/LodTerrainRenderer.WaterDepth.cs`, `WaterRepair.cs`: liquid depth, junction and repair.
 - `Render/LodTerrainRenderer.WaterCapture.cs`: staged captures and metadata.
-- `Render/VanillaRenderReadiness.cs`: two-frame vanilla ownership stabilization/publication.
+- `Render/VanillaRenderReadiness.cs`, `VanillaReadinessMask.cs` and shared `lodownership.fsh`:
+  terrain ownership baseline; frozen for water-only work after the rejected 0.4.38 experiment.
 - `assets/vintagehorizons/shaderincludes/lodownershiptest.fsh`: surface/depth ownership decisions.
 - `assets/vintagehorizons/shaderincludes/lodsurfacecolor.fsh`: texture, mapped alpha and Fresnel.
 - `Render/LodClimateMapPages.cs`, `LodTintRegistry.cs`: RGBA climate/fallback tint transport.
 
 Paths above are relative to `VintageHorizons/src`, except `assets`, relative to
-`VintageHorizons`. The installed artifact is `dist/vintagehorizons_0.4.36.zip`, 32 entries, with
+`VintageHorizons`. The installed artifact is `dist/vintagehorizons_0.4.39.zip`, 32 entries, with
 DLL, manifest and LICENSE, no PDB or game DLLs, SHA-256
-`E971ADFACE300CE9EB897C055A5DAF518467EA32152DB293EC1505C388454904`.
+`1791924D1FFAEF6575EA70013079E660DE212B81ACD8229FFBF8B9AE0BB62863`.
 
 Read `CLAUDE.md` before work. Do not launch the game, push or publish without owner authorization.
 Test artifacts advance the patch exactly once and are copy-installed without removing old zips.

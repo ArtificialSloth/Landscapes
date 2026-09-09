@@ -2,26 +2,25 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Distant water: preserve the accepted seam, close movement handoff
+## Distant water: protect accepted 0.4.39 and complete continuity evidence
 
-Current accepted source is `0.4.36` at `049d0c5` on `codex/water-depth-light`. Read
+Current accepted source is `0.4.39` on `codex/water-depth-light`. Read
 [the current handoff](plans/HANDOFF_WATER_SEAM.md) and
-[Session 81](sessions/SESSION_81.md). The settled Phase 2 visual handoff is human-accepted in the
-tested scene; movement and lifecycle coverage remain before the renderer plan's continuity gate
-can be called complete.
+[Session 82](sessions/SESSION_82.md). The settled seam and the 0.4.37 streaming improvement are
+human-accepted in the tested scenes. Version 0.4.38's shared readiness-mask extension caused severe
+terrain/seabed holes and was completely removed in 0.4.39.
 
-- **Fix the split-second light patch when a new vanilla water chunk first draws.** The screenshot
-  and source lifecycle fit a one-frame overlap: vanilla OIT water can appear before the readiness
-  tracker completes two rendered observations and publishes vanilla ownership, so cached water
-  is still allowed underneath. Keep conservative chunk readiness for terrain. In cached OIT
-  water only, test the existing same-frame vanilla revealage and liquid-depth snapshots before
-  shading: suppress cached surface where BOTH prove vanilla liquid actually contributed. The
-  liquid-depth gate prevents unrelated transparent objects from hiding water. This diagnosis and
-  correction are not yet human-proven.
-- **Do not regress the settled seam.** The 0.4.36 rule is stage-specific: full-resolution OIT
-  revealage replaces quarter-resolution liquid depth for junction SURFACE coverage, while liquid
-  depth remains authoritative for underwater murk. New loading logic must preserve that split and
-  the accepted alpha 1.3 / foam 1.6 / clarity 40 defaults.
+- **Treat the remaining streaming flicker as an accepted limitation.** When a new vanilla water
+  chunk first draws, a barely perceptible light flicker may remain. Do not pursue it through the
+  shared readiness tracker, terrain ownership mask, chunk-presence state or publication timing.
+  Any further experiment must stay inside the dedicated water stage and leave opaque terrain and
+  seabed continuity untouched. A terrain-ownership change is separate scope requiring explicit
+  owner authorization and a terrain-first runtime test.
+- **Do not regress the settled seam or safe 0.4.37 veto.** Full-resolution OIT revealage replaces
+  quarter-resolution liquid depth for junction SURFACE coverage. Before durable ownership catches
+  up, cached OIT water is suppressed only when revealage and liquid depth both prove vanilla
+  liquid at that pixel. Liquid depth remains authoritative for underwater murk. Preserve alpha
+  1.3 / foam 1.6 / clarity 40.
 - **Watch, do not tune, the movement-only open-water blips.** They were briefly reported away
   from the seam and then could not be reproduced. If they return, capture while moving and locate
   the mark in vanilla revealage, combined revealage, raw/repaired depth and final color before
@@ -33,10 +32,10 @@ can be called complete.
 - **Finish required-path lifecycle coverage:** transparency disabled and deliberate resource
   failures must produce a named failure and missing cached output, never plausible output from an
   older path.
-- **Physically retire opaque fallback scaffolding.** The per-section opaque `RenderMesh` call and
-  all runtime selection are gone. Remove its remaining `MeshRef` allocation, publication and
-  disposal lifecycle after water continuity, then update tests and telemetry whose names still
-  imply a complete legacy renderer.
+- **Keep opaque fallback retirement separate from water development.** The per-section opaque
+  `RenderMesh` call and runtime selection are gone, but remaining `MeshRef` allocation,
+  publication and disposal are terrain-renderer work. Do not fold that cleanup into a water fix;
+  it needs its own authorization and regression scope.
 - **Rework old Phase 9 failure-injection expectations.** Tests and benchmark notes that expect a
   same-frame or next-frame legacy fallback are superseded for product renderer failures. Retain
   explicit diagnostic A/B modes only where they cannot be mistaken for automatic recovery.

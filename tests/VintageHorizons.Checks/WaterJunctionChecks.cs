@@ -32,6 +32,12 @@ public static class WaterJunctionChecks
         bool depthEnabled, bool surfaceEnabled)
     {
         if (!rasterized || band != 1) return false;
+        // Before the durable chunk mask catches up, current-frame liquid depth plus
+        // current-frame revealage can already prove vanilla water drew this pixel.
+        // Neither signal is sufficient alone: revealage could belong to glass or another
+        // transparent object, while quarter-resolution liquid depth is spatially coarse.
+        if (depthEnabled && surfaceEnabled && !depthClear && !revealageClear)
+            return false;
         bool reject = owned;
         bool coverageMissing = surfaceEnabled ? revealageClear : depthClear;
         if (owned && depthEnabled && coverageMissing)
@@ -103,21 +109,48 @@ public static class WaterJunctionChecks
                 depthEnabled: true, surfaceEnabled: true),
             "a revealage hole without cached geometry remains empty");
 
+        c.False(KeepCachedSurface(true, 1, false, junction,
+                depthClear: false, revealageClear: false,
+                depthEnabled: true, surfaceEnabled: true),
+            "same-frame vanilla liquid suppresses cached water before chunk ownership catches up");
+        c.True(KeepCachedSurface(true, 1, false, junction,
+                depthClear: true, revealageClear: false,
+                depthEnabled: true, surfaceEnabled: true),
+            "unrelated full-resolution transparency cannot hide cached water without liquid depth");
+        c.True(KeepCachedSurface(true, 1, false, junction,
+                depthClear: false, revealageClear: true,
+                depthEnabled: true, surfaceEnabled: true),
+            "coarse liquid depth cannot hide a full-resolution pixel without vanilla OIT coverage");
+        c.True(KeepCachedSurface(true, 1, false, junction,
+                depthClear: false, revealageClear: false,
+                depthEnabled: true, surfaceEnabled: false),
+            "the transient veto is inactive without the immutable revealage copy");
+
         string root = GameAssemblies.RepoRoot;
         string ownership = File.ReadAllText(Path.Combine(root,
             "VintageHorizons/assets/vintagehorizons/shaderincludes/lodownershiptest.fsh"));
         c.True(ownership.Contains("#if defined(VH_WATER_DEPTH) || defined(VH_WATER_OIT)")
             && ownership.Contains("owned && ownershipBand == 1 && waterJunctionDepth == 1")
             && ownership.Contains("texelFetch(vanillaWaterDepth, ivec2(gl_FragCoord.xy), 0).r == 1.0")
-            && ownership.Contains("texture(vanillaWaterDepth, gl_FragCoord.xy / frameSize.xy).r == 1.0")
+            && ownership.Contains("vanillaWaterDepth, gl_FragCoord.xy / frameSize.xy).r")
+            && ownership.Contains("vanillaWaterClear = vanillaWaterDepthAtPixel == 1.0")
             && ownership.Contains("vanillaOwnsCell(cellX + dx, cellY, cellZ + dz, ownershipBand)"),
             "GLSL gives depth and OIT the same clear, water-only boundary exception");
         c.True(ownership.Contains("texelFetch(")
             && ownership.Contains("vanillaOitRevealage, ivec2(gl_FragCoord.xy), 0).r")
             && ownership.Contains("waterJunctionSurface == 1")
-            && ownership.Contains("junctionCoverageMissing = vanillaRevealage >= 0.9999")
+            && ownership.Contains("junctionCoverageMissing = vanillaRevealageAtPixel >= 0.9999")
             && !ownership.Contains("junctionCoverageMissing = junctionCoverageMissing ||"),
             "OIT replaces quarter-resolution depth with exact full-resolution vanilla coverage");
+        int transientVeto = ownership.IndexOf(
+            "vanillaWaterDepthAtPixel < 1.0 && vanillaRevealageAtPixel < 0.9999",
+            StringComparison.Ordinal);
+        int junctionException = ownership.IndexOf(
+            "if (owned && ownershipBand == 1 && waterJunctionDepth == 1",
+            StringComparison.Ordinal);
+        c.True(transientVeto >= 0 && transientVeto < junctionException
+            && ownership.Contains("float vanillaRevealageAtPixel = 1.0;", StringComparison.Ordinal),
+            "same-frame vanilla liquid vetoes cached OIT before the durable ownership exception");
         c.True(!ownership.Contains("liquidDepth,") && !ownership.Contains("gl_FragDepth")
             && ownership.Contains("dz = -1; dz <= 1") && ownership.Contains("dx = -1; dx <= 1"),
             "the exception uses immutable coverage and adjacent cells without synthesizing depth");

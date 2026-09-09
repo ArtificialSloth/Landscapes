@@ -103,7 +103,25 @@
 #else
         // OIT is full resolution while the engine liquid target is quarter resolution.
         // This is the same normalized lookup underwatereffects.fsh uses for liquidDepth.
-        vanillaWaterClear = texture(vanillaWaterDepth, gl_FragCoord.xy / frameSize.xy).r == 1.0;
+        float vanillaWaterDepthAtPixel = texture(
+            vanillaWaterDepth, gl_FragCoord.xy / frameSize.xy).r;
+        vanillaWaterClear = vanillaWaterDepthAtPixel == 1.0;
+
+        // Chunk readiness deliberately takes two rendered observations before it transfers
+        // ownership. Newly tessellated vanilla water can therefore reach OIT one frame while
+        // this cell is still cache-owned, and the two translucent surfaces make a bright
+        // chunk-shaped flash. The immutable images describe THIS frame, so use them as a
+        // narrow per-pixel veto before the durable mask catches up. Revealage alone could be
+        // glass or another transparent object; require liquid depth as well. Conversely,
+        // quarter-resolution depth alone cannot hide a full-resolution surface pixel.
+        float vanillaRevealageAtPixel = 1.0;
+        if (ownershipBand == 1 && waterJunctionSurface == 1)
+        {
+            vanillaRevealageAtPixel = texelFetch(
+                vanillaOitRevealage, ivec2(gl_FragCoord.xy), 0).r;
+            if (vanillaWaterDepthAtPixel < 1.0 && vanillaRevealageAtPixel < 0.9999)
+                discard;
+        }
 #endif
         bool junctionCoverageMissing = vanillaWaterClear;
 #ifdef VH_WATER_OIT
@@ -116,9 +134,7 @@
         // contributed no transparent surface at all.
         if (waterJunctionSurface == 1)
         {
-            float vanillaRevealage = texelFetch(
-                vanillaOitRevealage, ivec2(gl_FragCoord.xy), 0).r;
-            junctionCoverageMissing = vanillaRevealage >= 0.9999;
+            junctionCoverageMissing = vanillaRevealageAtPixel >= 0.9999;
         }
 #endif
         if (owned && ownershipBand == 1 && waterJunctionDepth == 1

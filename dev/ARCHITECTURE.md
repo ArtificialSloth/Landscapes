@@ -402,6 +402,13 @@ The server must answer every accepted section request, including explicit refusa
     a vertical side against a substitute empty chunk when real neighbour data is absent. Only an
     outward horizontal liquid face at such a genuinely missing client chunk is suppressed. A
     loaded empty neighbour, top/bottom face or interior liquid face remains engine-owned.
+28. **Water continuity must not redefine terrain ownership.** A same-frame water correction may
+    use immutable vanilla images inside the dedicated water stage, but water development does not
+    add weaker facts to the shared readiness mask or change ground ownership, publication or
+    stabilization semantics. Version 0.4.38 crossed this boundary and produced severe terrain and
+    seabed holes; 0.4.39 completely restores the 0.4.37 terrain-safe state. Any future terrain
+    ownership change is separate work requiring explicit owner authorization and terrain-first
+    runtime evidence.
 
 ## Concurrency invariants
 

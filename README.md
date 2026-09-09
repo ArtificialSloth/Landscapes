@@ -90,12 +90,12 @@ in advance.
 | `off` / `<chunks>` | Suppress cached water within this many chunks of you. `off` is the default. |
 | `edge <chunks>` | How far water's own footprint is grown past the ground's. Derived when unset. |
 | `fresnel [on\|off]` | Give distant water the game's own opacity, which changes with the angle you look at it. On by default. |
-| `alpha <0-1>` | The most solid distant water is allowed to get. Below 1 the shaded bed underneath shows through. |
+| `alpha <0.05-2>` | Ceiling applied before the water texture and climate tint reduce opacity. `1.3` is the accepted default; values above 1 are useful because the mapped texture alpha still lowers the final result. |
 | `depth [on\|off]` | Darken ground under water by how deep it is, as the game's own light does — a bed under eight blocks draws at 70% of the shore beside it, one under twenty at 26%. On by default. **Rebuilds every loaded section.** |
-| `clarity <blocks>` | How far light gets back UP through the water to your eye. Smaller is murkier and darkens sooner. **This has no counterpart in the game** and cannot follow your viewing angle; see the caveat below. `0` turns it off. |
+| `clarity <blocks>` | How far light gets back UP through the water to your eye. Smaller is murkier and darkens sooner. **This has no counterpart in the game** and cannot follow your viewing angle; see the caveat below. `40` is the accepted default; `0` turns it off. |
 | `wave <blocks>` | How wide a strip of water keeps one quad per block so it can carry the game's own wave where the two surfaces meet. `1` is the default; `0` turns the wave off. **Rebuilds every loaded section.** |
 | `walls [on\|off]` | Diagnostic. `off` drops the side faces drawn where the cache has no record of what is beside a body of water. |
-| `glint <0-1>` / `foam <0-1>` | How much of the game's sun reflection and surface noise distant water carries. |
+| `glint <0-1>` / `foam <0-2>` | How much of the game's sun reflection and surface noise distant water carries. Foam defaults to the accepted `1.6`. |
 
 **A caveat on `clarity`.** The game's own light only models sunlight travelling DOWN through
 water, one level per block, and this mod reproduces that exactly. `clarity` is an extra term

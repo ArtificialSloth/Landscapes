@@ -2,6 +2,26 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-09 - Streaming-water guard accepted after complete terrain-safe rollback
+
+Version 0.4.37 reduced the split-second light patch seen as newly loaded vanilla water begins
+drawing. Cached OIT water is suppressed before durable ownership catches up only when vanilla's
+same-frame liquid depth and full-resolution revealage both prove a liquid contribution. The owner
+reported no holes and found the patch much shorter and barely perceptible.
+
+A broader 0.4.38 follow-up carried engine-announced chunk presence through a spare channel of the
+shared readiness mask. Its focused checks passed and the water looked fine, but the owner found
+severe terrain and seabed holes. The entire shared-state change was rejected. Version 0.4.39
+removes it completely and returns to 0.4.37 behavior under a higher package identity. The owner
+human-tested 0.4.39 and called it acceptable.
+
+The Release build completed with zero warnings/errors, all 22,656 assertions passed, and the
+verified 32-entry 0.4.39 package was copy-installed with SHA-256
+`1791924D1FFAEF6575EA70013079E660DE212B81ACD8229FFBF8B9AE0BB62863`.
+Water development now has a durable boundary: it may not change shared terrain readiness,
+ownership or mask-publication semantics. The residual barely perceptible water flicker is an
+accepted limitation unless a future correction remains strictly water-local.
+
 ## 2026-09-08 - Distant-water material and settled seam accepted in 0.4.36
 
 The dedicated water path is runtime-proven on the owner's machine and the narrow settled handoff

@@ -8,13 +8,37 @@ first.
 
 ## [Unreleased]
 
-**Known open:** the settled vanilla/cached-water handoff is human-accepted in 0.4.36. When a newly
-loaded vanilla water chunk first appears during movement, it can show a lighter chunk-sized patch
-for a split second. Source tracing points to one frame of double surface composition before the
-conservative readiness mask transfers ownership; the proposed per-pixel correction is not yet
-built or human-tested. Movement-only open-water blips were reported once and then could not be
-reproduced. Physical retirement of the old non-drawing per-section opaque resource lifecycle
-also remains.
+**Known open:** the settled vanilla/cached-water handoff remains human-accepted, and 0.4.39 makes
+the new-chunk light patch barely perceptible in the owner's test. A residual split-second flicker
+is accepted rather than risking terrain continuity. Movement-only open-water blips were reported
+once and then could not be reproduced. Physical retirement of the old non-drawing per-section
+opaque resource lifecycle also remains, as separate renderer work rather than water work.
+
+## [0.4.39] - 2026-09-09
+
+**Terrain and seabed continuity are restored.** This private test build completely removes the
+rejected 0.4.38 engine-presence channel and all of its changes to shared terrain readiness,
+ownership-mask publication and shared shader state. Apart from its higher version identity,
+0.4.39 returns to 0.4.37 behavior: the accepted settled seam remains and the streaming-water
+correction stays local to cached OIT pixels.
+
+The owner tested 0.4.39 and called it acceptable. Future water work may not alter shared terrain
+readiness or ownership; the residual barely perceptible water flicker is the safer failure.
+Release build: zero warnings/errors. Fast checks: 22,656 assertions, zero failures. The verified
+32-entry package was copy-installed with SHA-256
+`1791924D1FFAEF6575EA70013079E660DE212B81ACD8229FFBF8B9AE0BB62863`.
+
+## [0.4.37-0.4.38] - 2026-09-09
+
+Version 0.4.37 reduces the split-second light patch when a newly loaded vanilla water chunk first
+draws. Before durable ownership catches up, cached OIT water is suppressed only when the current
+vanilla liquid-depth and full-resolution revealage images both prove liquid coverage. The owner
+reported no holes and found the patch much shorter and barely perceptible.
+
+Version 0.4.38 attempted to bridge the remaining frame by carrying engine-announced chunk
+presence through a spare channel of the shared readiness mask. The water looked fine, but the
+owner found severe terrain and seabed holes. The build is rejected in full despite 22,674 passing
+assertions; 0.4.39 rolls back every part of that shared-state extension.
 
 ## [0.4.36] - 2026-09-08
 
