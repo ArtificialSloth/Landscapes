@@ -23,7 +23,12 @@ public static class PolicyChecks
     {
         c.Eq(LodPaletteEntry.FlagWater, Flags(EnumBlockMaterial.Water, "water-still-7"), "water is translucent");
         c.Eq(LodPaletteEntry.FlagWater, Flags(EnumBlockMaterial.Lava, "lava-still-7"), "lava uses the water path");
-        c.Eq(LodPaletteEntry.FlagWater, Flags(EnumBlockMaterial.Ice, "lakeice"), "ice uses the water path");
+        c.Eq((byte)0, Flags(EnumBlockMaterial.Ice, "lakeice"),
+            "lake ice is solid terrain rather than liquid-depth water");
+        c.Eq((byte)0, Flags(EnumBlockMaterial.Ice, "glacierice"),
+            "transparent glacier ice is solid terrain rather than liquid-depth water");
+        c.Eq((byte)0, Flags(EnumBlockMaterial.Ice, "packedglacierice"),
+            "opaque packed glacier ice is solid terrain rather than liquid-depth water");
         c.Eq(LodPaletteEntry.FlagSnowLayer, Flags(EnumBlockMaterial.Snow, "snowlayer-3"),
             "vanilla snow is retained as coverage rather than ordinary terrain");
 

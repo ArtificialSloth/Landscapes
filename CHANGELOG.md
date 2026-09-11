@@ -13,6 +13,33 @@ it replaces 0.4.39 as the accepted baseline is his call. Winter temporal converg
 accumulation and melt, `/vhrefresh` boundaries, campaign cost) has not yet had its acceptance
 run.
 
+## [0.4.55] - 2026-09-11
+
+**Standing logs now use bark on their walls instead of repeating the cut end on every face.**
+Version 0.4.54 expands each live block-texture table slot with separate X- and Z-wall textures and
+means, with the previous top texture as the fallback. The owner confirmed the general correction
+but found that Redwood quarter-trunks still showed rings: their shape uses bark correctly, while
+unused block-file face names call both north and up the cut end. Version 0.4.55 makes wall lookup
+skip the already-selected top texture and continue to bark; a sideways-log control preserves real
+wall-facing cut ends. `.vhwhy` and `.vhholes` also write their reports to the client log.
+
+**The source cause of the dark rim around icy mountain summits is fixed in 0.4.55.** A staged
+0.4.54 capture showed vanilla liquid depth completely clear while the mod-added liquid-depth mask
+covered the entire glacier-shaped summit. All `EnumBlockMaterial.Ice` blocks—including solid
+transparent glacier ice and opaque packed glacier ice—had been classified as water. That waved
+glaciers, rendered them through the water path, and submitted them to the quarter-resolution liquid
+depth that drives underwater murk. Ice is now ordinary solid distant terrain. Stored palette flags
+are refreshed from live block data on load, so existing caches need no purge or re-exploration.
+The visual result and the new opaque distant-ice appearance still await the owner's in-game check.
+
+Release completed with zero warnings/errors and 22,984 assertions passed. The verified 34-entry
+0.4.55 private-test archive was copy-installed without touching older zips; source and installed
+copies have SHA-256 `F6D61EDEC20E46CDC9BF563F1F24FE52F63287284E4F6AD296462B247BC4F9B5`.
+The exact 0.4.54 artifact source was recovered and committed as `21d2e66`. At owner direction,
+every future incremented private test build is now committed as an exact source/test/version
+checkpoint after verification and local installation; this does not authorize pushing, tagging,
+publishing, or public release.
+
 ## [0.4.53] - 2026-09-11
 
 **The flash when vanilla terrain hands over to distant terrain is fixed.** Walking away from the

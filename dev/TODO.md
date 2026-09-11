@@ -2,6 +2,17 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
+## Start here: test 0.4.55
+
+Read [Session 85](sessions/SESSION_85.md). Version 0.4.55 is built, verified, copy-installed and
+checkpointed for the owner to test. Its source fixes the remaining Redwood wall texture and stops
+solid glacier/ice blocks entering the water, wave, OIT and liquid-depth paths.
+
+- Confirm all four visible Redwood trunk sides use bark while the top remains the cut end.
+- Revisit the captured snowy peak with `.vhwater murk on`; the dark blue rim should be absent.
+- Glance at a frozen lake and glacier. Ice now uses the opaque distant-terrain representation;
+  removing false liquid behavior is source-proven, but that appearance tradeoff needs review.
+
 ## Handoff flash follow-ups
 
 The vanilla-to-LOD handoff flash is fixed in 0.4.53 and confirmed by the owner. Its cause, the
@@ -10,9 +21,6 @@ G170. Remaining:
 
 - **Owner decision:** accept 0.4.53 in place of 0.4.39. Session 83's criterion was a clean
   vanilla-to-LOD transfer with no new terrain holes; the owner has confirmed the first.
-- **Small sky patches.** The 0.4.52 witness run also logged 32 frames of a few hundred to 1,500 px
-  whose ray left loaded chunks in the air 44–66 blocks out, over cache-owned ground, in runs of
-  about 15 frames. Re-measure with `.vhsky on` on 0.4.53 before investigating.
 - **`.vhgap` scans before the physics step** (Before/0.994), so its range verdicts can be a frame
   old. Move the scan after the late range check or retire it.
 - **Comparison switches for disproved hypotheses.** Retire `.vhsnowline` (every part) and

@@ -1069,7 +1069,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         IDictionary<string, CompositeTexture> textures, string[] names, int topSubId)
     {
         int wallId = PickFaceTexture(textures, names, IsUsableAtlasTexture,
-            out CompositeTexture? wall);
+            out CompositeTexture? wall, skipId: topSubId);
         if (wallId < 0 || wallId == topSubId) return null;
         return new LodBlockTextureRegistry.FaceTexture(
             capi.BlockTextureAtlas.Positions[wallId], PackMean(MeanOf(wall, wallId)));
@@ -1080,15 +1080,22 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// or -1. Face names come first, then the shorthands a block file groups them under, so a
     /// log's sides resolve to its bark whether or not the loader expanded "all" into faces.
     ///
+    /// <paramref name="skipId"/> is passed over, and a wall passes over the top's own texture.
+    /// Redwood trunks are why: the quarter-trunk block is drawn from its own shape, bark on
+    /// the outside and the cut end on top, and the face names in its block file - which that
+    /// shape does not use - say "north" is the cut end. Taking that at its word left rings on
+    /// the north and south walls of every redwood. A log lying on its side is unaffected,
+    /// because its cut end is not also its top.
     /// </summary>
     internal static int PickFaceTexture(IDictionary<string, CompositeTexture> textures,
-        string[] names, System.Func<int, bool> usable, out CompositeTexture? face)
+        string[] names, System.Func<int, bool> usable, out CompositeTexture? face,
+        int skipId = -1)
     {
         foreach (string name in names)
         {
             if (!textures.TryGetValue(name, out CompositeTexture? candidate)) continue;
             int id = candidate?.Baked?.TextureSubId ?? -1;
-            if (!usable(id)) continue;
+            if (!usable(id) || id == skipId) continue;
             face = candidate;
             return id;
         }

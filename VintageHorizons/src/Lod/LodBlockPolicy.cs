@@ -23,10 +23,20 @@ public static class LodBlockPolicy
             return LodPaletteEntry.FlagSnowLayer;
         }
 
-        if (block.BlockMaterial is EnumBlockMaterial.Water or EnumBlockMaterial.Lava or EnumBlockMaterial.Ice)
+        if (block.BlockMaterial is EnumBlockMaterial.Water or EnumBlockMaterial.Lava)
         {
             return LodPaletteEntry.FlagWater;
         }
+
+        // Ice is solid terrain, including the glacier and packed-glacier layers used on
+        // mountain summits. It used to share FlagWater merely because some ice uses the
+        // transparent render pass. That made the LOD wave it like liquid, and—more
+        // importantly—submitted whole glaciers to the engine's liquid-depth target. The
+        // quarter-resolution depth then applied underwater murk around snowy peaks.
+        //
+        // Let ice continue through the ordinary terrain rules. Palette flags are rebuilt
+        // from the live Block whenever stored sections load, so existing caches gain the
+        // correction without re-exploration.
 
         // Sparse, mostly-transparent ground cover. As solid LOD cubes these come out as
         // pale grey blobs, because their textures average toward the transparent pixels.

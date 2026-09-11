@@ -348,6 +348,26 @@ public static class PackedQuadChecks
                 VintageHorizonsModSystem.ZWallTextureNames, Usable, out _),
             "and its cut end faces north and south");
 
+        // A redwood quarter-trunk: its block file names the cut end for "north" and "up" and
+        // bark for the other sides. Walls pass over the top's own texture, as the resolver does.
+        var redwood = new Dictionary<string, Vintagestory.API.Client.CompositeTexture>
+        {
+            ["north"] = Tex(Trunk), ["up"] = Tex(Trunk), ["down"] = Tex(Bark),
+            ["east"] = Tex(Bark), ["south"] = Tex(Bark), ["west"] = Tex(Bark),
+        };
+        int redwoodTop = VintageHorizonsModSystem.PickFaceTexture(redwood,
+            VintageHorizonsModSystem.UpFaceTextureNames, Usable, out _);
+        c.Eq(Trunk, redwoodTop, "a redwood trunk's top is the cut end");
+        c.Eq(Bark, VintageHorizonsModSystem.PickFaceTexture(redwood,
+                VintageHorizonsModSystem.ZWallTextureNames, Usable, out _, skipId: redwoodTop),
+            "its north and south walls are bark, not the cut end its block file names for north");
+        c.Eq(Bark, VintageHorizonsModSystem.PickFaceTexture(redwood,
+                VintageHorizonsModSystem.XWallTextureNames, Usable, out _, skipId: redwoodTop),
+            "its east and west walls are bark");
+        c.Eq(Trunk, VintageHorizonsModSystem.PickFaceTexture(lying,
+                VintageHorizonsModSystem.ZWallTextureNames, Usable, out _, skipId: Bark),
+            "passing over the top's texture still leaves a lying log's cut end facing north");
+
         var offAtlas = new Dictionary<string, Vintagestory.API.Client.CompositeTexture>
         {
             ["all"] = Tex(0),

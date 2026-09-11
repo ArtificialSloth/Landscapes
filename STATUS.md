@@ -4,9 +4,9 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-11`
-**Mod version:** `0.4.53` — current test build, installed and human-tested; the owner confirms it fixes the vanilla-to-LOD handoff flash
-**Last accepted baseline:** `0.4.39` at base commit `8ace702`; 0.4.53 is the candidate to replace it
-**Active branch:** `codex/water-depth-light`; the 0.4.40–0.4.53 work is committed on it
+**Mod version:** `0.4.55` — current test build, verified and copy-installed; not yet human-tested
+**Last accepted baseline:** `0.4.39` at base commit `8ace702`; 0.4.53 is human-tested for the handoff-flash fix but baseline promotion remains the owner's call
+**Active branch:** `codex/water-depth-light`; exact 0.4.54 checkpoint `21d2e66`, 0.4.55 checkpoint created with the Session 85 documentation pass
 **Target:** Vintage Story 1.22.5+, .NET 10
 **Source files:** `104` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
@@ -15,8 +15,35 @@
 
 ## Current result
 
-**The vanilla-to-LOD handoff flash is fixed in 0.4.53, and spatial winter terrain is built with a
-positive appearance review.** The owner tested 0.4.53 on 2026-09-11 and reported the flash gone.
+**Version 0.4.55 fixes the remaining Redwood wall texture in source and removes solid ice from the
+water/liquid-depth path that drew a dark rim around glacier summits. It is installed and awaiting
+the owner's visual check.** The vanilla-to-LOD handoff flash remains fixed in the owner's 0.4.53
+test, and spatial winter terrain retains its positive appearance review.
+
+## Tree and glacier corrections
+
+Version 0.4.54 added separate live-atlas rows for a block's top, X walls and Z walls, so standing
+logs use bark on their sides rather than their top cut end everywhere. The owner confirmed the
+ordinary-tree correction but found Redwood still wrong. Redwood quarter-trunk shapes use bark on
+the outside while their unused block-file face names call `north` and `up` the same cut-end
+texture. Version 0.4.55 makes wall lookup skip the already-selected top texture and continue to the
+bark candidate. A lying-log control preserves a real wall-facing cut end.
+
+The snowy-peak rim was isolated by a staged 0.4.54 capture. The vanilla liquid-depth target was
+entirely clear (`min=max=1`), while the mod-added combined target contained 16,074 non-clear
+quarter-resolution texels. Spatially overlaying that coverage on the frame painted the entire
+glacier-shaped summit. `LodBlockPolicy` classified all `EnumBlockMaterial.Ice` as `FlagWater`,
+including the `glacierice` and opaque `packedglacierice` blocks the installed game's worldgen uses
+for mountain layers. Those solid blocks therefore received water waves and material, entered OIT,
+and wrote the liquid depth that drives underwater murk.
+
+0.4.55 limits the liquid classification to Water and Lava; ice follows ordinary solid terrain.
+Stored palette flags are re-derived from the live block registry on load, so existing caches gain
+the correction without re-exploration. Three policy cases pin lake, glacier and packed-glacier ice
+as non-water. This mechanism is source-traced and harness-tested; absence of the rim and the opaque
+distant-ice appearance still require human review.
+
+## Handoff flash result retained
 
 The flash was one frame of open sky on a chunk at the edge of vanilla's own draw range (65 to 67
 blocks out at the owner's view distance of 64) in a cell the ownership mask had handed to
@@ -96,8 +123,8 @@ Older protobuf peers ignore them and retain one-shot behavior. New clients accep
 replacement only while its submitted content revision is current, so a later local capture wins,
 and retain the remote update route until that exact replacement persistence revision is
 acknowledged. Only L0 is transferred; parents rebuild locally. The compatibility numbers remain
-`1 / 4 / 6`; `dev/WIRE_HISTORY.md` records the append-compatible extensions. Session 84 changed
-nothing on the wire or on disk.
+`1 / 4 / 6`; `dev/WIRE_HISTORY.md` records the append-compatible extensions. Sessions 84–85
+changed nothing on the wire or on disk.
 
 ## Diagnostics added in Session 84
 
@@ -115,7 +142,7 @@ All are session-only chat commands that write their findings to the client log.
 
 ## Performance and artifact evidence
 
-The final fast tier passed **22,941 assertions with zero failures**, and the Release build
+The final fast tier passed **22,984 assertions with zero failures**, and the 0.4.55 Release build
 completed with zero warnings and zero errors. The late range check captures the range inputs once
 per frame and sweeps only on frames where the physics step changed the player's block; its cost
 was not separately measured. Snow adds 1,024 uncompressed bits-array bytes per resident section
@@ -126,14 +153,15 @@ comparison). Snow adds no geometry, though a bare/snow boundary can reduce greed
 merging. Frost adds vertex arithmetic/noise only for frostable material slots. No paired
 large-world runtime capture yet isolates campaign cost.
 
-The verified `dist/vintagehorizons_0.4.53.zip` is 505,483 bytes with SHA-256
-`97B16452998681AF2BE3C04F3DE7475A1308DD80602EC31458082234C8096685`; the installed copy in the
-owner's Mods directory matches. The 0.4.50–0.4.52 diagnostic builds and older test artifacts were
-preserved; their hashes are in Session 84. Nothing was pushed, tagged, or publicly released.
-Sandbox runs in Session 84 were owner-authorised; the assistant did not launch the owner's own
-game.
+The verified `dist/vintagehorizons_0.4.55.zip` is 507,880 bytes with 34 entries and SHA-256
+`F6D61EDEC20E46CDC9BF563F1F24FE52F63287284E4F6AD296462B247BC4F9B5`; its packaged DLL matches
+the Release output and the installed Mods-folder copy has the same hash. Eleven older test zips
+remain in that folder. Exact 0.4.54 was recovered and checkpointed as `21d2e66`; under the owner's
+new standing instruction, 0.4.55 and every later incremented private test artifact receive an
+exact Git checkpoint after verification and installation. This does not authorize a push, tag,
+publication, or public release. The assistant did not launch the game in Session 85.
 
-Documentation validation passed **2,274 of 2,279 checks**. The five failures are the
+Documentation validation passed **2,282 of 2,287 checks**. The five failures are the
 pre-existing personal Windows paths in ignored `.testdata/water-extraction` and
 `.testdata/water-oit` diagnostic logs. Current version, changelog coverage, source count,
 compatibility, links, session routing and active performance-plan routing pass.
@@ -156,23 +184,26 @@ compatibility, links, session routing and active performance-plan routing pass.
 
 ## Next work
 
-Begin with [Session 84](dev/sessions/SESSION_84.md) and the top of [TODO](dev/TODO.md).
+Begin with [Session 85](dev/sessions/SESSION_85.md) and the top of [TODO](dev/TODO.md).
 
-1. Owner decision: accept 0.4.53 as the new baseline. Session 83's criterion was a clean
+1. Human-test 0.4.55: Redwood side bark with a cut-end top; the captured snowy peak with murk on;
+   and the distant appearance of lake/glacier ice now that solid ice no longer uses water.
+2. Owner decision: accept 0.4.53 or a later accepted build as the new baseline. Session 83's criterion was a clean
    vanilla-to-LOD transfer with no new terrain holes; the owner has confirmed the first.
-2. Winter temporal verification, unchanged from Session 83: one controlled unloaded-region
+3. Winter temporal verification, unchanged from Session 83: one controlled unloaded-region
    accumulation and melt through the 30-second signal, finite campaign, durable L0 replacement,
    live client offer and local mip convergence; campaign tick, storage and network cost in a
    large explored world; `/vhrefresh` at its boundaries.
-3. Session 84 follow-ups: re-measure the small cache-owned sky patches with `.vhsky` on 0.4.53;
-   decide whether to keep `.vhsky` and retire `.vhsnowline` and `.vhgap release`; move or retire
-   the pre-physics `.vhgap` scan; the stale-sphere and eviction-gap cleanups.
+4. Session 84 follow-ups: decide whether to keep `.vhsky` and retire `.vhsnowline` and
+   `.vhgap release`; move or retire the pre-physics `.vhgap` scan; the stale-sphere and
+   eviction-gap cleanups.
 
-[Session 84](dev/sessions/SESSION_84.md) holds the flash investigation and fix,
+[Session 85](dev/sessions/SESSION_85.md) holds the tree/ice work and checkpoint rule,
+[Session 84](dev/sessions/SESSION_84.md) the flash investigation and fix,
 [Session 83](dev/sessions/SESSION_83.md) the 0.4.40–0.4.49 winter work, and
 [Session 82](dev/sessions/SESSION_82.md) the accepted water baseline. Architecture owns the
 winter/update invariants and settled decision 33, `dev/WIRE_HISTORY.md` owns compatibility, and
-G166–G172 in `dev/GOTCHAS.md` preserve the new traps.
+G166–G173 in `dev/GOTCHAS.md` preserve the new traps.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md); GPU renderer work

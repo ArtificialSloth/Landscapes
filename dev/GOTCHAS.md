@@ -3415,3 +3415,25 @@ archived session. Why 0.4.39 looked clean is not established.
 **Safer action:** give each build an objective count (the `.vhsky` summaries) before treating a
 visual bisection as the regression window, and keep code-history evidence (decompiled `dist/`
 builds) beside it.
+
+### G173 - A block material is not a liquid-rendering classification
+
+**Trigger:** grouping every block whose `BlockMaterial` is Water, Lava or Ice into one generic
+water flag because some ice blocks use a transparent render pass.
+
+**Trap:** Vintage Story uses `EnumBlockMaterial.Ice` for solid `glacierice` and `lakeice` and for
+opaque `packedglacierice`; world-generation layers build cold mountain summits from both glacier
+forms. `FlagWater` did more than select translucency: it applied water waves and material, routed
+the geometry through water/OIT, and submitted it to the quarter-resolution liquid-depth target.
+A 0.4.54 staged capture had clear vanilla liquid depth but showed the mod-added depth mask covering
+the entire glacier-shaped summit. Ground behind those false liquid samples received underwater
+murk, producing the reported dark rim.
+
+**Safer action:** classify for the consumer's semantic contract, not from a broad engine enum or
+render pass. Liquid depth may contain actual liquid in front of ground, never merely transparent
+solid terrain. Verify unusual families against the installed block definitions and inspect stage
+coverage spatially; counts alone did not identify the summit. Re-derive material flags from live
+blocks when cached sections load so a corrected policy fixes existing worlds without a purge.
+
+**Found:** 2026-09-11, Session 85. Fixed in 0.4.55 by returning Ice to the ordinary solid-terrain
+path; the end-to-end visual result remains awaiting owner acceptance.

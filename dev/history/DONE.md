@@ -2,6 +2,34 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-11 - Tree wall textures and false glacier liquid depth fixed (0.4.54-0.4.55)
+
+Standing logs had one block texture applied to every face, so their top cut-end tile appeared on
+the walls. Version 0.4.54 added independent top, X-wall and Z-wall atlas rows; the owner confirmed
+ordinary trees and identified Redwood as the remaining exception. Redwood quarter-trunk block
+metadata names an unused north face as the same cut end used on top, so 0.4.55 makes wall lookup
+pass over the selected top texture and continue to bark. Lying-log controls preserve a genuine
+wall cut end.
+
+The snowy-peak dark rim was isolated from a 0.4.54 staged capture. Vanilla's liquid-depth image
+was clear, but the mod-added depth coverage traced the entire glacier summit. The block policy had
+treated every Ice material—including transparent glacier ice and opaque packed glacier ice—as
+water, which sent solid mountains through water waves, OIT and the quarter-resolution liquid-depth
+target that drives underwater murk. Version 0.4.55 returns Ice to ordinary solid terrain. Existing
+caches are fixed by the established live-block reclassification on load.
+
+Release completed without warnings or errors; 22,984 assertions passed. The verified 34-entry
+0.4.55 archive was copy-installed with matching SHA-256
+`F6D61EDEC20E46CDC9BF563F1F24FE52F63287284E4F6AD296462B247BC4F9B5`; visual acceptance remains
+open. The exact 0.4.54 source was reconstructed from its packaged DLL and committed as `21d2e66`.
+At owner direction, every future incremented private test build is now an automatic exact Git
+checkpoint after verification and local installation; remote and public actions still require
+separate approval.
+
+The 0.4.53 `.vhsky` follow-up produced only the already-known small cache-owned runs, concentrated
+at the outer screen columns, and the owner saw no artifact. That invisible follow-up is closed;
+the witness remains available as a diagnostic.
+
 ## 2026-09-11 - Vanilla-to-LOD handoff flash found and fixed (0.4.53)
 
 The release blocker Session 83 left open is closed. The flash was one frame of open sky on a chunk
