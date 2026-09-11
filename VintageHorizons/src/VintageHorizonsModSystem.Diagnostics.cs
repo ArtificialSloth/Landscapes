@@ -6,6 +6,7 @@ public partial class VintageHorizonsModSystem
 {
     const double Mebibyte = 1024 * 1024;
     VintageHorizonsDiagnosticsHud? diagnosticsHud;
+    bool diagnosticsEnabled = false;
 
     void InstallDiagnostics()
     {
@@ -16,8 +17,22 @@ public partial class VintageHorizonsModSystem
 
     void OnDiagnosticsLevelFinalize()
     {
+        if (!diagnosticsEnabled) return;
         diagnosticsHud?.RefreshNow();
         diagnosticsHud?.TryOpen(false);
+    }
+
+    bool SetDiagnosticsEnabled(bool enabled)
+    {
+        diagnosticsEnabled = enabled;
+        if (!enabled)
+        {
+            diagnosticsHud?.TryClose();
+            return false;
+        }
+
+        diagnosticsHud?.RefreshNow();
+        return diagnosticsHud?.TryOpen(false) == true;
     }
 
     void OnDiagnosticsLeaveWorld() => diagnosticsHud?.TryClose();
@@ -210,6 +225,7 @@ public partial class VintageHorizonsModSystem
     void AddDevelopmentConfiguration(List<string> lines)
     {
         Heading(lines, "DEVELOPMENT MOD");
+        Entry(lines, ".vhdiag", diagnosticsEnabled);
         Entry(lines, "allocation telemetry", allocationTelemetryEnabled);
         Entry(lines, "auto explore", autoExplore);
         Entry(lines, "auto unpause", renderer?.AutoUnpause

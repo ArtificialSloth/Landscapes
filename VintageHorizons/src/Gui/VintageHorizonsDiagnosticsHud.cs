@@ -3,9 +3,9 @@ using Vintagestory.API.Client;
 namespace VintageHorizons;
 
 /// <summary>
-/// Always-on development side panel. It deliberately has no close action: this temporary
-/// instrument stays available throughout the pre-release cycle. Hold Alt to release the
-/// mouse, then drag the title bar.
+/// Opt-in development side panel. It deliberately has no close action: use `.vhdiag off` so
+/// the command state and the visible window cannot disagree. Hold Alt to release the mouse,
+/// then drag the title bar.
 /// </summary>
 internal sealed class VintageHorizonsDiagnosticsHud : HudElement
 {
@@ -61,7 +61,7 @@ internal sealed class VintageHorizonsDiagnosticsHud : HudElement
         GuiComposer composer = capi.Gui
             .CreateCompo(DebugName, dialogBounds)
             .AddShadedDialogBG(ElementBounds.Fill, true)
-            .AddDialogTitleBar("VH MOD CONFIG — Alt+drag", OnTitleClose)
+            .AddDialogTitleBar("VH DIAGNOSTICS — Alt+drag", OnTitleClose)
             .AddInset(insetBounds, 2)
             .BeginClip(clipBounds);
 

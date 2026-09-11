@@ -30,7 +30,7 @@ public static class StaticAssetChecks
         VersionAgreement(c);
         AssistServeLoopDoesNotLogProgress(c);
         ChatCommandNamesAreUnique(c);
-        ConfigurationPanelStaysVisibleAndStable(c);
+        ConfigurationPanelIsOptInAndStable(c);
         ConfigDialogWiring(c);
         NoIntegerVectorUniforms(c);
         SourceHasNoControlCharacters(c);
@@ -45,11 +45,11 @@ public static class StaticAssetChecks
     }
 
     /// <summary>
-    /// The temporary development panel is intentionally a low-churn inventory of Vintage
-    /// Horizons configuration. Keep the reflection/counter dashboard and hidden scrollback
-    /// from returning: a troubleshooting screenshot must capture every current input.
+    /// The temporary development panel is an opt-in, low-churn inventory of Vintage Horizons
+    /// configuration. Keep the reflection/counter dashboard and hidden scrollback from
+    /// returning: a troubleshooting screenshot must capture every current input.
     /// </summary>
-    static void ConfigurationPanelStaysVisibleAndStable(Check c)
+    static void ConfigurationPanelIsOptInAndStable(Check c)
     {
         string sourceRoot = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src");
         string hud = File.ReadAllText(Path.Combine(sourceRoot, "Gui",
@@ -80,6 +80,27 @@ public static class StaticAssetChecks
 
         string commands = File.ReadAllText(Path.Combine(sourceRoot,
             "VintageHorizonsModSystem.cs"));
+        int diagStart = commands.IndexOf("ChatCommands.Create(\"vhdiag\")",
+            StringComparison.Ordinal);
+        int diagEnd = commands.IndexOf("ChatCommands.Create(\"vhinfo\")", diagStart,
+            StringComparison.Ordinal);
+        c.True(diagStart >= 0 && diagEnd > diagStart,
+            "the diagnostics-window command is registered before commands available while deferring");
+        if (diagStart >= 0 && diagEnd > diagStart)
+        {
+            string diagCommand = commands[diagStart..diagEnd];
+            c.True(diagCommand.Contains("OptionalBool(\"on\")", StringComparison.Ordinal)
+                && diagCommand.Contains("SetDiagnosticsEnabled(enabled)", StringComparison.Ordinal),
+                ".vhdiag accepts on/off and routes both states through the diagnostics owner");
+        }
+        c.True(inventory.Contains("bool diagnosticsEnabled = false;", StringComparison.Ordinal)
+            && inventory.Contains("if (!diagnosticsEnabled) return;", StringComparison.Ordinal),
+            "the diagnostics window defaults off and LevelFinalize cannot open it while disabled");
+        c.True(inventory.Contains("diagnosticsHud?.TryClose();", StringComparison.Ordinal)
+            && inventory.Contains("return diagnosticsHud?.TryOpen(false) == true;",
+                StringComparison.Ordinal),
+            "the diagnostics owner closes immediately on off and opens immediately on on");
+
         int registerStart = commands.IndexOf("void RegisterCommands()", StringComparison.Ordinal);
         int registerEnd = commands.IndexOf("void ApplyGuiConfig(", registerStart,
             StringComparison.Ordinal);

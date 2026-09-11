@@ -2197,6 +2197,26 @@ public partial class VintageHorizonsModSystem : ModSystem
     }
     void RegisterCommands()
     {
+        capi.ChatCommands.Create("vhdiag")
+            .WithDescription("Show or hide the Vintage Horizons diagnostics window for this session. Default off.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
+            .HandleWith(args =>
+            {
+                if (args.Parsers[0].IsMissing)
+                {
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] diagnostics window: {(diagnosticsEnabled ? "on" : "off")}");
+                }
+
+                bool enabled = (bool)args[0];
+                bool opened = SetDiagnosticsEnabled(enabled);
+                return TextCommandResult.Success(!enabled
+                    ? "[VintageHorizons] diagnostics window off."
+                    : opened
+                        ? "[VintageHorizons] diagnostics window on."
+                        : "[VintageHorizons] diagnostics window is on but could not open right now.");
+            });
+
         capi.ChatCommands.Create("vhinfo")
             .WithDescription("VintageHorizons status. Also written to the client log, which is the only "
                 + "copy long enough to read.")
