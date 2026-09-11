@@ -11,8 +11,13 @@ public partial class LodTerrainRenderer
     // before that, then append cached water before either opaque ground renderer runs.
     internal const double PrepareBeforeOrder = 0.994;
     internal const double WaterDepthBeforeOrder = 0.996;
+    // The engine moves the player at Before/1.0 (EntityBehaviorPlayerPhysics), after both of
+    // the above. Ownership's range half is checked once more after that, before anything
+    // draws; see LodTerrainRenderer.LateRangeCheck.cs.
+    internal const double LateRangeBeforeOrder = 1.001;
     BeforeStageRenderer? prepareStageRenderer;
     BeforeStageRenderer? waterDepthStageRenderer;
+    BeforeStageRenderer? lateRangeRenderer;
     IShaderProgram? waterDepthProg;
     bool waterDepthShaderOk;
     bool waterDepthFailed;
@@ -56,6 +61,8 @@ public partial class LodTerrainRenderer
         waterOitRenderer = new BeforeStageRenderer(DrawWaterOit, WaterOitOrder);
         capi.Event.RegisterRenderer(prepareStageRenderer, EnumRenderStage.Before, "vintagehorizons-prepare");
         capi.Event.RegisterRenderer(waterDepthStageRenderer, EnumRenderStage.Before, "vintagehorizons-waterdepth");
+        lateRangeRenderer = new BeforeStageRenderer(RunLateRangeCheck, LateRangeBeforeOrder);
+        capi.Event.RegisterRenderer(lateRangeRenderer, EnumRenderStage.Before, "vintagehorizons-laterange");
         capi.Event.RegisterRenderer(waterCaptureEndRenderer, EnumRenderStage.AfterOIT, "vintagehorizons-watercapture");
         capi.Event.RegisterRenderer(waterOitRenderer, EnumRenderStage.OIT, "vintagehorizons-water");
     }
@@ -66,7 +73,9 @@ public partial class LodTerrainRenderer
             capi.Event.UnregisterRenderer(prepareStageRenderer, EnumRenderStage.Before);
         if (waterDepthStageRenderer != null)
             capi.Event.UnregisterRenderer(waterDepthStageRenderer, EnumRenderStage.Before);
-        prepareStageRenderer = waterDepthStageRenderer = null;
+        if (lateRangeRenderer != null)
+            capi.Event.UnregisterRenderer(lateRangeRenderer, EnumRenderStage.Before);
+        prepareStageRenderer = waterDepthStageRenderer = lateRangeRenderer = null;
         if (waterCaptureEndRenderer != null)
             capi.Event.UnregisterRenderer(waterCaptureEndRenderer, EnumRenderStage.AfterOIT);
         waterCaptureEndRenderer = null;

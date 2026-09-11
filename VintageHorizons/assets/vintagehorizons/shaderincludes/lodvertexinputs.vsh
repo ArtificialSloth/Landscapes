@@ -260,12 +260,22 @@ uniform int leafSeasonCheapRow;
 // the horizon can say where that is. See `.vhtint climatewide`.
 uniform float climateFadeBlocks;
 uniform int climateFieldEnabled;
+uniform int climateTintEnabled;
 uniform int climateMinCellX;
 uniform int climateMinCellZ;
 uniform int climateCapacity;
 uniform float climateCellBlocks;
 uniform float climateSeaLevel;
 uniform int climateRainSeaLevel;
+uniform float climateSnowMinY;
+uniform float climateSnowStepY;
+uniform float snowLineY;
+// 1 while `.vhsnowline shader off` compares against 0.4.39's single player-local threshold.
+uniform int snowLineUniformOnly;
+// 1 while `.vhsnowline fetch off` restores 0.4.39's placement: only a vertex tinted from the
+// climate field reads it.
+uniform int climateFetchTintOnly;
+uniform float seasonTemperature;
 
 // The ENGINE'S own value noise, included rather than transcribed. colormap.vsh builds both the
 // row and the column jitter out of it, and a transcription that drifted would put distant leaves
@@ -275,10 +285,10 @@ uniform int climateRainSeaLevel;
 // One cell's temperature and rainfall, in 0..255. The wrap is the field's own: a window of
 // cells stored in a ring, so a cell address folds into the buffer the same way in both
 // languages.
-vec2 climateCell(int cellX, int cellZ)
+vec4 climateCell(int cellX, int cellZ)
 {
     int wrap = climateCapacity - 1;
-    return texelFetch(climateField, ivec2(cellX & wrap, cellZ & wrap), 0).rg * 255.0;
+    return texelFetch(climateField, ivec2(cellX & wrap, cellZ & wrap), 0);
 }
 
 // The seasonal colour the game would draw at this position, from colormap.vsh:
@@ -358,6 +368,8 @@ vec4 climateColor(int page, float temperature, float rainfall)
 
 out vec3 tint;
 out float tintAlpha;
+out float snowLineAtVertex;
+out float frostAtVertex;
 out vec4 worldPos;
 out vec4 vertexColor;
 out float yLevel;

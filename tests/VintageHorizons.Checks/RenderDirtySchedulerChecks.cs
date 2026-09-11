@@ -10,6 +10,7 @@ public static class RenderDirtySchedulerChecks
         BoundedScanCanPassTheMaximumBusyPrefix(c);
         CameraCellsRefreshPriority(c);
         ClearInvalidatesOldEntries(c);
+        RevisionsIdentifyReplacementWork(c);
     }
 
     static void RefreshPrunesAndOrders(Check c)
@@ -126,6 +127,29 @@ public static class RenderDirtySchedulerChecks
         c.True(Take(scheduler, dirty, out long first), "the replacement world yields work");
         c.Eq(current, first, "clearing dirty state invalidates old priority entries");
         c.False(dirty.Contains(old), "an old-world key cannot reappear after clear");
+    }
+
+    static void RevisionsIdentifyReplacementWork(Check c)
+    {
+        var dirty = new LodRenderDirtySet();
+        long key = Key(3);
+        c.Eq(0L, dirty.Revision(key), "a never-dirtied key has no render identity");
+
+        c.True(dirty.Add(key), "the first render obligation is accepted");
+        c.Eq(1L, dirty.Revision(key), "the first obligation receives a revision");
+        c.False(dirty.Add(key), "duplicate pending work is coalesced");
+        c.Eq(1L, dirty.Revision(key),
+            "coalescing an already-pending obligation does not change its identity");
+
+        dirty.Remove(key);
+        c.Eq(1L, dirty.Revision(key),
+            "taking work preserves the identity needed to validate its worker result");
+        c.True(dirty.Add(key), "a later invalidation creates replacement work");
+        c.Eq(2L, dirty.Revision(key),
+            "replacement work receives a newer identity than the in-flight result");
+
+        dirty.Clear();
+        c.Eq(0L, dirty.Revision(key), "a world reset discards old render identities");
     }
 
     static bool Take(LodRenderDirtyScheduler scheduler, LodRenderDirtySet dirty, out long key) =>

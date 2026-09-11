@@ -35,6 +35,8 @@ public sealed class LodSaveSnapshot
     public ulong[] Runs = Array.Empty<ulong>();
     public int[] ColumnStart = Array.Empty<int>();
     public bool[] Captured = Array.Empty<bool>();
+    public ulong[] SnowStateObservedBits = Array.Empty<ulong>();
+    public ulong[] SnowCoveredBits = Array.Empty<ulong>();
 
     public static LodSaveSnapshot Of(int level, int sx, int sz, long revision,
         LodSection section, IWorldAccessor world, bool applyToParent)
@@ -66,6 +68,8 @@ public sealed class LodSaveSnapshot
             Runs = (ulong[])section.Runs.Clone(),
             ColumnStart = (int[])section.ColumnStart.Clone(),
             Captured = (bool[])section.Captured.Clone(),
+            SnowStateObservedBits = (ulong[])section.SnowStateObservedBits.Clone(),
+            SnowCoveredBits = (ulong[])section.SnowCoveredBits.Clone(),
         };
     }
 

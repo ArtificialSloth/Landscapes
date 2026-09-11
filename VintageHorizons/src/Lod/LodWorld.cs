@@ -164,6 +164,14 @@ public class LodWorld
     /// <summary>Changes only when exact section availability changes.</summary>
     public int AvailableDataRevision { get; private set; }
 
+    /// <summary>
+    /// Changes when authoritative snow provenance arrives or changes in resident terrain.
+    /// The renderer uses it only to coalesce an early climate-field refresh; no frame path
+    /// scans sections looking for changes.
+    /// </summary>
+    public long SnowStateObservationRevision { get; private set; }
+    public long LastSnowStateObservationChangeMs { get; private set; }
+
     /// <summary>Top-level (MaxLevel) ancestor keys - the quadtree roots.</summary>
     public readonly HashSet<long> TopLevelKeys = new();
 
@@ -205,6 +213,36 @@ public class LodWorld
 
     public static int ColumnStepBlocks(int level) => LodSection.ColumnStepBlocks << level;
 
+    /// <summary>
+    /// Whether the finest resident terrain answer at this position came from loaded
+    /// client/server chunks and therefore already contains vanilla's actual snow blocks.
+    /// This performs resident dictionary lookups only; climate refresh must never pull
+    /// sections from disk or scan block columns on the render thread.
+    /// </summary>
+    public bool HasObservedSnowStateAt(int blockX, int blockZ)
+    {
+        if (blockX < 0 || blockZ < 0) return false;
+
+        for (int level = 0; level <= MaxLevel; level++)
+        {
+            int footprint = LodSection.SectionBlocks << level;
+            int step = LodSection.ColumnStepBlocks << level;
+            long key = SectionKey(level, blockX / footprint, blockZ / footprint);
+            if (!Sections.TryGetValue(key, out LodSection? section)) continue;
+
+            int localX = (blockX % footprint) / step;
+            int localZ = (blockZ % footprint) / step;
+            int col = LodSection.ColumnIndex(localX, localZ);
+            if (!section.Captured[col]) continue;
+
+            // A captured generated column is an explicit unknown, so a coarser sibling
+            // aggregate must not override the finer source at this position.
+            return section.IsSnowStateObserved(col);
+        }
+
+        return false;
+    }
+
     public LodSection GetOrCreateSection(long key)
     {
         if (Sections.TryGetValue(key, out LodSection? section)) return section;
@@ -218,6 +256,7 @@ public class LodWorld
             {
                 Sections[key] = section;
                 TrackResident(key);
+                NoteObservedSnowStateArrival(section);
                 SectionBecameResident?.Invoke(key);
                 return section;
             }
@@ -242,6 +281,7 @@ public class LodWorld
 
         Sections[key] = section = loaded;
         TrackResident(key);
+        NoteObservedSnowStateArrival(section);
         SectionBecameResident?.Invoke(key);
         return true;
     }
@@ -306,6 +346,7 @@ public class LodWorld
         Sections[key] = section;
         TrackResident(key);
         RegisterAvailableData(key);
+        NoteObservedSnowStateArrival(section);
 
         // Deliberately not marked render-dirty: reloads are requested by rendering AND
         // by mip propagation, and the radial planner re-requests a mesh if it still owns
@@ -316,6 +357,25 @@ public class LodWorld
         // same reason. Only a neighbour that actually built a mesh against our absence
         // needs one, which is a question about meshes and so belongs to the renderer.
         SectionBecameResident?.Invoke(key);
+    }
+
+    /// <summary>
+    /// Replace a locally cached section with a newer durable server observation. The caller
+    /// has already revision-validated the asynchronous decode. Unlike an ordinary reload this
+    /// is a content change: its mesh, persistence row and mip ancestors all need refreshing.
+    /// </summary>
+    public void InstallReplacement(long key, LodSection section)
+    {
+        bool wasResident = Sections.ContainsKey(key);
+        Sections[key] = section;
+        TrackResident(key);
+        LoadsInFlight.Remove(key);
+        LoadFailed.Remove(key);
+        RegisterAvailableData(key);
+        RegisterInTree(key);
+        NoteObservedSnowStateArrival(section);
+        MarkChanged(key);
+        if (!wasResident) SectionBecameResident?.Invoke(key);
     }
 
     /// <summary>
@@ -502,6 +562,33 @@ public class LodWorld
     }
 
     /// <summary>
+    /// Record an observed snow answer change. Provenance always becomes durable and
+    /// propagates outward, but only an effective bare/snow transition changes the material
+    /// marker in the mesh payload. Upgrading unknown bare terrain to observed bare terrain
+    /// therefore does not rebuild an otherwise identical mesh.
+    /// </summary>
+    public void MarkSnowStateObservationChanged(long key, bool appearanceChanged = true)
+    {
+        if (KeyLevel(key) == 0) NoteSnowStateObservationChanged();
+        contentRevisions[key] = ContentRevision(key) + 1;
+        if (appearanceChanged) RenderDirty.Add(key);
+        MarkSaveDirty(key);
+        if (KeyLevel(key) < MaxLevel) MipDirty.Add(key);
+    }
+
+    /// <summary>Tell climate refresh that new authoritative coverage is available.</summary>
+    public void NoteSnowStateObservationChanged()
+    {
+        SnowStateObservationRevision++;
+        LastSnowStateObservationChangeMs = Environment.TickCount64;
+    }
+
+    void NoteObservedSnowStateArrival(LodSection section)
+    {
+        if (section.HasAnyObservedSnowState) NoteSnowStateObservationChanged();
+    }
+
+    /// <summary>
     /// Record a change to the row that must become durable. Kept separate from content
     /// revisions because clearing ApplyToParent changes the stored row without changing
     /// terrain content.
@@ -638,8 +725,12 @@ public class LodWorld
         // are in the capture path: a mip that rewrites only the parent's interior touches no
         // edge, and skipping MarkChanged on that would leave the parent's own mesh, save row
         // and mip obligation stale. See G138.
-        int parentEdges = LodMip.ApplyToParent(result, parent, out bool parentChanged);
+        int parentEdges = LodMip.ApplyToParent(
+            result, parent, out bool parentChanged, out bool snowStateChanged,
+            out bool snowAppearanceChanged);
         if (parentChanged) MarkChanged(parentKey, parentEdges);
+        else if (snowStateChanged)
+            MarkSnowStateObservationChanged(parentKey, snowAppearanceChanged);
         return true;
     }
 
@@ -679,6 +770,8 @@ public class LodWorld
         HasDataSet.Clear();
         AvailableDataSet.Clear();
         AvailableDataRevision++;
+        SnowStateObservationRevision = 0;
+        LastSnowStateObservationChangeMs = 0;
         TopLevelKeys.Clear();
         LoadsInFlight.Clear();
         LoadFailed.Clear();

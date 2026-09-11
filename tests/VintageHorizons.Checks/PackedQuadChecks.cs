@@ -136,7 +136,8 @@ public static class PackedQuadChecks
     {
         LodSection section = IsolatedRun(10, 4, textureSlot: 517);
         MeshResult plain = LodMesher.BuildMesh(Fixtures.Job(
-            section, emitTextureSlots: false, textureModeRevision: 11, worldEpoch: 21));
+            section, emitTextureSlots: false, textureModeRevision: 11, worldEpoch: 21,
+            contentRevision: 31, renderRevision: 41));
         MeshResult textured = LodMesher.BuildMesh(Fixtures.Job(
             section, emitTextureSlots: true, textureModeRevision: 12, worldEpoch: 22));
         MeshResult coarse = LodMesher.BuildMesh(Fixtures.Job(
@@ -150,6 +151,8 @@ public static class PackedQuadChecks
         c.Eq(12L, textured.TextureModeRevision, "the textured result carries its toggle identity");
         c.Eq(21L, plain.WorldEpoch, "the plain result carries its world identity");
         c.Eq(22L, textured.WorldEpoch, "the textured result carries its world identity");
+        c.Eq(31L, plain.ContentRevision, "the result carries its section-content identity");
+        c.Eq(41L, plain.RenderRevision, "the result carries its render-obligation identity");
 
         for (int vertex = 0; vertex < textured.VertexCount; vertex++)
         {
@@ -161,7 +164,7 @@ public static class PackedQuadChecks
             c.Eq((byte)0, textured.Rgba[at + 2],
                 "the visible legacy mesh retains all twenty-four slot bits");
             c.Eq((byte)(LodMesher.LegacyTextureBase + 63), textured.Rgba[at + 3],
-                "the unused fourth alpha band marks a texture while preserving tint 63");
+                "the expanded comparison stream's fourth band marks a texture while preserving tint 63");
         }
         for (int vertex = 0; vertex < plain.VertexCount; vertex++)
         {

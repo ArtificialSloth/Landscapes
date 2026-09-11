@@ -98,6 +98,16 @@ public partial class VintageHorizonsModSystem
         Entry(lines, ".vhfar", DistanceOrUnlimited(renderer.FarViewDistanceCap));
         AddThresholds(lines, thresholds);
         Entry(lines, ".vhmask", renderer.ChunkMaskEnabled);
+        Entry(lines, ".vhgap", renderer.HandoffGapLog);
+        Entry(lines, ".vhgap release", renderer.HandoffGapRelease);
+        Entry(lines, ".vhsnowline cells", renderer.SnowLinePerCell);
+        Entry(lines, ".vhsnowline shader", renderer.SnowLineFromField);
+        Entry(lines, ".vhsnowline alpha", renderer.SnowLineInTexture);
+        Entry(lines, ".vhsnowline early", renderer.SnowLineEarlyRefresh);
+        Entry(lines, ".vhsnowline fetch", renderer.SnowLineFetchAll);
+        Entry(lines, ".vhsky", renderer.SkyWitness);
+        Entry(lines, ".vhsky verify", renderer.SkyMaskVerify);
+        Entry(lines, ".vhlaterange", renderer.LateRangeCheck);
         Entry(lines, ".vhblend", renderer.BlendPipelineEnabled);
         Entry(lines, ".vhnear", Number(renderer.NearSuppressionBlocks, "0") + " blocks");
         Entry(lines, ".vhslabs", HalfBlockMode(renderer));
@@ -256,6 +266,7 @@ public partial class VintageHorizonsModSystem
         Entry(lines, "savegame sweep", server.SweepSavegame);
         Entry(lines, "sweep radius", server.SweepRadiusChunks + " chunks");
         Entry(lines, "sweep columns/sec", server.SweepColumnsPerSecond.ToString(CultureInfo.InvariantCulture));
+        Entry(lines, "snow campaign columns/sec", server.RefreshColumnsPerSecond.ToString(CultureInfo.InvariantCulture));
         Entry(lines, "generate command", server.EnableGenerateCommand);
         Entry(lines, "gen max radius", server.GenerateMaxRadiusChunks + " chunks");
         Entry(lines, "gen default radius", server.GenerateDefaultRadiusChunks + " chunks");

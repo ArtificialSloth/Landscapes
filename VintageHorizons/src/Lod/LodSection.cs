@@ -73,6 +73,20 @@ public struct LodPaletteEntry
     /// and the ground shows through it.
     /// </summary>
     public const byte FlagThin = 16;
+
+    /// <summary>
+    /// A real snow layer/block captured from vanilla. It remains in the durable runs for
+    /// mixed-version compatibility, but current meshers treat it as surface appearance
+    /// rather than building another slab/cube above the cached terrain.
+    /// </summary>
+    public const byte FlagSnowLayer = 32;
+
+    /// <summary>
+    /// A block variant whose own model carries vanilla snow (normally Variant["cover"] ==
+    /// "snow"). Unlike FlagSnowLayer this block remains terrain; the flag contributes the
+    /// column's observed snow answer during capture.
+    /// </summary>
+    public const byte FlagSnowCovered = 64;
 }
 
 /// <summary>
@@ -87,6 +101,8 @@ public class LodSection
     public const int GridSize = 64;                 // columns per section edge
     public const int ColumnStepBlocks = 1;          // blocks per column at level 0 - full DH-parity resolution
     public const int SectionBlocks = GridSize * ColumnStepBlocks; // 64 at level 0
+    public const int SnowStateObservedWordCount = (GridSize * GridSize + 63) / 64;
+    public const int SnowStateObservedByteCount = SnowStateObservedWordCount * sizeof(ulong);
 
     /// <summary>Run packing: paletteId(16) | yTop(14) | yBottom(14). Run spans [yBottom, yTop).</summary>
     public static ulong PackRun(int paletteId, int yTop, int yBottom) =>
@@ -109,6 +125,21 @@ public class LodSection
     public int CapturedColumns;
 
     /// <summary>
+    /// One bit per column saying capture read the live/savegame block state, including its
+    /// real snow layer or snow-covered variant. Generated peeks deliberately leave the bit
+    /// clear: their terrain is useful, but climate remains the only snow answer for them.
+    /// </summary>
+    public readonly ulong[] SnowStateObservedBits = new ulong[SnowStateObservedWordCount];
+
+    /// <summary>
+    /// One bit per column carrying the observed yes/no snow answer. This is deliberately
+    /// separate from the run palette: thin snow can disappear during majority material
+    /// downsampling while its areal coverage must survive to inform the parent surface.
+    /// Meaningful only where the corresponding SnowStateObservedBits bit is set.
+    /// </summary>
+    public readonly ulong[] SnowCoveredBits = new ulong[SnowStateObservedWordCount];
+
+    /// <summary>
     /// Set when a section was deserialized off the main thread: palette BlockIds are
     /// not resolved yet, because the game's block registry may only be touched from
     /// the main thread. Resolved and cleared on install, before anything reads ids.
@@ -129,6 +160,8 @@ public class LodSection
             long bytes = ColumnStart.LongLength * sizeof(int)
                 + Runs.LongLength * sizeof(ulong)
                 + Captured.LongLength
+                + SnowStateObservedBits.LongLength * sizeof(ulong)
+                + SnowCoveredBits.LongLength * sizeof(ulong)
                 + Palette.Count * 12L;
             if (PendingPaletteCodes != null)
             {
@@ -140,6 +173,46 @@ public class LodSection
     }
 
     public int RunCount(int col) => ColumnStart[col + 1] - ColumnStart[col];
+
+    public bool IsSnowStateObserved(int col) =>
+        (SnowStateObservedBits[col >> 6] & (1UL << (col & 63))) != 0;
+
+    public bool IsSnowCovered(int col) =>
+        (SnowCoveredBits[col >> 6] & (1UL << (col & 63))) != 0;
+
+    public bool HasAnyObservedSnowState
+    {
+        get
+        {
+            foreach (ulong word in SnowStateObservedBits)
+                if (word != 0) return true;
+            return false;
+        }
+    }
+
+    /// <summary>Set one column's snow-source provenance and report whether it changed.</summary>
+    public bool SetSnowStateObserved(int col, bool observed)
+    {
+        int word = col >> 6;
+        ulong mask = 1UL << (col & 63);
+        ulong before = SnowStateObservedBits[word];
+        ulong after = observed ? before | mask : before & ~mask;
+        if (before == after) return false;
+        SnowStateObservedBits[word] = after;
+        return true;
+    }
+
+    /// <summary>Set one column's observed snow coverage and report whether it changed.</summary>
+    public bool SetSnowCovered(int col, bool covered)
+    {
+        int word = col >> 6;
+        ulong mask = 1UL << (col & 63);
+        ulong before = SnowCoveredBits[word];
+        ulong after = covered ? before | mask : before & ~mask;
+        if (before == after) return false;
+        SnowCoveredBits[word] = after;
+        return true;
+    }
 
     /// <summary>Enumerate a column's runs: callback(paletteId, yTop, yBottom).</summary>
     public Span<ulong> ColumnRuns(int col) =>

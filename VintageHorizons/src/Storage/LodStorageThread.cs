@@ -23,10 +23,12 @@ public enum LodForeignSource
 /// <summary>A foreign blob decoded without touching the live block registry.</summary>
 public readonly record struct LodForeignDecodeResult(
     long Epoch, long Key, LodForeignSource Source, LodSection? Section,
+    bool ReplaceExisting, long ExpectedContentRevision,
     long EstimatedBytes, long ReadyAtMilliseconds);
 
 readonly record struct LodForeignDecodeJob(
-    long Epoch, long Key, LodForeignSource Source, byte[] Blob);
+    long Epoch, long Key, LodForeignSource Source, byte[] Blob,
+    bool ReplaceExisting, long ExpectedContentRevision);
 
 /// <summary>
 /// Serializes and writes LOD sections away from the render thread.
@@ -130,10 +132,12 @@ public class LodStorageThread : IDisposable
         Volatile.Read(ref ForeignOutstandingRef(source)) < ForeignLimit(source);
 
     public bool TryEnqueueForeign(
-        long epoch, long key, LodForeignSource source, byte[] blob)
+        long epoch, long key, LodForeignSource source, byte[] blob,
+        bool replaceExisting = false, long expectedContentRevision = 0)
     {
         if (blob.Length == 0 || !TryReserveForeign(source)) return false;
-        foreignRequests.Enqueue(new LodForeignDecodeJob(epoch, key, source, blob));
+        foreignRequests.Enqueue(new LodForeignDecodeJob(
+            epoch, key, source, blob, replaceExisting, expectedContentRevision));
         signal.Set();
         return true;
     }
@@ -387,7 +391,9 @@ public class LodStorageThread : IDisposable
         long estimatedBytes = section?.EstimatedContentBytes ?? 0;
         Interlocked.Add(ref foreignResultBytes, estimatedBytes);
         foreignResults.Enqueue(new LodForeignDecodeResult(
-            job.Epoch, job.Key, job.Source, section, estimatedBytes, Environment.TickCount64));
+            job.Epoch, job.Key, job.Source, section,
+            job.ReplaceExisting, job.ExpectedContentRevision,
+            estimatedBytes, Environment.TickCount64));
     }
 
     public int LoadErrors;

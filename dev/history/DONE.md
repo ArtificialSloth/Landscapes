@@ -2,6 +2,56 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-11 - Vanilla-to-LOD handoff flash found and fixed (0.4.53)
+
+The release blocker Session 83 left open is closed. The flash was one frame of open sky on a chunk
+at vanilla's own range edge while the ownership mask still handed it to vanilla. The engine moves
+the local player at Before/1.0, after this mod's preparation at 0.994, and fills its culler only
+afterwards. Since 0.4.13 the exact range sweep had therefore measured the pre-physics player block
+and released each chunk one frame after vanilla stopped drawing it. 0.4.53 re-runs the loss-only
+sweep at Before/1.001 whenever the physics step changed the player's block. The owner confirmed
+the flash is gone.
+
+Getting there took three diagnostic builds. `.vhgap` (0.4.50) and its same-frame release saw
+nothing, because they ran in the same pre-physics slot. `.vhsnowline` (0.4.51–0.4.52) found
+nothing in the 0.4.40 snow line that the owner's bisection pointed at. The `.vhsky` GPU witness
+(0.4.52) measured the picture directly: single frames of 20,000–215,000 px, always over loaded
+vanilla ground 65–67 blocks out that the captured mask gave to vanilla, with the GPU mask
+identical to the CPU copy. Decompiling the engine's frame order and every `dist/` build then
+located both the mechanism and the build that introduced it. The 0.4.48 stale-result rejection
+and the 0.4.49 gain-only geometry gate remain in place as sound but insufficient changes. Details
+are in Session 84.
+
+## 2026-09-10 - Spatial winter state and event-driven existing-terrain refresh built
+
+The 0.4.40–0.4.49 development sequence closes the original global-snow regression in source and
+in the owner's appearance review. Snow had remained one player-local uniform after grass and
+foliage moved to a position-specific climate field, so entering a snowy chunk repainted the whole
+visible LOD world. The field now carries each 64-block cell's current seasonal snow threshold.
+Where loaded vanilla terrain has been captured, paired per-column provenance and coverage bits
+override that estimate with actual snow-layer or snow-covered-variant state. The bits persist,
+propagate through mips by observed-only areal majority, and use an append-compatible format-4
+tail. Generated peeks remain unknown.
+
+Snow is rendered as material/colour on the existing top surface, as directed, not as additional
+geometry. Frostable grass and foliage receive a live vanilla-derived frost overlay while their
+ordinary seasonal tint continues underneath. The owner ultimately described the snow visuals as
+fine.
+
+The initial perpetual one-full-height-chunk-column-per-second updater was built, questioned, and
+removed. Loaded chunks now use vanilla's immediate dirty event. Dormant terrain uses 30-second
+regional weather-snapshot polling, finite accumulation/melt campaigns at a configurable default
+of one column per second, and one dormant-region canary per poll. `/vhrefresh` supplies a manual
+safe recapture over existing terrain only. Durable changed L0 rows reach connected network clients
+through an append-compatible refresh manifest and integrated clients through sibling-row
+modification detection; parents rebuild locally.
+
+Source/build validation reaches 22,812 assertions with zero failures and a zero-warning/error
+Release build. Compatibility remains 1/4/6. The overall 0.4.49 build is **not accepted**, because
+the vanilla-to-LOD terrain handoff now visibly flashes; that regression remains open in TODO and
+Session 83. The completed entry here is the winter data/render/update architecture, not release
+acceptance.
+
 ## 2026-09-09 - Streaming-water guard accepted after complete terrain-safe rollback
 
 Version 0.4.37 reduced the split-second light patch seen as newly loaded vanilla water begins

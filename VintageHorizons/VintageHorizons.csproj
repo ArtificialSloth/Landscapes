@@ -8,7 +8,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>VintageHorizons</AssemblyName>
     <RootNamespace>VintageHorizons</RootNamespace>
-    <Version>0.4.39</Version>
+    <Version>0.4.53</Version>
   </PropertyGroup>
 
   <!-- No debug info in Release: the zip never ships the .pdb, and generating one
@@ -36,6 +36,11 @@
     </Reference>
     <Reference Include="VintagestoryLib">
       <HintPath>$(GamePath)/VintagestoryLib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Vanilla's public regional snow snapshots drive finite dormant-terrain refreshes. -->
+    <Reference Include="VSEssentials">
+      <HintPath>$(GamePath)/Mods/VSEssentials.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="0Harmony">

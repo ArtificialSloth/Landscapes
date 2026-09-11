@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Buffers.Binary;
 using System.Text;
 using Microsoft.Data.Sqlite;
 using Vintagestory.API.Common;
@@ -458,6 +459,35 @@ public class LodStore : SQLiteDBConnection
                 if (snap.Captured[i]) capturedBits[i >> 3] |= (byte)(1 << (i & 7));
             }
             w.Write(capturedBits);
+
+            // Append-compatible format-4 extension. Old readers stop after Captured and
+            // safely ignore this tail; new readers treat a missing tail as legacy data
+            // whose snow source is unknown, so the existing cache does not need a purge.
+            var snowStateBits = new byte[LodSection.SnowStateObservedByteCount];
+            int words = Math.Min(
+                snap.SnowStateObservedBits.Length, LodSection.SnowStateObservedWordCount);
+            for (int i = 0; i < words; i++)
+            {
+                BinaryPrimitives.WriteUInt64LittleEndian(
+                    snowStateBits.AsSpan(i * sizeof(ulong), sizeof(ulong)),
+                    snap.SnowStateObservedBits[i]);
+            }
+            w.Write(snowStateBits);
+
+            // Second append-compatible format-4 tail: the answer paired with the
+            // provenance above. A reader must have both before it may suppress climate
+            // fallback; 0.4.43 rows carried only provenance and could otherwise claim a
+            // downsampled-away snow layer was authoritative bare ground.
+            var snowCoveredBits = new byte[LodSection.SnowStateObservedByteCount];
+            words = Math.Min(
+                snap.SnowCoveredBits.Length, LodSection.SnowStateObservedWordCount);
+            for (int i = 0; i < words; i++)
+            {
+                BinaryPrimitives.WriteUInt64LittleEndian(
+                    snowCoveredBits.AsSpan(i * sizeof(ulong), sizeof(ulong)),
+                    snap.SnowCoveredBits[i]);
+            }
+            w.Write(snowCoveredBits);
         }
 
         return ms.ToArray();
@@ -531,6 +561,39 @@ public class LodStore : SQLiteDBConnection
                 {
                     section.Captured[i] = true;
                     section.CapturedColumns++;
+                }
+            }
+
+            byte[] snowStateBits = r.ReadBytes(LodSection.SnowStateObservedByteCount);
+            if (snowStateBits.Length != 0
+                && snowStateBits.Length != LodSection.SnowStateObservedByteCount)
+                return null;
+
+            for (int i = 0; i < snowStateBits.Length / sizeof(ulong); i++)
+            {
+                section.SnowStateObservedBits[i] = BinaryPrimitives.ReadUInt64LittleEndian(
+                    snowStateBits.AsSpan(i * sizeof(ulong), sizeof(ulong)));
+            }
+
+            byte[] snowCoveredBits = r.ReadBytes(LodSection.SnowStateObservedByteCount);
+            if (snowCoveredBits.Length != 0
+                && snowCoveredBits.Length != LodSection.SnowStateObservedByteCount)
+                return null;
+
+            if (snowCoveredBits.Length == 0)
+            {
+                // The 0.4.43 extension knew only that vanilla had been sampled. At mip
+                // levels that bit could survive after the thin snow material vanished,
+                // so it is not enough to assert bare ground. Retain terrain and fall back
+                // to climate until a rolling authoritative recapture upgrades it.
+                Array.Clear(section.SnowStateObservedBits);
+            }
+            else
+            {
+                for (int i = 0; i < snowCoveredBits.Length / sizeof(ulong); i++)
+                {
+                    section.SnowCoveredBits[i] = BinaryPrimitives.ReadUInt64LittleEndian(
+                        snowCoveredBits.AsSpan(i * sizeof(ulong), sizeof(ulong)));
                 }
             }
 

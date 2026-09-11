@@ -13,6 +13,8 @@ in float fogAmount;
 in float edgeFade;
 in vec3 tint;
 in float tintAlpha;
+in float snowLineAtVertex;
+in float frostAtVertex;
 in vec3 terrainPos;
 in vec3 sectionLocal;
 
@@ -380,7 +382,6 @@ uniform float columnBlocks;
 // mountaintops the same lush green as the valley floor.
 // Must equal LodTintRegistry.MaxSlots; LoadShader logs an error if it does not.
 const int TINT_SLOTS = 64;
-uniform float snowLineY;
 
 // Blend factors per band, now that alpha carries the slot instead of an opacity.
 // Flowers are crossed quads in vanilla; as a solid cube they read as a grey blob, so

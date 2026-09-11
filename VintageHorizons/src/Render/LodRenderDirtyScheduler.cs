@@ -9,6 +9,7 @@ public sealed class LodRenderDirtySet : IEnumerable<long>
 {
     readonly HashSet<long> keys = new();
     readonly Queue<long> additions = new();
+    readonly Dictionary<long, long> revisions = new();
 
     public int Count => keys.Count;
     internal long Generation { get; private set; }
@@ -16,17 +17,25 @@ public sealed class LodRenderDirtySet : IEnumerable<long>
     public bool Add(long key)
     {
         if (!keys.Add(key)) return false;
+        // This is the identity of the mesh obligation, not merely set membership. A key is
+        // removed when a worker snapshots it; if capture, a neighbour edge, or a render-mode
+        // change dirties it again while that worker is busy, the new Add receives a new
+        // revision. The completed worker result can then be rejected without ever replacing
+        // the still-live older mesh with an obsolete intermediate one.
+        revisions[key] = revisions.GetValueOrDefault(key) + 1;
         additions.Enqueue(key);
         return true;
     }
 
     public bool Remove(long key) => keys.Remove(key);
     public bool Contains(long key) => keys.Contains(key);
+    public long Revision(long key) => revisions.GetValueOrDefault(key);
 
     public void Clear()
     {
         keys.Clear();
         additions.Clear();
+        revisions.Clear();
         Generation++;
     }
 

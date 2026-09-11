@@ -19,7 +19,7 @@ longer sinks near the transition.
 client ChunkDirty / server ChunkColumnLoaded / transient generation
     -> column-key deduplication
     -> owning-thread chunk and rain-map snapshot
-    -> capture worker: blocks -> vertical RLE runs
+    -> capture worker: blocks -> vertical RLE runs + loaded-column snow observation
     -> owning-thread palette registration and leaf merge
     -> immutable mip snapshot -> mip worker -> revision-validated owning-thread publication
     -> immutable mesh snapshot -> mesh workers
@@ -43,7 +43,9 @@ server cache key manifest
 
 Integrated singleplayer sibling-cache discovery adds a dedicated read-only SQLite reader.
 It scans at a coarse cadence, computes key deltas on its own thread, and publishes bounded
-immutable batches for owning-thread registration. Visibility-driven blob reads use a
+immutable batches for owning-thread registration. It also compares level-zero `ModifiedMs`
+values and publishes changed-key batches, allowing a newer server-side capture to replace an
+older client row without a reconnect. Visibility-driven blob reads use a
 second bounded worker and worker-owned read-only connection; the game thread only requests
 keys and publishes completed immutable blobs.
 
@@ -79,8 +81,11 @@ state.
 
 Mesh workers receive immutable section snapshots. They build CPU vertex/index arrays only. They
 never call OpenGL or mutate `LodWorld`. Jobs/results carry both the pipeline world epoch and the
-renderer texture-mode revision; publication rejects either stale identity before touching
-new-world in-flight or dirty bookkeeping.
+renderer texture-mode revision, plus the section content revision and exact render-obligation
+revision. Snapshot submission rechecks the render revision, and publication rejects a stale
+same-world result while retaining the current live mesh and restoring the exact dirty obligation.
+Cross-world and texture-mode identities are rejected before touching new-world in-flight or dirty
+bookkeeping.
 
 ### Mip worker
 
@@ -133,6 +138,12 @@ here is frame-critical even if the game exposes it separately from game ticks.
 
 `LodSection` is a 64×64 grid of vertical columns. Each column contains packed RLE runs. A section-local palette maps run ids to live block ids, untinted colors, material flags, and tint slots.
 
+Each section also holds two 4,096-bit snow maps. `SnowStateObservedBits` says a loaded
+client/server/savegame column supplied actual vanilla snow state; transient generated peeks leave
+it clear. `SnowCoveredBits` carries the yes/no answer and is meaningful only under that
+provenance. Keeping the answer outside the material runs lets thin snow coverage survive mip
+downsampling even if the snow block itself does not win a material vote.
+
 Level 0 stores the finest LOD representation. Higher levels double horizontal column size. A parent section receives one quadrant from each child. `ApplyToParent`/`MipDirty` preserves propagation obligations across persistence and restart.
 
 Packed section keys contain level, section X, and section Z. `HasDataSet` includes real rows and synthesized ancestors so the quadtree can descend without loading every section into RAM.
@@ -146,6 +157,13 @@ The serialized blob contains:
 - Palette codes, colors, and material flags.
 - Per-column run counts and packed runs.
 - Captured-column bits.
+- Optional append-only observed-snow provenance and snow-covered bitsets.
+
+The format-4 snow tails are backward compatible. Old readers ignore data after captured bits.
+Current readers treat a missing tail as unknown and reject a partial one. A provenance-only
+0.4.43 row is also downgraded to unknown because provenance without its paired yes/no answer
+cannot safely assert bare terrain. The authoritative compatibility reasoning is recorded in
+`dev/WIRE_HISTORY.md`.
 
 Database schema meaning, blob format, and assist protocol are independent compatibility numbers. Their authoritative history is `dev/WIRE_HISTORY.md`.
 
@@ -175,6 +193,15 @@ probes share exact capture, ordered restoration and verification of every bindin
 
 Opaque and translucent terrain use separate mesh buffers and passes. Seasonal/climate tint data is refreshed from live game color maps and applied in the shader. The camera uses relative section transforms so large world coordinates do not enter mesh vertex data. Cosmetic terrain noise combines section-local vertices with a stable section world origin; it must not sample camera-relative geometry coordinates.
 
+Snow is surface appearance, not LOD geometry. Capture may retain a snow-layer run for backward
+compatibility, but current meshing emits no slab, cube, wall, or occlusion cover for it. When an
+observed column is snow-covered, the existing highest surface carries the fourth material band;
+otherwise the shader uses the snow threshold stored in the climate field at that terrain
+position. Frostable tint slots carry a separate material bit, and the shader derives vanilla-like
+frost strength from that cell's current temperature, altitude, season temperature, and value
+noise before composing it over the ordinary live seasonal tint. Snow therefore does not freeze
+or replace the seasonal color system.
+
 Cached water uses dedicated surface and depth programs. OIT is the normal product stage; the
 named opaque pipeline is retained only as an explicit dedicated-shader comparison. The legacy
 water shader selector is retired. When a requested surface, liquid-depth, junction, repair or OIT
@@ -187,6 +214,13 @@ cached meshes are skipped before submission, and only mixed frontier meshes pay 
 readiness mask. Per-cell ownership is the default; the measured radial cutoff remains the
 explicit fallback. Visibility/ownership remains separate from mesh residency and
 persistence; see `dev/plans/PLAN_CHUNK_AWARE_VANILLA_HANDOFF.md`.
+
+Ownership is decided each frame by the preparation at Before/0.994, which has to precede
+vanilla's liquid-depth pass at 0.995. The engine moves the local player later in the same stage
+(Before/1.0) and fills its frustum culler only after that, so a loss-only late range check at
+Before/1.001 re-runs the exact range sweep whenever the physics step changed the player's block
+and publishes the ground texels before anything draws. Water's footprint follows at the next
+preparation, so every water pass in a frame reads the same footprint.
 
 Opaque terrain faces use outward counter-clockwise winding and render with GPU back-face
 culling enabled. Water and thin/cutout surfaces stay two-sided. Selected opaque sections are
@@ -212,12 +246,17 @@ tick. Both policies trade slightly later reclamation for the removal of collecti
 frame/tick bursts.
 
 Seasonal/climate sampling uses game APIs and therefore also remains on the owning thread.
-Stable published slots refresh no more than once every 30 seconds. A tint slot registered by a
-later cache load bypasses that cadence immediately; sampling still advances one slot per frame into
-staging arrays and publishes the completed low/high tables atomically. Mesh scheduling retains a
-section's exact dirty obligation while any tint slot in its palette is unpublished, so geometry is
-not first revealed with identity-white tint and recoloured later. Untinted sections do not wait,
-and existing parent coverage remains live during a refined replacement's appearance preparation.
+Stable published slots and the 128×128 field refresh no more than once every 30 seconds. The field
+stores raw temperature, rainfall, spread distance, and a quantized current snow threshold at one
+64-block cell per level-zero section edge; one existing texture sample serves both biome tint and
+snow. Newly arrived authoritative snow coverage coalesces an earlier field refresh after a
+one-second debounce rather than waiting for the next calendar interval. A tint slot registered by
+a later cache load bypasses the cadence immediately; sampling still advances one slot or field
+row per frame into staging arrays and publishes complete tables/field atomically. Mesh scheduling
+retains a section's exact dirty obligation while any tint slot in its palette is unpublished, so
+geometry is not first revealed with identity-white tint and recoloured later. Untinted sections
+do not wait, and existing parent coverage remains live during a refined replacement's appearance
+preparation.
 
 The saved blend-pipeline master controls both seam resources and packed-L0 block textures. Off
 gates owning-thread atlas resolution and omits texture-slot arrays from immutable mesh snapshots;
@@ -318,7 +357,23 @@ Server capture and serving are additive. Players without the mod remain unaffect
 
 Savegame sweeping may load only terrain already known to exist with a safe generated neighborhood. Transient generation uses `PeekChunkColumn` and must not write generated terrain to the savegame. Runtime absence verification measures this promise.
 
+After the sweep has built its generated-column map, dormant snow refresh is change-driven rather
+than a perpetual terrain scan. Loaded chunks take the exact path through vanilla's chunk-dirty
+event. Every 30 seconds the server reads public regional snow-accumulation snapshots, reduces
+corner deltas to accumulation/melt band crossings, and starts a finite campaign over eligible
+existing columns. One dormant map-region canary is loaded per poll so unloaded weather history
+eventually becomes visible. Campaign work is rate-limited by `RefreshColumnsPerSecond` (default
+1, clamped 0–16), shares the sweep's 1 ms owning-thread issue budget, and cannot generate an
+absent column. There is no “can accept snow” classification: unknown, wholly bare, wholly covered,
+and mixed observed columns already provide the safe directional filter.
+
 The server must answer every accepted section request, including explicit refusal. Silence strands the client's in-flight slot indefinitely.
+
+Persisted changed level-zero rows are offered live to connected clients with the
+append-compatible refresh flag. Only L0 is transferred; each client rebuilds its own parents.
+A replacement may overwrite an older remote/local row only if the submitted content revision is
+still current, so a later client capture remains authoritative. The remote-update route remains
+live until the exact replacement persistence revision is acknowledged.
 
 ## Settled decisions register
 
@@ -409,6 +464,23 @@ The server must answer every accepted section request, including explicit refusa
     seabed holes; 0.4.39 completely restores the 0.4.37 terrain-safe state. Any future terrain
     ownership change is separate work requiring explicit owner authorization and terrain-first
     runtime evidence.
+29. **Observed snow provenance and snow coverage are separate facts.** Generated peeks remain
+    unknown; loaded captures may assert bare or covered. Both facts persist and propagate, and
+    a coarse parent may assert either only when all contributing captured children were observed.
+30. **Snow changes surface material, not topology.** Snow layers do not add LOD geometry. Actual
+    observed coverage marks the existing top face; unknown terrain uses a spatial climate
+    threshold. Frost composes over live seasonal tint.
+31. **Dormant snow refresh follows weather transitions.** Loaded chunks recapture from dirty
+    events; unloaded regions use 30-second snapshot signals, finite rate-limited campaigns and
+    sparse canaries. Continuous full-world column cycling is intentionally absent.
+32. **Live server refresh transfers durable L0 only.** Connected clients may replace older rows
+    after a refresh notification, but local capture wins revision races and mip ancestors rebuild
+    locally.
+33. **Range ownership is decided from the player block the engine will draw with.** An ownership
+    decision that predicts vanilla's range clause must use the block position the culler is
+    given, which exists only after the player's physics step at Before/1.0. The preparation stays
+    at 0.994 for the water passes; the late range check at 1.001 is loss-only, goes through the
+    ordinary publication handshake, and defers water's footprint by one frame (G170).
 
 ## Concurrency invariants
 

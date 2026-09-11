@@ -1,16 +1,16 @@
 namespace VintageHorizons;
 
 /// <summary>
-/// The raw temperature and rainfall of every 64-block cell around the player, so distant
-/// terrain can be tinted by the climate it stands in rather than by the climate under the
-/// player's feet.
+/// The raw temperature, rainfall and current snow line of every 64-block cell around the
+/// player, so distant terrain can be coloured by the climate it stands in rather than by the
+/// climate under the player's feet.
 ///
-/// This is the whole spatial half of the distant tint. Everything else a tint needs is either
-/// arithmetic - the lapse rate that turns raw temperature into the temperature at a vertex's
-/// own height, and the season blend weight - or a lookup in a colour map. Two bytes per cell
-/// is therefore the entire per-position input, which is why this is a field of climate and not
-/// a field of colours: colours would need one plane per tint slot and would still have to be
-/// resampled every time the season moved.
+/// This is the whole spatial half of distant climate rendering. Everything else a tint needs is
+/// either arithmetic - the lapse rate that turns raw temperature into the temperature at a
+/// vertex's own height, and the season blend weight - or a lookup in a colour map. Temperature
+/// and rainfall remain two bytes per cell; snow adds one quantised threshold that is refreshed
+/// as the season moves. This is still a field of climate rather than colours: colours would need
+/// one plane per tint slot and would also have to be resampled every time the season moved.
 ///
 /// **64 blocks** because that is one level-0 section edge, so a section origin is cell-aligned
 /// at every LOD level and the shader can build a cell address without a large world coordinate
@@ -18,6 +18,12 @@ namespace VintageHorizons;
 /// owner's world, raw temperature moves 2.3 counts and rainfall 10.8 counts per 64 blocks, and
 /// both scale exactly linearly from 32 to 256 blocks - climate is a smooth ramp at this scale,
 /// not a noisy field, so interpolating between cell centres costs curvature only.
+///
+/// Snow is deliberately part of the same field. The old renderer calculated one snow line at
+/// the player's position and sent that single height to the whole view, so walking into a cold
+/// chunk repainted every visible mountain white on the next refresh. Carrying the snow line with
+/// the raw climate gives missing cells the same nearest-known behaviour and lets the shader
+/// interpolate the threshold at the terrain's own X/Z.
 ///
 /// **The client does not know the climate everywhere.** It holds map regions for ground it has
 /// been sent - about 1,000 blocks on arrival, growing toward 3,000 as the player explores,
@@ -53,6 +59,8 @@ internal sealed class LodClimateField
     readonly ushort[] spread;
     readonly byte[] temperature;
     readonly byte[] rainfall;
+    readonly float[] snowLine;
+    readonly ulong[] snowStateObserved;
 
     int minCellX;
     int minCellZ;
@@ -61,6 +69,10 @@ internal sealed class LodClimateField
 
     int pendingMinCellX;
     int pendingMinCellZ;
+    float snowMinY;
+    float snowStepY = 1f;
+    float pendingSnowMinY;
+    float pendingSnowStepY = 1f;
 
     /// <summary>
     /// Cells answered so far in the refresh being BUILT, and cells in the one on screen.
@@ -87,6 +99,8 @@ internal sealed class LodClimateField
         spread = new ushort[cells];
         temperature = new byte[cells];
         rainfall = new byte[cells];
+        snowLine = new float[cells];
+        snowStateObserved = new ulong[(cells + 63) / 64];
         Clear();
     }
 
@@ -99,6 +113,15 @@ internal sealed class LodClimateField
     public int WidthCells => width;
     public int DepthCells => depth;
     public int KnownCells => knownCells;
+    public float SnowMinY => snowMinY;
+    public float SnowStepY => snowStepY;
+
+    /// <summary>
+    /// Whether the alpha byte carries the per-cell snow line (the 0.4.40 design) or a constant
+    /// 255, as 0.4.39's texels did. A session-only comparison for `.vhsnowline alpha`; it
+    /// takes effect at the next publish.
+    /// </summary>
+    public bool EncodeSnowLine { get; set; } = true;
     /// <summary>
     /// Usable only once at least one cell carries a real climate. With none, the spread has
     /// nothing to spread and the field must not be drawn from at all - the caller keeps its
@@ -107,7 +130,8 @@ internal sealed class LodClimateField
     /// </summary>
     public bool Active => width > 0 && depth > 0 && knownCells > 0;
     public long Bytes => texels.LongLength * sizeof(int) + spread.LongLength * sizeof(ushort)
-        + temperature.LongLength + rainfall.LongLength;
+        + temperature.LongLength + rainfall.LongLength + snowLine.LongLength * sizeof(float)
+        + snowStateObserved.LongLength * sizeof(ulong);
 
     /// <summary>True when the buffer differs from what the GPU last accepted.</summary>
     public bool Dirty { get; private set; }
@@ -143,6 +167,8 @@ internal sealed class LodClimateField
         Array.Fill(spread, (ushort)Unreached);
         Array.Clear(temperature);
         Array.Clear(rainfall);
+        Array.Clear(snowLine);
+        Array.Clear(snowStateObserved);
         width = depth = 0;
         pendingKnownCells = 0;
         knownCells = 0;
@@ -153,14 +179,40 @@ internal sealed class LodClimateField
     public delegate bool Sampler(int blockX, int blockZ, out byte temperature, out byte rainfall);
 
     /// <summary>
+    /// The same real climate answer plus the current snow threshold at that cell. Kept as a
+    /// separate delegate so climate-only checks and callers do not have to invent seasonal
+    /// state; the renderer uses this overload.
+    /// </summary>
+    public delegate bool SeasonalSampler(int blockX, int blockZ,
+        out byte temperature, out byte rainfall, out float snowLineY,
+        out bool snowStateIsObserved);
+
+    /// <summary>
     /// Start a window centred on the camera. The window is re-sampled wholesale rather than
     /// scrolled: the wrapped ring hands a reused slot to different world coordinates, and a
     /// full rewrite is what stops the shader reading another place's climate.
     /// </summary>
     public void BeginRefresh(int camBlockX, int camBlockZ)
     {
+        BeginRefresh(camBlockX, camBlockZ, 0f, 65_000f);
+    }
+
+    /// <summary>
+    /// Start a window and define how its snow line is encoded in the texture alpha byte.
+    /// Snow is blended over 24 blocks, so one byte across the world's vertical span retains
+    /// more precision than the visible transition needs without adding another sampler.
+    /// </summary>
+    public void BeginRefresh(int camBlockX, int camBlockZ, float minSnowY, float maxSnowY)
+    {
+        if (!float.IsFinite(minSnowY) || !float.IsFinite(maxSnowY) || maxSnowY <= minSnowY)
+            throw new ArgumentOutOfRangeException(nameof(maxSnowY),
+                "Snow encoding range must be finite and non-empty.");
+
         pendingMinCellX = CellOf(camBlockX) - capacity / 2;
         pendingMinCellZ = CellOf(camBlockZ) - capacity / 2;
+        pendingSnowMinY = minSnowY;
+        pendingSnowStepY = (maxSnowY - minSnowY) / 255f;
+        Array.Clear(snowStateObserved);
         for (int z = 0; z < capacity; z++)
         {
             int row = ((pendingMinCellZ + z) & capacityMask) * capacity;
@@ -181,6 +233,23 @@ internal sealed class LodClimateField
     public void RefreshRow(int row, Sampler sample)
     {
         ArgumentNullException.ThrowIfNull(sample);
+
+        bool WithoutSnow(int blockX, int blockZ,
+            out byte temperature, out byte rainfall, out float snowLineY,
+            out bool snowStateIsObserved)
+        {
+            snowLineY = pendingSnowMinY + pendingSnowStepY * 255f;
+            snowStateIsObserved = false;
+            return sample(blockX, blockZ, out temperature, out rainfall);
+        }
+
+        RefreshRow(row, WithoutSnow);
+    }
+
+    /// <summary>Sample one row including the current, position-specific snow threshold.</summary>
+    public void RefreshRow(int row, SeasonalSampler sample)
+    {
+        ArgumentNullException.ThrowIfNull(sample);
         if (row < 0 || row >= capacity) return;
 
         int cellZ = pendingMinCellZ + row;
@@ -191,9 +260,13 @@ internal sealed class LodClimateField
             int cellX = pendingMinCellX + x;
             int index = at + (cellX & capacityMask);
             int blockX = cellX * CellBlocks + CellBlocks / 2;
-            if (!sample(blockX, blockZ, out byte t, out byte r)) continue;
+            if (!sample(blockX, blockZ, out byte t, out byte r, out float snow,
+                out bool observed)) continue;
             temperature[index] = t;
             rainfall[index] = r;
+            snowLine[index] = Math.Clamp(snow, pendingSnowMinY,
+                pendingSnowMinY + pendingSnowStepY * 255f);
+            SetSnowStateObserved(index, observed);
             spread[index] = 0;
             pendingKnownCells++;
         }
@@ -209,6 +282,8 @@ internal sealed class LodClimateField
         knownCells = pendingKnownCells;
         minCellX = pendingMinCellX;
         minCellZ = pendingMinCellZ;
+        snowMinY = pendingSnowMinY;
+        snowStepY = pendingSnowStepY;
         width = depth = capacity;
         SweepForward();
         SweepBackward();
@@ -224,6 +299,10 @@ internal sealed class LodClimateField
         spread[intoIndex] = (ushort)Math.Min(candidate, Unreached - 1);
         temperature[intoIndex] = temperature[fromIndex];
         rainfall[intoIndex] = rainfall[fromIndex];
+        snowLine[intoIndex] = snowLine[fromIndex];
+        // Climate is intentionally spread into gaps; capture provenance is not. An
+        // observed source cannot claim that its unknown neighbour was observed too.
+        SetSnowStateObserved(intoIndex, observed: false);
     }
 
     int Index(int cellX, int cellZ) =>
@@ -270,9 +349,8 @@ internal sealed class LodClimateField
     /// <summary>
     /// Pack for upload. BGRA ints with red at bits 16-23, the way this renderer's other
     /// CPU-built textures are packed, because `LoadOrUpdateTextureFromBgra` is the upload path.
-    /// Red carries temperature, green rainfall; blue carries how far the climate was spread, in
-    /// thirds of a cell, saturating - it is what a diagnostic needs to say whether a colour
-    /// came from real data or from the nearest place that had any.
+    /// Red carries temperature, green rainfall, blue carries how far the climate was spread,
+    /// and alpha carries the position-specific snow line across the published vertical range.
     /// </summary>
     void WriteTexels()
     {
@@ -292,7 +370,11 @@ internal sealed class LodClimateField
                     continue;
                 }
                 int far = Math.Min(255, (int)spread[i]);
-                texels[i] = unchecked((int)0xFF000000)
+                int snow = !EncodeSnowLine || IsSnowStateObserved(i)
+                    ? 255
+                    : Math.Clamp((int)MathF.Round(
+                        (snowLine[i] - snowMinY) / snowStepY), 0, 255);
+                texels[i] = (snow << 24)
                     | (temperature[i] << 16) | (rainfall[i] << 8) | far;
             }
         }
@@ -329,12 +411,50 @@ internal sealed class LodClimateField
         return true;
     }
 
+    /// <summary>The snow threshold the shader reads at a world position.</summary>
+    public bool TrySnowLineAt(double blockX, double blockZ, out float snowLineY)
+    {
+        snowLineY = 0f;
+        if (!Active) return false;
+
+        double fx = blockX / CellBlocks - 0.5;
+        double fz = blockZ / CellBlocks - 0.5;
+        int cx = Math.Clamp((int)Math.Floor(fx), minCellX, minCellX + capacity - 2);
+        int cz = Math.Clamp((int)Math.Floor(fz), minCellZ, minCellZ + capacity - 2);
+        float tx = (float)Math.Clamp(fx - cx, 0.0, 1.0);
+        float tz = (float)Math.Clamp(fz - cz, 0.0, 1.0);
+
+        float y00 = ReadSnowLine(cx, cz);
+        float y10 = ReadSnowLine(cx + 1, cz);
+        float y01 = ReadSnowLine(cx, cz + 1);
+        float y11 = ReadSnowLine(cx + 1, cz + 1);
+        snowLineY = Lerp(Lerp(y00, y10, tx), Lerp(y01, y11, tx), tz);
+        return true;
+    }
+
     void Read(int cellX, int cellZ, out float temperature, out float rainfall, out int spread)
     {
         int v = texels[TexelIndex(cellX, cellZ, capacity)];
         temperature = (v >> 16) & 0xFF;
         rainfall = (v >> 8) & 0xFF;
         spread = v & 0xFF;
+    }
+
+    float ReadSnowLine(int cellX, int cellZ)
+    {
+        int v = texels[TexelIndex(cellX, cellZ, capacity)];
+        return snowMinY + ((v >> 24) & 0xFF) * snowStepY;
+    }
+
+    bool IsSnowStateObserved(int index) =>
+        (snowStateObserved[index >> 6] & (1UL << (index & 63))) != 0;
+
+    void SetSnowStateObserved(int index, bool observed)
+    {
+        int word = index >> 6;
+        ulong mask = 1UL << (index & 63);
+        if (observed) snowStateObserved[word] |= mask;
+        else snowStateObserved[word] &= ~mask;
     }
 
     static float Lerp(float a, float b, float t) => a + (b - a) * t;

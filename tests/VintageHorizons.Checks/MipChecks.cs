@@ -19,6 +19,10 @@ public static class MipChecks
         RunMerging(c);
         PaletteRemap(c);
         WorkerBoundary(c);
+        SnowStateProvenance(c);
+        FinestResidentSnowStateWins(c);
+        SnowCoverageDownsamplesIndependently(c);
+        SnowMetadataDirtiesOnlyVisibleAppearance(c);
         RevisionValidation(c);
         NothingToDo(c);
     }
@@ -199,6 +203,179 @@ public static class MipChecks
         c.True(LodMip.ApplyToParent(result, parent, out _) != LodSection.EdgeNone,
             "owning-thread publication changes the parent");
         c.Eq(Half * Half, parent.CapturedColumns, "published worker result fills only its quadrant");
+    }
+
+    /// <summary>
+    /// Synthetic seasonal snow is disabled only when every captured source represented by
+    /// a parent column came from live/savegame chunks. Generated terrain stays explicitly
+    /// unknown, and replacing a quadrant must be able to clear an older observed bit.
+    /// </summary>
+    static void SnowStateProvenance(Check c)
+    {
+        var observed = new LodSection();
+        observed.FindOrAddPaletteEntry(blockId: 1, color: 0x00112233, flags: 0);
+        ulong[] run = { LodSection.PackRun(0, 10, 0) };
+        int[] sourceCols =
+        {
+            LodSection.ColumnIndex(0, 0),
+            LodSection.ColumnIndex(1, 0),
+            LodSection.ColumnIndex(0, 1),
+            LodSection.ColumnIndex(1, 1),
+        };
+        foreach (int col in sourceCols)
+        {
+            observed.SetColumn(col, run);
+            observed.SetSnowStateObserved(col, observed: true);
+        }
+        observed.SetSnowCovered(sourceCols[0], covered: true);
+        observed.SetSnowCovered(sourceCols[1], covered: true);
+
+        var parent = new LodSection();
+        MipResult allObserved = LodMip.BuildResult(
+            LodMip.CreateJob(1, 2, 3, observed, 0, 0));
+        LodMip.ApplyToParent(
+            allObserved, parent, out bool contentChanged, out bool snowChanged,
+            out bool snowAppearanceChanged);
+        int parentCol = LodSection.ColumnIndex(0, 0);
+        c.True(contentChanged, "observed source first creates the parent terrain");
+        c.True(snowChanged, "observed source changes the parent's snow provenance");
+        c.True(snowAppearanceChanged,
+            "the first authoritative covered answer changes the parent's appearance");
+        c.True(parent.IsSnowStateObserved(parentCol),
+            "four observed source columns produce an observed parent column");
+        c.True(parent.IsSnowCovered(parentCol),
+            "a tied observed footprint retains snow instead of opening a bare pinhole");
+
+        observed.SetSnowStateObserved(sourceCols[3], observed: false);
+        MipResult mixed = LodMip.BuildResult(
+            LodMip.CreateJob(1, 2, 4, observed, 0, 0));
+        LodMip.ApplyToParent(
+            mixed, parent, out contentChanged, out snowChanged,
+            out snowAppearanceChanged);
+        c.False(contentChanged,
+            "changing provenance alone does not pretend the geometry changed");
+        c.True(snowChanged, "mixed source clears the older parent provenance");
+        c.True(snowAppearanceChanged,
+            "clearing an observed covered answer changes the parent's appearance");
+        c.False(parent.IsSnowStateObserved(parentCol),
+            "one generated source keeps the merged parent on climate fallback");
+        c.False(parent.IsSnowCovered(parentCol),
+            "coverage is cleared whenever its provenance becomes unknown");
+
+        observed.SetSnowCovered(sourceCols[0], covered: false);
+        observed.SetSnowCovered(sourceCols[1], covered: false);
+        observed.SetSnowStateObserved(sourceCols[3], observed: true);
+        MipResult observedBare = LodMip.BuildResult(
+            LodMip.CreateJob(1, 2, 5, observed, 0, 0));
+        LodMip.ApplyToParent(
+            observedBare, parent, out contentChanged, out snowChanged,
+            out snowAppearanceChanged);
+        c.False(contentChanged,
+            "observed-bare provenance still leaves terrain geometry alone");
+        c.True(snowChanged,
+            "unknown-to-observed bare changes the parent's durable provenance");
+        c.False(snowAppearanceChanged,
+            "unknown-to-observed bare does not change the parent's visible snow answer");
+        c.True(parent.IsSnowStateObserved(parentCol),
+            "the parent retains the authoritative bare answer");
+        c.False(parent.IsSnowCovered(parentCol),
+            "the authoritative bare answer remains visibly bare");
+    }
+
+    static void SnowCoverageDownsamplesIndependently(Check c)
+    {
+        var child = new LodSection();
+        int soil = child.FindOrAddPaletteEntry(1, 0x00332211, 0);
+        int snow = child.FindOrAddPaletteEntry(2, 0x00FFFFFF, LodPaletteEntry.FlagSnowLayer);
+        int[] cols =
+        {
+            LodSection.ColumnIndex(0, 0), LodSection.ColumnIndex(1, 0),
+            LodSection.ColumnIndex(0, 1), LodSection.ColumnIndex(1, 1),
+        };
+        for (int i = 0; i < cols.Length; i++)
+        {
+            child.SetColumn(cols[i], i < 2
+                ? new[] { LodSection.PackRun(snow, 11, 10), LodSection.PackRun(soil, 10, 0) }
+                : new[] { LodSection.PackRun(soil, 10, 0) });
+            child.SetSnowStateObserved(cols[i], true);
+            child.SetSnowCovered(cols[i], i < 2);
+        }
+
+        var parent = new LodSection();
+        LodMip.ApplyToParent(LodMip.BuildResult(LodMip.CreateJob(1, 2, 3, child, 0, 0)),
+            parent, out _, out _);
+        int parentCol = LodSection.ColumnIndex(0, 0);
+        c.True(parent.IsSnowCovered(parentCol),
+            "snow footprint survives even when material voting and coverage voting differ");
+    }
+
+    static void FinestResidentSnowStateWins(Check c)
+    {
+        const int blockX = 150;
+        const int blockZ = 170;
+        ulong[] run = { LodSection.PackRun(0, 10, 0) };
+        var world = new LodWorld();
+
+        int coarseLevel = 1;
+        int coarseFootprint = LodSection.SectionBlocks << coarseLevel;
+        int coarseStep = LodSection.ColumnStepBlocks << coarseLevel;
+        LodSection coarse = world.GetOrCreateSection(LodWorld.SectionKey(
+            coarseLevel, blockX / coarseFootprint, blockZ / coarseFootprint));
+        coarse.FindOrAddPaletteEntry(blockId: 1, color: 0x00112233, flags: 0);
+        int coarseCol = LodSection.ColumnIndex(
+            (blockX % coarseFootprint) / coarseStep,
+            (blockZ % coarseFootprint) / coarseStep);
+        coarse.SetColumn(coarseCol, run);
+        coarse.SetSnowStateObserved(coarseCol, observed: true);
+        c.True(world.HasObservedSnowStateAt(blockX, blockZ),
+            "an observed resident mip can suppress synthetic snow");
+
+        int fineFootprint = LodSection.SectionBlocks;
+        LodSection fine = world.GetOrCreateSection(LodWorld.SectionKey(
+            0, blockX / fineFootprint, blockZ / fineFootprint));
+        fine.FindOrAddPaletteEntry(blockId: 1, color: 0x00112233, flags: 0);
+        int fineCol = LodSection.ColumnIndex(
+            blockX % fineFootprint, blockZ % fineFootprint);
+        fine.SetColumn(fineCol, run);
+        c.False(world.HasObservedSnowStateAt(blockX, blockZ),
+            "a finer generated answer keeps climate fallback despite an observed coarse mip");
+
+        fine.SetSnowStateObserved(fineCol, observed: true);
+        c.True(world.HasObservedSnowStateAt(blockX, blockZ),
+            "an authoritative fine recapture suppresses the fallback immediately");
+        c.False(world.HasObservedSnowStateAt(-1, blockZ),
+            "outside-world coordinates never alias the packed positive key space");
+    }
+
+    static void SnowMetadataDirtiesOnlyVisibleAppearance(Check c)
+    {
+        var world = new LodWorld();
+        long provenanceKey = LodWorld.SectionKey(0, 3, 4);
+        world.GetOrCreateSection(provenanceKey);
+        world.MarkSnowStateObservationChanged(provenanceKey, appearanceChanged: false);
+
+        c.False(world.RenderDirty.Contains(provenanceKey),
+            "unknown-to-observed bare provenance does not rebuild an identical mesh");
+        c.True(world.SaveDirty.Contains(provenanceKey),
+            "provenance-only updates are persisted");
+        c.True(world.MipDirty.Contains(provenanceKey),
+            "provenance-only updates still propagate to coarser levels");
+        c.Eq(1L, world.ContentRevision(provenanceKey),
+            "provenance invalidates an older worker snapshot");
+        c.Eq(1L, world.SnowStateObservationRevision,
+            "level-zero provenance requests one coalesced climate refresh");
+
+        long coveredKey = LodWorld.SectionKey(0, 5, 6);
+        world.GetOrCreateSection(coveredKey);
+        world.MarkSnowStateObservationChanged(coveredKey, appearanceChanged: true);
+        c.True(world.RenderDirty.Contains(coveredKey),
+            "an effective snow answer change rebuilds the existing face's marker");
+        c.True(world.SaveDirty.Contains(coveredKey),
+            "visible snow answers remain durable");
+        c.True(world.MipDirty.Contains(coveredKey),
+            "visible snow answers propagate to coarser levels");
+        c.Eq(2L, world.SnowStateObservationRevision,
+            "each level-zero metadata change advances the coalesced climate revision");
     }
 
     static void RevisionValidation(Check c)

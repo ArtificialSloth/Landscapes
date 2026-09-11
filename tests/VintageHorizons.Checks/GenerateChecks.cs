@@ -16,8 +16,113 @@ public static class GenerateChecks
         KeyInjective(c);
         Neighbourhood(c);
         ClassifyRule(c);
+        RefreshNeverGenerates(c);
         GeneratorConstants(c);
         AbsentSampling(c);
+        SnowRefreshCampaigns(c);
+        SnowActivityBands(c);
+    }
+
+    static void RefreshNeverGenerates(Check c)
+    {
+        c.Eq(LodPlayerPregen.EnumRunAction.Peek,
+            LodPlayerPregen.SelectAction(EnumColumnAction.Peek, LodPlayerPregen.EnumPurpose.Generate),
+            "generation may peek a missing column");
+        c.Eq(LodPlayerPregen.EnumRunAction.SkipMissing,
+            LodPlayerPregen.SelectAction(EnumColumnAction.Peek, LodPlayerPregen.EnumPurpose.RefreshExisting),
+            "refresh skips missing columns instead of peeking them");
+        c.Eq(LodPlayerPregen.EnumRunAction.Load,
+            LodPlayerPregen.SelectAction(EnumColumnAction.Load, LodPlayerPregen.EnumPurpose.RefreshExisting),
+            "refresh loads a safe existing column for recapture");
+        c.Eq(LodPlayerPregen.EnumRunAction.SkipFrontier,
+            LodPlayerPregen.SelectAction(EnumColumnAction.SkipFrontier,
+                LodPlayerPregen.EnumPurpose.RefreshExisting),
+            "refresh preserves the no-generation frontier rule");
+    }
+
+    static void SnowRefreshCampaigns(Check c)
+    {
+        var refresh = new LodSnowRefreshScheduler();
+        c.False(refresh.TryNext(out _, out _, out _), "an empty snow scheduler has no work");
+
+        c.True(refresh.Add(-1, -1, 16), "the first snow candidate is accepted");
+        c.True(refresh.Add(-2, -1, 16), "a second column in the region is accepted");
+        c.False(refresh.Add(-1, -1, 16), "snow candidates are deduplicated");
+        c.Eq(2, refresh.Count, "deduplication keeps the candidate set bounded");
+        c.Eq(1, refresh.RegionCount, "negative columns use floor division into one map region");
+        c.True(refresh.TryRegionCanaryAt(0, (x, _) => x == -2,
+                out int regionX, out int regionZ, out int canaryX, out int canaryZ),
+            "a region can choose a later safe candidate when its first column is frontier");
+        c.Eq((-1, -1), (regionX, regionZ), "the canary retains the signed map-region key");
+        c.Eq((-2, -1), (canaryX, canaryZ), "the eligibility rule selected the safe canary");
+
+        c.Eq(2, refresh.Signal(-1, -1, EnumLodSnowChange.Accumulating),
+            "a weather change creates one finite regional campaign");
+        c.Eq(0, refresh.Signal(-1, -1, EnumLodSnowChange.Accumulating),
+            "a repeated signal merges with pending columns instead of duplicating them");
+        c.Eq(2, refresh.Pending, "the finite queue has one obligation per candidate");
+
+        c.True(refresh.TryNext(out int firstX, out int firstZ, out EnumLodSnowChange firstChange),
+            "the first campaign column is available");
+        c.Eq((-1, -1), (firstX, firstZ), "campaign order is stable");
+        c.Eq(EnumLodSnowChange.Accumulating, firstChange, "the weather direction is retained");
+        c.True(refresh.TryNext(out int secondX, out int secondZ, out _),
+            "the second campaign column is available");
+        c.Eq((-2, -1), (secondX, secondZ), "the region drains exactly once");
+        c.False(refresh.TryNext(out _, out _, out _),
+            "a completed campaign becomes idle instead of starting another pass");
+
+        refresh.Observe(-1, -1, observedColumns: 1024, coveredColumns: 1024);
+        refresh.Observe(-2, -1, observedColumns: 1024, coveredColumns: 0);
+        c.Eq(1, refresh.Signal(-1, -1, EnumLodSnowChange.Accumulating),
+            "accumulation skips a fully snowy column but retains a bare one");
+        c.True(refresh.TryNext(out secondX, out secondZ, out _), "the bare column was queued");
+        c.Eq((-2, -1), (secondX, secondZ), "the accumulation filter chose the bare column");
+
+        c.Eq(1, refresh.Signal(-1, -1, EnumLodSnowChange.Melting),
+            "melting skips a bare column but retains a snowy one");
+        c.True(refresh.TryNext(out firstX, out firstZ, out _), "the snowy column was queued");
+        c.Eq((-1, -1), (firstX, firstZ), "the melt filter chose the snowy column");
+    }
+
+    static void SnowActivityBands(Check c)
+    {
+        var activity = new LodSnowActivityTracker();
+        long region = LodColumnMap.Key(3, 5);
+        activity.Prime(region, 100);
+
+        float[] lightSnow = Enumerable.Repeat(0.5f, 8).ToArray();
+        c.Eq(EnumLodSnowChange.None, activity.Observe(region, 101, lightSnow, 3.6f),
+            "sub-band accumulation does not start a premature campaign");
+        c.Eq(EnumLodSnowChange.None, activity.Observe(region, 102, lightSnow, 3.6f),
+            "activity accumulates across vanilla hourly snapshots");
+        c.Eq(EnumLodSnowChange.Accumulating, activity.Observe(region, 103, lightSnow, 3.6f),
+            "crossing a visual snow band starts accumulation work");
+
+        c.Eq(EnumLodSnowChange.None, activity.Observe(region, 103, lightSnow, 3.6f),
+            "the same vanilla snapshot is never processed twice");
+        c.Eq(EnumLodSnowChange.Accumulating, activity.Observe(region, 110,
+                Enumerable.Repeat(20f, 8).ToArray(), 3.6f),
+            "a time jump clamps at the configured snow range and signals once");
+        c.Eq(EnumLodSnowChange.None, activity.Observe(region, 111,
+                Enumerable.Repeat(20f, 8).ToArray(), 3.6f),
+            "a permanently cold region becomes idle after reaching the clamp");
+
+        c.Eq(EnumLodSnowChange.Melting, activity.Observe(region, 112,
+                Enumerable.Repeat(-2f, 8).ToArray(), 3.6f),
+            "a later thaw crosses back into a finite melt campaign");
+
+        var bareActivity = new LodSnowActivityTracker();
+        bareActivity.Prime(region, 200);
+        c.Eq(EnumLodSnowChange.Melting, bareActivity.Observe(region, 201,
+                Enumerable.Repeat(-0.5f, 8).ToArray(), 3.6f),
+            "half a snow level is enough to check whether thin existing snow melted");
+        c.Eq(EnumLodSnowChange.Melting, bareActivity.Observe(region, 202,
+                Enumerable.Repeat(-20f, 8).ToArray(), 3.6f),
+            "reaching vanilla's -1 floor produces the final melt check");
+        c.Eq(EnumLodSnowChange.None, bareActivity.Observe(region, 203,
+                Enumerable.Repeat(-20f, 8).ToArray(), 3.6f),
+            "a permanently warm region becomes idle at vanilla's -1 floor");
     }
 
     static void GeneratorConstants(Check c)

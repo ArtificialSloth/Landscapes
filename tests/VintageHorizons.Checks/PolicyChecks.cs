@@ -24,6 +24,8 @@ public static class PolicyChecks
         c.Eq(LodPaletteEntry.FlagWater, Flags(EnumBlockMaterial.Water, "water-still-7"), "water is translucent");
         c.Eq(LodPaletteEntry.FlagWater, Flags(EnumBlockMaterial.Lava, "lava-still-7"), "lava uses the water path");
         c.Eq(LodPaletteEntry.FlagWater, Flags(EnumBlockMaterial.Ice, "lakeice"), "ice uses the water path");
+        c.Eq(LodPaletteEntry.FlagSnowLayer, Flags(EnumBlockMaterial.Snow, "snowlayer-3"),
+            "vanilla snow is retained as coverage rather than ordinary terrain");
 
         // Not terrain at all, so it never becomes geometry.
         c.Eq(LodPaletteEntry.FlagSkip, Flags(EnumBlockMaterial.Fire, "fire"), "fire is skipped");
@@ -84,13 +86,13 @@ public static class PolicyChecks
             "a bottom half-slab of soil is half a block tall");
         c.Eq(LodPaletteEntry.FlagHalf, Shaped(EnumBlockMaterial.Stone, "rock-granite", 0f, 0.5f),
             "so is a slab of rock");
-        c.Eq(LodPaletteEntry.FlagHalf, Shaped(EnumBlockMaterial.Snow, "snowlayer-3", 0f, 0.375f),
-            "and a snow layer no deeper than half a block");
+        c.Eq(LodPaletteEntry.FlagSnowLayer, Shaped(EnumBlockMaterial.Snow, "snowlayer-3", 0f, 0.375f),
+            "a shallow snow layer is appearance rather than half-block terrain");
 
         c.Eq((byte)0, Shaped(EnumBlockMaterial.Soil, "soil-low-normal", 0f, 1f),
             "a full block is unchanged");
-        c.Eq((byte)0, Shaped(EnumBlockMaterial.Snow, "snowlayer-6", 0f, 0.75f),
-            "deep snow rounds up to a full block rather than down to a half");
+        c.Eq(LodPaletteEntry.FlagSnowLayer, Shaped(EnumBlockMaterial.Snow, "snowlayer-6", 0f, 0.75f),
+            "deep snow is the same coverage material rather than a full terrain block");
         c.Eq((byte)0, Shaped(EnumBlockMaterial.Stone, "rock-granite", 0.5f, 1f),
             "a TOP slab keeps its full height: its top face is where the ground is");
 
@@ -105,6 +107,16 @@ public static class PolicyChecks
         // half-height water surface is not something this mod draws.
         c.Eq(LodPaletteEntry.FlagWater, Shaped(EnumBlockMaterial.Water, "water-still-3", 0f, 0.5f),
             "a shallow water block is still water, not a slab");
+
+        var covered = new Block
+        {
+            BlockMaterial = EnumBlockMaterial.Soil,
+            Code = new AssetLocation("game", "soil-medium-snow"),
+            Variant = new Vintagestory.API.Util.RelaxedReadOnlyDictionary<string, string>(
+                new Dictionary<string, string> { ["cover"] = "snow" }),
+        };
+        c.Eq(LodPaletteEntry.FlagSnowCovered, LodBlockPolicy.FlagsFor(covered),
+            "vanilla's cover variant marks an in-place snow-covered surface");
     }
 
     static void Degenerate(Check c)

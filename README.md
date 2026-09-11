@@ -18,9 +18,12 @@ are unaffected.
 - **Real 3D terrain**, not a heightmap. Mountains, overhangs, cave mouths, forests, and
   anything you build all appear at distance, at 1-block resolution near the player.
 - **Translucent water**, drawn over the lake and sea floors beneath it.
-- **Live seasonal colour**. Grass and foliage follow the game's own climate and season
-  maps. The mod derives a snow line from the local temperature lapse rate. So the far
-  terrain changes with the seasons. It does not keep the colours it had at capture time.
+- **Live seasons and winter cover**. Grass and foliage follow the game's own climate and
+  season maps at the terrain's position. Loaded vanilla chunks also teach the cache their
+  actual snow-covered surface, including snow layers and snow-covered block variants. Where
+  that observation does not exist, the mod falls back to a position-specific seasonal snow
+  line. Snow and frost are colour/material effects on the existing LOD surface; they add no
+  snow-block geometry.
 - **Persistent per-world cache** that grows as you play. Join time and memory use do not
   depend on the size of the explored area.
 
@@ -46,11 +49,15 @@ in advance.
 | `.vhdetail [blocks]` | Without an argument, report all six transition distances. With a value, reset them to a doubling sequence beginning there; `.vhconfig` edits them individually. |
 | `.vhfar <blocks>` | Cap the LOD render distance. `0` means unlimited, which is the default. |
 | `.vhmask [on\|off]` | Hand each loaded vanilla chunk its own ground instead of using one distance, and skip cached terrain that is entirely replaced. On by default since 0.3.17; the setting is saved. Turn it off to fall back to a single measured distance. |
-| `.vhpaint [on\|off]` | Diagnostic. Paints the terrain the mask is hiding bright red instead of hiding it. A gap that turns red is the mask's doing; a gap that stays empty is not. |
+| `.vhpaint [on\|off]` | Diagnostic. Paints the terrain the mask is hiding magenta instead of hiding it. A gap that turns magenta is the mask's doing; a gap that stays empty is not. Magenta can also show where distant terrain stands in front of the game's own, which is harmless. |
 | `.vhskip [on\|off]` | Only matters with `.vhmask on`. On (the default) lets the mod drop a whole cached piece when the game covers all of it. Off keeps the per-pixel masking but never drops a whole piece. |
 | `.vhholes` | Finds ground the mod handed to the game that the game is not drawing, anywhere around you. No need to look at anything, so it works for a band behind you. |
-| `.vhgeom [on\|off]` | Only matters with `.vhmask on`. On (the default) means ground the game says it drew, but holds no terrain for, does not hide cached terrain. Turn it off to compare. |
+| `.vhgeom [on\|off]` | Only matters with `.vhmask on`. On (the default) delays a new handoff until vanilla holds uploaded terrain geometry. It does not revoke ownership after the handoff. Turn it off to compare. |
 | `.vhwhy [blocks]` | Look at a hole and run this. It searches your line of sight (out to the mod's full draw distance by default) and reports the **first** patch of ground nothing is drawing, so whatever is visible behind the hole does not confuse the answer. It says whether the mod is hiding cached terrain it should not, whether the game claims that ground while holding none, or whether it was simply never captured. |
+| `.vhsky [on\|off]` | Diagnostic for flashes and holes. After distant terrain is drawn, it counts sky showing below the horizon every frame and writes each flash to the client log with where it was and how the chunk mask stood there. `.vhsky verify on\|off` also reads the mask back from the graphics card after every upload. Off by default and not saved; it draws nothing. |
+| `.vhlaterange [on\|off]` | Checks the game's draw range again after it moves the player each frame, so a chunk leaving it passes to distant terrain in the same frame. On by default and not saved. `off` restores the one-frame-late timing of 0.4.13–0.4.52, for comparison only. |
+| `.vhgap [on\|off]` | Diagnostic. Logs every chunk the mask gives to the game while the game is not drawing it, with the reason and how long it lasted. `.vhgap release on\|off` also hands such chunks to distant terrain, as a comparison. Not saved. |
+| `.vhsnowline [part on\|off]` | Comparison only. Undoes one part of the spatial snow line (`cells`, `shader`, `alpha`, `early` or `fetch`); `legacy` undoes all of them and `spatial` restores them. Not saved. |
 | `.vhcoarse` | Standing where far terrain looks blockier than it should, run this. It reports which nearby detail is missing and what it is waiting for. |
 | `.vhbackface [on\|off]` | Reject back-facing cached solid terrain before shading it. On by default and not saved; water and thin surfaces remain two-sided. |
 | `.vhheight [on\|off]` | Bound each cached piece by how tall its terrain actually is, instead of from bedrock to sky. On by default and not saved. Mostly it means looking up or down stops drawing pieces that are nowhere near the screen. Run it with no argument to see how tall your terrain really is. |
@@ -121,18 +128,20 @@ changes until the next start.
 
 `.vhinfo` names the mod that this one defers to.
 
-Two server commands exist as well (`/`, not `.`). They need the controlserver
+Three server commands exist as well (`/`, not `.`). They need the controlserver
 privilege, which every singleplayer host has:
 
 | Command | Purpose |
 | --- | --- |
 | `/vhserver` | Server assist status: settings in force, cache size, transfer counters |
 | `/vhgen start [radius] [x z]` | Build the LOD cache around you (or around `x z`). It generates terrain that nobody visited yet. Also `stop` and `status`. See below. |
+| `/vhrefresh [radius]` | Reload and recapture existing vanilla terrain around you so cached snow and edits catch up. Default 32 chunks, maximum 128. Missing terrain is never generated. Also `stop` and `status`. |
 
 The client settings persist in `VintagestoryData/ModConfig/vintagehorizons.json`.
 The per-world cache lives in `VintagestoryData/ModData/vintagehorizons/<savegame-id>.db`.
-When an update changes what the stored data means, the mod discards that cache. A stale
-cache can therefore never degrade a newer version.
+When an incompatible update changes what the stored data means, the mod discards that cache.
+Compatible additions are read conservatively—for example, old rows without an observed-snow
+answer keep their terrain and use the climate fallback until recaptured.
 
 ## Building
 
@@ -164,7 +173,7 @@ that capture sees them. You get a horizon over every place that you visited befo
 you do not fly back over it.
 
 Sweeping is on by default, in singleplayer too. The settings are `SweepSavegame`,
-`SweepRadiusChunks` and `SweepColumnsPerSecond`, in
+`SweepRadiusChunks`, `SweepColumnsPerSecond` and `RefreshColumnsPerSecond`, in
 `ModConfig/vintagehorizons-server.json`.
 
 The default is safe because the sweep **generates nothing**. The sweep skips a position
@@ -174,6 +183,31 @@ load there makes the engine generate the missing neighbours.
 `PregenRadiusChunks` takes the opposite trade. It creates terrain that nobody visited yet, so
 it stays off unless an admin asks for it. That setting now uses the same transient
 generation `/vhgen` uses, so it too writes nothing to the savegame.
+
+### Keeping dormant snow current
+
+Loaded chunks update through vanilla's ordinary chunk-dirty events, so terrain near active
+players is recaptured when snow accumulates or melts. Previously explored terrain that is no
+longer loaded uses a slower server-side path after the startup sweep:
+
+- Every 30 seconds, the server reads vanilla's public regional snow-accumulation snapshots.
+- A region crossing an accumulation or melt band starts one finite campaign over eligible
+  existing columns. The default rate is one chunk column per second; the configurable range is
+  0–16, and 0 disables automatic snow refresh.
+- One dormant map region is woken per 30-second poll as a canary, so an unloaded region
+  eventually exposes new weather snapshots. Columns are not cycled continuously between
+  weather changes.
+
+A “column” here is one 32×32 vanilla chunk footprint through the full world height. The
+scheduler uses the generated-column map built by the safe sweep and never peeks or generates
+missing terrain. There is deliberately no “can accept snow” flag: an observed column records
+how many surface samples were snow-covered, and permanent warm/cold regions become ineligible
+for the direction that cannot change them.
+
+`/vhrefresh [radius]` is the manual catch-up path. It performs the same two-pass existence and
+safe-neighbourhood proof as the sweep, then recaptures only existing columns. Updated level-zero
+rows are offered to already connected modded clients after they are durably stored; integrated
+singleplayer detects the same replacement through the sibling cache's modification timestamp.
 
 ### Generating the horizon (/vhgen)
 
@@ -204,7 +238,9 @@ the measurement for your own world.
 It stops there because the pass that adds trees crashes vanilla worldgen when it runs
 this way. The fix is a patch this mod does not ship.
 
-A client that is already connected learns about new sections at its next join, not live.
+A connected modded client learns newly durable server sections and replacements through bounded
+follow-up offers. On a server without Vintage Horizons, the client still learns only from vanilla
+chunks the server actually sends it.
 
 The command needs the controlserver privilege. Five settings bound it in the server
 config: `EnableGenerateCommand`, `GenerateMaxRadiusChunks` (the ceiling, default 128),

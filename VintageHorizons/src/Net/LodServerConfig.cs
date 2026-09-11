@@ -70,6 +70,16 @@ public class LodServerConfig
     public int SweepColumnsPerSecond = 16;
 
     /// <summary>
+    /// Existing generated columns recaptured per second while a finite regional snow-change
+    /// campaign is active. Vanilla weather snapshots trigger those campaigns; one dormant
+    /// region is sampled every 30 seconds so inactive terrain eventually catches up. No
+    /// columns are continuously cycled between changes. Work stays on the sweep's proven-safe
+    /// generated-column set and never generates missing terrain. 0 disables automatic snow
+    /// refresh while retaining the one-time startup sweep.
+    /// </summary>
+    public int RefreshColumnsPerSecond = 1;
+
+    /// <summary>
     /// Let an admin build the LOD cache around themselves with /vhgen. Columns nobody
     /// has generated are peeked: real worldgen runs from the seed, capture reads the
     /// result, and nothing is written to the savegame. Columns that exist are loaded
@@ -146,6 +156,9 @@ public class LodServerConfig
         // index lookup, so a large radius over a small world is nearly free.
         SweepRadiusChunks = Math.Clamp(SweepRadiusChunks, 0, 512);
         SweepColumnsPerSecond = Math.Clamp(SweepColumnsPerSecond, 1, 64);
+        // Snow campaigns get a lower ceiling than the finite startup pass. Sixteen is the
+        // already-tested startup cadence; the ordinary background default remains one.
+        RefreshColumnsPerSecond = Math.Clamp(RefreshColumnsPerSecond, 0, 16);
         // Same ceiling as pregen: past 256 chunks the time cost stops being something an
         // admin grasps from a chat reply. The default clamps against the ceiling, not
         // against 256 - a lowered ceiling must not leave a default the command refuses.
@@ -166,6 +179,9 @@ public class LodServerConfig
     /// <summary>True when the sweep is configured to actually do something.</summary>
     public bool SweepEnabled => SweepSavegame && SweepRadiusChunks > 0;
 
+    /// <summary>Snow campaigns depend on the generated-column map built by the sweep.</summary>
+    public bool RefreshEnabled => SweepEnabled && RefreshColumnsPerSecond > 0;
+
     /// <summary>True when /vhgen is configured to accept a start.</summary>
     public bool GenerateEnabled => EnableGenerateCommand && GenerateMaxRadiusChunks > 0;
 
@@ -174,5 +190,6 @@ public class LodServerConfig
         + $"radius {(ServeRadiusBlocks > 0 ? ServeRadiusBlocks + " blocks" : "unlimited")}, "
         + $"{MaxSectionsPerSecondPerPlayer}/s per player, {MaxSectionsPerSecondTotal}/s total, "
         + $"sweep {(SweepEnabled ? SweepRadiusChunks + " chunks" : "off")}, "
+        + $"refresh {(RefreshEnabled ? RefreshColumnsPerSecond + "/s" : "off")}, "
         + $"generate {(GenerateEnabled ? "on request up to " + GenerateMaxRadiusChunks + " chunks" : "off")}";
 }

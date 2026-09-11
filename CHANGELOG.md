@@ -8,11 +8,90 @@ first.
 
 ## [Unreleased]
 
-**Known open:** the settled vanilla/cached-water handoff remains human-accepted, and 0.4.39 makes
-the new-chunk light patch barely perceptible in the owner's test. A residual split-second flicker
-is accepted rather than risking terrain continuity. Movement-only open-water blips were reported
-once and then could not be reproduced. Physical retirement of the old non-drawing per-section
-opaque resource lifecycle also remains, as separate renderer work rather than water work.
+**Known open:** version 0.4.53 fixes the vanilla-to-LOD handoff flash in the owner's test; whether
+it replaces 0.4.39 as the accepted baseline is his call. Winter temporal convergence (a real
+accumulation and melt, `/vhrefresh` boundaries, campaign cost) has not yet had its acceptance
+run.
+
+## [0.4.53] - 2026-09-11
+
+**The flash when vanilla terrain hands over to distant terrain is fixed.** Walking away from the
+area the game draws itself, a chunk at the edge of the game's draw range could vanish for one
+frame and show open sky before distant terrain replaced it. The game moves the player partway
+through preparing each frame and only then decides how far it will draw; this mod decided which
+chunks the game owned earlier in that same step, from where the player had stood before moving.
+Whenever a step took a chunk out of the game's range, the game stopped drawing it one frame before
+the mod handed it back. The lag dates from 0.4.13, which moved the mod's per-frame preparation
+earlier so distant water could be prepared before the game's own water depth.
+
+The range is now checked a second time after the game has moved the player and before anything
+is drawn. That check can only hand ground to distant terrain sooner; it never takes ground away.
+The owner confirmed the flash is gone. `.vhlaterange off` restores the old timing for comparison.
+
+Release build: zero warnings/errors. Fast checks: 22,941 assertions, zero failures. The verified
+package was copy-installed with SHA-256
+`97B16452998681AF2BE3C04F3DE7475A1308DD80602EC31458082234C8096685`.
+
+## [0.4.50-0.4.52] - 2026-09-10
+
+Private diagnostic builds for the handoff flash. 0.4.50 added `.vhgap`, which logs every chunk the
+mask gives to vanilla while the game is not drawing it, and `.vhgap release`, which hands such
+chunks back at once; the flash was unchanged. 0.4.51 added `.vhsnowline`, which undoes each part
+of the 0.4.40 spatial snow line in turn; `legacy` did not help. 0.4.52 added `.vhsnowline fetch`
+and `.vhsky`, which counts sky showing below the horizon after distant terrain is drawn and logs
+where each flash was and how the chunk mask stood there, with `verify` reading the mask back from
+the graphics card. Its first run located the flash exactly and led to the 0.4.53 fix. The builds
+passed 22,873, 22,881 and 22,928 fast-check assertions with zero failures. The 0.4.52 package has
+SHA-256 `A78B0DCF786F11EDED00B4A553ECB65243B2EE050D9170A9000EDA7868BECF33`.
+
+## [0.4.49] - 2026-09-09-10
+
+**Distant winter state is now spatial and can use vanilla's actual snow.** The old snow threshold
+was one uniform calculated under the player, even though terrain colour already had a
+position-specific climate field. Crossing a warm/cold boundary therefore repainted every visible
+LOD mountain on the next seasonal update. The climate field now carries a snow threshold for each
+64-block cell. Loaded client/server chunks additionally record whether each LOD surface column was
+actually observed and whether it was snow-covered; generated peeks remain unknown and use the
+climate estimate.
+
+Snow layers and blocks whose vanilla variant carries snow contribute to that observed answer.
+Two one-bit-per-column maps preserve provenance and coverage independently through persistence
+and mip construction. Parent coverage uses an areal majority, retaining snow on a tie, only when
+all contributing captured children were observed. The renderer marks the existing top surface as
+snow-covered and emits no extra snow slab, cube, wall or cover geometry. Fallback snow remains
+position-specific. Frostable grass and foliage use vanilla's current climate/season temperature
+and noise as a live colour overlay, without replacing the existing seasonal tint.
+
+Existing terrain can now change after its first capture. Loaded chunks recapture from vanilla's
+chunk-dirty event. `/vhrefresh [radius]` manually walks an area, proves which columns already
+exist with the same safe-neighbourhood rule as the savegame sweep, and recaptures them without
+generating missing terrain. The first automatic design continuously refreshed one full-height
+chunk column per second; it was removed after review because snow changes are rare. Its
+replacement polls vanilla's regional snow snapshots every 30 seconds, starts finite regional
+accumulation/melt campaigns, and wakes one dormant-region canary per poll. The server setting
+`RefreshColumnsPerSecond` defaults to 1, clamps to 0–16, and 0 disables the automatic path.
+There is no speculative “can accept snow” metadata.
+
+Durably updated level-zero rows now reach connected clients through an append-compatible refresh
+flag on the existing key-manifest message. Integrated singleplayer detects newer sibling-cache
+rows through `ModifiedMs`. Replacement decode/install is revision-guarded so a later local
+capture wins, and clients rebuild mip parents locally instead of transferring every ancestor.
+The section blob retains format 4 by appending optional observed/covered bitsets; old readers
+ignore them, while new readers treat missing or incomplete tails as unknown. Protocol/blob/schema
+remain 1/4/6.
+
+Two handoff hypotheses were implemented and disproved as complete fixes. Version 0.4.48 rejects
+mesh results whose render obligation changed after their snapshot; the owner still saw the
+flash. Version 0.4.49 stops using mutable cull visibility as a continuing geometry guard and
+requires uploaded vanilla pool geometry only while ownership is first gained; the owner still
+saw the flash. Its runtime log recorded 158 readiness gains with **zero readiness losses, zero
+range-sweep losses, zero owned cells without geometry and zero whole-section skips**, yet the
+flicker remained. The clean follow-up must instrument the exact transition instead of inferring
+cause from interval totals. The owner reports the snow visuals themselves look fine.
+
+The latest Release build completed with zero warnings/errors and all **22,812 assertions** pass.
+The verified 32-entry 0.4.49 test archive was copy-installed with SHA-256
+`6057CBD380DEF8D745EB5650389E38EDC92E5F7B42B86C5C3413273F805855DD`.
 
 ## [0.4.39] - 2026-09-09
 

@@ -40,10 +40,17 @@ public static class ConfigChecks
         c.True(config.SweepSavegame, "savegame sweeping is on by default");
         c.True(config.SweepRadiusChunks > 0, "the default sweep radius actually sweeps something");
         c.True(config.SweepEnabled, "the defaults leave sweeping enabled");
+        c.Eq(1, config.RefreshColumnsPerSecond,
+            "existing terrain refreshes at one column per second by default");
+        c.True(config.RefreshEnabled, "the defaults leave automatic snow refresh enabled");
         c.False(new LodServerConfig { SweepSavegame = false }.SweepEnabled,
             "clearing the flag disables sweeping");
         c.False(new LodServerConfig { SweepRadiusChunks = 0 }.SweepEnabled,
             "a zero radius disables sweeping as surely as the flag does");
+        c.False(new LodServerConfig { SweepSavegame = false }.RefreshEnabled,
+            "snow campaigns cannot run without the safe sweep map");
+        c.False(new LodServerConfig { RefreshColumnsPerSecond = 0 }.RefreshEnabled,
+            "a zero refresh rate disables only the rolling pass");
 
         c.Eq(LodAssist.MaxSectionsPerSecondPerPlayer, config.MaxSectionsPerSecondPerPlayer,
             "the per-player default tracks the protocol constant");
@@ -106,6 +113,12 @@ public static class ConfigChecks
             "sweep rate is capped");
         c.Eq(1, Sanitized(cfg => cfg.SweepColumnsPerSecond = 0).SweepColumnsPerSecond,
             "a zero sweep rate becomes one, not a stall");
+        c.Eq(16, Sanitized(cfg => cfg.RefreshColumnsPerSecond = 1000).RefreshColumnsPerSecond,
+            "the snow campaign rate cannot exceed the tested startup cadence");
+        c.Eq(0, Sanitized(cfg => cfg.RefreshColumnsPerSecond = -1).RefreshColumnsPerSecond,
+            "a negative refresh rate disables the rolling pass");
+        c.Eq(0, Sanitized(cfg => cfg.RefreshColumnsPerSecond = 0).RefreshColumnsPerSecond,
+            "zero remains the explicit rolling-refresh off switch");
         c.Eq(48, Sanitized(cfg => cfg.SweepRadiusChunks = 48).SweepRadiusChunks,
             "an in-range sweep radius is preserved exactly");
 
@@ -171,8 +184,11 @@ public static class ConfigChecks
         c.True(off.Describe().Contains("serving off"), "serving off is described");
 
         c.True(text.Contains("sweep 128 chunks"), "the description reports the sweep radius");
+        c.True(text.Contains("refresh 1/s"), "the description reports the snow campaign rate");
         c.True(new LodServerConfig { SweepSavegame = false }.Describe().Contains("sweep off"),
             "a disabled sweep is described as off");
+        c.True(new LodServerConfig { RefreshColumnsPerSecond = 0 }.Describe().Contains("refresh off"),
+            "disabled automatic snow refresh is described as off");
 
         c.True(text.Contains("generate on request up to 128 chunks"),
             "the description reports the generate ceiling");

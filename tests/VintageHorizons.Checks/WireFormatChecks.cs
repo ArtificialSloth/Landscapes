@@ -55,6 +55,7 @@ public static class WireFormatChecks
             "10:GenerateMaxRadiusChunks:Int32", "11:GenerateDefaultRadiusChunks:Int32",
             "12:GenerateColumnsPerSecond:Int32", "13:GenerateMaxInFlight:Int32",
             "14:PregenRadiusChunks:Int32", "15:PregenColumnsPerSecond:Int32",
+            "16:RefreshColumnsPerSecond:Int32",
             "1:EnableCapture:Boolean", "2:EnableServing:Boolean",
             "3:ServeRadiusBlocks:Int32", "4:MaxSectionsPerSecondPerPlayer:Int32",
             "5:MaxSectionsPerSecondTotal:Int32", "6:SweepSavegame:Boolean",
@@ -62,7 +63,10 @@ public static class WireFormatChecks
             "9:EnableGenerateCommand:Boolean",
         }, Layout(typeof(AssistServerSettings)), "AssistServerSettings field numbers");
 
-        c.SeqEq(new[] { "1:Sequence:Int32", "2:Last:Boolean", "3:Keys:Int64[]" },
+        c.SeqEq(new[]
+        {
+            "1:Sequence:Int32", "2:Last:Boolean", "3:Keys:Int64[]", "4:Refresh:Boolean",
+        },
             Layout(typeof(AssistKeyManifest)), "AssistKeyManifest field numbers");
 
         c.SeqEq(new[] { "1:Keys:Int64[]" },
@@ -111,6 +115,7 @@ public static class WireFormatChecks
                 GenerateMaxInFlight = 64,
                 PregenRadiusChunks = 0,
                 PregenColumnsPerSecond = 8,
+                RefreshColumnsPerSecond = 1,
             },
         });
         c.Eq(true, welcome.Enabled, "welcome enabled flag survives");
@@ -120,11 +125,17 @@ public static class WireFormatChecks
             "welcome server settings survive");
         c.Eq(64, welcome.ServerSettings?.GenerateMaxInFlight ?? -1,
             "welcome generation settings survive");
+        c.Eq(1, welcome.ServerSettings?.RefreshColumnsPerSecond ?? -1,
+            "welcome rolling-refresh settings survive");
 
         var keys = new[] { 0L, 1L, -1L, long.MaxValue, long.MinValue };
-        var manifest = Roundtrip(new AssistKeyManifest { Sequence = 2, Last = true, Keys = keys });
+        var manifest = Roundtrip(new AssistKeyManifest
+        {
+            Sequence = 2, Last = true, Keys = keys, Refresh = true,
+        });
         c.SeqEq(keys, manifest.Keys, "manifest keys survive, including the extremes");
         c.Eq(true, manifest.Last, "the manifest last flag survives");
+        c.True(manifest.Refresh, "the append-only refresh marker survives");
 
         var request = Roundtrip(new AssistSectionRequest { Keys = keys });
         c.SeqEq(keys, request.Keys, "request keys survive");

@@ -385,6 +385,9 @@ public class LodPipeline
             Epoch = worldEpoch,
             Cx = cx,
             Cz = cz,
+            // This overload is used by transient worldgen peeks. It has generated
+            // terrain, not the savegame's current snow accumulation.
+            SnowStateObserved = false,
             Chunks = refs,
             RainMap = (ushort[])rainMap.Clone(),
         });
@@ -491,8 +494,12 @@ public class LodPipeline
     {
         if (store == null || storageThread == null || blob.Length == 0)
             return LodForeignQueueOutcome.Unavailable;
-        if (World.Sections.ContainsKey(key)) return LodForeignQueueOutcome.Unavailable;
-        return storageThread.TryEnqueueForeign(worldEpoch, key, source, blob)
+        bool replaceExisting = Remote.IsUpdate(key);
+        if (World.Sections.ContainsKey(key) && !replaceExisting)
+            return LodForeignQueueOutcome.Unavailable;
+        long expectedContentRevision = World.ContentRevision(key);
+        return storageThread.TryEnqueueForeign(
+            worldEpoch, key, source, blob, replaceExisting, expectedContentRevision)
             ? LodForeignQueueOutcome.Queued
             : LodForeignQueueOutcome.Retryable;
     }
@@ -522,6 +529,9 @@ public class LodPipeline
 
     /// <inheritdoc cref="LodRemoteKeySet.AddRemoteKeys"/>
     public int AddRemoteKeys(IEnumerable<long> keys) => Remote.AddRemoteKeys(keys);
+
+    /// <inheritdoc cref="LodRemoteKeySet.AddRemoteUpdates"/>
+    public int AddRemoteUpdates(IEnumerable<long> keys) => Remote.AddRemoteUpdates(keys);
 
     /// <inheritdoc cref="LodRemoteKeySet.Wanted"/>
     public long[] RemoteWanted() => Remote.Wanted();
@@ -599,7 +609,9 @@ public class LodPipeline
             if (result.Epoch != worldEpoch) continue;
 
             LodSection? section = result.Section;
-            bool installed = section != null && !World.Sections.ContainsKey(result.Key);
+            bool installed = section != null && (result.ReplaceExisting
+                ? World.ContentRevision(result.Key) == result.ExpectedContentRevision
+                : !World.Sections.ContainsKey(result.Key));
             if (installed)
             {
                 store.ResolvePendingPalette(section!, api.World);
@@ -609,16 +621,24 @@ public class LodPipeline
                 // No worker result may overwrite data that became authoritative after
                 // submission. This second check documents the commit rule beside the
                 // actual mutation, even though no callback above is expected to capture.
-                installed = !World.Sections.ContainsKey(result.Key);
+                installed = result.ReplaceExisting
+                    ? World.ContentRevision(result.Key) == result.ExpectedContentRevision
+                    : !World.Sections.ContainsKey(result.Key);
             }
 
             if (installed)
             {
-                World.InstallLoaded(result.Key, section);
+                if (result.ReplaceExisting)
+                    World.InstallReplacement(result.Key, section!);
+                else
+                    World.InstallLoaded(result.Key, section);
                 // Persist it: re-fetching a mean 45.9 KB a section every session is not an
                 // option, so a foreign section becomes local cache data after adoption.
-                World.MarkChanged(result.Key);
+                if (!result.ReplaceExisting) World.MarkChanged(result.Key);
                 Remote.MarkInstalled(result.Key);
+                if (result.ReplaceExisting)
+                    Remote.MarkUpdateInstalled(
+                        result.Key, World.PersistenceRevision(result.Key));
                 ForeignSectionsInstalled++;
             }
             else
@@ -744,6 +764,9 @@ public class LodPipeline
                 Epoch = worldEpoch,
                 Cx = cx,
                 Cz = cz,
+                // Loaded client/server chunks contain the actual snow layers and
+                // snow-covered block variants that vanilla is drawing.
+                SnowStateObserved = true,
                 Chunks = chunks,
                 RainMap = (ushort[])rainMap.Clone(),
             });
@@ -831,6 +854,10 @@ public class LodPipeline
 
         var pidByBlockId = new Dictionary<int, int>();
         ulong[]?[] batch = result.RunsByColumn;
+        bool snowStateChanged = false;
+        bool snowAppearanceChanged = false;
+        int snowObservedColumns = 0;
+        int snowCoveredColumns = 0;
 
         for (int col = 0; col < batch.Length; col++)
         {
@@ -838,6 +865,8 @@ public class LodPipeline
             if (runs == null) continue;
 
             int kept = 0;
+            bool snowCovered = false;
+            bool foundSurface = false;
             for (int i = 0; i < runs.Length; i++)
             {
                 int blockId = LodSection.RunPaletteId(runs[i]); // raw block id from capture
@@ -855,7 +884,42 @@ public class LodPipeline
                 // otherwise be a solid, pale-grey 1-block cube.
                 if ((section.Palette[pid].Flags & LodPaletteEntry.FlagSkip) != 0) continue;
 
+                // Runs are top-down. Vanilla snow blocks are appearance layered over
+                // the first real surface below them; a snow-covered block variant is
+                // already that surface. Only the first retained surface answers the
+                // column, so buried snow cannot repaint the landscape above it.
+                if (!foundSurface)
+                {
+                    byte flags = section.Palette[pid].Flags;
+                    if ((flags & LodPaletteEntry.FlagSnowLayer) != 0)
+                    {
+                        snowCovered = true;
+                    }
+                    else
+                    {
+                        snowCovered |= (flags & LodPaletteEntry.FlagSnowCovered) != 0;
+                        foundSurface = true;
+                    }
+                }
+
                 runs[kept++] = LodSection.PackRun(pid, LodSection.RunYTop(runs[i]), LodSection.RunYBottom(runs[i]));
+            }
+
+            // An authoritative recapture upgrades generated/legacy data and can clear
+            // snow that melted. A later generated peek can never erase that stronger
+            // provenance or its paired coverage answer.
+            if (result.SnowStateObserved)
+            {
+                snowObservedColumns++;
+                if (snowCovered) snowCoveredColumns++;
+                bool wasEffectivelyCovered = section.IsSnowStateObserved(col)
+                    && section.IsSnowCovered(col);
+                bool coveredChanged = section.SetSnowCovered(col, snowCovered);
+                bool observedChanged = section.SetSnowStateObserved(col, observed: true);
+                snowStateChanged |= coveredChanged || observedChanged;
+                bool isEffectivelyCovered = section.IsSnowStateObserved(col)
+                    && section.IsSnowCovered(col);
+                snowAppearanceChanged |= wasEffectivelyCovered != isEffectivelyCovered;
             }
 
             if (kept != runs.Length) batch[col] = runs[..kept];
@@ -873,6 +937,21 @@ public class LodPipeline
         if (contentChanged)
         {
             World.MarkChanged(result.SectionKey, touchedEdges);
+            if (snowStateChanged) World.NoteSnowStateObservationChanged();
+        }
+        else if (snowStateChanged)
+        {
+            // Observed-bare provenance still persists and propagates, but it no longer
+            // remeshes an identical bare surface. Effective coverage changes rebuild only
+            // the section's ordinary mesh; snow adds no geometry.
+            World.MarkSnowStateObservationChanged(
+                result.SectionKey, snowAppearanceChanged);
+        }
+
+        if (result.SnowStateObserved)
+        {
+            SnowStateCaptured?.Invoke(result.Cx, result.Cz,
+                snowObservedColumns, snowCoveredColumns);
         }
     }
 
@@ -917,8 +996,12 @@ public class LodPipeline
             {
                 // A durable row is now a valid local fallback even when a still-newer
                 // revision remains dirty.
-                Remote.MarkPersisted(completion.Key);
-                if (newestBecameDurable) saveRetries.Remove(completion.Key);
+                Remote.MarkPersisted(completion.Key, completion.Revision);
+                if (newestBecameDurable)
+                {
+                    saveRetries.Remove(completion.Key);
+                    SectionPersisted?.Invoke(completion.Key);
+                }
                 continue;
             }
 
@@ -937,6 +1020,19 @@ public class LodPipeline
                 Environment.TickCount64 + LodSaveRetry.DelayMilliseconds(failures));
         }
     }
+
+    /// <summary>
+    /// Owning-thread notification that the newest row for a key became durable. The server
+    /// uses level-zero notifications to tell clients about refreshed terrain only after the
+    /// blob reader can actually serve it.
+    /// </summary>
+    public Action<long>? SectionPersisted;
+
+    /// <summary>
+    /// Owning-thread summary of an authoritative loaded-column snow observation. Used by
+    /// the server's finite snow scheduler; zero covered means bare now, never incapable.
+    /// </summary>
+    public Action<int, int, int, int>? SnowStateCaptured;
 
     void SaveSomeDirtySections(int budget)
     {

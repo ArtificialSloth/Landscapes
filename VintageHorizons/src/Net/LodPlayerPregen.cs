@@ -6,16 +6,18 @@ using Vintagestory.API.Server;
 namespace VintageHorizons.Net;
 
 /// <summary>
-/// Builds the LOD cache around a player on request (/vhgen), including terrain that
-/// nobody has generated.
+/// Walks a bounded area for /vhgen or /vhrefresh. Generation includes terrain that
+/// nobody has generated; refresh only recaptures terrain already in the vanilla save.
 ///
-/// Three phases. PROBE asks the engine which columns exist, exactly as the sweep does.
+/// Generation has three phases. PROBE asks the engine which columns exist, exactly as the sweep does.
 /// WORK walks the same spiral and acts on <see cref="LodColumnMap.Classify"/>: columns
 /// that exist load through the normal capture path, and columns that do not exist are
 /// PEEKED - PeekChunkColumn runs real worldgen from the seed and hands the column back
 /// without writing the savegame or the loaded chunk list. VERIFY then re-probes a
 /// sample of positions that were absent, because "a peek persists nothing" is a promise
 /// this mod makes to server admins, and a promise gets measured, not trusted.
+/// Refresh shares PROBE and WORK, maps every absent position to SkipMissing, and needs no
+/// VERIFY phase because it never asks the engine to generate anything.
 ///
 /// Peeked columns reach capture through <see cref="LodPipeline.CaptureColumn"/>. The
 /// BlockAccessor cannot see a peeked column, so the ChunkColumnLoaded path that serves
@@ -48,6 +50,7 @@ public class LodPlayerPregen
     readonly ILogger logger;
     readonly LodPipeline pipeline;
     readonly int centreCx, centreCz, radiusChunks, perSecond, maxInFlight;
+    readonly EnumPurpose purpose;
 
     /// <summary>Which positions hold generated terrain, and the safety rule over them.</summary>
     readonly LodColumnMap exists = new();
@@ -85,6 +88,9 @@ public class LodPlayerPregen
     /// <summary>Existing columns skipped because a neighbour was missing.</summary>
     public int SkippedFrontier { get; private set; }
 
+    /// <summary>Absent columns deliberately ignored by an existing-terrain refresh.</summary>
+    public int Missing { get; private set; }
+
     /// <summary>Peeked columns that came back without a usable rain height map.</summary>
     public int NoHeightMap { get; private set; }
 
@@ -116,6 +122,36 @@ public class LodPlayerPregen
         Incomplete,
     }
 
+    /// <summary>Whether this bounded walk may create a transient worldgen result.</summary>
+    public enum EnumPurpose
+    {
+        Generate,
+        RefreshExisting,
+    }
+
+    /// <summary>The action a run takes after the generated-column map classifies a position.</summary>
+    public enum EnumRunAction
+    {
+        Peek,
+        Load,
+        SkipMissing,
+        SkipFrontier,
+    }
+
+    /// <summary>
+    /// Apply the run's authority to a map classification. Refresh is intentionally unable
+    /// to select Peek: this pure boundary is the proof that /vhrefresh cannot generate a
+    /// missing vanilla column.
+    /// </summary>
+    public static EnumRunAction SelectAction(EnumColumnAction action, EnumPurpose purpose) =>
+        action switch
+        {
+            EnumColumnAction.Load => EnumRunAction.Load,
+            EnumColumnAction.SkipFrontier => EnumRunAction.SkipFrontier,
+            EnumColumnAction.Peek when purpose == EnumPurpose.RefreshExisting => EnumRunAction.SkipMissing,
+            _ => EnumRunAction.Peek,
+        };
+
     /// <summary>
     /// Resolve where a run should be centred. Pure, so the precedence has a check.
     ///
@@ -142,7 +178,7 @@ public class LodPlayerPregen
     /// </param>
     public LodPlayerPregen(ICoreServerAPI sapi, ILogger logger, LodPipeline pipeline,
         int centreCx, int centreCz, int radiusChunks, LodServerConfig config, string startedBy,
-        int? columnsPerSecond = null)
+        int? columnsPerSecond = null, EnumPurpose purpose = EnumPurpose.Generate)
     {
         this.sapi = sapi;
         this.logger = logger;
@@ -152,11 +188,24 @@ public class LodPlayerPregen
         this.radiusChunks = radiusChunks;
         perSecond = Math.Max(1, columnsPerSecond ?? config.GenerateColumnsPerSecond);
         maxInFlight = Math.Max(1, config.GenerateMaxInFlight);
+        this.purpose = purpose;
         StartedBy = startedBy;
     }
 
     public void Start()
     {
+        if (purpose == EnumPurpose.RefreshExisting)
+        {
+            logger.Notification(
+                "Existing-terrain LOD refresh started by {0} around block {1},{2}: {3} "
+                + "columns out to {4} chunks. Only safely loadable columns already present "
+                + "in the savegame are recaptured; missing terrain is never generated. "
+                + "Progress every 10%.",
+                StartedBy, CentreBlockX, CentreBlockZ, WorkTotal, radiusChunks);
+            listenerId = sapi.Event.RegisterGameTickListener(_ => Step(), LodTickAllowance.TickMilliseconds);
+            return;
+        }
+
         logger.Notification(
             "Generation started by {0} around block {1},{2}: {3} columns out to {4} chunks. "
             + "Columns nobody generated are peeked from the seed and captured; nothing is "
@@ -167,9 +216,9 @@ public class LodPlayerPregen
     }
 
     /// <summary>
-    /// Stop issuing new work. Peeks already in flight still get captured - that worldgen
-    /// time is spent either way, and throwing the result away helps nobody. The verify
-    /// phase still runs, so a stopped run still reports whether the promise held.
+    /// Stop issuing new work. Generation peeks already in flight still get captured - that
+    /// worldgen time is spent either way, and throwing the result away helps nobody. Its
+    /// verify phase still runs, so a stopped generation reports whether the promise held.
     /// </summary>
     public void Cancel() => Cancelled = true;
 
@@ -218,16 +267,27 @@ public class LodPlayerPregen
             });
         }
 
+        string label = purpose == EnumPurpose.RefreshExisting ? "Refresh" : "Generation";
         Report(probeIndex, ProbeTotal,
-            $"Generation: examined {{0}}% ({probeIndex}/{ProbeTotal} positions), {exists.Count} hold terrain");
+            $"{label}: examined {{0}}% ({probeIndex}/{ProbeTotal} positions), {exists.Count} hold terrain");
 
         if (probeIndex < ProbeTotal || probesInFlight > 0) return;
 
         Probing = false;
         reported = 0;
-        logger.Notification(
-            "Generation: {0} of {1} positions hold terrain already. Existing columns load "
-            + "from the savegame; the rest are generated transiently.", exists.Count, ProbeTotal);
+        if (purpose == EnumPurpose.RefreshExisting)
+        {
+            logger.Notification(
+                "Refresh: {0} of {1} positions hold terrain already. Safe existing columns "
+                + "will be loaded and recaptured; absent positions and the frontier are skipped.",
+                exists.Count, ProbeTotal);
+        }
+        else
+        {
+            logger.Notification(
+                "Generation: {0} of {1} positions hold terrain already. Existing columns load "
+                + "from the savegame; the rest are generated transiently.", exists.Count, ProbeTotal);
+        }
     }
 
     void StepWork()
@@ -243,9 +303,9 @@ public class LodPlayerPregen
             int cx = centreCx + dx;
             int cz = centreCz + dz;
 
-            switch (exists.Classify(cx, cz))
+            switch (SelectAction(exists.Classify(cx, cz), purpose))
             {
-                case EnumColumnAction.Peek:
+                case EnumRunAction.Peek:
                     // Both gates bound this run's memory, not only its CPU: a peek that
                     // lands becomes a whole chunk column held until capture drains it.
                     // Stop the tick without advancing - the position retries next tick.
@@ -258,7 +318,7 @@ public class LodPlayerPregen
                     IssuePeek(cx, cz);
                     continue;
 
-                case EnumColumnAction.Load:
+                case EnumRunAction.Load:
                     // Loading is safe here for the same reason it is in the sweep: the
                     // whole neighbourhood exists, so the engine has nothing to
                     // complete. Capture goes through OnLoaded -> QueueColumn rather
@@ -267,11 +327,28 @@ public class LodPlayerPregen
                     // so on a dedicated server, where the event fires too, the column
                     // still captures once.
                     workIndex++; started++;
-                    sapi.WorldManager.LoadChunkColumnPriority(cx, cz, new ChunkLoadOptions
+                    if (purpose == EnumPurpose.RefreshExisting
+                        && sapi.WorldManager.GetMapChunk(cx, cz) != null)
                     {
-                        OnLoaded = () => pipeline.QueueColumn(cx, cz),
-                    });
+                        // Vanilla already keeps resident snow state current. Capture it
+                        // directly instead of routing a no-op through the chunk loader.
+                        pipeline.QueueColumn(cx, cz);
+                    }
+                    else
+                    {
+                        sapi.WorldManager.LoadChunkColumnPriority(cx, cz, new ChunkLoadOptions
+                        {
+                            OnLoaded = () => pipeline.QueueColumn(cx, cz),
+                        });
+                    }
                     Indexed++;
+                    continue;
+
+                case EnumRunAction.SkipMissing:
+                    // /vhrefresh is an observation command. An absent vanilla column
+                    // supplies no snow truth and must remain absent.
+                    workIndex++;
+                    Missing++;
                     continue;
 
                 default:
@@ -284,12 +361,25 @@ public class LodPlayerPregen
         }
         workAllowance.Spend(started);
 
-        Report(workIndex, WorkTotal,
-            $"Generation: {{0}}% ({workIndex}/{WorkTotal} columns) - {Generated} generated, "
-            + $"{Indexed} loaded, {SkippedFrontier} skipped on the frontier");
+        if (purpose == EnumPurpose.RefreshExisting)
+        {
+            Report(workIndex, WorkTotal,
+                $"Refresh: {{0}}% ({workIndex}/{WorkTotal} columns) - {Indexed} loaded, "
+                + $"{Missing} absent, {SkippedFrontier} skipped on the frontier");
+        }
+        else
+        {
+            Report(workIndex, WorkTotal,
+                $"Generation: {{0}}% ({workIndex}/{WorkTotal} columns) - {Generated} generated, "
+                + $"{Indexed} loaded, {SkippedFrontier} skipped on the frontier");
+        }
 
         bool workOver = Cancelled || workIndex >= WorkTotal;
-        if (workOver && peeksInFlight.Count == 0) BeginVerify();
+        if (workOver && peeksInFlight.Count == 0)
+        {
+            if (purpose == EnumPurpose.RefreshExisting) FinishRefresh();
+            else BeginVerify();
+        }
     }
 
     void IssuePeek(int cx, int cz)
@@ -373,6 +463,20 @@ public class LodPlayerPregen
         verifier.Start();
     }
 
+    void FinishRefresh()
+    {
+        Done = true;
+        sapi.Event.UnregisterGameTickListener(listenerId);
+
+        string verb = Cancelled ? "stopped by request" : "finished";
+        logger.Notification(
+            "Existing-terrain LOD refresh {0} around block {1},{2} after {3}/{4} columns: "
+            + "{5} loaded for recapture, {6} absent, {7} skipped on the frontier. Capture, "
+            + "persistence, and client replacement continue through the bounded background "
+            + "pipeline after this area walk finishes.",
+            verb, CentreBlockX, CentreBlockZ, workIndex, WorkTotal, Indexed, Missing, SkippedFrontier);
+    }
+
     void Finish(LodAbsenceVerifier verified)
     {
         Done = true;
@@ -415,7 +519,23 @@ public class LodPlayerPregen
     }
 
     /// <summary>One line for /vhgen status and /vhserver.</summary>
-    public string Status =>
+    public string Status => purpose == EnumPurpose.RefreshExisting
+        ? RefreshStatus
+        : GenerationStatus;
+
+    string RefreshStatus =>
+        Done
+            ? $"refresh {(Cancelled ? "stopped" : "finished")}: {workIndex}/{WorkTotal} columns "
+              + $"around {CentreBlockX},{CentreBlockZ} - {Indexed} loaded, {Missing} absent, "
+              + $"{SkippedFrontier} skipped on the frontier"
+        : Probing
+            ? $"refresh probing around {CentreBlockX},{CentreBlockZ}: examined "
+              + $"{probeIndex}/{ProbeTotal} positions, {exists.Count} hold terrain"
+            : $"refreshing existing terrain around {CentreBlockX},{CentreBlockZ} (started by "
+              + $"{StartedBy}): {workIndex}/{WorkTotal} columns - {Indexed} loaded, "
+              + $"{Missing} absent, {SkippedFrontier} skipped";
+
+    string GenerationStatus =>
         Done
             ? $"generation {(Cancelled ? "stopped" : "finished")}: {WorkTotal} columns around "
               + $"{CentreBlockX},{CentreBlockZ} - {Generated} generated, {Indexed} loaded, "

@@ -18,6 +18,7 @@ public static class MesherChecks
         UnevenBase(c);
         LevelScaling(c);
         AlphaBands(c);
+        SnowSurfaceAppearance(c);
         WaterIsASeparatePass(c);
         ThinMats(c);
         CoverageRules(c);
@@ -397,10 +398,11 @@ public static class MesherChecks
     }
 
     /// <summary>
-    /// The tint slot rides in the vertex alpha byte in three bands, because the vertex
+    /// The tint slot rides in the vertex alpha byte in four bands, because the vertex
     /// format is position plus colour and there is nowhere else to put it. The shader
     /// divides by TINT_SLOTS to recover which band it is - so the band boundaries here and
-    /// the constant in the GLSL are the same number seen from two sides.
+    /// the constant in the GLSL are the same number seen from two sides. The fourth band
+    /// marks an existing upward surface as authoritatively snow-covered; it adds no quad.
     /// </summary>
     static void AlphaBands(Check c)
     {
@@ -417,6 +419,41 @@ public static class MesherChecks
             "a slot at the limit falls back to no tint");
         c.Eq((byte)LodTintRegistry.SlotNone,
             AlphaOf(Column(flags: 0, tintSlot: 255)), "a wildly out-of-range slot falls back to no tint");
+    }
+
+    static void SnowSurfaceAppearance(Check c)
+    {
+        var bare = new LodSection();
+        int bareSoil = bare.FindOrAddPaletteEntry(1, 0x00332211, 0, tintSlot: 5);
+        int col = LodSection.ColumnIndex(12, 15);
+        bare.SetColumn(col, new[] { LodSection.PackRun(bareSoil, 10, 0) });
+        bare.SetSnowStateObserved(col, true);
+
+        var snowy = new LodSection();
+        int soil = snowy.FindOrAddPaletteEntry(1, 0x00332211, 0, tintSlot: 5);
+        int snow = snowy.FindOrAddPaletteEntry(2, 0x00FFFFFF, LodPaletteEntry.FlagSnowLayer);
+        snowy.SetColumn(col, new[]
+        {
+            LodSection.PackRun(snow, 11, 10),
+            LodSection.PackRun(soil, 10, 0),
+        });
+        snowy.SetSnowStateObserved(col, true);
+        snowy.SetSnowCovered(col, true);
+
+        MeshResult bareMesh = LodMesher.BuildMesh(Fixtures.Job(bare));
+        MeshResult snowMesh = LodMesher.BuildMesh(Fixtures.Job(snowy));
+        c.Eq(bareMesh.PackedOpaqueQuadCount, snowMesh.PackedOpaqueQuadCount,
+            "snow coverage changes appearance without adding a geometry layer");
+        c.Eq(bareMesh.Heights.Opaque.MaxY, snowMesh.Heights.Opaque.MaxY,
+            "snow coverage stays on the existing terrain surface height");
+
+        int snowyTop = Enumerable.Range(0, snowMesh.PackedOpaqueQuadCount)
+            .Single(i => LodPackedQuadFormat.FaceOf(snowMesh.PackedOpaqueQuads, i)
+                == LodPackedFace.Top);
+        byte alpha = (byte)(snowMesh.PackedOpaqueQuads[
+            snowyTop * LodPackedQuadFormat.WordsPerQuad + 2] >> 24);
+        c.Eq((byte)(LodMesher.LegacyTextureBase + 5), alpha,
+            "the packed top face carries observed snow while preserving its tint slot");
     }
 
     static void WaterIsASeparatePass(Check c)

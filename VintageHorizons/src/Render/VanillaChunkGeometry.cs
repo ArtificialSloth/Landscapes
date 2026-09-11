@@ -25,9 +25,10 @@ namespace VintageHorizons;
 /// <c>tests/VintageHorizons.Checks</c> fails against the installed game if it does.
 /// </para>
 /// <para>
-/// This is a measurement. It must never decide ownership on its own: G40 records what
-/// happened the last time a chunk-emptiness rule reached the draw path from reasoning
-/// rather than from evidence.
+/// Pool geometry may delay a first ownership gain because it proves the upload has happened.
+/// It must never revoke established ownership on its own: the engine changes cull/visibility
+/// state independently of chunk lifetime, and G40 records what happened when a transient
+/// measurement was treated as authoritative loss.
 /// </para>
 /// </summary>
 static class VanillaChunkGeometry
@@ -358,6 +359,36 @@ static class VanillaChunkGeometry
             if (!location.Hide) return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// The drawn counter behind IsChunkRendered, when the binding exists. Zero means the
+    /// tessellator has never visited this chunk object, which is what a chunk the client has
+    /// just installed - or re-installed over one it already had - looks like (G40).
+    /// </summary>
+    public static bool TryDrawnCount(IWorldChunk? chunk, out int drawn)
+    {
+        drawn = 0;
+        if (chunk is not ClientChunk client) return false;
+        drawn = DrawnCount(client, out bool known);
+        return known;
+    }
+
+    /// <summary>The ray culler's verdict for this frame, `CullVisible[bufIndex]` (G43). Public API.</summary>
+    public static bool TryIsCullVisible(IWorldChunk? chunk, out bool visible)
+    {
+        visible = true;
+        if (chunk is not ClientChunk client) return false;
+        try
+        {
+            visible = client.CullVisible[ClientChunk.bufIndex];
+            return true;
+        }
+        catch
+        {
+            visible = true;
+            return false;
+        }
     }
 
     /// <summary>

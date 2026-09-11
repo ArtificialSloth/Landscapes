@@ -3291,3 +3291,127 @@ terrain readiness, ownership and mask-publication semantics unchanged. Preserve 
 depth-plus-revealage veto and accept its barely perceptible residual flicker. If terrain ownership
 ever needs to change, treat it as separately authorized terrain work with a terrain-first runtime
 regression case. Version 0.4.39 is the complete rollback and the accepted checkpoint.
+
+### G166 - A spatial climate path can still hide a player-local seasonal scalar
+
+**Trigger:** distant terrain already has per-position climate and mostly follows biome/season
+boundaries, but one winter effect changes across the whole visible world when the player crosses
+a chunk boundary.
+
+**Trap:** snow was not part of the climate field. One `snowLineY` uniform was calculated from
+the climate under the player and read by every distant vertex. Standing in a snowy chunk therefore
+turned every visible mountain white at the next refresh; leaving it removed snow everywhere. The
+existing spatial tint machinery made the renderer look more complete than it was.
+
+**Safer action:** inventory every position-dependent input, not only the main color. The same
+64-block climate-field sample now carries raw climate and a quantized snow threshold at the
+terrain's own X/Z, and the field stays active for snow even when optional far-biome tint is off.
+Reserve a global uniform only as the no-field fallback.
+
+### G167 - “Observed” is provenance, not the observed snow answer
+
+**Trigger:** persisting one bit that says vanilla terrain was sampled, then inferring bare ground
+when the snow material is absent from a coarse section.
+
+**Trap:** 0.4.43 stored observation provenance but expected the material runs to carry the answer.
+A thin snow layer can lose a mip's majority material vote while its areal coverage remains real.
+The surviving provenance bit then turned “snow did not survive downsampling” into “vanilla
+authoritatively reported bare,” producing grey/sparse winter patches in coarser LODs.
+
+**Safer action:** store two facts: `SnowStateObservedBits` and `SnowCoveredBits`. Propagate
+coverage by area independently of material (snow wins a tie), and assert a parent answer only
+when every contributing captured child was observed. Treat an old provenance-only row as unknown,
+not bare; this is why format 4 has two append-only tails.
+
+### G168 - Rare state changes do not justify a perpetual terrain recapture
+
+**Trigger:** making existing cached snow eventually converge when most regions are permanently
+warm, permanently snowy, or unchanged for most of the year.
+
+**Trap:** the first background design loaded and recaptured one full-height chunk column every
+second forever. Its instantaneous rate was low, but it paid continuous disk/load/capture,
+persistence, mip, mesh and possibly network work for two rare transitions: accumulation and melt.
+Adding “can accept snow” metadata would not solve the scheduling error; nearly every terrain
+column has at least one snow-capable surface.
+
+**Safer action:** follow the authoritative change mechanism. Loaded chunks recapture on vanilla
+`ChunkDirty`. Dormant regions poll vanilla's snow snapshots every 30 seconds, cross coarse
+accumulation/melt bands into finite campaigns, and wake one canary region per poll so unloaded
+history eventually appears. Filter by observed bare/covered state, cap campaign issue work, and
+do no column cycling between changes.
+
+### G169 - Correlated interval counters do not identify a visible handoff flash
+
+**Trigger:** one 30-second log interval contains exactly as many readiness losses as broader
+geometry misses while the player reports vanilla-to-LOD flicker.
+
+**Trap:** 0.4.48 recorded 28 readiness losses, zero public-false commits and zero range-sweep
+losses, alongside 28 broader geometry misses. That correlation exposed a real semantic problem:
+the continuing geometry guard included mutable cull visibility. Version 0.4.49 made the guard
+gain-only and tested uploaded pool geometry. The next runtime log then recorded 158 gains,
+**zero losses, zero owned-without-geometry cells and zero whole-section skips**, yet the owner
+still saw the flicker. The internal correction was not a sufficient explanation of the visible
+symptom. Stale mesh-result rejection had already failed the same acceptance test.
+
+**Safer action:** instrument the exact chunk and frame of a reproducible transition. Distinguish
+mask ownership, GPU mask publication, vanilla pool geometry, LOD selection/residency,
+parent-child coverage and material revision before changing another rule. `.vhmask off`
+stopping the flash proves the mask-enabled composite is necessary; it does not prove which side
+of that composite failed.
+
+**Corrected (Session 84, 0.4.53):** the counters were not merely insufficient. The interval quoted
+above was the block written 30 seconds after joining; it contained no chunk crossing and so no
+handoff at all, and it says nothing about the flash. The flash was a readiness *loss* that arrived
+one frame late (G170). The safer action above is what found it: `.vhsky` measured the picture at
+the exact frame.
+
+### G170 - A Before-stage callback below order 1.0 sees the player before this frame's move
+
+**Trigger:** reading `Entity.Pos`, a block position derived from it, or anything else the player's
+physics moves, from an `EnumRenderStage.Before` renderer ordered below 1.0, and using it to
+predict what the engine will draw this frame.
+
+**Trap:** `EntityBehaviorPlayerPhysics` registers as a Before-stage renderer at order 1.0 and
+advances the local player there in fixed 1/60 s steps. `ClientMain` then fills the frustum culler
+from `player.Entity.Pos.AsBlockPos` and draws. Since 0.4.13 this mod's preparation (0.994) ran the
+exact range sweep ahead of that step, so ownership measured vanilla's range from the pre-physics
+block. Whenever a step crossed a block boundary that took a chunk past vanilla's range edge,
+vanilla stopped drawing it in that frame and the mask released it in the next: one frame of open
+sky, one to eight times a second while walking. `CaptureDrawRange` had assumed that a capture from
+any render callback was this frame's; that holds for the culler's settings but not for the player.
+
+**Safer action:** decide anything that must match this frame's culler after Before/1.0 (0.4.53's
+late range check runs at 1.001) or in the opaque stage. `LateRangeCheckChecks` reads the physics
+order from the installed engine, so a game update that moves it fails a check rather than
+bringing the flash back.
+
+**Found:** Session 84, from the `.vhsky` witness and decompiled 1.22.7 `ClientMain` and
+`VSEssentials`. Fixed in 0.4.53.
+
+### G171 - A CPU audit that runs where the decision runs shares its blind spot
+
+**Trigger:** checking an ownership or visibility decision with a diagnostic scheduled in the same
+callback, from the same inputs.
+
+**Trap:** `.vhgap` asked the engine about every suppressing cell every frame, and `.vhgap release`
+handed every gap it found to the cache in the frame it was found, yet the flash was unchanged. Both
+ran at Before/0.994 with the pre-physics player block (G170), so every signal they read agreed that
+vanilla was drawing chunks it was about to stop drawing for the coming frame.
+
+**Safer action:** measure the output. `.vhsky` counts sky below the horizon after all opaque terrain
+is drawn and reports, per flash, that frame's captured mask and the ground its ray should have hit.
+It located the cause in one run.
+
+### G172 - A visual bisection of a single-frame artefact is not a regression window
+
+**Trigger:** bisecting a flash that lasts one frame (about 4 ms at the owner's 235 fps) by playing
+each build briefly.
+
+**Trap:** the owner judged 0.4.39 clean and 0.4.40 bad, and the first half of Session 84 then took
+0.4.40's snow-line changes apart one by one. The cause had been present since 0.4.13 in both
+builds: identical preparation order, identical ownership code, and the same 235 fps in every
+archived session. Why 0.4.39 looked clean is not established.
+
+**Safer action:** give each build an objective count (the `.vhsky` summaries) before treating a
+visual bisection as the regression window, and keep code-history evidence (decompiled `dist/`
+builds) beside it.

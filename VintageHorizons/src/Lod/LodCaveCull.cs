@@ -1251,7 +1251,7 @@ public static class LodCaveCull
                     int pid = LodSection.RunPaletteId(run);
                     byte flags = self.PaletteFlags[pid];
                     if ((flags & (LodPaletteEntry.FlagWater | LodPaletteEntry.FlagThin
-                        | LodPaletteEntry.FlagSkip)) == 0)
+                        | LodPaletteEntry.FlagSkip | LodPaletteEntry.FlagSnowLayer)) == 0)
                     {
                         hasOpaqueFill = true;
                         break;
@@ -1277,6 +1277,8 @@ public static class LodCaveCull
             Runs = runs.ToArray(),
             ColumnStart = starts,
             Captured = self.Captured,
+            SnowStateObservedBits = self.SnowStateObservedBits,
+            SnowCoveredBits = self.SnowCoveredBits,
             PaletteColors = self.PaletteColors,
             PaletteFlags = self.PaletteFlags,
             PaletteTintSlots = self.PaletteTintSlots,
@@ -1323,7 +1325,7 @@ public static class LodCaveCull
             {
                 byte flags = paletteFlags[palette[at]];
                 if ((flags & (LodPaletteEntry.FlagWater | LodPaletteEntry.FlagThin
-                    | LodPaletteEntry.FlagSkip)) == 0) carried = palette[at];
+                    | LodPaletteEntry.FlagSkip | LodPaletteEntry.FlagSnowLayer)) == 0) carried = palette[at];
             }
             else if (carried >= 0) palette[at] = carried;
         }
@@ -1335,7 +1337,7 @@ public static class LodCaveCull
             {
                 byte flags = paletteFlags[palette[at]];
                 if ((flags & (LodPaletteEntry.FlagWater | LodPaletteEntry.FlagThin
-                    | LodPaletteEntry.FlagSkip)) == 0) carried = palette[at];
+                    | LodPaletteEntry.FlagSkip | LodPaletteEntry.FlagSnowLayer)) == 0) carried = palette[at];
             }
             else if (carried >= 0) palette[at] = carried;
         }
@@ -1382,7 +1384,8 @@ public static class LodCaveCull
         byte[] marks = work.Marks;
         int grid = LodSection.GridSize;
         const byte NotFill = LodPaletteEntry.FlagWater
-            | LodPaletteEntry.FlagThin | LodPaletteEntry.FlagSkip;
+            | LodPaletteEntry.FlagThin | LodPaletteEntry.FlagSkip
+            | LodPaletteEntry.FlagSnowLayer;
 
         long lit = 0, litF = 0, sight = 0, sightF = 0;
         long route = 0, routeF = 0, unknown = 0, unknownF = 0;

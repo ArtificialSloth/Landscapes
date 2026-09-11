@@ -29,6 +29,7 @@ public sealed class LodLocalOfferSource : IDisposable
     readonly ILogger logger;
     readonly string path;
     readonly ConcurrentQueue<long[]> keyDeltas = new();
+    readonly ConcurrentQueue<long[]> updateDeltas = new();
     readonly AutoResetEvent scanSignal = new(false);
     readonly Thread scanThread;
     readonly ConcurrentQueue<long> blobRequests = new();
@@ -136,6 +137,13 @@ public sealed class LodLocalOfferSource : IDisposable
     /// </summary>
     public bool TryTakeDiscoveredKeys(out long[] keys) => keyDeltas.TryDequeue(out keys!);
 
+    /// <summary>
+    /// Existing level-zero rows whose contents changed after this reader first saw them.
+    /// Parents are intentionally omitted: installing the changed L0 section makes the
+    /// client's own pipeline rebuild its mip ancestors, avoiding six redundant transfers.
+    /// </summary>
+    public bool TryTakeUpdatedKeys(out long[] keys) => updateDeltas.TryDequeue(out keys!);
+
     /// <summary>Wake the reader early. Used by the isolated fixture; production polls.</summary>
     internal void RequestDiscovery() => scanSignal.Set();
 
@@ -227,7 +235,7 @@ public sealed class LodLocalOfferSource : IDisposable
 
     void ScanLoop()
     {
-        var known = new HashSet<long>();
+        var known = new Dictionary<long, long>();
         try
         {
             // This connection is created, used and disposed on this thread. Blob reads
@@ -235,37 +243,44 @@ public sealed class LodLocalOfferSource : IDisposable
             // crosses thread ownership.
             using SqliteConnection scanConn = OpenReadOnly(path);
             using SqliteCommand cmd = scanConn.CreateCommand();
-            cmd.CommandText = "SELECT Detail, SX, SZ FROM Section";
+            cmd.CommandText = "SELECT Detail, SX, SZ, ModifiedMs FROM Section";
 
             while (running)
             {
                 try
                 {
-                    var scanned = new List<long>();
+                    var scanned = new List<(long Key, int Detail, long ModifiedMs)>();
                     using SqliteDataReader reader = cmd.ExecuteReader();
                     while (reader.Read())
                     {
-                        scanned.Add(LodWorld.SectionKey(
-                            reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2)));
+                        int detail = reader.GetInt32(0);
+                        scanned.Add((
+                            LodWorld.SectionKey(detail, reader.GetInt32(1), reader.GetInt32(2)),
+                            detail,
+                            reader.GetInt64(3)));
                     }
 
                     // Commit the scan to the known set only after the reader reached EOF.
                     // If SQLite throws halfway through, marking that partial prefix known
                     // before publishing it would suppress those keys forever on retry.
                     List<long>? discovered = null;
-                    foreach (long key in scanned)
+                    List<long>? updated = null;
+                    foreach ((long key, int detail, long modifiedMs) in scanned)
                     {
-                        if (known.Add(key)) (discovered ??= new List<long>()).Add(key);
+                        if (!known.TryGetValue(key, out long previous))
+                        {
+                            known[key] = modifiedMs;
+                            (discovered ??= new List<long>()).Add(key);
+                            continue;
+                        }
+
+                        if (previous == modifiedMs) continue;
+                        known[key] = modifiedMs;
+                        if (detail == 0) (updated ??= new List<long>()).Add(key);
                     }
 
-                    if (discovered != null)
-                    {
-                        for (int start = 0; start < discovered.Count; start += KeysPerDelta)
-                        {
-                            int count = Math.Min(KeysPerDelta, discovered.Count - start);
-                            keyDeltas.Enqueue(discovered.GetRange(start, count).ToArray());
-                        }
-                    }
+                    PublishBatches(discovered, keyDeltas);
+                    PublishBatches(updated, updateDeltas);
                 }
                 catch (Exception e)
                 {
@@ -283,6 +298,16 @@ public sealed class LodLocalOfferSource : IDisposable
         {
             try { logger.Warning("Could not start server-side LOD discovery: {0}", e.Message); }
             catch { /* diagnostics must not kill shutdown */ }
+        }
+    }
+
+    static void PublishBatches(List<long>? keys, ConcurrentQueue<long[]> destination)
+    {
+        if (keys == null) return;
+        for (int start = 0; start < keys.Count; start += KeysPerDelta)
+        {
+            int count = Math.Min(KeysPerDelta, keys.Count - start);
+            destination.Enqueue(keys.GetRange(start, count).ToArray());
         }
     }
 

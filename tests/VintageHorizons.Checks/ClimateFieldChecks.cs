@@ -18,10 +18,43 @@ public static class ClimateFieldChecks
         KnownCellsSurviveExactly(c);
         OneKnownCellFillsTheWholeWindow(c);
         TheNearerClimateWins(c);
+        SnowLineFollowsItsCell(c);
+        SnowObservationDoesNotSpread(c);
+        TheSnowLineCanLeaveTheAlphaByteAlone(c);
         NothingKnownPublishesNothing(c);
         ARebuiltWindowCannotLeakTheOldOne(c);
         ThePublishedFieldSurvivesTheNextRefresh(c);
         ColourMapPixelsAreRepackedRedHigh(c);
+    }
+
+    /// <summary>
+    /// `.vhsnowline alpha off` has to restore 0.4.39's texels exactly: the alpha byte stops
+    /// carrying the threshold and every published cell reads 255, the "no estimated snow" value,
+    /// while temperature and rainfall keep travelling in their own channels.
+    /// </summary>
+    static void TheSnowLineCanLeaveTheAlphaByteAlone(Check c)
+    {
+        LodClimateField.SeasonalSampler low = (int x, int z, out byte t, out byte r,
+            out float snowLine, out bool observed) =>
+        {
+            t = 120; r = 80; snowLine = 10f; observed = false;
+            return true;
+        };
+
+        var field = new LodClimateField(32);
+        field.BeginRefresh(0, 0, 0f, 255f);
+        for (int row = 0; row < field.RefreshRowCount; row++) field.RefreshRow(row, low);
+        field.CompleteRefresh();
+        c.Eq(10, (field.Texels[0] >> 24) & 0xFF, "by default the alpha byte carries the cell's snow line");
+
+        field.EncodeSnowLine = false;
+        field.BeginRefresh(0, 0, 0f, 255f);
+        for (int row = 0; row < field.RefreshRowCount; row++) field.RefreshRow(row, low);
+        field.CompleteRefresh();
+        c.True(field.Texels.All(texel => ((texel >> 24) & 0xFF) == 255),
+            "switched off, every texel's alpha is the constant 255 that 0.4.39 published");
+        c.Eq(120, (field.Texels[0] >> 16) & 0xFF, "and temperature still travels in red");
+        c.Eq(80, (field.Texels[0] >> 8) & 0xFF, "and rainfall in green");
     }
 
     /// <summary>
@@ -244,6 +277,90 @@ public static class ClimateFieldChecks
         // Off-axis too: the chamfer must spread in a circle, not along rows only.
         c.Eq(20, Read(field, -8, 4).Temperature, "a cell off the axis still takes the nearer");
         c.Eq(220, Read(field, 8, -4).Temperature, "and so does one on the other side");
+    }
+
+    /// <summary>
+    /// Snow used to be one renderer uniform sampled under the player's feet. The climate field
+    /// could colour two neighbouring cells correctly while the snow overlay still repainted
+    /// both from whichever one the player occupied. Snow now has to survive the same storage,
+    /// nearest-known spread and bilinear position lookup as temperature and rainfall.
+    /// </summary>
+    static void SnowLineFollowsItsCell(Check c)
+    {
+        LodClimateField.SeasonalSampler twoSnowLines =
+            (int x, int z, out byte t, out byte r, out float snow,
+                out bool observed) =>
+            {
+                int cx = LodClimateField.CellOf(x);
+                int cz = LodClimateField.CellOf(z);
+                t = 100;
+                r = 80;
+                snow = 255f;
+                observed = false;
+                if (cz != 0) return false;
+                if (cx == 0) { snow = 80f; return true; }
+                if (cx == 1) { snow = 160f; return true; }
+                return false;
+            };
+
+        var field = new LodClimateField(32);
+        field.BeginRefresh(0, 0, minSnowY: 0f, maxSnowY: 255f);
+        for (int row = 0; row < field.RefreshRowCount; row++)
+            field.RefreshRow(row, twoSnowLines);
+        field.CompleteRefresh();
+
+        c.True(field.TrySnowLineAt(32, 32, out float cold),
+            "the cold cell has a published snow line");
+        c.True(field.TrySnowLineAt(96, 32, out float warm),
+            "the warm cell has a published snow line");
+        c.Near(80f, cold, 0.01f, "the cold cell keeps its own threshold");
+        c.Near(160f, warm, 0.01f, "the warm cell keeps its own threshold");
+
+        c.True(field.TrySnowLineAt(64, 32, out float between),
+            "the ground between cell centres has a snow line");
+        c.Near(120f, between, 0.01f,
+            "snow interpolates by terrain position instead of snapping with the player");
+
+        c.True(field.TrySnowLineAt(-32, 32, out float spread),
+            "an unknown neighbour receives the nearest known snow line");
+        c.Near(80f, spread, 0.01f,
+            "missing snow climate spreads from the same nearest cell as its temperature");
+
+        int packed = field.Texels[LodClimateField.TexelIndex(0, 0, field.Capacity)];
+        c.Eq(80, (packed >> 24) & 0xFF,
+            "the snow threshold is uploaded in climate alpha without another sampler");
+        c.Eq(0, packed & 0xFF,
+            "and its real cell still carries an unmodified spread diagnostic in blue");
+    }
+
+    static void SnowObservationDoesNotSpread(Check c)
+    {
+        LodClimateField.SeasonalSampler oneObservedCell =
+            (int x, int z, out byte t, out byte r, out float snow,
+                out bool observed) =>
+            {
+                t = 100;
+                r = 80;
+                snow = 80f;
+                observed = LodClimateField.CellOf(x) == 0
+                    && LodClimateField.CellOf(z) == 0;
+                return observed;
+            };
+
+        var field = new LodClimateField(32);
+        field.BeginRefresh(0, 0, minSnowY: 0f, maxSnowY: 255f);
+        for (int row = 0; row < field.RefreshRowCount; row++)
+            field.RefreshRow(row, oneObservedCell);
+        field.CompleteRefresh();
+
+        c.True(field.TrySnowLineAt(32, 32, out float observed),
+            "the observed cell publishes a snow answer");
+        c.Near(255f, observed, 0.01f,
+            "the observed cell disables synthetic snow");
+        c.True(field.TrySnowLineAt(96, 32, out float spread),
+            "an unknown neighbour receives fallback climate");
+        c.Near(80f, spread, 0.01f,
+            "observation provenance does not spread into the unknown neighbour");
     }
 
     static void NothingKnownPublishesNothing(Check c)

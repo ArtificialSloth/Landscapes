@@ -2,6 +2,7 @@ using Vintagestory.API.Common;
 using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
+using Vintagestory.GameContent;
 
 namespace VintageHorizons.Net;
 
@@ -27,11 +28,13 @@ public class LodServerCaptureSystem : ModSystem
     LodPlayerPregen? pregen;
     LodSavegameSweep? sweep;
     LodPlayerPregen? generate;
+    LodPlayerPregen? refresh;
     long tickListenerId;
     long statsListenerId;
     bool statsRegistered;
     bool allocationTelemetryEnabled;
     LodPhaseCost pipelineTickCost;
+    readonly HashSet<long> persistedLevelZeroChanges = new();
 
     /// <summary>
     /// Whether chunk loads drive capture on this server. Dedicated: yes, every load.
@@ -67,6 +70,9 @@ public class LodServerCaptureSystem : ModSystem
 
     /// <summary>Progress line for /vhserver, or null when /vhgen never ran.</summary>
     public string? GenerateStatus => generate?.Status;
+
+    /// <summary>Progress line for /vhserver, or null when /vhrefresh never ran.</summary>
+    public string? RefreshStatus => refresh?.Status;
 
     /// <summary>Main thread only - the capture pipeline mutates this set every tick.</summary>
     public long[] SnapshotKeys() =>
@@ -121,6 +127,7 @@ public class LodServerCaptureSystem : ModSystem
         // Registered whatever the config says: a command that refuses with the reason
         // beats "no such command", which reads as a broken mod.
         RegisterGenerateCommand();
+        RegisterRefreshCommand();
 
         if (!Config.EnableCapture)
         {
@@ -166,6 +173,7 @@ public class LodServerCaptureSystem : ModSystem
         OpenPipeline();
 
         sapi.Event.ChunkColumnLoaded += OnChunkColumnLoaded;
+        sapi.Event.ChunkDirty += OnChunkDirty;
         sapi.Event.DidBreakBlock += (_, _, blockSel) => QueueAt(blockSel?.Position);
         sapi.Event.DidPlaceBlock += (_, _, blockSel, _) => QueueAt(blockSel?.Position);
 
@@ -175,8 +183,20 @@ public class LodServerCaptureSystem : ModSystem
         // inventing anything.
         if (Config.SweepEnabled)
         {
+            WeatherSystemBase? weather = null;
+            try
+            {
+                weather = sapi.ModLoader.GetModSystem<WeatherSystemServer>();
+            }
+            catch (Exception e)
+            {
+                Mod.Logger.Warning(
+                    "Vanilla weather system was unavailable; the startup sweep still runs, "
+                    + "but automatic dormant-terrain snow refresh is disabled: {0}", e.Message);
+            }
             sweep = new LodSavegameSweep(sapi, Mod.Logger,
-                Config.SweepRadiusChunks, Config.SweepColumnsPerSecond)
+                Config.SweepRadiusChunks, Config.SweepColumnsPerSecond,
+                Config.RefreshColumnsPerSecond, weather, pipeline!.QueueColumn)
             {
                 TrackPhaseAllocations = allocationTelemetryEnabled,
             };
@@ -222,6 +242,12 @@ public class LodServerCaptureSystem : ModSystem
         // from the block code alone. Tint slots are likewise client-only and stay 0.
         pipeline = new LodPipeline(sapi, Mod.Logger, (_, _, _, _) => (0, 0));
         pipeline.TrackPhaseAllocations = allocationTelemetryEnabled;
+        pipeline.SectionPersisted = key =>
+        {
+            if (LodWorld.KeyLevel(key) == 0) persistedLevelZeroChanges.Add(key);
+        };
+        pipeline.SnowStateCaptured = (cx, cz, observed, covered) =>
+            sweep?.ObserveSnowState(cx, cz, observed, covered);
         pipeline.Open("ModData/vintagehorizons", "-server");
 
         tickListenerId = sapi.Event.RegisterGameTickListener(_ => TickPipeline(), 50);
@@ -428,7 +454,18 @@ public class LodServerCaptureSystem : ModSystem
 
     void OnChunkColumnLoaded(Vec2i chunkCoord, IWorldChunk[] chunks)
     {
+        sweep?.ObserveLoadedColumn(chunkCoord.X, chunkCoord.Y);
         pipeline!.QueueColumn(chunkCoord.X, chunkCoord.Y); // Vec2i.Y is the Z chunk coord
+    }
+
+    /// <summary>
+    /// Vanilla snow commits mark the chunks they changed dirty. Capturing that event gives
+    /// loaded terrain an exact, immediate path; the regional scheduler is only responsible
+    /// for dormant savegame columns. QueueColumn coalesces the vertical chunks in a column.
+    /// </summary>
+    void OnChunkDirty(Vec3i chunkCoord, IWorldChunk chunk, EnumChunkDirtyReason reason)
+    {
+        pipeline?.QueueColumn(chunkCoord.X, chunkCoord.Z);
     }
 
     /// <summary>
@@ -448,6 +485,122 @@ public class LodServerCaptureSystem : ModSystem
     void OnGameWorldSave()
     {
         if (pipeline?.Active == true) TickPipeline();
+    }
+
+    // ---- /vhrefresh: recapture existing terrain without generating missing columns ----
+
+    const int RefreshDefaultRadiusChunks = 32;
+    const int RefreshMaxRadiusChunks = 128;
+
+    void RegisterRefreshCommand()
+    {
+        sapi.ChatCommands.Create("vhrefresh")
+            .WithDescription(
+                "Reload and recapture existing VintageHorizons LOD terrain around you. "
+                + "Missing vanilla terrain is never generated. Use a radius, status, or stop.")
+            .RequiresPrivilege(Privilege.controlserver)
+            .WithArgs(sapi.ChatCommands.Parsers.OptionalWord("radius|status|stop"))
+            .HandleWith(OnRefreshCommand);
+    }
+
+    TextCommandResult OnRefreshCommand(TextCommandCallingArgs args)
+    {
+        string input = Convert.ToString(args.Parsers[0].GetValue())?.Trim() ?? "";
+        if (input.Equals("status", StringComparison.OrdinalIgnoreCase))
+        {
+            return TextCommandResult.Success(RefreshStatusLine());
+        }
+        if (input.Equals("stop", StringComparison.OrdinalIgnoreCase))
+        {
+            if (refresh is not { Done: false })
+                return TextCommandResult.Success("[VintageHorizons] No refresh is running.");
+
+            refresh.Cancel();
+            return TextCommandResult.Success(
+                "[VintageHorizons] Existing-terrain refresh stopping. Already requested "
+                + "loads may still complete and be captured.");
+        }
+
+        int radius = RefreshDefaultRadiusChunks;
+        if (input.Length > 0
+            && (!int.TryParse(input, out radius) || radius < 0 || radius > RefreshMaxRadiusChunks))
+        {
+            return TextCommandResult.Error(
+                $"[VintageHorizons] Usage: /vhrefresh [radius 0-{RefreshMaxRadiusChunks}], "
+                + "/vhrefresh status, or /vhrefresh stop.");
+        }
+
+        return StartRefresh(args, radius);
+    }
+
+    string RefreshStatusLine() => refresh != null
+        ? "[VintageHorizons] " + refresh.Status
+        : "[VintageHorizons] No refresh has run. /vhrefresh [radius] - default "
+          + $"{RefreshDefaultRadiusChunks} chunks, max {RefreshMaxRadiusChunks}.";
+
+    TextCommandResult StartRefresh(TextCommandCallingArgs args, int radius)
+    {
+        if (!Config.EnableCapture)
+        {
+            return TextCommandResult.Error(
+                "[VintageHorizons] Server LOD capture is switched off (EnableCapture in "
+                + $"ModConfig/{ConfigFile}), so there is nothing to refresh into.");
+        }
+        if (!worldReady)
+        {
+            return TextCommandResult.Error("[VintageHorizons] The world still starts up. Try again shortly.");
+        }
+        if (refresh is { Done: false })
+        {
+            return TextCommandResult.Error(
+                $"[VintageHorizons] A refresh started by {refresh.StartedBy} is already going: "
+                + refresh.Status + ". Use /vhrefresh stop first.");
+        }
+        if (generate is { Done: false })
+        {
+            return TextCommandResult.Error(
+                "[VintageHorizons] /vhgen is already running. Let it finish or stop it before "
+                + "starting a refresh, so both area walkers do not compete.");
+        }
+
+        var pos = args.Caller.Pos;
+        double bx = pos?.X ?? sapi.World.DefaultSpawnPosition.X;
+        double bz = pos?.Z ?? sapi.World.DefaultSpawnPosition.Z;
+        bool fromSpawn = pos == null;
+        int cs = GlobalConstants.ChunkSize;
+        string startedBy = args.Caller.Player?.PlayerName ?? "the console";
+
+        refresh = new LodPlayerPregen(sapi, Mod.Logger, OpenPipeline(),
+            (int)bx / cs, (int)bz / cs, radius, Config, startedBy,
+            Config.SweepColumnsPerSecond, LodPlayerPregen.EnumPurpose.RefreshExisting)
+        {
+            TrackPhaseAllocations = allocationTelemetryEnabled,
+        };
+        refresh.Start();
+
+        int columns = LodPlayerPregen.ColumnsFor(radius);
+        int seconds = Math.Max(1, LodPlayerPregen.EstimateSeconds(columns, Config.SweepColumnsPerSecond));
+        string time = seconds >= 120 ? seconds / 60 + " minutes" : seconds + " seconds";
+        return TextCommandResult.Success(
+            $"[VintageHorizons] Refreshing existing LOD around {(fromSpawn ? "spawn " : "")}{(int)bx},{(int)bz} "
+            + $"out to {radius} chunks ({radius * cs} blocks): examining {columns} columns, "
+            + $"roughly {time} if they all exist and the server keeps up. Only safe columns "
+            + "already present in the vanilla save are loaded and recaptured; missing terrain "
+            + "is never generated. Updated LOD becomes visible after capture, persistence, and "
+            + "the next server refresh offer. /vhrefresh status shows progress; /vhrefresh stop cancels.");
+    }
+
+    /// <summary>
+    /// Durable L0 changes since the assist last checked. Parents are rebuilt by receiving
+    /// clients from L0, so sending them too would multiply each snow campaign transfer.
+    /// Main-thread producer and consumer; the returned snapshot owns its array.
+    /// </summary>
+    public long[] TakePersistedLevelZeroChanges()
+    {
+        if (persistedLevelZeroChanges.Count == 0) return Array.Empty<long>();
+        long[] changes = persistedLevelZeroChanges.ToArray();
+        persistedLevelZeroChanges.Clear();
+        return changes;
     }
 
     void TickPipeline()
@@ -484,6 +637,7 @@ public class LodServerCaptureSystem : ModSystem
         LogSweepStats("sweep", sweep);
         LogGenerationStats("startup generation", pregen);
         LogGenerationStats("command generation", generate);
+        LogGenerationStats("command refresh", refresh);
 
         Mod.Logger.Notification(
             "  server allocation interval MiB/max KiB: pipeline tick {0:0.00}/{1:0.0}",
@@ -508,28 +662,33 @@ public class LodServerCaptureSystem : ModSystem
         sweep?.ResetPhaseCosts();
         pregen?.ResetPhaseCosts();
         generate?.ResetPhaseCosts();
+        refresh?.ResetPhaseCosts();
     }
 
     void LogSweepStats(string label, LodSavegameSweep? work)
     {
         if (work == null || work.ProbeIssueCost.Calls + work.ProbePublishCost.Calls
-            + work.LoadIssueCost.Calls == 0) return;
+            + work.LoadIssueCost.Calls + work.RefreshIssueCost.Calls == 0) return;
 
         Mod.Logger.Notification(
             "  {0} p95/p99/max us: probe issue {1:0}/{2:0}/{3:0} | probe publish "
-            + "{4:0}/{5:0}/{6:0} | load issue {7:0}/{8:0}/{9:0}",
+            + "{4:0}/{5:0}/{6:0} | load issue {7:0}/{8:0}/{9:0} | refresh issue "
+            + "{10:0}/{11:0}/{12:0}",
             label,
             work.ProbeIssueCost.P95Us, work.ProbeIssueCost.P99Us, work.ProbeIssueCost.MaxUs,
             work.ProbePublishCost.P95Us, work.ProbePublishCost.P99Us, work.ProbePublishCost.MaxUs,
-            work.LoadIssueCost.P95Us, work.LoadIssueCost.P99Us, work.LoadIssueCost.MaxUs);
+            work.LoadIssueCost.P95Us, work.LoadIssueCost.P99Us, work.LoadIssueCost.MaxUs,
+            work.RefreshIssueCost.P95Us, work.RefreshIssueCost.P99Us, work.RefreshIssueCost.MaxUs);
 
         Mod.Logger.Notification(
             "  {0} allocation interval MiB/max KiB: probe issue {1:0.00}/{2:0.0} | "
-            + "probe publish {3:0.00}/{4:0.0} | load issue {5:0.00}/{6:0.0}",
+            + "probe publish {3:0.00}/{4:0.0} | load issue {5:0.00}/{6:0.0} | "
+            + "refresh issue {7:0.00}/{8:0.0}",
             label,
             MiB(work.ProbeIssueCost.AllocatedBytes), KiB(work.ProbeIssueCost.MaxAllocatedBytes),
             MiB(work.ProbePublishCost.AllocatedBytes), KiB(work.ProbePublishCost.MaxAllocatedBytes),
-            MiB(work.LoadIssueCost.AllocatedBytes), KiB(work.LoadIssueCost.MaxAllocatedBytes));
+            MiB(work.LoadIssueCost.AllocatedBytes), KiB(work.LoadIssueCost.MaxAllocatedBytes),
+            MiB(work.RefreshIssueCost.AllocatedBytes), KiB(work.RefreshIssueCost.MaxAllocatedBytes));
     }
 
     void LogGenerationStats(string label, LodPlayerPregen? work)
@@ -563,10 +722,13 @@ public class LodServerCaptureSystem : ModSystem
         // capture into a closed pipeline. CaptureColumn also refuses once Active drops,
         // as the second layer of the same guard.
         generate?.Cancel();
+        refresh?.Cancel();
+        sweep?.Stop();
 
         if (sapi != null)
         {
             sapi.Event.ChunkColumnLoaded -= OnChunkColumnLoaded;
+            sapi.Event.ChunkDirty -= OnChunkDirty;
             sapi.Event.GameWorldSave -= OnGameWorldSave;
             sapi.Event.UnregisterGameTickListener(tickListenerId);
             if (statsRegistered) sapi.Event.UnregisterGameTickListener(statsListenerId);
@@ -574,5 +736,6 @@ public class LodServerCaptureSystem : ModSystem
         pipeline?.Close();
         pipeline?.Dispose();
         pipeline = null;
+        persistedLevelZeroChanges.Clear();
     }
 }

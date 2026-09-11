@@ -31,25 +31,29 @@ public static class LodMesher
     const int W = 0, E = 1, N = 2, S = 3;
 
     // The tint slot rides in the alpha byte, so the vertex format stays position+colour:
-    //   0..63    opaque,     tint slot = alpha
-    //   64..127  water,      tint slot = alpha - 64
-    //   128..191 thin plant, tint slot = alpha - 128
+    //   0..63    opaque,       tint slot = alpha
+    //   64..127  water,        tint slot = alpha - 64
+    //   128..191 thin plant,   tint slot = alpha - 128
+    //   192..255 observed snow tint slot = alpha - 192
     // Slot 0 is the identity tint. The band picks the blend factor in the shader, so
     // water and flowers can be see-through by different amounts.
     const byte WaterBase = LodTintRegistry.MaxSlots;
     const byte ThinBase = LodTintRegistry.MaxSlots * 2;
-    // The fourth 64-value alpha band is unused by material/tint encoding. Solid L0
-    // vertices use it as a legacy-mesh texture marker: RGB carries the 24-bit block
-    // texture slot and alpha - 192 recovers the original opaque tint slot. This gives
-    // the established expanded renderer the same material identity as packed quads
-    // without adding another vertex stream.
+    // The packed renderer uses the fourth band for authoritative snow on an existing
+    // surface. The retired expanded comparison stream historically used the same band
+    // as a texture marker: RGB carries the 24-bit block texture slot and alpha - 192
+    // recovers its opaque tint slot. Snow therefore takes a safe flat-colour fallback
+    // only in that diagnostic stream; the packed renderer is the visible authority.
     public const byte LegacyTextureBase = LodTintRegistry.MaxSlots * 3;
+    const byte SnowBase = LegacyTextureBase;
+    const int SnowColor = 0x00F7F3ED;
 
-    static byte AlphaFor(byte paletteFlags, byte tintSlot)
+    static byte AlphaFor(byte paletteFlags, byte tintSlot, bool snowCovered = false)
     {
         byte slot = tintSlot < LodTintRegistry.MaxSlots ? tintSlot : (byte)LodTintRegistry.SlotNone;
         if ((paletteFlags & LodPaletteEntry.FlagWater) != 0) return (byte)(WaterBase + slot);
         if ((paletteFlags & LodPaletteEntry.FlagThin) != 0) return (byte)(ThinBase + slot);
+        if (snowCovered) return (byte)(SnowBase + slot);
         return slot;
     }
 
@@ -170,7 +174,8 @@ public static class LodMesher
     /// HALF blocks. A short holds every height a 14-bit run can carry for any world height
     /// up to 8,191 blocks, which is far past what the game builds.
     /// </summary>
-    readonly record struct HFace(short Cx, short Cz, short Y, short Pid, bool Bottom, bool Water, bool Thin, short YBottom, short Submerged, short SeamCell);
+    readonly record struct HFace(short Cx, short Cz, short Y, short Pid, bool Bottom,
+        bool Water, bool Thin, bool SnowCovered, short YBottom, short Submerged, short SeamCell);
 
     /// <summary>One exposed wall segment on a column edge. YTop and YBottom are half blocks.</summary>
     readonly record struct VFace(byte Dir, short Fixed, short Along, short YTop, short YBottom, short Pid, bool Water, short Submerged);
@@ -237,6 +242,8 @@ public static class LodMesher
             {
                 WorldEpoch = job.WorldEpoch,
                 Key = job.Key,
+                ContentRevision = job.ContentRevision,
+                RenderRevision = job.RenderRevision,
                 Self = job.Self,
                 Neighbors = job.Neighbors,
                 AssumedCoveredSides = job.AssumedCoveredSides,
@@ -307,6 +314,18 @@ public static class LodMesher
                 if (!self.Captured[col]) continue;
 
                 Span<ulong> runs = self.ColumnRuns(col);
+                bool snowCovered = IsBitSet(self.SnowStateObservedBits, col)
+                    && IsBitSet(self.SnowCoveredBits, col);
+                int snowSurfaceRun = -1;
+                if (snowCovered)
+                {
+                    for (int r = 0; r < runs.Length; r++)
+                    {
+                        if (IsSnowLayerRun(self, runs[r])) continue;
+                        snowSurfaceRun = r;
+                        break;
+                    }
+                }
 
                 // The water surface standing over this column, in half blocks, or a sentinel
                 // where there is none. Runs are stored top-down, so the first translucent one
@@ -329,6 +348,10 @@ public static class LodMesher
                 for (int r = 0; r < runs.Length; r++)
                 {
                     ulong run = runs[r];
+                    // Snow is retained in durable runs for older readers, but the current
+                    // LOD represents it by marking the real surface below. No extra slab,
+                    // cube, wall or coverage geometry is emitted for the snow itself.
+                    if (IsSnowLayerRun(self, run)) continue;
                     // Half blocks from here down. A slab's run still ends on a whole-block
                     // boundary in storage; its SURFACE is half a block lower.
                     int yTop = TopHalf(self, runs, r, half, surfaceHalfOnly);
@@ -345,7 +368,8 @@ public static class LodMesher
                     // perfectly good colour.
                     if (isThin)
                     {
-                        hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, true, true, (short)yBottom, 0, 0));
+                        hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid,
+                            false, true, true, r == snowSurfaceRun, (short)yBottom, 0, 0));
                         continue;
                     }
 
@@ -355,6 +379,7 @@ public static class LodMesher
                     bool topCovered = r > 0
                         && BottomHalf(runs[r - 1]) == yTop
                         && !IsThinRun(self, runs[r - 1])
+                        && !IsSnowLayerRun(self, runs[r - 1])
                         && !IsCutoutRun(self, runs[r - 1], cutoutsCover)
                         && IsTranslucentRun(self, runs[r - 1]) == isTranslucent;
                     // YBottom is carried for thin cover only, which is the one face that
@@ -385,19 +410,21 @@ public static class LodMesher
                     if (!topCovered)
                     {
                         hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false,
-                            isTranslucent, false, 0, submerged,
+                            isTranslucent, false, r == snowSurfaceRun, 0, submerged,
                             SeamCellFor(cx, cz, job.WaterSeamStripBlocks, step, isTranslucent)));
                     }
 
                     bool bottomCovered = r < runs.Length - 1
                         && TopHalf(self, runs, r + 1, half, surfaceHalfOnly) == yBottom
                         && !IsThinRun(self, runs[r + 1])
+                        && !IsSnowLayerRun(self, runs[r + 1])
                         && !IsCutoutRun(self, runs[r + 1], cutoutsCover)
                         && IsTranslucentRun(self, runs[r + 1]) == isTranslucent;
                     if (!bottomCovered && yBottom > 2 && !isTranslucent)
                     {
                         // A floor's own plane IS the run's bottom, so Y already carries it.
-                        hf.Add(new HFace((short)cx, (short)cz, (short)yBottom, (short)pid, true, false, false, 0, 0, 0));
+                        hf.Add(new HFace((short)cx, (short)cz, (short)yBottom, (short)pid,
+                            true, false, false, false, 0, 0, 0));
                     }
 
                     bool solidCoverOnly = !isTranslucent;
@@ -436,6 +463,8 @@ public static class LodMesher
         {
             WorldEpoch = job.WorldEpoch,
             Key = job.Key,
+            ContentRevision = job.ContentRevision,
+            RenderRevision = job.RenderRevision,
             Xyz = opaque.Xyz.ToArray(),
             Rgba = opaque.Rgba.ToArray(),
             Indices = opaque.Indices.ToArray(),
@@ -491,6 +520,8 @@ public static class LodMesher
             if (c != 0) return c;
             c = a.Thin.CompareTo(b.Thin);
             if (c != 0) return c;
+            c = a.SnowCovered.CompareTo(b.SnowCovered);
+            if (c != 0) return c;
             c = a.YBottom.CompareTo(b.YBottom);
             if (c != 0) return c;
             c = a.Submerged.CompareTo(b.Submerged);
@@ -513,6 +544,7 @@ public static class LodMesher
                 && faces[end].Pid == first.Pid
                 && faces[end].Bottom == first.Bottom
                 && faces[end].Thin == first.Thin
+                && faces[end].SnowCovered == first.SnowCovered
                 && faces[end].YBottom == first.YBottom
                 && faces[end].Submerged == first.Submerged
                 && faces[end].SeamCell == first.SeamCell)
@@ -529,7 +561,8 @@ public static class LodMesher
             Buffers buf = first.Water ? water : opaque;
             int color = SubmergedColor(
                 self.PaletteColors[first.Pid], first.Submerged, absorption);
-            byte alpha = AlphaFor(self.PaletteFlags[first.Pid], self.PaletteTintSlots[first.Pid]);
+            byte alpha = AlphaFor(self.PaletteFlags[first.Pid],
+                self.PaletteTintSlots[first.Pid], first.SnowCovered);
             int textureSlot = TextureSlotFor(self, first.Pid, step, emitTextureSlots,
                 first.Submerged);
 
@@ -708,6 +741,13 @@ public static class LodMesher
     static bool IsThinRun(SectionSnapshot s, ulong run) =>
         (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagThin) != 0;
 
+    static bool IsSnowLayerRun(SectionSnapshot s, ulong run) =>
+        (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagSnowLayer) != 0;
+
+    static bool IsBitSet(ulong[] bits, int col) =>
+        (uint)(col >> 6) < (uint)bits.Length
+        && (bits[col >> 6] & (1UL << (col & 63))) != 0;
+
     /// <summary>
     /// A run this mesher draws as a solid cube that the GAME draws as a see-through cutout -
     /// a crop, tall grass, a vine (<see cref="LodPaletteEntry.FlagCutout"/>). It covers
@@ -760,7 +800,7 @@ public static class LodMesher
         if (!IsHalfRun(s, runs[at])) return false;
         for (int i = 0; i < at; i++)
         {
-            if (!IsTranslucentRun(s, runs[i])) return false;
+            if (!IsTranslucentRun(s, runs[i]) && !IsSnowLayerRun(s, runs[i])) return false;
         }
         return true;
     }
@@ -865,6 +905,7 @@ public static class LodMesher
             // A mat never covers anything; beyond that, solid faces are only culled by
             // solid neighbours so terrain stays visible through water.
             if (IsThinRun(nb!, neighborRuns[i])) continue;
+            if (IsSnowLayerRun(nb!, neighborRuns[i])) continue;
             if (IsCutoutRun(nb!, neighborRuns[i], cutoutsCover)) continue;
             if (solidCoverOnly && IsTranslucentRun(nb!, neighborRuns[i])) continue;
 
@@ -930,6 +971,7 @@ public static class LodMesher
                 ulong run = neighborRuns[runAt];
                 if (LodSection.RunYTop(run) > y && LodSection.RunYBottom(run) <= y
                     && !IsThinRun(neighbor, run)
+                    && !IsSnowLayerRun(neighbor, run)
                     && !IsCutoutRun(neighbor, run, cutoutsCover)
                     && (!solidCoverOnly || !IsTranslucentRun(neighbor, run)))
                 {
@@ -1075,7 +1117,18 @@ public static class LodMesher
         buf.Xyz.Add(x);
         buf.Xyz.Add(y);
         buf.Xyz.Add(z);
-        if (textureSlot > 0)
+
+        // Packed terrain can use the fourth material band directly because its texture
+        // identity has a dedicated geometry bit. The retired expanded comparison stream
+        // already uses that band as its texture marker, so give it a safe snow-coloured,
+        // untextured fallback rather than letting it decode RGB as a bogus table index.
+        if (alpha >= SnowBase)
+        {
+            color = SnowColor;
+            alpha -= SnowBase;
+            textureSlot = 0;
+        }
+        if (textureSlot > 0 && alpha < SnowBase)
         {
             // TextureSlotFor admits only opaque L0 faces, whose alpha is 0..63.
             // 192..255 can therefore mark the alternate RGB payload without losing

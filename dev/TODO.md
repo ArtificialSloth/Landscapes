@@ -2,6 +2,47 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
+## Handoff flash follow-ups
+
+The vanilla-to-LOD handoff flash is fixed in 0.4.53 and confirmed by the owner. Its cause, the
+change that introduced it (0.4.13) and the fix are in [Session 84](sessions/SESSION_84.md) and
+G170. Remaining:
+
+- **Owner decision:** accept 0.4.53 in place of 0.4.39. Session 83's criterion was a clean
+  vanilla-to-LOD transfer with no new terrain holes; the owner has confirmed the first.
+- **Small sky patches.** The 0.4.52 witness run also logged 32 frames of a few hundred to 1,500 px
+  whose ray left loaded chunks in the air 44–66 blocks out, over cache-owned ground, in runs of
+  about 15 frames. Re-measure with `.vhsky on` on 0.4.53 before investigating.
+- **`.vhgap` scans before the physics step** (Before/0.994), so its range verdicts can be a frame
+  old. Move the scan after the late range check or retire it.
+- **Comparison switches for disproved hypotheses.** Retire `.vhsnowline` (every part) and
+  `.vhgap release`, or keep them deliberately. `.vhsky` is worth keeping as a diagnostic.
+- **Stale recorded spheres and eviction gaps.** When vanilla re-tessellates a buried chunk beside a
+  newly unloaded neighbour, the recorded draw sphere disagrees for 1–7 frames (invisible in
+  practice); the sandbox also found two eviction gaps of 4 and 7 frames. Refreshing the recorded
+  sphere from `RegisterOnChunkRetesselated` would close the first.
+- **The 0.4.39 bisection result.** It was judged clean although its timing matches 0.4.40's. This
+  is not explained; measure it with an objective count only if it matters.
+
+## Winter update verification debt
+
+The mechanism is built and the sampled appearance is satisfactory, but temporal convergence has
+not yet received a clean acceptance run:
+
+- Observe one real accumulation and one real melt without travelling through the target area.
+  Confirm the 30-second regional signal, finite campaign, durable L0 update, live offer and client
+  mip rebuild all occur, and record elapsed time for the configured 1-column/s default.
+- Verify permanently warm and fully snow-covered regions become idle between weather-band
+  crossings, while a dormant seasonal region eventually wakes through the one-region-per-poll
+  canary.
+- Exercise `/vhrefresh` at radius 0, the default radius and a frontier. Confirm no absent
+  vanilla column is generated and a connected client receives the durable replacement.
+- Compare authoritative snow at L0 and across mip boundaries, including mixed/tied coverage,
+  frosted grass and frosted foliage. The owner has accepted the general look, not this matrix.
+- Measure campaign tick cost and network/storage volume in a large explored world. The design is
+  bounded (1 ms issue budget, default 1 column/s, level-zero transfer only), but no paired runtime
+  performance capture isolates it yet.
+
 ## Distant water: protect accepted 0.4.39 and complete continuity evidence
 
 Current accepted source is `0.4.39` on `codex/water-depth-light`. Read

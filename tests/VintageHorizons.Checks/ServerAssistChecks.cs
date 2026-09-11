@@ -413,6 +413,20 @@ public static class ServerAssistChecks
         client.Pump((_, _) => true, keys => published.AddRange(keys));
         c.Eq(3, published.Count, "a repeated manifest chunk publishes no duplicate pipeline work");
 
+        var refreshed = new List<long>();
+        client.OnKeyManifest(new AssistKeyManifest
+        {
+            Keys = new[] { first[0] }, Last = true, Refresh = true,
+        });
+        client.Pump((_, _) => true,
+            keys => published.AddRange(keys), null, keys => refreshed.AddRange(keys));
+        c.SeqEq(new[] { first[0] }, refreshed,
+            "a refresh manifest republishes an existing key through the replacement callback");
+        c.Eq(3, published.Count,
+            "a refresh manifest is not misreported as newly available terrain");
+        c.True(client.ManifestComplete,
+            "a refresh chunk does not disturb the completed join manifest");
+
         // A null key array on the wire must not throw.
         c.NoThrow(() =>
         {

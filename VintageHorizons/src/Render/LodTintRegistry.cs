@@ -14,9 +14,11 @@ namespace VintageHorizons;
 /// block the registry scan happened to hit first - a conifer, so nothing ever turned
 /// for autumn - and water was left untinted grey.
 ///
-/// A slot is one distinct (climate map, season map) pair. The captured colour stays
-/// untinted and the slot's colour is recomputed from the game's own colour maps every
-/// few seconds, so distant terrain follows the calendar without re-capturing anything.
+/// A slot is one distinct (climate map, season map, frostable state) identity. The
+/// captured colour stays untinted and the slot's colour is recomputed from the game's
+/// own colour maps every few seconds, so distant terrain follows the calendar without
+/// re-capturing anything. Keeping frostable in the identity prevents blocks sharing
+/// colour maps from lending each other a winter overlay.
 ///
 /// Slots are derived from the live Block, never persisted: an existing cache picks up
 /// correct per-species tints with no re-exploration, and the mapping stays right if a
@@ -123,7 +125,10 @@ public class LodTintRegistry
     // and the compiler said so, flagging the branch as unreachable. The real check reads
     // the shader files: see StaticAssetChecks in the fast tier of scripts/check.sh.
 
-    readonly Dictionary<(string?, string?, int), int> slotByMaps = new();
+    // Frostable is part of the identity. Two blocks may use the same colour maps and
+    // untinted share while only one asks vanilla's shader for winter frost; letting them
+    // share would make the representative's answer leak onto the other material.
+    readonly Dictionary<(string?, string?, int, bool), int> slotByMaps = new();
     readonly List<Block?> representative = new();
 
     /// <summary>Per slot, the share of the colour the tint must leave alone. See LodUntintedShare.</summary>
@@ -241,7 +246,7 @@ public class LodTintRegistry
     {
         representative.Add(null);              // slot 0: no tint
         untintedShare.Add(LodUntintedShare.None);
-        slotByMaps[(null, null, 0)] = SlotNone;
+        slotByMaps[(null, null, 0, false)] = SlotNone;
         // Identity until the first refresh publishes: an unsampled slot must not tint at all.
         // The fallback colour has to start white for the same reason. BuildSlotTable runs over
         // every slot, so a slot registered but not yet sampled would otherwise publish whatever
@@ -274,11 +279,12 @@ public class LodTintRegistry
     public Block? PlantTintFallback;
 
     /// <summary>
-    /// Slot for this block, registering a new one if this (map pair, untinted share) is
-    /// unseen. The share is part of the key because two blocks on the same colour maps can
-    /// still need different amounts of it - full, sparse and very sparse grass coverage
-    /// share `climatePlantTint`/`seasonalGrass` and show quite different amounts of bare
-    /// dirt through it.
+    /// Slot for this block, registering a new one if this (map pair, untinted share,
+    /// frostable state) is unseen. The share is part of the key because two blocks on the
+    /// same colour maps can still need different amounts of it - full, sparse and very
+    /// sparse grass coverage share `climatePlantTint`/`seasonalGrass` and show quite
+    /// different amounts of bare dirt through it. Frostability is equally material:
+    /// vanilla applies its cold-weather overlay only to blocks that opt in.
     /// </summary>
     public int SlotFor(Block? block, LodUntintedShare share)
     {
@@ -294,7 +300,7 @@ public class LodTintRegistry
                 : SlotNone;
         }
 
-        var key = (climate, season, share.Key);
+        var key = (climate, season, share.Key, block.Frostable);
         if (slotByMaps.TryGetValue(key, out int slot)) return slot;
 
         // Out of slots: hand this block the registered slot on the SAME colour maps whose share
@@ -302,7 +308,8 @@ public class LodTintRegistry
         // means shares are exact while slots last and only degrade once 64 are spoken for.
         // Untinted was the old answer and it is worse than a near neighbour by a wide margin -
         // a share is at most 0.7 and a missing tint is the whole colour.
-        if (representative.Count >= MaxSlots) return NearestSlot(climate, season, share);
+        if (representative.Count >= MaxSlots)
+            return NearestSlot(climate, season, share, block.Frostable);
 
         slot = representative.Count;
         representative.Add(block);
@@ -330,13 +337,16 @@ public class LodTintRegistry
                 : SlotNone;
         }
 
-        if (slotByMaps.TryGetValue((climate, season, share.Key), out int slot)) return slot;
+        if (slotByMaps.TryGetValue((climate, season, share.Key, block.Frostable), out int slot))
+            return slot;
 
         // Only once the table is full does a block draw from a neighbour's slot, so only then
         // may this report one. Answering with a near neighbour before that would describe a slot
         // this block does not use and SlotFor would not give it - a diagnostic that agrees with
         // itself and not with the renderer is worse than one that says "not registered".
-        return representative.Count >= MaxSlots ? NearestSlot(climate, season, share) : SlotNone;
+        return representative.Count >= MaxSlots
+            ? NearestSlot(climate, season, share, block.Frostable)
+            : SlotNone;
     }
 
     /// <summary>
@@ -344,20 +354,31 @@ public class LodTintRegistry
     /// <see cref="SlotNone"/> when none is registered at all. Only reached once every slot is
     /// spoken for, which the base game does not do on its own.
     /// </summary>
-    int NearestSlot(string? climate, string? season, LodUntintedShare share)
+    int NearestSlot(string? climate, string? season, LodUntintedShare share, bool frostable)
     {
         int best = SlotNone;
         int bestDistance = int.MaxValue;
-        foreach (((string? c, string? s, int _), int slot) in slotByMaps)
+        int bestAny = SlotNone;
+        int bestAnyDistance = int.MaxValue;
+        foreach (((string? c, string? s, int _, bool frost), int slot) in slotByMaps)
         {
             if (c != climate || s != season) continue;
             if (slot <= SlotNone || slot >= untintedShare.Count) continue;
             int distance = share.DistanceTo(untintedShare[slot]);
-            if (distance >= bestDistance) continue;
-            bestDistance = distance;
-            best = slot;
+            if (distance < bestAnyDistance)
+            {
+                bestAnyDistance = distance;
+                bestAny = slot;
+            }
+            if (frost == frostable && distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = slot;
+            }
         }
-        return best;
+        // At the hard 64-slot ceiling preserving the colour map is still better than
+        // becoming untinted. Prefer matching frost identity, then degrade only overflow.
+        return best != SlotNone ? best : bestAny;
     }
 
     /// <summary>
@@ -428,6 +449,7 @@ public class LodTintRegistry
     /// </summary>
     readonly int[] slotSeasonPage = new int[MaxSlots];
     readonly bool[] slotIsLeaves = new bool[MaxSlots];
+    readonly bool[] slotFrostable = new bool[MaxSlots];
 
     /// <summary>
     /// Record the page each slot's climate map landed on. A slot with no paged map keeps
@@ -462,6 +484,7 @@ public class LodTintRegistry
                 ? seasonPage : LodSeasonMapPages.NoPage;
             slotIsLeaves[slot] = block != null
                 && block.BlockMaterial == EnumBlockMaterial.Leaves;
+            slotFrostable[slot] = block?.Frostable == true;
         }
     }
 
@@ -505,7 +528,7 @@ public class LodTintRegistry
             // usable and actually blends a season: without both, there is no row to pick.
             int seasonPage = usable && hasSeason
                 ? slotSeasonPage[slot] : LodSeasonMapPages.NoPage;
-            int flags = slotIsLeaves[slot] ? 1 : 0;
+            int flags = (slotIsLeaves[slot] ? 1 : 0) | (slotFrostable[slot] ? 2 : 0);
             slotTable[SlotTableTexel(slot, PageRow)] = unchecked((int)0xFF000000)
                 | (page << 16) | (seasonPage << 8) | flags;
 

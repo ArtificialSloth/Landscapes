@@ -143,7 +143,7 @@ public sealed class LodAssistClient
     /// </summary>
     public readonly HashSet<long> RemoteKeys = new();
 
-    readonly ConcurrentQueue<(long[] Keys, bool Last)> manifestChunks = new();
+    readonly ConcurrentQueue<(long[] Keys, bool Last, bool Refresh)> manifestChunks = new();
 
     /// <summary>True once the final manifest chunk has been applied.</summary>
     public bool ManifestComplete { get; private set; }
@@ -152,7 +152,7 @@ public sealed class LodAssistClient
     public int ManifestExpected { get; private set; }
 
     internal void OnKeyManifest(AssistKeyManifest msg) =>
-        manifestChunks.Enqueue((msg.Keys ?? Array.Empty<long>(), msg.Last));
+        manifestChunks.Enqueue((msg.Keys ?? Array.Empty<long>(), msg.Last, msg.Refresh));
 
     // ---- Section transfer ----
 
@@ -282,8 +282,9 @@ public sealed class LodAssistClient
     public void Pump(
         LodForeignSectionInstaller install,
         Action<long[]>? offerKeys = null,
-        Action<long, bool>? transferFailed = null) =>
-        PumpCore(install, deferredInstall: false, offerKeys, transferFailed);
+        Action<long, bool>? transferFailed = null,
+        Action<long[]>? refreshKeys = null) =>
+        PumpCore(install, deferredInstall: false, offerKeys, transferFailed, refreshKeys);
 
     /// <summary>
     /// Pump arrivals into an asynchronous decoder. A successful callback retains the
@@ -292,24 +293,35 @@ public sealed class LodAssistClient
     public void PumpAsync(
         LodForeignSectionInstaller enqueue,
         Action<long[]>? offerKeys = null,
-        Action<long, bool>? transferFailed = null) =>
-        PumpCore(enqueue, deferredInstall: true, offerKeys, transferFailed);
+        Action<long, bool>? transferFailed = null,
+        Action<long[]>? refreshKeys = null) =>
+        PumpCore(enqueue, deferredInstall: true, offerKeys, transferFailed, refreshKeys);
 
     void PumpCore(
         LodForeignSectionInstaller install,
         bool deferredInstall,
         Action<long[]>? offerKeys,
-        Action<long, bool>? transferFailed)
+        Action<long, bool>? transferFailed,
+        Action<long[]>? refreshKeys)
     {
         // One protocol-bounded chunk per game tick. A retained manifest can contain many
         // chunks, and applying all of them in one callback would recreate the join hitch
         // that chunking is meant to prevent.
-        if (manifestChunks.TryDequeue(out (long[] Keys, bool Last) chunk))
+        if (manifestChunks.TryDequeue(out (long[] Keys, bool Last, bool Refresh) chunk))
         {
             List<long>? newlyOffered = null;
             foreach (long key in chunk.Keys)
             {
-                if (!refused.Contains(key) && RemoteKeys.Add(key))
+                if (chunk.Refresh)
+                {
+                    // A durable new version revives a key that an older request refused.
+                    refused.Remove(key);
+                    retriesByKey.Remove(key);
+                    retryNotBeforeByKey.Remove(key);
+                    RemoteKeys.Add(key);
+                    (newlyOffered ??= new List<long>()).Add(key);
+                }
+                else if (!refused.Contains(key) && RemoteKeys.Add(key))
                 {
                     (newlyOffered ??= new List<long>()).Add(key);
                 }
@@ -318,9 +330,13 @@ public sealed class LodAssistClient
             // The callback runs on this same owning-thread Pump. It receives only the
             // delta from this chunk, so LodWorld registration happens once rather than by
             // re-enumerating the complete retained RemoteKeys set every game tick.
-            if (newlyOffered != null) offerKeys?.Invoke(newlyOffered.ToArray());
+            if (newlyOffered != null)
+            {
+                if (chunk.Refresh) refreshKeys?.Invoke(newlyOffered.ToArray());
+                else offerKeys?.Invoke(newlyOffered.ToArray());
+            }
 
-            if (chunk.Last)
+            if (chunk.Last && !chunk.Refresh)
             {
                 // The first manifest is the join, and is worth a line. Everything after it is
                 // a follow-up offer, and those now arrive every few seconds while a server

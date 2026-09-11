@@ -19,19 +19,24 @@
     // field at all - and it is what every build before the field drew everywhere.
     tint = tintFallback[slot].rgb;
     tintAlpha = tintFallback[slot].a;
+    snowLineAtVertex = snowLineY;
+    frostAtVertex = 0.0;
 
-    // The climate field, where this slot can be finished from it. A page of 255 means it
-    // cannot be, and the fallback above stands.
-    int tintPage = 255;
-    // Coarse sections take the flat fallback and skip the whole lookup - the four field
-    // samples, the four map samples, the season row and the weight - rather than computing a
-    // per-position climate for a voxel that already averages a neighbourhood.
-    if (climateFieldEnabled == 1
-        && (climateFadeBlocks <= 0.0 || columnBlocks <= climateFadeBlocks))
-    {
-        tintPage = int(tintPages[slot].r * 255.0 + 0.5);
-    }
-    if (tintPage < 255)
+    // One spatial sample serves both biome colour and snow. Snow used to be the exception:
+    // snowLineY was calculated under the player's feet and every fragment in the view read the
+    // same uniform, so crossing a climate boundary repainted the whole horizon on the next
+    // refresh. Alpha now carries this cell's current seasonal snow threshold; red and green
+    // remain raw temperature and rainfall, and blue remains the spread diagnostic.
+    vec4 climateSample = vec4(0.0);
+    bool haveClimateSample = false;
+    // `.vhsnowline fetch off` puts the lookup back where 0.4.39 had it: a vertex reads the
+    // field only when it will be tinted from it, and every other vertex keeps the uniform snow
+    // line and skips all four fetches. A comparison for the handoff flash, not a mode.
+    bool climateWanted = climateFetchTintOnly == 0
+        || (climateTintEnabled == 1
+            && (climateFadeBlocks <= 0.0 || columnBlocks <= climateFadeBlocks)
+            && int(tintPages[slot].r * 255.0 + 0.5) < 255);
+    if (climateFieldEnabled == 1 && climateWanted)
     {
         // Cell coordinates from the world position. The stored value for a cell is its
         // CENTRE, so the half-cell shift is what makes the interpolation land on the samples
@@ -48,13 +53,56 @@
         int hiZ = climateMinCellZ + climateCapacity - 2;
         int cz = clamp(int(floor(fz)), loZ, hiZ);
 
-        vec2 c00 = climateCell(cx, cz);
-        vec2 c10 = climateCell(cx + 1, cz);
-        vec2 c01 = climateCell(cx, cz + 1);
-        vec2 c11 = climateCell(cx + 1, cz + 1);
-        vec2 climate = mix(mix(c00, c10, clamp(fx - float(cx), 0.0, 1.0)),
-                           mix(c01, c11, clamp(fx - float(cx), 0.0, 1.0)),
-                           clamp(fz - float(cz), 0.0, 1.0));
+        vec4 c00 = climateCell(cx, cz);
+        vec4 c10 = climateCell(cx + 1, cz);
+        vec4 c01 = climateCell(cx, cz + 1);
+        vec4 c11 = climateCell(cx + 1, cz + 1);
+        climateSample = mix(mix(c00, c10, clamp(fx - float(cx), 0.0, 1.0)),
+                            mix(c01, c11, clamp(fx - float(cx), 0.0, 1.0)),
+                            clamp(fz - float(cz), 0.0, 1.0));
+        if (snowLineUniformOnly == 0)
+        {
+            snowLineAtVertex = climateSnowMinY
+                + climateSample.a * 255.0 * climateSnowStepY;
+        }
+        haveClimateSample = true;
+    }
+
+    // Vanilla's frostable bit is a material property, separate from both colour maps and
+    // snow blocks. Page-row blue packs bit 0 = leaves and bit 1 = frostable. Use the same
+    // current climate sample and SeasonTemperature that vanilla's colormap shader uses, so
+    // frost overlays the seasonal tint instead of replacing or freezing it.
+    int materialFlags = int(tintPages[slot].b * 255.0 + 0.5);
+    bool frostable = (materialFlags & 2) != 0;
+    if (frostable && haveClimateSample)
+    {
+        float frostAdjusted = clamp(
+            climateSample.r * 255.0 - (yLevel - climateSeaLevel) / 1.5,
+            0.0, 255.0) / 255.0;
+        float hereTemp = frostAdjusted + seasonTemperature;
+        if (hereTemp < 0.333)
+        {
+            float frostNoise = (valuenoise(terrainPos / 2.0)
+                + valuenoise(terrainPos * 2.0)) * 1.25 - 0.5;
+            frostAtVertex = max(0.0, frostNoise)
+                * clamp((0.333 - hereTemp) * 15.0, 0.0, 1.0);
+        }
+    }
+
+    // The climate field, where this slot can be finished from it. A page of 255 means it
+    // cannot be, and the fallback above stands.
+    int tintPage = 255;
+    // Coarse sections take the flat fallback and skip the whole lookup - the four field
+    // samples, the four map samples, the season row and the weight - rather than computing a
+    // per-position climate for a voxel that already averages a neighbourhood.
+    if (climateTintEnabled == 1 && haveClimateSample
+        && (climateFadeBlocks <= 0.0 || columnBlocks <= climateFadeBlocks))
+    {
+        tintPage = int(tintPages[slot].r * 255.0 + 0.5);
+    }
+    if (tintPage < 255)
+    {
+        vec2 climate = climateSample.rg * 255.0;
 
         // Climate.GetAdjustedTemperature: one count colder per 1.5 blocks above sea level,
         // and warmer below it, clamped to the range the maps are indexed by.
@@ -105,7 +153,8 @@
         float amount = leafSeasonVariation * (1.0 - coarse);
         if (seasonPage < 255 && amount > 0.0)
         {
-            bool leaves = pageRow.b > 0.5 / 255.0;
+            int pageFlags = int(pageRow.b * 255.0 + 0.5);
+            bool leaves = (pageFlags & 1) != 0;
             season = mix(season, seasonAt(seasonPage, terrainPos, leaves), amount);
         }
 

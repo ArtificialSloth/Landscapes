@@ -122,6 +122,7 @@ public class AssistServerSettings
     [ProtoMember(13)] public int GenerateMaxInFlight;
     [ProtoMember(14)] public int PregenRadiusChunks;
     [ProtoMember(15)] public int PregenColumnsPerSecond;
+    [ProtoMember(16)] public int RefreshColumnsPerSecond;
 
     public static AssistServerSettings From(LodServerConfig config) => new()
     {
@@ -140,6 +141,7 @@ public class AssistServerSettings
         GenerateMaxInFlight = config.GenerateMaxInFlight,
         PregenRadiusChunks = config.PregenRadiusChunks,
         PregenColumnsPerSecond = config.PregenColumnsPerSecond,
+        RefreshColumnsPerSecond = config.RefreshColumnsPerSecond,
     };
 }
 
@@ -160,6 +162,14 @@ public class AssistKeyManifest
     [ProtoMember(2)] public bool Last;
 
     [ProtoMember(3)] public long[] Keys = Array.Empty<long>();
+
+    /// <summary>
+    /// These keys already existed when the client joined but now have newer durable L0
+    /// contents. Older clients ignore this append-only field and retain their previous
+    /// one-shot behavior; newer clients fetch the replacements through the same bounded
+    /// request path as ordinary sections.
+    /// </summary>
+    [ProtoMember(4)] public bool Refresh;
 }
 
 /// <summary>

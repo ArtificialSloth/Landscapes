@@ -1,3 +1,6 @@
+using Vintagestory.API.Client;
+using Vintagestory.API.Common;
+
 namespace VintageHorizons.Checks;
 
 public static class TintReadinessChecks
@@ -6,6 +9,7 @@ public static class TintReadinessChecks
     {
         LateSlotBypassesCadence(c);
         MeshWaitsForEveryUsedSlot(c);
+        FrostIdentityDoesNotLeak(c);
     }
 
     static void LateSlotBypassesCadence(Check c)
@@ -58,5 +62,35 @@ public static class TintReadinessChecks
         plain.Palette.Add(new LodPaletteEntry { TintSlot = LodTintRegistry.SlotNone });
         c.True(LodTintRegistry.SectionTintsReady(plain, readySlotCount: 1),
             "untinted terrain does not wait for climate sampling");
+    }
+
+    static void FrostIdentityDoesNotLeak(Check c)
+    {
+        var map = new ColorMap();
+        Block Plain(bool frostable) => new()
+        {
+            ClimateColorMap = "shared",
+            ClimateColorMapResolved = map,
+            Frostable = frostable,
+        };
+
+        var registry = new LodTintRegistry();
+        int ordinary = registry.SlotFor(Plain(false), LodUntintedShare.None);
+        int frosted = registry.SlotFor(Plain(true), LodUntintedShare.None);
+        c.True(ordinary != frosted,
+            "blocks sharing colour maps cannot borrow each other's frostable state");
+        c.Eq(frosted, registry.SlotFor(Plain(true), LodUntintedShare.None),
+            "the frostable material identity is stable across equivalent blocks");
+
+        registry.AssignPages(new LodClimateMapPages(), new LodSeasonMapPages());
+        registry.CompleteRefresh();
+        int ordinaryFlags = registry.SlotTable[
+            LodTintRegistry.SlotTableTexel(ordinary, LodTintRegistry.PageRow)] & 0xFF;
+        int frostedFlags = registry.SlotTable[
+            LodTintRegistry.SlotTableTexel(frosted, LodTintRegistry.PageRow)] & 0xFF;
+        c.Eq(0, ordinaryFlags & 2,
+            "an ordinary slot publishes no frostable material flag");
+        c.Eq(2, frostedFlags & 2,
+            "a frostable slot publishes the flag consumed by the terrain shader");
     }
 }

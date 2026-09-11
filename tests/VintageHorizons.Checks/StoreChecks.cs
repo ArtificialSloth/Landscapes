@@ -1,4 +1,5 @@
 using VintageHorizons.Net;
+using System.IO.Compression;
 
 namespace VintageHorizons.Checks;
 
@@ -15,6 +16,7 @@ public static class StoreChecks
     public static void Run(Check c)
     {
         RoundTrip(c);
+        LegacySnowProvenanceTail(c);
         DeferredPalette(c);
         AFailedLookupIsNotRemembered(c);
         AColourlessCacheIsRepaired(c);
@@ -111,6 +113,9 @@ public static class StoreChecks
         section.SetColumn(0, new[] { LodSection.PackRun(stone, 30, 0) });
         section.SetColumn(1, new[] { LodSection.PackRun(water, 40, 30), LodSection.PackRun(stone, 30, 0) });
         section.SetColumn(Fixtures.Total - 1, new[] { LodSection.PackRun(stone, 12, 0) });
+        section.SetSnowStateObserved(0, observed: true);
+        section.SetSnowStateObserved(Fixtures.Total - 1, observed: true);
+        section.SetSnowCovered(0, covered: true);
 
         LodSection back = Restore(c, section);
         if (back == null!) return;
@@ -118,6 +123,10 @@ public static class StoreChecks
         c.SeqEq(section.Runs, back.Runs, "runs survive the round trip");
         c.SeqEq(section.ColumnStart, back.ColumnStart, "column offsets survive the round trip");
         c.SeqEq(section.Captured, back.Captured, "the captured bitmask survives the round trip");
+        c.SeqEq(section.SnowStateObservedBits, back.SnowStateObservedBits,
+            "the observed-snow-state bitmask survives the round trip");
+        c.SeqEq(section.SnowCoveredBits, back.SnowCoveredBits,
+            "the observed snow-coverage bitmask survives the round trip");
         c.Eq(section.CapturedColumns, back.CapturedColumns, "the captured count is rebuilt");
         c.Eq(section.Palette.Count, back.Palette.Count, "the palette keeps its length");
 
@@ -132,6 +141,45 @@ public static class StoreChecks
         c.True(back.Captured[Fixtures.Total - 1], "the final column survives the bitmask");
         c.SeqEq(section.ColumnRuns(Fixtures.Total - 1).ToArray(),
             back.ColumnRuns(Fixtures.Total - 1).ToArray(), "the final column's runs survive");
+    }
+
+    /// <summary>
+    /// The provenance bitset is an optional tail inside format 4, so months of existing
+    /// terrain remain readable. Missing means unknown, which safely retains climate snow
+    /// until a real chunk recapture upgrades the column.
+    /// </summary>
+    static void LegacySnowProvenanceTail(Check c)
+    {
+        LodSection section = Fixtures.SolidSection();
+        section.SetSnowStateObserved(0, observed: true);
+        byte[] current = LodStore.Serialize(Fixtures.Snapshot(section));
+
+        byte[] payload;
+        using (var input = new MemoryStream(current, 1, current.Length - 1))
+        using (var deflate = new DeflateStream(input, CompressionMode.Decompress))
+        using (var output = new MemoryStream())
+        {
+            deflate.CopyTo(output);
+            payload = output.ToArray();
+        }
+        payload = payload[..^LodSection.SnowStateObservedByteCount];
+
+        byte[] legacy;
+        using (var output = new MemoryStream())
+        {
+            output.WriteByte(current[0]);
+            using (var deflate = new DeflateStream(
+                output, CompressionLevel.Fastest, leaveOpen: true))
+                deflate.Write(payload);
+            legacy = output.ToArray();
+        }
+
+        LodSection? back = new LodStore(null!).DeserializeForeign(legacy, null);
+        c.True(back != null, "a format-4 blob without the provenance tail still loads");
+        c.True(back != null && back.CapturedColumns == Fixtures.Total,
+            "legacy terrain keeps all captured columns");
+        c.True(back != null && back.SnowStateObservedBits.All(word => word == 0),
+            "legacy terrain safely treats snow state as unknown");
     }
 
     /// <summary>
@@ -363,6 +411,22 @@ public static class StoreChecks
             Thread.Sleep(100);
             c.False(offers.TryTakeDiscoveredKeys(out _),
                 "an unchanged scan publishes no owning-thread work");
+
+            // Existing L0 rows are a different kind of delta: the key is already known,
+            // but its durable contents changed and the client must fetch a replacement.
+            using (var w = new Microsoft.Data.Sqlite.SqliteConnection(writer.ToString()))
+            {
+                w.Open();
+                using var cmd = w.CreateCommand();
+                cmd.CommandText =
+                    "UPDATE Section SET Data=x'01', ModifiedMs=2 WHERE Detail=0 AND SX=1 AND SZ=2;";
+                cmd.ExecuteNonQuery();
+            }
+            offers.RequestDiscovery();
+            c.SeqEq(new[] { first }, WaitForUpdateDelta(offers),
+                "a changed existing L0 row publishes one refresh delta");
+            c.False(offers.TryTakeDiscoveredKeys(out _),
+                "a content refresh is not misreported as a new key");
             offers.Dispose();
 
             if (OperatingSystem.IsLinux())
@@ -499,6 +563,17 @@ public static class StoreChecks
         while (timeout.ElapsedMilliseconds < 5000)
         {
             if (offers.TryTakeDiscoveredKeys(out long[] keys)) return keys;
+            Thread.Sleep(10);
+        }
+        return Array.Empty<long>();
+    }
+
+    static long[] WaitForUpdateDelta(LodLocalOfferSource offers)
+    {
+        var timeout = System.Diagnostics.Stopwatch.StartNew();
+        while (timeout.ElapsedMilliseconds < 5000)
+        {
+            if (offers.TryTakeUpdatedKeys(out long[] keys)) return keys;
             Thread.Sleep(10);
         }
         return Array.Empty<long>();
@@ -721,12 +796,18 @@ public static class StoreChecks
             8, 100, LodForeignSource.ServerAssist, future),
             "a future blob is isolated to one server decode job");
         c.True(worker.TryEnqueueForeign(
-            8, 101, LodForeignSource.ServerAssist, good),
+            8, 101, LodForeignSource.ServerAssist, good,
+            replaceExisting: true, expectedContentRevision: 42),
             "valid work can queue behind a rejected blob");
         c.Eq(null, WaitForForeign(worker, c).Section,
             "a future blob returns one failed result rather than throwing");
-        c.True(WaitForForeign(worker, c).Section != null,
+        LodForeignDecodeResult replacement = WaitForForeign(worker, c);
+        c.True(replacement.Section != null,
             "the decoder remains alive after rejecting a future blob");
+        c.True(replacement.ReplaceExisting,
+            "the decoder preserves replacement authority for owning-thread publication");
+        c.Eq(42L, replacement.ExpectedContentRevision,
+            "the decoder preserves the revision that guards a replacement race");
     }
 
     static LodForeignDecodeResult WaitForForeign(LodStorageThread worker, Check c)

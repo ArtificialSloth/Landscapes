@@ -282,6 +282,33 @@ internal sealed class VanillaRenderReadiness
     }
 
     /// <summary>
+    /// Every committed cell inside the active window, appended to <paramref name="into"/>. The
+    /// walk <see cref="QueueAllReadyCells"/> makes, without queueing anything: the handoff gap
+    /// scan asks the engine about the committed set in the frame it is used.
+    /// </summary>
+    public int CollectCommittedCells(List<VanillaChunkCell> into)
+    {
+        int found = 0;
+        for (int slot = 0; slot < columnTags.Length; slot++)
+        {
+            if (columnTags[slot] == -1L || columnReady[slot] == 0) continue;
+            UnpackColumn(columnTags[slot], out int chunkX, out int chunkZ);
+            if (chunkX < minChunkX || chunkX >= minChunkX + width
+                || chunkZ < minChunkZ || chunkZ >= minChunkZ + depth) continue;
+
+            int baseIndex = slot * verticalChunks;
+            for (int y = 0; y < verticalChunks; y++)
+            {
+                if ((VanillaReadinessState)states[baseIndex + y] != VanillaReadinessState.VanillaReady)
+                    continue;
+                into.Add(new VanillaChunkCell(chunkX, y, chunkZ));
+                found++;
+            }
+        }
+        return found;
+    }
+
+    /// <summary>
     /// Low-cadence interior maintenance under an examined-cell budget. This deliberately
     /// ignores cell state. A ready-only sweep can lose ownership but never gain it: a
     /// chunk that finishes tessellating after its dirty event was probed leaves its cell

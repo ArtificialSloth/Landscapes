@@ -41,6 +41,14 @@ public class LodRemoteKeySet
     /// </summary>
     readonly HashSet<long> localKeys = new();
 
+    /// <summary>
+    /// Keys for which the server has announced a newer durable level-zero row. Unlike
+    /// RemoteOnly, these may also exist locally; they route to the server until the refreshed
+    /// copy is durably written to this client's cache.
+    /// </summary>
+    readonly HashSet<long> remoteUpdates = new();
+    readonly Dictionary<long, long> installedUpdateRevisions = new();
+
     readonly HashSet<long> remoteWanted = new();
 
     /// <summary>Record that local disk holds a row for this key. Called during the cache key scan.</summary>
@@ -53,9 +61,44 @@ public class LodRemoteKeySet
     /// </summary>
     public bool WantFromRemote(long key)
     {
-        if (!RemoteOnly.Contains(key)) return false;
+        if (!RemoteOnly.Contains(key) && !remoteUpdates.Contains(key)) return false;
         remoteWanted.Add(key);
         return true;
+    }
+
+    public bool IsUpdate(long key) => remoteUpdates.Contains(key);
+
+    /// <summary>
+    /// Register durable server changes. Existing local rows are deliberately eligible here:
+    /// this is an explicit freshness notification, not an ordinary offer competing with a
+    /// client capture. The pipeline carries a content revision through decode so a client
+    /// capture that happens afterward still wins the race.
+    /// </summary>
+    public int AddRemoteUpdates(IEnumerable<long> keys)
+    {
+        int added = 0;
+        foreach (long key in keys)
+        {
+            bool heldLocally = localKeys.Contains(key) || world.Sections.ContainsKey(key);
+            if (!heldLocally)
+            {
+                if (RemoteOnly.Add(key))
+                {
+                    world.LoadFailed.Remove(key);
+                    world.LoadsInFlight.Remove(key);
+                    world.InstallStoredKey(
+                        LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key),
+                        applyToParent: false);
+                }
+                continue;
+            }
+
+            if (!remoteUpdates.Add(key)) continue;
+            world.LoadFailed.Remove(key);
+            remoteWanted.Add(key);
+            added++;
+        }
+        return added;
     }
 
     /// <summary>
@@ -155,14 +198,38 @@ public class LodRemoteKeySet
     }
 
     /// <summary>
+    /// Remember which local persistence revision contains an installed refresh. An older
+    /// save already in flight must not retire the update route before this revision lands.
+    /// </summary>
+    public void MarkUpdateInstalled(long key, long persistenceRevision)
+    {
+        if (remoteUpdates.Contains(key)) installedUpdateRevisions[key] = persistenceRevision;
+    }
+
+    /// <summary>
     /// Storage acknowledged a local row. Future reloads may use disk and no longer need
     /// the remote fallback; this transition deliberately happens after, never at, enqueue.
     /// </summary>
-    public void MarkPersisted(long key)
+    public void MarkPersisted(long key, long persistenceRevision = long.MaxValue)
     {
         localKeys.Add(key);
         RemoteOnly.Remove(key);
-        remoteWanted.Remove(key);
+        if (installedUpdateRevisions.TryGetValue(key, out long installedRevision)
+            && persistenceRevision >= installedRevision)
+        {
+            remoteUpdates.Remove(key);
+            installedUpdateRevisions.Remove(key);
+        }
+
+        // An unrelated older save may complete after a refresh was announced but before
+        // its replacement has even been installed. That acknowledgement makes the old
+        // row durable; it must not cancel the still-needed download. Once the replacement
+        // is installed, MarkInstalled deliberately removes wanted while its exact revision
+        // remains protected above until that newer save completes.
+        if (!remoteUpdates.Contains(key))
+            remoteWanted.Remove(key);
+        else if (!installedUpdateRevisions.ContainsKey(key))
+            remoteWanted.Add(key);
     }
 
     /// <summary>
@@ -172,7 +239,7 @@ public class LodRemoteKeySet
     /// </summary>
     public void MarkRetryable(long key)
     {
-        if (!RemoteOnly.Contains(key)) return;
+        if (!RemoteOnly.Contains(key) && !remoteUpdates.Contains(key)) return;
         world.LoadFailed.Remove(key);
         world.LoadsInFlight.Remove(key);
         remoteWanted.Add(key);
@@ -188,6 +255,8 @@ public class LodRemoteKeySet
     public void MarkUnavailable(long key)
     {
         RemoteOnly.Remove(key);
+        remoteUpdates.Remove(key);
+        installedUpdateRevisions.Remove(key);
         remoteWanted.Remove(key);
 
         // Already resident (a local capture won the race): just stop waiting. Recording a
@@ -205,6 +274,8 @@ public class LodRemoteKeySet
     {
         localKeys.Clear();
         RemoteOnly.Clear();
+        remoteUpdates.Clear();
+        installedUpdateRevisions.Clear();
         remoteWanted.Clear();
     }
 }

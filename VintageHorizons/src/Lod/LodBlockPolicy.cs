@@ -14,6 +14,15 @@ public static class LodBlockPolicy
 {
     public static byte FlagsFor(Block block)
     {
+        // Vanilla snow is captured as real blocks, but the distant representation needs
+        // only its coverage. Keeping this as a distinct derived flag (rather than Skip)
+        // leaves the run available to older readers while current meshers draw the surface
+        // below it with a snow material marker.
+        if (block.BlockMaterial == EnumBlockMaterial.Snow)
+        {
+            return LodPaletteEntry.FlagSnowLayer;
+        }
+
         if (block.BlockMaterial is EnumBlockMaterial.Water or EnumBlockMaterial.Lava or EnumBlockMaterial.Ice)
         {
             return LodPaletteEntry.FlagWater;
@@ -36,6 +45,13 @@ public static class LodBlockPolicy
         }
 
         byte flags = 0;
+
+        if (block.Variant != null
+            && block.Variant.TryGetValue("cover", out string? cover)
+            && string.Equals(cover, "snow", StringComparison.OrdinalIgnoreCase))
+        {
+            flags |= LodPaletteEntry.FlagSnowCovered;
+        }
 
         // Terrain that only fills the bottom half of its cell. Runs are stored in whole
         // blocks, so this is the only place the difference can be recorded, and the mesher

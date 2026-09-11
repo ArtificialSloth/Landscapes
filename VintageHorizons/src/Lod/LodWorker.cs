@@ -10,6 +10,8 @@ public class SectionSnapshot
     public required ulong[] Runs;
     public required int[] ColumnStart;
     public required bool[] Captured;
+    public ulong[] SnowStateObservedBits = Array.Empty<ulong>();
+    public ulong[] SnowCoveredBits = Array.Empty<ulong>();
     public required int[] PaletteColors;
     public required byte[] PaletteFlags;
     public required byte[] PaletteTintSlots;
@@ -22,6 +24,7 @@ public class SectionSnapshot
     /// </summary>
     public long EstimatedRetainedBytes => EstimateRetainedBytes(
         Runs.LongLength, ColumnStart.LongLength, Captured.LongLength,
+        SnowStateObservedBits.LongLength, SnowCoveredBits.LongLength,
         PaletteColors.LongLength, PaletteFlags.LongLength, PaletteTintSlots.LongLength,
         PaletteTextureSlots.LongLength);
 
@@ -48,6 +51,8 @@ public class SectionSnapshot
             Runs = s.Runs,
             ColumnStart = s.ColumnStart,
             Captured = (bool[])s.Captured.Clone(),
+            SnowStateObservedBits = (ulong[])s.SnowStateObservedBits.Clone(),
+            SnowCoveredBits = (ulong[])s.SnowCoveredBits.Clone(),
             PaletteColors = colors,
             PaletteFlags = flags,
             PaletteTintSlots = slots,
@@ -57,15 +62,19 @@ public class SectionSnapshot
 
     public static long EstimateRetainedBytes(LodSection s, bool includeTextureSlots = true) => EstimateRetainedBytes(
         s.Runs.LongLength, s.ColumnStart.LongLength, s.Captured.LongLength,
+        s.SnowStateObservedBits.LongLength, s.SnowCoveredBits.LongLength,
         s.Palette.Count, s.Palette.Count, s.Palette.Count,
         includeTextureSlots ? s.Palette.Count : 0);
 
     static long EstimateRetainedBytes(long runs, long columnStarts, long captured,
+        long snowStateObserved, long snowCovered,
         long paletteColors, long paletteFlags, long paletteTintSlots, long paletteTextureSlots)
     {
         long bytes = SaturatingMultiply(runs, sizeof(ulong));
         bytes = SaturatingAdd(bytes, SaturatingMultiply(columnStarts, sizeof(int)));
         bytes = SaturatingAdd(bytes, captured);
+        bytes = SaturatingAdd(bytes, SaturatingMultiply(snowStateObserved, sizeof(ulong)));
+        bytes = SaturatingAdd(bytes, SaturatingMultiply(snowCovered, sizeof(ulong)));
         bytes = SaturatingAdd(bytes, SaturatingMultiply(paletteColors, sizeof(int)));
         bytes = SaturatingAdd(bytes, paletteFlags);
         bytes = SaturatingAdd(bytes, paletteTintSlots);
@@ -83,6 +92,7 @@ public class CaptureJob
 {
     public long Epoch;
     public int Cx, Cz;
+    public bool SnowStateObserved;
     public required IWorldChunk?[] Chunks; // indexed by chunkY
     public required ushort[] RainMap;      // copied on the main thread
 }
@@ -93,6 +103,7 @@ public class CaptureResult
     public long Epoch;
     public long SectionKey;
     public int Cx, Cz;
+    public bool SnowStateObserved;
     public required ulong[]?[] RunsByColumn; // GridSize² entries, only this chunk column's 16×16 filled
     public long EstimatedBytes;
     public long ReadyAtMilliseconds;
@@ -108,6 +119,21 @@ public class MeshJob
     public long WorldEpoch;
 
     public long Key;
+
+    /// <summary>
+    /// Content identity of <see cref="Self"/> when the snapshot was taken, carried through
+    /// the worker for diagnostics and correlation. Publication deliberately gates on
+    /// <see cref="RenderRevision"/> instead: provenance-only snow changes advance content
+    /// revisions for mip correctness without changing the mesh.
+    /// </summary>
+    public long ContentRevision;
+
+    /// <summary>
+    /// Identity of the complete render obligation, including neighbour-edge and render-mode
+    /// changes that do not alter this section's own content.
+    /// </summary>
+    public long RenderRevision;
+
     public required SectionSnapshot Self;
     public required SectionSnapshot?[] Neighbors; // W, E, N, S, NW, NE, SW, SE
     public long EstimatedRetainedBytes;
@@ -217,6 +243,8 @@ public class MeshResult
     public long WorldEpoch;
 
     public long Key;
+    public long ContentRevision;
+    public long RenderRevision;
     public required float[] Xyz;
     public required byte[] Rgba;
     public required int[] Indices;
@@ -523,6 +551,8 @@ public class LodWorker : IDisposable
                         ChildKey = job.ChildKey,
                         ChildRevision = job.ChildRevision,
                         RunsByParentColumn = new ulong[]?[LodSection.GridSize * LodSection.GridSize],
+                        SnowStateObservedBits = new ulong[LodSection.SnowStateObservedWordCount],
+                        SnowCoveredBits = new ulong[LodSection.SnowStateObservedWordCount],
                         ChildPalette = job.Palette,
                         Failed = true,
                     });
@@ -609,6 +639,7 @@ public class LodWorker : IDisposable
             SectionKey = LodWorld.SectionKey(0, sectionX, sectionZ),
             Cx = job.Cx,
             Cz = job.Cz,
+            SnowStateObserved = job.SnowStateObserved,
             RunsByColumn = batch,
             EstimatedBytes = estimatedBytes,
             ReadyAtMilliseconds = Environment.TickCount64,

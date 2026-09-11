@@ -32,8 +32,8 @@
 
     // Decode the tint slot, then snow line on up-facing terrain.
     // Only the blend band is needed here; the tint itself arrives interpolated.
-    int band = int(vertexColor.a * 255.0 + 0.5) / TINT_SLOTS;  // 0 opaque, 1 water, 2 thin
-    bool translucent = band > 0;
+    int band = int(vertexColor.a * 255.0 + 0.5) / TINT_SLOTS;  // 0 opaque, 1 water, 2 thin, 3 observed snow
+    bool translucent = band == 1 || band == 2;
 
     // WATER IS NOT SHADED BY ITS NORMAL, because vanilla's is not - chunkliquid.fsh has no
     // normal term at all, which the comment above already says. It made no difference while

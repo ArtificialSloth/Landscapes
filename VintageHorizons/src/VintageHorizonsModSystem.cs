@@ -517,6 +517,16 @@ public partial class VintageHorizonsModSystem : ModSystem
             {
                 if (retryable) pipeline.MarkRemoteRetryable(key);
                 else pipeline.MarkRemoteUnavailable(key);
+            },
+            refreshed =>
+            {
+                // In integrated play the sibling database is the freshness authority: it
+                // carries ModifiedMs and retries until its newer row is accepted. Taking the
+                // same unversioned notification from both sources can reinstall one row after
+                // the first copy has already become durable and retired its update route,
+                // producing a needless second mesh replacement. Dedicated multiplayer has no
+                // sibling reader and continues to use the network manifest.
+                if (localOffers == null) pipeline.AddRemoteUpdates(refreshed);
             });
 
         // Nearest first. The render path asks for exactly the sections it wants, but far
@@ -612,6 +622,12 @@ public partial class VintageHorizonsModSystem : ModSystem
             }
         }
 
+        if (localOffers.TryTakeUpdatedKeys(out long[] updated))
+        {
+            pipeline.AddRemoteUpdates(updated);
+            localOfferKeysUpdated += updated.Length;
+        }
+
         var installBudget = new LodDrainBudget();
         int completed = 0;
         while (completed < LocalOffersPerTick
@@ -694,6 +710,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     const int LocalOffersPerTick = 4;
     int localOfferItemsProcessed;
     long localOfferBytesProcessed;
+    long localOfferKeysUpdated;
 
     /// <summary>
     /// Fill in palette colours for a section captured by a server, which had no texture
@@ -1653,10 +1670,11 @@ public partial class VintageHorizonsModSystem : ModSystem
         if (localOffers != null || localOfferKeysDiscovered > 0)
         {
             Mod.Logger.Notification(
-                "  local sibling offers: {0} discovered, {1} retryable misses, {2} accepted, "
-                + "{3} installed, {4} remote-only, {5} wanted",
-                localOfferKeysDiscovered, localOfferRetryableMisses, localOfferSectionsAccepted,
-                localOfferSectionsInstalled, pipeline.RemoteOnly.Count, pipeline.RemoteWanted().Length);
+                "  local sibling offers: {0} discovered, {1} refreshed, {2} retryable misses, "
+                + "{3} accepted, {4} installed, {5} remote-only, {6} wanted",
+                localOfferKeysDiscovered, localOfferKeysUpdated, localOfferRetryableMisses,
+                localOfferSectionsAccepted, localOfferSectionsInstalled,
+                pipeline.RemoteOnly.Count, pipeline.RemoteWanted().Length);
         }
 
         // Repairing means the cache on disk was written without colours, which drew as
@@ -1841,12 +1859,13 @@ public partial class VintageHorizonsModSystem : ModSystem
 
             Mod.Logger.Notification(
                 "  render budgets: snapshots {0} items/{1:0.00} MiB, {2} queued/{3:0.00} MiB, oldest {4}ms | "
-                + "uploads {5} items/{6:0.00} MiB, {7} queued/{8:0.00} MiB, oldest {9}ms",
+                + "uploads {5} items/{6:0.00} MiB, {7} queued/{8:0.00} MiB, oldest {9}ms | "
+                + "{10} stale results rejected",
                 renderer.MeshSnapshotItems, renderer.MeshSnapshotBytes / (1024.0 * 1024.0),
                 worker.PendingMeshes, worker.PendingMeshBytes / (1024.0 * 1024.0), worker.OldestMeshAgeMs,
                 renderer.MeshUploadItems, renderer.MeshUploadBytes / (1024.0 * 1024.0),
                 worker.PendingMeshResults, worker.PendingMeshResultBytes / (1024.0 * 1024.0),
-                worker.OldestMeshResultAgeMs);
+                worker.OldestMeshResultAgeMs, renderer.StaleMeshResultsRejected);
 
             Mod.Logger.Notification(
                 "  render gpu calls p95/p99/max us: upload {0:0}/{1:0}/{2:0} | dispose {3:0}/{4:0}/{5:0}",
@@ -2062,6 +2081,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         loggedLocalOffers = false;
         localOfferProbeTicks = 0;
         localOfferKeysDiscovered = 0;
+        localOfferKeysUpdated = 0;
         localOfferRetryableMisses = 0;
         localOfferSectionsAccepted = 0;
         localOfferSectionsInstalled = 0;
@@ -2522,7 +2542,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             });
 
         capi.ChatCommands.Create("vhpaint")
-            .WithDescription("Paint the terrain the mask is hiding bright red instead of hiding it. Diagnostic.")
+            .WithDescription("Paint the terrain the mask is hiding magenta instead of hiding it. Diagnostic.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
@@ -2535,7 +2555,135 @@ public partial class VintageHorizonsModSystem : ModSystem
                 renderer.MaskDebugPaint = (bool)args[0];
                 return TextCommandResult.Success(
                     $"[VintageHorizons] paint mode {(renderer.MaskDebugPaint ? "on" : "off")}. " +
-                    "Red is terrain the mask is hiding. A gap that stays empty is not the mask.");
+                    "Magenta is terrain the mask is hiding. A gap that stays empty is not the mask.");
+            });
+
+        // Session-only, like .vhpaint. The flash this exists for lasts a frame or two, too short
+        // to read on screen, and chat cannot be copied, so every switch and every finding goes to
+        // the client log (G72).
+        capi.ChatCommands.Create("vhgap")
+            .WithDescription("Log every chunk the mask gives to vanilla while vanilla is not drawing it: "
+                + "one client-log line per gap, with the reason and how many frames it lasted. "
+                + "on | off. '.vhgap release on|off' also hands such chunks to the cache in the "
+                + "frame they are found, as a comparison.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
+                      capi.ChatCommands.Parsers.OptionalWord("value"))
+            .HandleWith(args =>
+            {
+                if (renderer == null)
+                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+
+                string part = args.Parsers[0].IsMissing ? "" : (string)args[0];
+                string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
+
+                if (part.Equals("on", StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Success(renderer.SetHandoffGapLog(true));
+                if (part.Equals("off", StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Success(renderer.SetHandoffGapLog(false));
+                if (part.Equals("release", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (value.Equals("on", StringComparison.OrdinalIgnoreCase))
+                        return TextCommandResult.Success(renderer.SetHandoffGapRelease(true));
+                    if (value.Equals("off", StringComparison.OrdinalIgnoreCase))
+                        return TextCommandResult.Success(renderer.SetHandoffGapRelease(false));
+                }
+                return TextCommandResult.Success(renderer.DescribeHandoffGaps());
+            });
+
+        // Session-only. Each switch undoes one part of the 0.4.40 spatial snow line - the build in
+        // which the vanilla-to-cache handoff flash first appeared - so the part responsible can be
+        // found in one session. Every change also goes to the client log (G72).
+        capi.ChatCommands.Create("vhsnowline")
+            .WithDescription("Compare the parts of the spatial snow line. '.vhsnowline cells on|off' "
+                + "(per-cell thresholds), '.vhsnowline shader on|off' (terrain reads the texture), "
+                + "'.vhsnowline alpha on|off' (the texture carries the threshold), "
+                + "'.vhsnowline early on|off' (refresh when observed snow arrives). "
+                + "'.vhsnowline fetch on|off' (every vertex reads the field, or only tinted ones "
+                + "as in 0.4.39). "
+                + "'legacy' turns all five off, 'spatial' turns them back on.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
+                      capi.ChatCommands.Parsers.OptionalWord("value"))
+            .HandleWith(args =>
+            {
+                if (renderer == null)
+                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+
+                string part = args.Parsers[0].IsMissing ? "" : (string)args[0];
+                string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
+                bool? on = value.Equals("on", StringComparison.OrdinalIgnoreCase) ? true
+                    : value.Equals("off", StringComparison.OrdinalIgnoreCase) ? false
+                    : null;
+
+                if (part.Equals("legacy", StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Success(renderer.SetSnowLineMode("all", false));
+                if (part.Equals("spatial", StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Success(renderer.SetSnowLineMode("all", true));
+                if (on.HasValue)
+                {
+                    if (part.Equals("cells", StringComparison.OrdinalIgnoreCase))
+                        return TextCommandResult.Success(renderer.SetSnowLineMode("cells", on.Value));
+                    if (part.Equals("shader", StringComparison.OrdinalIgnoreCase))
+                        return TextCommandResult.Success(renderer.SetSnowLineMode("shader", on.Value));
+                    if (part.Equals("alpha", StringComparison.OrdinalIgnoreCase))
+                        return TextCommandResult.Success(renderer.SetSnowLineMode("alpha", on.Value));
+                    if (part.Equals("early", StringComparison.OrdinalIgnoreCase))
+                        return TextCommandResult.Success(renderer.SetSnowLineMode("early", on.Value));
+                    if (part.Equals("fetch", StringComparison.OrdinalIgnoreCase))
+                        return TextCommandResult.Success(renderer.SetSnowLineMode("fetch", on.Value));
+                }
+                return TextCommandResult.Success("[VintageHorizons] " + renderer.DescribeSnowLineModes());
+            });
+
+        // Session-only. The first measurement of what the graphics card actually drew at the
+        // handoff: every earlier diagnostic compared CPU beliefs with each other. Every switch
+        // and every finding goes to the client log (G72).
+        capi.ChatCommands.Create("vhsky")
+            .WithDescription("Watch for sky showing through the ground. After distant terrain is drawn, "
+                + "count sky below the horizon every frame and write each flash to the client log with "
+                + "where it was and how the chunk mask stood there. on | off. '.vhsky verify on|off' "
+                + "also reads the mask back from the graphics card after every upload.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
+                      capi.ChatCommands.Parsers.OptionalWord("value"))
+            .HandleWith(args =>
+            {
+                if (renderer == null)
+                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+
+                string part = args.Parsers[0].IsMissing ? "" : (string)args[0];
+                string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
+
+                if (part.Equals("on", StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Success(renderer.SetSkyWitness(true));
+                if (part.Equals("off", StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Success(renderer.SetSkyWitness(false));
+                if (part.Equals("verify", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (value.Equals("on", StringComparison.OrdinalIgnoreCase))
+                        return TextCommandResult.Success(renderer.SetSkyMaskVerify(true));
+                    if (value.Equals("off", StringComparison.OrdinalIgnoreCase))
+                        return TextCommandResult.Success(renderer.SetSkyMaskVerify(false));
+                }
+                return TextCommandResult.Success("[VintageHorizons] " + renderer.DescribeSkyWitness());
+            });
+
+        // Session-only. The fix for the handoff flash, switchable only so the old timing can be
+        // compared against it with .vhsky. Every switch goes to the client log (G72).
+        capi.ChatCommands.Create("vhlaterange")
+            .WithDescription("Check vanilla's draw range again after the game moves the player each frame, "
+                + "so a chunk leaving it goes to distant terrain in that same frame. On by default. "
+                + "on | off. Off restores the timing of 0.4.13 to 0.4.52, for comparison only.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("value"))
+            .HandleWith(args =>
+            {
+                if (renderer == null)
+                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+
+                string value = args.Parsers[0].IsMissing ? "" : (string)args[0];
+                if (value.Equals("on", StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Success(renderer.SetLateRangeCheck(true));
+                if (value.Equals("off", StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Success(renderer.SetLateRangeCheck(false));
+                return TextCommandResult.Success("[VintageHorizons] " + renderer.DescribeLateRangeCheck());
             });
 
         // Session-only, like the other comparison switches. The point of shipping these is
@@ -3666,7 +3814,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             });
 
         capi.ChatCommands.Create("vhgeom")
-            .WithDescription("While the chunk mask is on: ignore ground the game claims but holds no terrain for. On by default.")
+            .WithDescription("While the chunk mask is on: wait for an uploaded vanilla mesh before first handing it terrain. On by default.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
@@ -3675,13 +3823,13 @@ public partial class VintageHorizonsModSystem : ModSystem
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
                         $"[VintageHorizons] geometry rule {(renderer.GeometryOwnershipRule ? "on" : "off")}. " +
-                        "On means a chunk the game says it drew, but holds no terrain in, does not " +
-                        "hide cached terrain. Only has an effect with .vhmask on.");
+                        "On delays a new handoff until vanilla holds uploaded terrain geometry; " +
+                        "it never revokes an established handoff. Only has an effect with .vhmask on.");
 
                 renderer.GeometryOwnershipRule = (bool)args[0];
                 return TextCommandResult.Success(
                     $"[VintageHorizons] geometry rule {(renderer.GeometryOwnershipRule ? "on" : "off")}. " +
-                    "The change applies on the next frame; ownership settles over the next second or two.");
+                    "The change applies on the next frame; new ownership settles over the next second or two.");
             });
 
         // Session-only. The two rules produce a visibly different seam, and the only honest

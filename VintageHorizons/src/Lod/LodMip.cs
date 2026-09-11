@@ -14,6 +14,8 @@ public sealed class MipJob
     public required ulong[] Runs;
     public required int[] ColumnStart;
     public required bool[] Captured;
+    public required ulong[] SnowStateObservedBits;
+    public required ulong[] SnowCoveredBits;
     public required LodPaletteEntry[] Palette;
 }
 
@@ -27,6 +29,8 @@ public sealed class MipResult
     public long ChildKey;
     public long ChildRevision;
     public required ulong[]?[] RunsByParentColumn;
+    public required ulong[] SnowStateObservedBits;
+    public required ulong[] SnowCoveredBits;
     public required LodPaletteEntry[] ChildPalette;
     public bool Failed;
 }
@@ -70,6 +74,8 @@ public static class LodMip
             Runs = child.Runs,
             ColumnStart = child.ColumnStart,
             Captured = (bool[])child.Captured.Clone(),
+            SnowStateObservedBits = (ulong[])child.SnowStateObservedBits.Clone(),
+            SnowCoveredBits = (ulong[])child.SnowCoveredBits.Clone(),
             Palette = child.Palette.ToArray(),
         };
     }
@@ -84,6 +90,8 @@ public static class LodMip
         const int half = gs / 2;
 
         var batch = new ulong[]?[gs * gs];
+        var snowStateObservedBits = new ulong[LodSection.SnowStateObservedWordCount];
+        var snowCoveredBits = new ulong[LodSection.SnowStateObservedWordCount];
 
         // The four child columns are described by where they sit in the child's own run
         // array, rather than copied out of it. Copying cost four allocations per parent
@@ -98,12 +106,18 @@ public static class LodMip
             for (int px = 0; px < half; px++)
             {
                 int captured = 0;
+                int snowCovered = 0;
+                bool allCapturedSnowStatesObserved = true;
                 for (int dz = 0; dz < 2; dz++)
                 {
                     for (int dx = 0; dx < 2; dx++)
                     {
                         int ci = LodSection.ColumnIndex(px * 2 + dx, pz * 2 + dz);
                         if (!job.Captured[ci]) continue;
+                        if ((job.SnowStateObservedBits[ci >> 6] & (1UL << (ci & 63))) == 0)
+                            allCapturedSnowStatesObserved = false;
+                        else if ((job.SnowCoveredBits[ci >> 6] & (1UL << (ci & 63))) != 0)
+                            snowCovered++;
                         colStart[captured] = job.ColumnStart[ci];
                         colEnd[captured] = job.ColumnStart[ci + 1];
                         captured++;
@@ -111,8 +125,18 @@ public static class LodMip
                 }
                 if (captured == 0) continue;
 
-                batch[LodSection.ColumnIndex(job.Qx * half + px, job.Qz * half + pz)] =
-                    MergeColumns(job.Runs, colStart, colEnd, captured);
+                int parentCol = LodSection.ColumnIndex(
+                    job.Qx * half + px, job.Qz * half + pz);
+                batch[parentCol] = MergeColumns(job.Runs, colStart, colEnd, captured);
+                if (allCapturedSnowStatesObserved)
+                {
+                    snowStateObservedBits[parentCol >> 6] |= 1UL << (parentCol & 63);
+                    // Areal majority, independent of which block material survives the
+                    // vertical slice vote. At an exact tie retaining snow avoids punching
+                    // tiny bare holes through an otherwise continuous winter surface.
+                    if (snowCovered * 2 >= captured)
+                        snowCoveredBits[parentCol >> 6] |= 1UL << (parentCol & 63);
+                }
             }
         }
 
@@ -122,6 +146,8 @@ public static class LodMip
             ChildKey = job.ChildKey,
             ChildRevision = job.ChildRevision,
             RunsByParentColumn = batch,
+            SnowStateObservedBits = snowStateObservedBits,
+            SnowCoveredBits = snowCoveredBits,
             ChildPalette = job.Palette,
         };
     }
@@ -138,14 +164,61 @@ public static class LodMip
     public static int ApplyToParent(
         MipResult result, LodSection parent, out bool contentChanged)
     {
+        return ApplyToParent(result, parent, out contentChanged, out _, out _);
+    }
+
+    /// <summary>
+    /// Runtime publication also reports snow-source provenance separately. It affects
+    /// persistence, later mips, and the climate overlay, but never requires remeshing an
+    /// otherwise identical parent.
+    /// </summary>
+    public static int ApplyToParent(
+        MipResult result, LodSection parent, out bool contentChanged,
+        out bool snowStateChanged)
+    {
+        return ApplyToParent(result, parent, out contentChanged,
+            out snowStateChanged, out _);
+    }
+
+    /// <summary>
+    /// Reports whether the effective observed-and-covered answer changed separately from
+    /// metadata provenance. Only that narrower answer alters the current mesh appearance.
+    /// </summary>
+    public static int ApplyToParent(
+        MipResult result, LodSection parent, out bool contentChanged,
+        out bool snowStateChanged, out bool snowAppearanceChanged)
+    {
         ulong[]?[] batch = result.RunsByParentColumn;
         var paletteMap = new int[result.ChildPalette.Length];
         Array.Fill(paletteMap, -1);
+        int snowStateEdges = LodSection.EdgeNone;
+        snowStateChanged = false;
+        snowAppearanceChanged = false;
 
         for (int col = 0; col < batch.Length; col++)
         {
             ulong[]? merged = batch[col];
             if (merged == null) continue;
+
+            bool observed = (result.SnowStateObservedBits[col >> 6]
+                & (1UL << (col & 63))) != 0;
+            bool covered = observed && (result.SnowCoveredBits[col >> 6]
+                & (1UL << (col & 63))) != 0;
+            bool wasEffectivelyCovered = parent.IsSnowStateObserved(col)
+                && parent.IsSnowCovered(col);
+            if (parent.SetSnowStateObserved(col, observed))
+            {
+                snowStateChanged = true;
+                snowStateEdges |= LodSection.ColumnEdges(col);
+            }
+            if (parent.SetSnowCovered(col, covered))
+            {
+                snowStateChanged = true;
+                snowStateEdges |= LodSection.ColumnEdges(col);
+            }
+            bool isEffectivelyCovered = parent.IsSnowStateObserved(col)
+                && parent.IsSnowCovered(col);
+            snowAppearanceChanged |= wasEffectivelyCovered != isEffectivelyCovered;
 
             for (int i = 0; i < merged.Length; i++)
             {
@@ -162,7 +235,8 @@ public static class LodMip
             }
         }
 
-        return parent.ReplaceColumns(batch, out contentChanged);
+        int contentEdges = parent.ReplaceColumns(batch, out contentChanged);
+        return contentEdges | snowStateEdges;
     }
 
     /// <summary>

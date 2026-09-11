@@ -59,6 +59,8 @@ public static class Fixtures
             Runs = (ulong[])section.Runs.Clone(),
             ColumnStart = (int[])section.ColumnStart.Clone(),
             Captured = (bool[])section.Captured.Clone(),
+            SnowStateObservedBits = (ulong[])section.SnowStateObservedBits.Clone(),
+            SnowCoveredBits = (ulong[])section.SnowCoveredBits.Clone(),
         };
     }
 
@@ -81,6 +83,8 @@ public static class Fixtures
             Runs = s.Runs,
             ColumnStart = s.ColumnStart,
             Captured = (bool[])s.Captured.Clone(),
+            SnowStateObservedBits = (ulong[])s.SnowStateObservedBits.Clone(),
+            SnowCoveredBits = (ulong[])s.SnowCoveredBits.Clone(),
             PaletteColors = colors,
             PaletteFlags = flags,
             PaletteTintSlots = slots,
@@ -96,11 +100,14 @@ public static class Fixtures
     public static MeshJob Job(LodSection self, long key = 0, SectionSnapshot?[]? neighbors = null,
         byte assumedCoveredSides = 0, int halfBlockLevels = 1,
         bool surfaceHalfBlocksOnly = true, bool cutoutBlocksCover = false,
-        bool emitTextureSlots = false, long textureModeRevision = 0, long worldEpoch = 0) =>
+        bool emitTextureSlots = false, long textureModeRevision = 0, long worldEpoch = 0,
+        long contentRevision = 0, long renderRevision = 0) =>
         new()
         {
             WorldEpoch = worldEpoch,
             Key = key,
+            ContentRevision = contentRevision,
+            RenderRevision = renderRevision,
             Self = Snap(self),
             Neighbors = neighbors ?? new SectionSnapshot?[4],
             AssumedCoveredSides = assumedCoveredSides,

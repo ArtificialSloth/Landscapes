@@ -46,6 +46,8 @@ public static class DrainBudgetChecks
         long expected = section.ColumnStart.LongLength * sizeof(int)
             + section.Runs.LongLength * sizeof(ulong)
             + section.Captured.LongLength
+            + section.SnowStateObservedBits.LongLength * sizeof(ulong)
+            + section.SnowCoveredBits.LongLength * sizeof(ulong)
             + 12
             + (24 + "stone".Length * sizeof(char))
             + 24;
@@ -57,6 +59,8 @@ public static class DrainBudgetChecks
         long expectedSnapshot = section.Runs.LongLength * sizeof(ulong)
             + section.ColumnStart.LongLength * sizeof(int)
             + section.Captured.LongLength
+            + section.SnowStateObservedBits.LongLength * sizeof(ulong)
+            + section.SnowCoveredBits.LongLength * sizeof(ulong)
             // Colour, flags, tint slot, and the two-byte texture slot the block texture
             // table indexes with.
             + section.Palette.Count * (sizeof(int) + 2L + sizeof(ushort));

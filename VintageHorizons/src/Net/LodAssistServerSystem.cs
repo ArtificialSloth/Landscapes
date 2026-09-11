@@ -83,10 +83,12 @@ public class LodAssistServerSystem : ModSystem
                     + $"({bytesServed / 1e6:0.0} MB, {(sectionsServed > 0 ? blobReadMs / sectionsServed : 0):0.00}ms avg read), "
                     + $"{sectionsOutsideRadius} refused as out of radius, {sectionsRefused} refused unserved, "
                     + $"{pendingByPlayer.Count} players waiting, "
-                    + $"{manifestDeltasSent} follow-up offers sent to connected players. "
+                    + $"{manifestDeltasSent} new-key and {refreshManifestsSent} refresh offers "
+                    + "sent to connected players. "
                     + (capture?.SweepStatus is string sw ? sw + ". " : "")
                     + (capture?.PregenStatus is string pg ? pg + ". " : "")
                     + (capture?.GenerateStatus is string gn ? gn + ". " : "")
+                    + (capture?.RefreshStatus is string rf ? rf + ". " : "")
                     + "Settings live in ModConfig/vintagehorizons-server.json (restart to apply).");
             });
 
@@ -181,7 +183,38 @@ public class LodAssistServerSystem : ModSystem
             delta.Length, told);
     }
 
+    /// <summary>
+    /// Tell current clients that durable L0 contents changed. This is separate from the
+    /// monotone key ledger: the key is old, its blob is new. One append-only manifest flag
+    /// lets old clients safely ignore the distinction while new clients request a replacement.
+    /// </summary>
+    void OfferUpdatedKeys()
+    {
+        LodServerCaptureSystem? capture = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>();
+        if (capture?.Capturing != true) return;
+
+        // Drain even with no listeners or with serving disabled. A later greeting receives
+        // the current rows through the ordinary full manifest and needs no history replay.
+        long[] updated = capture.TakePersistedLevelZeroChanges();
+        if (updated.Length == 0 || ledger.GreetedCount == 0
+            || capture.Config.EnableServing != true) return;
+
+        int told = 0;
+        foreach (IPlayer online in sapi.World.AllOnlinePlayers)
+        {
+            if (online is not IServerPlayer player || !ledger.HasGreeted(player.PlayerUID)) continue;
+            SendManifest(player, updated, refresh: true);
+            told++;
+        }
+
+        refreshManifestsSent += told;
+        if (told > 0)
+            Mod.Logger.Debug("VintageHorizons: offered {0} refreshed L0 sections to {1} player(s)",
+                updated.Length, told);
+    }
+
     long manifestDeltasSent;
+    long refreshManifestsSent;
 
     void OnPlayerDisconnect(IServerPlayer player)
     {
@@ -644,6 +677,7 @@ public class LodAssistServerSystem : ModSystem
     {
         LodPhaseStart phaseStart = LodPhaseCost.Start(allocationTelemetryEnabled);
         OfferNewKeys();
+        OfferUpdatedKeys();
         OfferCost.Add(phaseStart);
     }
 
@@ -726,7 +760,7 @@ public class LodAssistServerSystem : ModSystem
     }
 
     /// <summary>Keys the server holds, in chunks. Main thread only.</summary>
-    void SendManifest(IServerPlayer player, long[] keys)
+    void SendManifest(IServerPlayer player, long[] keys, bool refresh = false)
     {
         int sent = 0, sequence = 0;
         while (sent < keys.Length)
@@ -741,6 +775,7 @@ public class LodAssistServerSystem : ModSystem
                 Sequence = sequence++,
                 Last = sent >= keys.Length,
                 Keys = chunk,
+                Refresh = refresh,
             }, player);
         }
 

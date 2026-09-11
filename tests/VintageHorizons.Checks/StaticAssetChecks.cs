@@ -301,6 +301,7 @@ public static class StaticAssetChecks
     static void SeasonRowWiring(Check c)
     {
         string vertex = ShaderBody("vsh");
+        string fragment = ShaderBody("fsh");
 
         // The pages, and the addressing the C# writes them at.
         c.Eq(128, LodSeasonMapPages.PageWidth, "a seasonal map is 128 columns of the year");
@@ -321,8 +322,21 @@ public static class StaticAssetChecks
         c.True(vertex.Contains("int seasonPage = int(pageRow.g * 255.0 + 0.5);",
                 StringComparison.Ordinal),
             "the seasonal page is the page row's green channel");
-        c.True(vertex.Contains("bool leaves = pageRow.b > 0.5 / 255.0;", StringComparison.Ordinal),
-            "and the leaves flag is its blue");
+        c.True(vertex.Contains("int pageFlags = int(pageRow.b * 255.0 + 0.5);",
+                StringComparison.Ordinal)
+            && vertex.Contains("bool leaves = (pageFlags & 1) != 0;",
+                StringComparison.Ordinal),
+            "and bit zero of blue remains the leaves flag");
+        c.True(vertex.Contains("bool frostable = (materialFlags & 2) != 0;",
+                StringComparison.Ordinal)
+            && vertex.Contains("float hereTemp = frostAdjusted + seasonTemperature;",
+                StringComparison.Ordinal)
+            && vertex.Contains("valuenoise(terrainPos / 2.0)", StringComparison.Ordinal)
+            && vertex.Contains("valuenoise(terrainPos * 2.0)", StringComparison.Ordinal),
+            "blue bit one drives frost from local climate and the live seasonal temperature");
+        c.True(fragment.Contains("frostedTint = mix(tint, vec3(1.0)",
+                StringComparison.Ordinal),
+            "frost overlays the live tint instead of replacing the seasonal system");
 
         // The noise, against the engine's own file rather than a copy of it kept here.
         string enginePath = Path.Combine(GameAssemblies.GamePath, "assets", "game",
@@ -464,6 +478,7 @@ public static class StaticAssetChecks
     static void ClimateFieldWiring(Check c)
     {
         string vertex = ShaderBody("vsh");
+        string fragment = ShaderBody("fsh");
         string renderer = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons",
             "src", "Render", "LodTerrainRenderer.cs"));
 
@@ -485,6 +500,29 @@ public static class StaticAssetChecks
         // every climate lands half a cell from where it was measured.
         c.True(vertex.Contains("/ climateCellBlocks - 0.5;", StringComparison.Ordinal),
             "the shader shifts by half a cell to land on the sampled centres");
+
+        // Snow is the third spatial result. It used to remain one snowLineY uniform sampled
+        // at the player's X/Z after temperature and rainfall moved into this field, which made
+        // every visible chunk gain or lose snow together whenever the player crossed climates.
+        c.True(vertex.Contains("snowLineAtVertex = climateSnowMinY", StringComparison.Ordinal)
+            && vertex.Contains("+ climateSample.a * 255.0 * climateSnowStepY;",
+                StringComparison.Ordinal),
+            "the vertex reconstructs snow from the climate cell at the terrain position");
+        c.True(fragment.Contains(
+                "snowLineAtVertex, snowLineAtVertex + 24.0, yLevel",
+                StringComparison.Ordinal),
+            "the fragment snow transition uses the interpolated per-position threshold");
+        c.False(fragment.Contains("smoothstep(snowLineY", StringComparison.Ordinal),
+            "no fragment can repaint the whole view from the player-local snow line");
+        c.True(renderer.Contains(
+                "seasonalRefreshTotalDays = capi.World.Calendar.TotalDays;",
+                StringComparison.Ordinal)
+            && renderer.Contains("EnumGetClimateMode.ForSuppliedDate_TemperatureOnly",
+                StringComparison.Ordinal)
+            && renderer.Contains(
+                "Climate.GetScaledAdjustedTemperatureFloatClient(\n            rawTemperature",
+                StringComparison.Ordinal),
+            "remembered raw climate is advanced to the current season for each field cell");
 
         // ---- the colour map pages ------------------------------------------------------
         c.True(vertex.Contains("int row = page * 256;", StringComparison.Ordinal),
@@ -571,8 +609,9 @@ public static class StaticAssetChecks
         // ---- every uniform the shader reads is one the renderer uploads -----------------
         foreach (string uniform in new[]
         {
-            "climateFieldEnabled", "climateMinCellX", "climateMinCellZ", "climateCapacity",
-            "climateCellBlocks", "climateSeaLevel",
+            "climateFieldEnabled", "climateTintEnabled", "climateMinCellX", "climateMinCellZ",
+            "climateCapacity", "climateCellBlocks", "climateSeaLevel", "climateSnowMinY",
+            "climateSnowStepY",
         })
         {
             c.True(vertex.Contains("uniform ", StringComparison.Ordinal)
@@ -589,11 +628,16 @@ public static class StaticAssetChecks
                 $"and the renderer binds {sampler}");
         }
 
-        // An unbound sampler reads zero, and zero here is a plausible-looking black tint, so
-        // the switch and the binds have to be decided by the same condition.
-        c.True(renderer.Contains("prog.Uniform(\"climateFieldEnabled\", climateOn ? 1 : 0);",
+        // Field availability and tint policy are separate. Snow must keep its own cell when
+        // the player turns expensive far-biome colouring off, while tint still requires the
+        // map and slot tables an unbound colour sampler would otherwise read as black.
+        c.True(renderer.Contains(
+                "prog.Uniform(\"climateFieldEnabled\", climateFieldOn ? 1 : 0);",
+                StringComparison.Ordinal)
+            && renderer.Contains(
+                "prog.Uniform(\"climateTintEnabled\", climateTintOn ? 1 : 0);",
                 StringComparison.Ordinal),
-            "the field is only switched on when its three tables are actually bound");
+            "spatial snow stays live independently of the biome-colour setting");
     }
 
     /// <summary>
@@ -1217,6 +1261,10 @@ public static class StaticAssetChecks
         c.True(modSystem.Contains("localOffers.RequestBlob", StringComparison.Ordinal)
             && modSystem.Contains("localOffers.TryTakeBlobResult", StringComparison.Ordinal),
             "singleplayer sibling-cache blob reads use the background I/O worker");
+        c.True(modSystem.Contains(
+                "if (localOffers == null) pipeline.AddRemoteUpdates(refreshed)",
+                StringComparison.Ordinal),
+            "integrated play accepts refresh announcements from one freshness authority");
         c.False(modSystem.Contains("localOffers.Blob(", StringComparison.Ordinal),
             "the game tick never performs a synchronous sibling-cache SQLite read");
     }
@@ -1350,16 +1398,15 @@ public static class StaticAssetChecks
     }
 
     /// <summary>
-    /// LodMesher packs the tint slot into a vertex alpha byte in three bands: opaque at
-    /// slot, water at MaxSlots + slot, thin at MaxSlots * 2 + slot. Alpha is a byte, so the
-    /// largest encodable value is MaxSlots * 3 - 1. Raise MaxSlots past 85 and the thin band
-    /// wraps into the opaque band with no error anywhere - thin plants would render as solid
-    /// terrain of an arbitrary tint.
+    /// LodMesher packs the tint slot into a vertex alpha byte in four bands: opaque at
+    /// slot, water at MaxSlots + slot, thin at MaxSlots * 2 + slot, and observed snow at
+    /// MaxSlots * 3 + slot. Alpha is a byte, so all four bands must fit or a material wraps
+    /// into a different band with no error anywhere.
     /// </summary>
     static void AlphaPacking(Check c)
     {
-        c.True(LodTintRegistry.MaxSlots * 3 <= 256,
-            $"tint bands fit in a byte (MaxSlots {LodTintRegistry.MaxSlots} * 3 <= 256)");
+        c.True(LodTintRegistry.MaxSlots * 4 <= 256,
+            $"tint bands fit in a byte (MaxSlots {LodTintRegistry.MaxSlots} * 4 <= 256)");
     }
 
     /// <summary>
@@ -1502,7 +1549,7 @@ public static class StaticAssetChecks
         c.True(vertex.Contains("(vhGeometry & 0x80000000u) != 0u", StringComparison.Ordinal),
             "the vertex stage tests the flag that says word two is a slot");
         c.Eq(192, LodMesher.LegacyTextureBase,
-            "the expanded mesh marker occupies the one alpha band no material uses");
+            "the expanded comparison stream shares the fourth band used by packed snow");
         c.True(vertex.Contains("if (vhEncodedAlpha >= 192)", StringComparison.Ordinal)
             && vertex.Contains("vhEncodedAlpha - 192", StringComparison.Ordinal)
             && vertex.Contains("vhSlotBytes.r | (vhSlotBytes.g << 8) | (vhSlotBytes.b << 16)",
@@ -1572,6 +1619,17 @@ public static class StaticAssetChecks
         c.True(renderer.Contains("WorldEpoch = currentWorldEpoch()", StringComparison.Ordinal)
             && renderer.Contains("result.WorldEpoch != currentEpoch", StringComparison.Ordinal),
             "mesh work carries world identity and stale-world results are rejected");
+        c.True(renderer.Contains("ContentRevision = contentRevision", StringComparison.Ordinal)
+            && renderer.Contains("RenderRevision = renderRevision", StringComparison.Ordinal),
+            "mesh jobs snapshot same-world content and render identities");
+        c.True(renderer.Contains(
+                "result.RenderRevision != world.RenderDirty.Revision(result.Key)",
+                StringComparison.Ordinal),
+            "same-world stale render results are rejected before publication");
+        c.False(renderer.Contains(
+                "result.ContentRevision != world.ContentRevision(result.Key)",
+                StringComparison.Ordinal),
+            "provenance-only content changes do not reject an identical terrain mesh");
         c.True(renderer.Contains("LodWorld.KeyLevel(key) != 0", StringComparison.Ordinal),
             "the toggle remesh is restricted to L0, where texture slots can exist");
         c.True(renderer.Contains("liveTexturedMeshes > 0", StringComparison.Ordinal)
@@ -1792,6 +1850,21 @@ public static class StaticAssetChecks
             "the measurement is handed the chunk rather than fetching its own");
         c.True(Regex.IsMatch(renderer, @"bool VanillaChunkHoldsDrawableGround\(IWorldChunk\? chunk\)"),
             "the geometry rule is handed the chunk rather than fetching its own");
+        c.True(renderer.Contains(
+                "bool gainingOwnership = decisionState == VanillaReadinessState.ObservedRendered;",
+                StringComparison.Ordinal),
+            "the geometry signal can delay ownership gain but cannot revoke committed ownership");
+        int geometryMethod = renderer.IndexOf(
+            "bool VanillaChunkHoldsDrawableGround(IWorldChunk? chunk)", StringComparison.Ordinal);
+        c.True(geometryMethod > 0, "the geometry gain predicate is identifiable");
+        string geometryBody = geometryMethod > 0
+            ? renderer.Substring(geometryMethod, Math.Min(900, renderer.Length - geometryMethod))
+            : string.Empty;
+        c.True(geometryBody.Contains("TryHoldsGeometry(chunk, out bool holdsGeometry)",
+                StringComparison.Ordinal),
+            "the geometry gain gate reads uploaded pool geometry");
+        c.False(geometryBody.Contains("TryIsVanillaDrawing", StringComparison.Ordinal),
+            "the geometry gain gate does not treat a transient cull verdict as ownership loss");
 
         ExactDrawRangeWiring(c, renderer, model,
             File.ReadAllText(Path.Combine(renderDir, "VanillaChunkGeometry.cs")));

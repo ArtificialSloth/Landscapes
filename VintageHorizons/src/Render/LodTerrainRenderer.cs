@@ -188,6 +188,7 @@ public partial class LodTerrainRenderer : IRenderer
     public long MeshSnapshotBytes { get; private set; }
     public int MeshSnapshotItems { get; private set; }
     public int MeshUploadItems { get; private set; }
+    public int StaleMeshResultsRejected { get; private set; }
     public long OpaqueDrawCalls { get; private set; }
     public long WaterDrawCalls { get; private set; }
     public long OpaqueDrawVertices { get; private set; }
@@ -292,12 +293,11 @@ public partial class LodTerrainRenderer : IRenderer
     public double ReadinessRangeSweepPeakMs { get; private set; }
 
     /// <summary>
-    /// Whether a chunk the engine claims while holding no mesh may own its cell.
-    /// On by default and only meaningful with the chunk mask enabled. Exposed as a
-    /// runtime toggle so a hole can be judged both ways in one place without a
-    /// rebuild: the rule un-suppresses cached terrain, so if it makes holes worse it
-    /// is doing so by adding mesh work, not by hiding more, and that is a question
-    /// only a person looking at the band can settle.
+    /// Whether a chunk the engine claims must hold an uploaded terrain mesh before it may
+    /// first own its cell. On by default and only meaningful with the chunk mask enabled.
+    /// This is deliberately a gain gate, never a loss signal: mesh/cull state can be
+    /// transient while vanilla replaces terrain, whereas a false IsChunkRendered result
+    /// and the exact range clause are the tracker's reliable loss paths.
     /// </summary>
     public bool GeometryOwnershipRule { get; set; } = true;
 
@@ -1283,6 +1283,7 @@ public partial class LodTerrainRenderer : IRenderer
         MeshSnapshotBytes = 0;
         MeshSnapshotItems = 0;
         MeshUploadItems = 0;
+        StaleMeshResultsRejected = 0;
         OpaqueDrawCalls = 0;
         WaterDrawCalls = 0;
         OpaqueDrawVertices = 0;
@@ -1702,6 +1703,7 @@ public partial class LodTerrainRenderer : IRenderer
 
     // Live seasonal state, refreshed incrementally and fed to the shader as uniforms.
     const long SeasonalRefreshIntervalMs = 30_000;
+    const long SnowObservationRefreshDebounceMs = 1_000;
     float snowLineY = 99999;
     float pendingSnowLineY = 99999;
     long lastSeasonRefreshMs;
@@ -1710,7 +1712,12 @@ public partial class LodTerrainRenderer : IRenderer
     int seasonalRefreshSlot;
     int seasonalRefreshX;
     int seasonalRefreshZ;
+    double seasonalRefreshTotalDays;
+    long seasonalRefreshSnowObservationRevision;
+    long publishedSnowObservationRevision;
     readonly BlockPos climatePos = new(0, 0, 0);
+    readonly ClimateCondition snowClimateLow = new();
+    readonly ClimateCondition snowClimateHigh = new();
 
     /// <summary>Optional hard cap in blocks; 0 = unlimited (render every cached section).</summary>
     public int FarViewDistanceCap = 0;
@@ -1931,15 +1938,19 @@ public partial class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
-    /// Raw temperature and rainfall for one cell centre, or false where the client holds no
-    /// map region there. Cached rather than built per row: it is called once per cell.
+    /// Raw temperature, rainfall and current snow threshold for one cell centre, or false where
+    /// neither the client nor remembered climate can answer. Cached rather than built per row:
+    /// it is called once per cell.
     /// </summary>
-    LodClimateField.Sampler? climateSampler;
-    LodClimateField.Sampler ClimateSampler => climateSampler ??=
-        (int bx, int bz, out byte temperature, out byte rainfall) =>
+    LodClimateField.SeasonalSampler? climateSampler;
+    LodClimateField.SeasonalSampler ClimateSampler => climateSampler ??=
+        (int bx, int bz, out byte temperature, out byte rainfall, out float snowLine,
+            out bool snowStateIsObserved) =>
         {
             temperature = 0;
             rainfall = 0;
+            snowLine = NoSnowLineY();
+            snowStateIsObserved = false;
             int cellX = LodClimateField.CellOf(bx);
             int cellZ = LodClimateField.CellOf(bz);
 
@@ -1950,12 +1961,23 @@ public partial class LodTerrainRenderer : IRenderer
                 temperature = (byte)Math.Clamp((int)MathF.Round(t), 0, 255);
                 rainfall = (byte)Math.Clamp((int)MathF.Round(r), 0, 255);
                 ClimateMemory.Learn(cellX, cellZ, temperature, rainfall);
+                snowLine = SnowLinePerCell
+                    ? CalculateSnowLine(bx, bz, temperature, rainfall, seasonalRefreshTotalDays)
+                    : pendingSnowLineY;
+                snowStateIsObserved = world.HasObservedSnowStateAt(bx, bz);
                 return true;
             }
 
             // Then what we were told the last time we were here. A real answer from a previous
             // session beats spreading a neighbour's climate across it.
-            if (ClimateMemory.TryGet(cellX, cellZ, out temperature, out rainfall)) return true;
+            if (ClimateMemory.TryGet(cellX, cellZ, out temperature, out rainfall))
+            {
+                snowLine = SnowLinePerCell
+                    ? CalculateSnowLine(bx, bz, temperature, rainfall, seasonalRefreshTotalDays)
+                    : pendingSnowLineY;
+                snowStateIsObserved = world.HasObservedSnowStateAt(bx, bz);
+                return true;
+            }
 
             // Otherwise ask the store, once per patch, and let the spread cover this refresh.
             if (ClimateStorage != null && ClimateMemory.ShouldRequest(cellX, cellZ, out long key))
@@ -2043,6 +2065,7 @@ public partial class LodTerrainRenderer : IRenderer
         readiness?.EnqueueCandidate(
             new VanillaChunkCell(chunkCoord.X, chunkCoord.Y, chunkCoord.Z), frameCounter,
             engineEvent: true);
+        NoteGapChunkEvent(chunkCoord.X, chunkCoord.Y, chunkCoord.Z, reason);
     }
 
     /// <summary>
@@ -2138,6 +2161,7 @@ public partial class LodTerrainRenderer : IRenderer
         LoadWaterDepthShader();
         LoadWaterSurfaceShader();
         LoadWaterOitShader();
+        LoadSkyWitnessShader();
         if (!ShaderLoadIsProvisional
             && gpuFailureInjection.Take(LodGpuFailureStage.FastShaders))
         {
@@ -2398,21 +2422,29 @@ public partial class LodTerrainRenderer : IRenderer
         long now = Environment.TickCount64;
         if (!seasonalRefreshActive)
         {
-            if (!LodTintRegistry.RefreshDue(
+            bool normalRefreshDue = LodTintRegistry.RefreshDue(
                 seasonalStateInitialized,
                 tints.HasUnreadySlots,
                 now - lastSeasonRefreshMs,
-                SeasonalRefreshIntervalMs)) return;
+                SeasonalRefreshIntervalMs);
+            bool snowObservationRefreshDue = SnowLineEarlyRefresh && seasonalStateInitialized
+                && publishedSnowObservationRevision != world.SnowStateObservationRevision
+                && now - world.LastSnowStateObservationChangeMs
+                    >= SnowObservationRefreshDebounceMs;
+            if (!normalRefreshDue && !snowObservationRefreshDue) return;
 
             seasonalRefreshActive = true;
             seasonalRefreshSlot = 1;   // skip slot 0, the identity tint
             seasonalRefreshX = (int)camPos.X;
             seasonalRefreshZ = (int)camPos.Z;
+            seasonalRefreshTotalDays = capi.World.Calendar.TotalDays;
+            seasonalRefreshSnowObservationRevision = world.SnowStateObservationRevision;
             // The engine's own season uniform, not Calendar.YearRel. The two differ by the
             // column jitter colormap.vsh applies and the CPU colour call does not; taking the
             // uniform means the mod reads the season map at the column the shader reads.
             tints.BeginRefresh(capi.World, capi.Render.ShaderUniforms.SeasonRel);
-            climateField.BeginRefresh(seasonalRefreshX, seasonalRefreshZ);
+            climateField.BeginRefresh(seasonalRefreshX, seasonalRefreshZ,
+                capi.World.SeaLevel - 64f, NoSnowLineY());
             pendingSnowLineY = CalculateSnowLine(seasonalRefreshX, seasonalRefreshZ);
         }
 
@@ -2457,6 +2489,7 @@ public partial class LodTerrainRenderer : IRenderer
         tints.CompleteRefresh();
         climateField.CompleteRefresh();
         snowLineY = pendingSnowLineY;
+        publishedSnowObservationRevision = seasonalRefreshSnowObservationRevision;
         seasonalRefreshActive = false;
         seasonalStateInitialized = true;
         lastSeasonRefreshMs = now;
@@ -2491,6 +2524,56 @@ public partial class LodTerrainRenderer : IRenderer
         }
         return calculated;
     }
+
+    /// <summary>
+    /// The current seasonal snow threshold for one known climate cell. The remembered field
+    /// stores world-generation temperature and rainfall, not a seasonal result: that result
+    /// changes with the calendar and must be rebuilt each refresh. The block-accessor overload
+    /// used here is specifically for applying the game's climate events to previously obtained
+    /// world-generation values, so remembered cells receive the same season and day/night
+    /// adjustment as cells whose map region is currently loaded.
+    /// </summary>
+    float CalculateSnowLine(int px, int pz, byte rawTemperature, byte rawRainfall,
+        double totalDays)
+    {
+        try
+        {
+            int seaLevel = capi.World.SeaLevel;
+            PrepareSnowClimate(snowClimateLow, rawTemperature, rawRainfall, 0);
+            PrepareSnowClimate(snowClimateHigh, rawTemperature, rawRainfall, 150);
+
+            climatePos.Set(px, seaLevel, pz);
+            ClimateCondition? low = capi.World.BlockAccessor.GetClimateAt(
+                climatePos, snowClimateLow,
+                EnumGetClimateMode.ForSuppliedDate_TemperatureOnly, totalDays);
+            climatePos.Set(px, seaLevel + 150, pz);
+            ClimateCondition? high = capi.World.BlockAccessor.GetClimateAt(
+                climatePos, snowClimateHigh,
+                EnumGetClimateMode.ForSuppliedDate_TemperatureOnly, totalDays);
+
+            if (low == null || high == null || low.Temperature <= high.Temperature)
+                return NoSnowLineY();
+
+            float lapsePerBlock = (low.Temperature - high.Temperature) / 150f;
+            float calculated = seaLevel + (low.Temperature - (-1f)) / lapsePerBlock;
+            return GameMath.Clamp(calculated, seaLevel - 64f, NoSnowLineY());
+        }
+        catch
+        {
+            return NoSnowLineY();
+        }
+    }
+
+    void PrepareSnowClimate(ClimateCondition climate,
+        byte rawTemperature, byte rawRainfall, int blocksAboveSeaLevel)
+    {
+        climate.WorldGenTemperature = Climate.GetScaledAdjustedTemperatureFloatClient(
+            rawTemperature, blocksAboveSeaLevel);
+        climate.WorldgenRainfall = Climate.GetRainFall(
+            rawRainfall, capi.World.SeaLevel + blocksAboveSeaLevel) / 255f;
+    }
+
+    float NoSnowLineY() => capi.World.BlockAccessor.MapSizeY + 24f;
 
 
     /// <summary>Transfer one planner or content-change obligation into exact dirty ownership.</summary>
@@ -2743,10 +2826,25 @@ public partial class LodTerrainRenderer : IRenderer
             }
 
             var neighbors = new SectionSnapshot?[neighborSections.Length];
+            long contentRevision = world.ContentRevision(best);
+            long renderRevision = world.RenderDirty.Revision(best);
             for (int d = 0; d < neighborSections.Length; d++)
             {
                 if (neighborSections[d] != null)
                     neighbors[d] = SectionSnapshot.Of(neighborSections[d]!, includeTextureSlots);
+            }
+
+            SectionSnapshot self = SectionSnapshot.Of(section, includeTextureSlots);
+
+            // Same-world publication needs a finer identity than WorldEpoch. If a mesh-visible
+            // capture or neighbour-edge invalidation landed while these immutable inputs were
+            // copied, restore the obligation without submitting an already-stale snapshot.
+            // ContentRevision is intentionally not the gate: provenance-only snow updates must
+            // invalidate mip work without forcing an otherwise identical terrain mesh.
+            if (renderRevision != world.RenderDirty.Revision(best))
+            {
+                world.RenderDirty.Add(best);
+                continue;
             }
 
             meshBudget--;
@@ -2755,7 +2853,9 @@ public partial class LodTerrainRenderer : IRenderer
             {
                 WorldEpoch = currentWorldEpoch(),
                 Key = best,
-                Self = SectionSnapshot.Of(section, includeTextureSlots),
+                ContentRevision = contentRevision,
+                RenderRevision = renderRevision,
+                Self = self,
                 Neighbors = neighbors,
                 EstimatedRetainedBytes = estimatedBytes,
                 ReadyAtMilliseconds = Environment.TickCount64,
@@ -2822,6 +2922,19 @@ public partial class LodTerrainRenderer : IRenderer
             if (result.WorldEpoch != currentEpoch) continue;
 
             meshJobInFlight.Remove(result.Key);
+
+            // Keep the currently live mesh until a result built from the newest complete
+            // render input arrives. Snow recapture made this race common: an older result
+            // could otherwise replace the mesh for a frame or more, followed by the queued
+            // correction, which appeared as a flash exactly when vanilla handed ownership
+            // to the cache.
+            if (result.RenderRevision != world.RenderDirty.Revision(result.Key))
+            {
+                if (!world.RenderDirty.Contains(result.Key))
+                    world.RenderDirty.Add(result.Key);
+                StaleMeshResultsRejected++;
+                continue;
+            }
 
             // The blend master switch changes what word two of an L0 packed quad means.
             // Never publish work built for the other interpretation after the switch: put
@@ -3049,9 +3162,12 @@ public partial class LodTerrainRenderer : IRenderer
     /// <para>
     /// `IRenderAPI.DefaultFrustumCuller` is public API and hands back `ClientMain.frustumCuller`
     /// itself - the same instance `MeshDataPool.FrustumCull` consults microseconds later in the
-    /// same opaque stage. `ClientMain` fills it in immediately before triggering that stage, so
-    /// a value read from a render callback is this frame's, not last frame's, whatever order
-    /// the callbacks run in. No reflection and no timing assumption.
+    /// same opaque stage. `ClientMain` fills it in after the whole Before stage, immediately
+    /// before triggering the opaque one. The culler's settings read here hold all frame, but the
+    /// player's position does not: the engine moves the player INSIDE the Before stage
+    /// (`EntityBehaviorPlayerPhysics`, order 1.0), so a capture taken by the preparation at
+    /// 0.994 describes where the player stood before this frame's physics step. That one-frame
+    /// lag was the handoff flash; `RunLateRangeCheck` captures again after the step.
     /// </para>
     /// <para>
     /// Two inputs are deliberately not the ones this renderer uses elsewhere:
@@ -3462,19 +3578,20 @@ public partial class LodTerrainRenderer : IRenderer
                     }
                 }
 
-                // The confirmed hole: the engine's drawn counter is set once and never
-                // cleared, so a chunk it claims can hold no terrain at all - and where it
-                // holds none, suppressing the cache leaves nobody drawing that ground. A
-                // cell like that is not owned, whatever the counter says.
+                // The engine's drawn counter advances before the completed mesh is uploaded.
+                // Mesh presence is therefore useful while GAINING ownership: it prevents a
+                // first handoff from running ahead of vanilla's actual replacement.
                 //
-                // Only while the mask is on. The same signal also feeds the column
-                // aggregate behind the radial handoff, and a buried chunk with no exposed
-                // faces holds no mesh either - harmless per cell, because cached terrain
-                // underground is invisible, but it would pull the radial radius in for
-                // every column. Containing it to the feature under evaluation keeps the
-                // default path exactly as measured. Widen it only on evidence: read
-                // "nearest incomplete" and "owned draws skipped" from a mask-on run.
-                if (rendered && atOwnershipDecision && ChunkMaskEnabled && GeometryOwnershipRule
+                // It is NOT a valid loss signal. Ordinary retessellation and the culler's
+                // current verdict are transient, and revoking an already-ready cell on one
+                // such observation made the mask alternate between vanilla and cache. The
+                // 0.4.48 owner log recorded 28 losses, zero false IsChunkRendered results on
+                // committed cells and zero range losses: every loss came through this gate.
+                // Actual chunk removal still returns false above and exact range loss is
+                // swept every player-block crossing, so retaining committed ownership here
+                // does not weaken either authoritative loss path.
+                bool gainingOwnership = decisionState == VanillaReadinessState.ObservedRendered;
+                if (rendered && gainingOwnership && ChunkMaskEnabled && GeometryOwnershipRule
                     && VanillaChunkGeometry.Available
                     && !VanillaChunkHoldsDrawableGround(decisionChunk))
                 {
@@ -3503,6 +3620,11 @@ public partial class LodTerrainRenderer : IRenderer
             // After the probes, so a cell committed this frame is swept with the sphere the
             // probe just recorded rather than a frame later.
             SweepRangeLosses(frameCounter);
+
+            // Measures this frame's final ownership against what the engine is drawing, and
+            // under `.vhgap release` withdraws ground nothing draws, before the handoff radius
+            // and the mask are published below. Off unless `.vhgap` is on.
+            ScanHandoffGaps(frameCounter);
 
             // Ownership the tracker can actually prove, converted into the radius the
             // fragment shader already understands. Uncertainty anywhere - an unowned
@@ -3930,7 +4052,7 @@ public partial class LodTerrainRenderer : IRenderer
         return VanillaRenderReadiness.SphereCentreSlackBlocks + margin;
     }
 
-    void PublishReadinessMask()
+    void PublishReadinessMask(bool rebuildWaterFootprint = true)
     {
         if (readinessMask == null || readinessMaskFailed) return;
 
@@ -3945,7 +4067,11 @@ public partial class LodTerrainRenderer : IRenderer
         // gate would leave water on the old growth until something unrelated moved the mask
         // (G66: a switch that changes how the renderer decides must invalidate what it decided).
         int dilation = WaterFootprintDilationChunks();
-        if (readiness != null
+        bool footprintRebuilt = false;
+        // The late range check passes false. The cached-water depth pass has already read this
+        // frame's footprint by then, so the change waits for the next preparation and every
+        // water pass within one frame reads the same footprint.
+        if (rebuildWaterFootprint && readiness != null
             && (waterFootprintRevision != readinessMask.Revision || waterFootprintDilation != dilation))
         {
             readinessMask.RebuildWaterFootprint(
@@ -3953,9 +4079,12 @@ public partial class LodTerrainRenderer : IRenderer
                 readiness.ActiveWidth, readiness.ActiveDepth, dilation);
             waterFootprintRevision = readinessMask.Revision;
             waterFootprintDilation = dilation;
+            footprintRebuilt = true;
         }
 
-        if (!readinessMask.Dirty && readinessMaskActive) return;
+        // A footprint the late check deferred is rebuilt after the ground it follows was already
+        // uploaded, so it has to go up even when nothing else changed.
+        if (!readinessMask.Dirty && readinessMaskActive && !footprintRebuilt) return;
 
         long started = Stopwatch.GetTimestamp();
         try
@@ -3970,6 +4099,7 @@ public partial class LodTerrainRenderer : IRenderer
             if (texture.TextureId <= 0)
                 throw new InvalidOperationException("Readiness mask texture was not created.");
             readinessMaskTexture = texture;
+            if (SkyMaskVerify) VerifySkyMaskUpload(texture, readinessMask.Texels, ReadinessMaskUnit);
 
             readinessMask.MarkUploaded();
             readinessMaskActive = true;
@@ -4567,19 +4697,23 @@ public partial class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
-    /// Whether the engine holds ground here that it could actually draw. An empty chunk
-    /// qualifies: there is nothing to draw and nothing for the cache to cover, and refusing
-    /// it ownership is what collapsed 0.3.3, because every column has sky. A chunk that is
-    /// not empty and holds no mesh does not qualify - that is ground with nothing drawing
-    /// it. An unmeasurable chunk qualifies, so a game update can only cost the fix, never
-    /// open the cache over live terrain.
+    /// Whether the engine holds uploaded terrain geometry here. An empty chunk qualifies:
+    /// there is nothing to draw and nothing for the cache to cover, and refusing it ownership
+    /// is what collapsed 0.3.3 because every column has sky. An unmeasurable chunk qualifies,
+    /// so a game update can only cost the gain gate, never invent a confident refusal.
+    ///
+    /// This intentionally does not ask TryIsVanillaDrawing. That broader diagnostic also
+    /// includes CullVisible and Hide, which can change while the pool geometry remains live;
+    /// using it as this predicate was the ownership oscillation fixed in 0.4.49.
     /// </summary>
     bool VanillaChunkHoldsDrawableGround(IWorldChunk? chunk)
     {
         try
         {
             if (chunk == null) return true;
-            return !VanillaChunkGeometry.TryIsVanillaDrawing(chunk, out bool drawing) || drawing;
+            if (chunk.Empty) return true;
+            return !VanillaChunkGeometry.TryHoldsGeometry(chunk, out bool holdsGeometry)
+                || holdsGeometry;
         }
         catch
         {
@@ -4599,8 +4733,8 @@ public partial class LodTerrainRenderer : IRenderer
                 return;
             }
 
-            if (!VanillaChunkGeometry.TryIsVanillaDrawing(chunk, out bool drawingNow)) return;
-            if (drawingNow) return;
+            if (!VanillaChunkGeometry.TryHoldsGeometry(chunk, out bool holdsGeometry)) return;
+            if (holdsGeometry) return;
 
             ReadinessDrawnWithoutGeometry++;
 
@@ -5627,6 +5761,10 @@ public partial class LodTerrainRenderer : IRenderer
         // command submission and is read only after a later frame reports it available.
         renderPaths.DrawOpaque();
 
+        // `.vhsky`: count sky still showing below the horizon now that all opaque terrain,
+        // vanilla's and ours, is in the depth buffer. Off by default; draws nothing visible.
+        RunSkyWitness();
+
         CaptureWaterImage("03-ground-depth", EnumFrameBuffer.Primary, depth: true);
         CaptureWaterImage("04-before-cached-water", EnumFrameBuffer.Primary, depth: false);
 
@@ -5885,13 +6023,29 @@ public partial class LodTerrainRenderer : IRenderer
         prog.Uniforms4("tintFallback", LodTintRegistry.MaxSlots, tints.FallbackUniforms);
         prog.Uniforms4("tintPages", LodTintRegistry.MaxSlots, tints.PageUniforms);
 
-        bool climateOn = ClimateFieldTint && climateField.Active
-            && climateFieldTexture != null && climateMapTexture != null
-            && slotTableTexture != null && climatePages.PageCount > 0;
-        prog.Uniform("climateFieldEnabled", climateOn ? 1 : 0);
-        if (climateOn)
+        // The field itself is also the snow source. It stays live when biome colouring is
+        // switched off or limited to nearby LOD levels; otherwise those performance settings
+        // would silently put snow back on the old player-local global threshold.
+        bool climateFieldOn = climateField.Active && climateFieldTexture != null;
+        bool climateTintOn = ClimateFieldTint && climateFieldOn
+            && climateMapTexture != null && slotTableTexture != null
+            && climatePages.PageCount > 0;
+        prog.Uniform("climateFieldEnabled", climateFieldOn ? 1 : 0);
+        prog.Uniform("climateTintEnabled", climateTintOn ? 1 : 0);
+        if (climateFieldOn)
         {
             prog.BindTexture2D("climateField", climateFieldTexture!.TextureId, ClimateFieldUnit);
+            // Two integer scalars, never the Vec2i overload, which reaches glUniform2f. See G42.
+            prog.Uniform("climateMinCellX", climateField.MinCellX);
+            prog.Uniform("climateMinCellZ", climateField.MinCellZ);
+            prog.Uniform("climateCapacity", climateField.Capacity);
+            prog.Uniform("climateCellBlocks", (float)LodClimateField.CellBlocks);
+            prog.Uniform("climateSnowMinY", climateField.SnowMinY);
+            prog.Uniform("climateSnowStepY", climateField.SnowStepY);
+            prog.Uniform("climateSeaLevel", (float)capi.World.SeaLevel);
+        }
+        if (climateTintOn)
+        {
             prog.BindTexture2D("climateMaps", climateMapTexture!.TextureId, ClimateMapsUnit);
             if (seasonColumnTexture != null)
                 prog.BindTexture2D("seasonColumn", seasonColumnTexture.TextureId,
@@ -5903,18 +6057,15 @@ public partial class LodTerrainRenderer : IRenderer
             // Zero means every level pays. Anything else is the voxel size past which a
             // vertex takes the flat fallback instead of working out its own climate.
             prog.Uniform("climateFadeBlocks", Math.Max(0f, ClimateFadeBlocks));
-            // Two integer scalars, never the Vec2i overload, which reaches glUniform2f. See G42.
-            prog.Uniform("climateMinCellX", climateField.MinCellX);
-            prog.Uniform("climateMinCellZ", climateField.MinCellZ);
-            prog.Uniform("climateCapacity", climateField.Capacity);
-            prog.Uniform("climateCellBlocks", (float)LodClimateField.CellBlocks);
-            prog.Uniform("climateSeaLevel", (float)capi.World.SeaLevel);
             // Rainfall's height terms are keyed on Climate.Sealevel, which is a separate
             // static from the world map's sea level the lapse rate uses. Passed rather than
             // assumed equal - in the owner's world they are not.
             prog.Uniform("climateRainSeaLevel", Climate.Sealevel);
         }
         prog.Uniform("snowLineY", snowLineY);
+        prog.Uniform("snowLineUniformOnly", SnowLineFromField ? 0 : 1);
+        prog.Uniform("climateFetchTintOnly", SnowLineFetchAll ? 0 : 1);
+        prog.Uniform("seasonTemperature", capi.Render.ShaderUniforms.SeasonTemperature);
     }
 
 
@@ -8460,6 +8611,8 @@ public partial class LodTerrainRenderer : IRenderer
         seasonalRefreshActive = false;
         seasonalStateInitialized = false;
         seasonalRefreshSlot = 0;
+        seasonalRefreshSnowObservationRevision = 0;
+        publishedSnowObservationRevision = 0;
         tints.InvalidateReadiness();
 
         // Remembered climate is per world and nothing in it is true in the next one. The rows
@@ -8483,6 +8636,7 @@ public partial class LodTerrainRenderer : IRenderer
         readinessSeedCursor = readinessBoundaryCursor = readinessInteriorCursor = 0;
         readinessDisabled = false;
         readinessFailureReported = false;
+        gapTracker.Clear();
     }
 
     public void Dispose()
@@ -8508,6 +8662,7 @@ public partial class LodTerrainRenderer : IRenderer
         DisposeReadinessMaskTexture();
         DisposeSeamFieldTexture();
         DisposeBlockTableTexture();
+        DisposeSkyWitnessResources();
         world.SectionBecameResident -= OnSectionBecameResident;
         capi.Event.ChunkDirty -= OnReadinessChunkDirty;
         capi.Event.ReloadShader -= LoadShader;

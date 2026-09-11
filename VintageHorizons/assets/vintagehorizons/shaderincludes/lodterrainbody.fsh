@@ -102,9 +102,21 @@ void main()
             }
         }
     }
+    if (!translucent && band != 3 && frostAtVertex > 0.0) {
+        // Vanilla frosts the colour-map tint, then lets the block texture continue to
+        // provide its detail. Applying the ratio preserves that same separation here:
+        // seasonal leaf/grass colour remains live underneath a white winter overlay.
+        vec3 frostedTint = mix(tint, vec3(1.0), clamp(frostAtVertex, 0.0, 1.0));
+        albedo *= frostedTint / max(tint, vec3(0.02));
+    }
     if (!translucent) {
         float upness = clamp(normal.y, 0.0, 1.0);
-        float snowMix = smoothstep(snowLineY, snowLineY + 24.0, yLevel) * upness;
+        // Band 3 is vanilla-observed coverage carried by this existing top face. Unknown
+        // terrain keeps the climate/season snow-line fallback; no extra snow geometry is
+        // created in either case.
+        float snowMix = (band == 3
+            ? 1.0
+            : smoothstep(snowLineAtVertex, snowLineAtVertex + 24.0, yLevel)) * upness;
         albedo = mix(albedo, vec3(0.93, 0.94, 0.97), snowMix);
     }
 

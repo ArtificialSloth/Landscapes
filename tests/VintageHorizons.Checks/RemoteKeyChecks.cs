@@ -18,7 +18,51 @@ public static class RemoteKeyChecks
         WantedFollowsTheView(c);
         OnlyForgetWhatWasSent(c);
         LocalOfferOutcomes(c);
+        UpdatedLocalRowsRouteUntilDurable(c);
         Unavailable(c);
+    }
+
+    static void UpdatedLocalRowsRouteUntilDurable(Check c)
+    {
+        var world = new LodWorld();
+        var remote = new LodRemoteKeySet(world);
+        long key = LodWorld.SectionKey(0, 12, 13);
+        remote.AddLocalKey(key);
+        world.InstallLoaded(key, new LodSection());
+
+        c.Eq(1, remote.AddRemoteUpdates(new[] { key }),
+            "a freshness notification can supersede an existing local row");
+        c.True(remote.IsUpdate(key), "the key remains marked as a replacement");
+        c.SeqEq(new[] { key }, remote.Wanted(),
+            "an announced replacement is requested without waiting for a mesh miss");
+        c.True(remote.WantFromRemote(key),
+            "an evicted stale row would route to the refreshed source, not local disk");
+        c.Eq(0, remote.AddRemoteUpdates(new[] { key }),
+            "repeated freshness notifications coalesce while one is pending");
+
+        remote.MarkPersisted(key, persistenceRevision: 1);
+        c.SeqEq(new[] { key }, remote.Wanted(),
+            "an older save completion cannot cancel an announced replacement before download");
+
+        remote.MarkRequested(new[] { key });
+        world.LoadsInFlight.Add(key);
+        c.Eq(0, remote.Wanted().Length,
+            "an update request transfers responsibility while its reply is pending");
+        remote.MarkRetryable(key);
+        c.SeqEq(new[] { key }, remote.Wanted(),
+            "a retryable update reply restores the refreshed row to wanted");
+        c.False(world.LoadsInFlight.Contains(key),
+            "a retryable update reply releases the completed transport attempt");
+        remote.MarkRequested(new[] { key });
+        remote.MarkUpdateInstalled(key, persistenceRevision: 3);
+        remote.MarkPersisted(key, persistenceRevision: 2);
+        c.True(remote.IsUpdate(key),
+            "an older save completion cannot retire a replacement still being persisted");
+        remote.MarkPersisted(key, persistenceRevision: 3);
+        c.False(remote.IsUpdate(key),
+            "the update route retires when the replacement revision becomes durable");
+        c.False(remote.WantFromRemote(key),
+            "the refreshed durable row returns future reloads to local disk");
     }
 
     /// <summary>
