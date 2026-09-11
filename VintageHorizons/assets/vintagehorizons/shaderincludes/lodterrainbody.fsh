@@ -30,15 +30,27 @@ void main()
         // zeroed rectangle. Row 1 is the averaged colour and was consumed as this quad's
         // albedo already.
         vec4 vhBlockRect = texelFetch(blockTable, ivec2(vhBlockSlot, 0), 0);
+        int vhMeanRowIndex = 2;
+        // Walls read their own rectangle and mean: rows 4 and 5 for faces along X, rows 6 and
+        // 7 for faces along Z. The engine draws a cube's sides from the textures named for
+        // them - bark on a standing log, whose top and bottom are the cut end - and one
+        // texture for every face put rings up the side of every trunk. A block that names
+        // nothing different for its sides has the top's rows copied there.
+        if (abs(normal.y) <= 0.5)
+        {
+            int vhWallRow = abs(normal.x) > 0.5 ? 4 : 6;
+            vhBlockRect = texelFetch(blockTable, ivec2(vhBlockSlot, vhWallRow), 0);
+            vhMeanRowIndex = vhWallRow + 1;
+        }
         if (vhBlockRect.z > vhBlockRect.x)
         {
-            // Row 2 is the sampled texture's own mean, with alpha flagging whether a
-            // grass-style overlay exists; row 3 is that overlay's rectangle. The fragment
-            // stage divides by the mean so the texture becomes variation AROUND the block's
-            // colour rather than the colour itself - grass-covered ground has a brown soil
-            // texture under a green overlay, so taking the texture at face value drew a brown
-            // band across the world.
-            vec4 vhMeanRow = texelFetch(blockTable, ivec2(vhBlockSlot, 2), 0);
+            // Row 2, or the wall's mean row, is the sampled texture's own mean, with alpha
+            // flagging whether a grass-style overlay exists; row 3 is that overlay's
+            // rectangle. The fragment stage divides by the mean so the texture becomes
+            // variation AROUND the block's colour rather than the colour itself - grass-covered
+            // ground has a brown soil texture under a green overlay, so taking the texture at
+            // face value drew a brown band across the world.
+            vec4 vhMeanRow = texelFetch(blockTable, ivec2(vhBlockSlot, vhMeanRowIndex), 0);
             vec3 vhBlockMean = vhMeanRow.rgb;
             vec4 vhBlockOverlay = vhMeanRow.a > 0.5
                 ? texelFetch(blockTable, ivec2(vhBlockSlot, 3), 0)

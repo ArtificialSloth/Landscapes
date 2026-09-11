@@ -1041,8 +1041,59 @@ public partial class VintageHorizonsModSystem : ModSystem
             }
         }
 
+        // The walls. The engine draws a cube's sides from the textures named for those faces,
+        // and for a standing log that is bark while its top and bottom are the cut end, so one
+        // texture for every face put rings up the whole trunk. A log lying on its side names
+        // the cut end for two of its walls, which is why the two wall axes are asked apart.
+        //
+        // TopSoil keeps the top's texture and overlay on its walls, exactly as before: the
+        // engine composites those sides in its own top-soil pass, and the look of distant
+        // grass was tuned against what this draws today.
+        LodBlockTextureRegistry.FaceTexture? wallX = null;
+        LodBlockTextureRegistry.FaceTexture? wallZ = null;
+        if (block.RenderPass != EnumChunkRenderPass.TopSoil && block.Textures != null)
+        {
+            wallX = WallTexture(block.Textures, XWallTextureNames, subId);
+            wallZ = WallTexture(block.Textures, ZWallTextureNames, subId);
+        }
+
         return new LodBlockTextureRegistry.BlockTexture(
-            position, overlayPosition, PackMean(mean), PackMean(composite));
+            position, overlayPosition, PackMean(mean), PackMean(composite), wallX, wallZ);
+    }
+
+    /// <summary>
+    /// The texture the engine draws on one wall axis, or null when it is the top's own - the
+    /// registry then copies the top's rows, so nothing about that block changes.
+    /// </summary>
+    LodBlockTextureRegistry.FaceTexture? WallTexture(
+        IDictionary<string, CompositeTexture> textures, string[] names, int topSubId)
+    {
+        int wallId = PickFaceTexture(textures, names, IsUsableAtlasTexture,
+            out CompositeTexture? wall);
+        if (wallId < 0 || wallId == topSubId) return null;
+        return new LodBlockTextureRegistry.FaceTexture(
+            capi.BlockTextureAtlas.Positions[wallId], PackMean(MeanOf(wall, wallId)));
+    }
+
+    /// <summary>
+    /// The first of <paramref name="names"/> the block defines with a texture on the atlas,
+    /// or -1. Face names come first, then the shorthands a block file groups them under, so a
+    /// log's sides resolve to its bark whether or not the loader expanded "all" into faces.
+    ///
+    /// </summary>
+    internal static int PickFaceTexture(IDictionary<string, CompositeTexture> textures,
+        string[] names, System.Func<int, bool> usable, out CompositeTexture? face)
+    {
+        foreach (string name in names)
+        {
+            if (!textures.TryGetValue(name, out CompositeTexture? candidate)) continue;
+            int id = candidate?.Baked?.TextureSubId ?? -1;
+            if (!usable(id)) continue;
+            face = candidate;
+            return id;
+        }
+        face = null;
+        return -1;
     }
 
     /// <summary>
@@ -1103,7 +1154,16 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// Face names to try for the up face, in order. Ground seen from above is nearly all top
     /// faces, and a block that names none of these falls back to the generic block colour.
     /// </summary>
-    static readonly string[] UpFaceTextureNames = { "up", "all", "top" };
+    internal static readonly string[] UpFaceTextureNames = { "up", "all", "top" };
+
+    /// <summary>
+    /// Face names for the two wall axes: faces along X are east and west, faces along Z are
+    /// north and south, matching the shader's choice of rows by normal.
+    /// </summary>
+    internal static readonly string[] XWallTextureNames =
+        { "east", "west", "horizontals", "sides", "all" };
+    internal static readonly string[] ZWallTextureNames =
+        { "north", "south", "horizontals", "sides", "all" };
 
     static int PackMean(TextureMean mean) => unchecked((int)0xFF000000)
         | Math.Clamp((int)(mean.B + 0.5f), 0, 255) << 16
@@ -2322,8 +2382,12 @@ public partial class VintageHorizonsModSystem : ModSystem
                 Vec3f look = capi.World.Player.Entity.Pos.GetViewVector();
                 var camera = capi.World.Player.Entity.CameraPos;
 
-                return TextCommandResult.Success("[VintageHorizons] " + renderer.ExplainViewRay(
-                    camera.X, camera.Y, camera.Z, look.X, look.Y, look.Z, range));
+                // Logged as well as shown: game chat cannot be copied out, and this answer is
+                // only useful in the hands of whoever reads the log (G72).
+                string why = renderer.ExplainViewRay(
+                    camera.X, camera.Y, camera.Z, look.X, look.Y, look.Z, range);
+                LogReportLines("why", why);
+                return TextCommandResult.Success("[VintageHorizons] " + why);
             });
 
         capi.ChatCommands.Create("vhtint")
@@ -3809,8 +3873,10 @@ public partial class VintageHorizonsModSystem : ModSystem
                     return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
 
                 var at = capi.World.Player.Entity.Pos;
-                return TextCommandResult.Success(
-                    "[VintageHorizons] " + renderer.ExplainOwnedButNotDrawn(at.X, at.Z, 4));
+                // Logged as well as shown, like .vhwhy (G72).
+                string holes = renderer.ExplainOwnedButNotDrawn(at.X, at.Z, 4);
+                LogReportLines("holes", holes);
+                return TextCommandResult.Success("[VintageHorizons] " + holes);
             });
 
         capi.ChatCommands.Create("vhgeom")

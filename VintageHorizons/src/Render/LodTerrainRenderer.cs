@@ -4241,16 +4241,18 @@ public partial class LodTerrainRenderer : IRenderer
         int replacementTexture = 0;
         try
         {
-            // Four rows per slot: the atlas rectangle, the averaged colour the quad no longer
-            // carries, the mean to normalise by, and the grass-style overlay's rectangle.
+            // Eight rows per slot: the top's atlas rectangle, the averaged colour the quad no
+            // longer carries, the mean to normalise by, the grass-style overlay's rectangle,
+            // then a rectangle and a mean for each wall axis (see RowsPerSlot).
             // Float, because an atlas rectangle in eight bits would land a fragment on the
             // wrong block's texture.
-            var pixels = new float[LodBlockTextureRegistry.MaxSlots * 16];
+            var pixels = new float[LodBlockTextureRegistry.MaxSlots
+                * LodBlockTextureRegistry.FloatsPerSlot];
             IReadOnlyList<float> table = blockTextures.Table;
             for (int slot = 0; slot < LodBlockTextureRegistry.MaxSlots; slot++)
             {
                 int from = slot * LodBlockTextureRegistry.FloatsPerSlot;
-                for (int row = 0; row < 4; row++)
+                for (int row = 0; row < LodBlockTextureRegistry.RowsPerSlot; row++)
                 {
                     int at = (row * LodBlockTextureRegistry.MaxSlots + slot) * 4;
                     pixels[at + 0] = table[from + row * 4 + 0];
@@ -4276,7 +4278,7 @@ public partial class LodTerrainRenderer : IRenderer
             GL.TexParameter(TextureTarget.Texture2D,
                 TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
             GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba32f,
-                LodBlockTextureRegistry.MaxSlots, 4, 0,
+                LodBlockTextureRegistry.MaxSlots, LodBlockTextureRegistry.RowsPerSlot, 0,
                 PixelFormat.Rgba, PixelType.Float, pixels);
             GL.BindTexture(TextureTarget.Texture2D, 0);
 

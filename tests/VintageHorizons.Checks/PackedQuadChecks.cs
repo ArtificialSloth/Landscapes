@@ -12,6 +12,8 @@ public static class PackedQuadChecks
         TextureSlotEmissionFollowsTheJob(c);
         TableColourMatchesTheVertexByteOrder(c);
         TopSoilOverlayUsesTheRightHalf(c);
+        WallsUseTheirOwnTextureRows(c);
+        LogSidesResolveToBark(c);
         MaterialPayloadsAndDegenerates(c);
         Rejections(c);
     }
@@ -241,6 +243,118 @@ public static class PackedQuadChecks
         c.Eq(full.atlasTextureId, top.atlasTextureId, "the sub-rectangle stays on its atlas");
         c.Eq(full.atlasNumber, top.atlasNumber, "the sub-rectangle stays on its atlas page");
         c.Eq(0.20f, full.x1, "the engine-owned full rectangle is not mutated");
+    }
+
+    /// <summary>
+    /// A standing log names bark for its sides and the cut end for its top and bottom, and the
+    /// engine draws each face from its own name. One texture per block put the cut end on every
+    /// face of every distant trunk. Walls now carry rows of their own; a block with nothing
+    /// different to say for its walls keeps the top's rows there and draws what it did before.
+    /// </summary>
+    static void WallsUseTheirOwnTextureRows(Check c)
+    {
+        static Vintagestory.API.Client.TextureAtlasPosition Rect(float x1, byte page = 0) => new()
+        {
+            atlasTextureId = 5,
+            atlasNumber = page,
+            x1 = x1,
+            y1 = 0.10f,
+            x2 = x1 + 0.05f,
+            y2 = 0.15f,
+        };
+
+        var trunk = Rect(0.10f);
+        var bark = Rect(0.30f);
+        var barkAcross = Rect(0.50f);
+        var registry = new LodBlockTextureRegistry(block => block.BlockId switch
+        {
+            1 => new(trunk, null, 0x00102030, 0x00102030,
+                new LodBlockTextureRegistry.FaceTexture(bark, 0x00405060),
+                new LodBlockTextureRegistry.FaceTexture(barkAcross, 0x00708090)),
+            3 => new(trunk, null, 0x00102030, 0x00102030,
+                new LodBlockTextureRegistry.FaceTexture(Rect(0.70f, page: 1), 0x00405060)),
+            _ => new(trunk, null, 0x00102030, 0x00102030),
+        });
+
+        const int f = LodBlockTextureRegistry.FloatsPerSlot;
+        c.Eq(8, LodBlockTextureRegistry.RowsPerSlot,
+            "a slot is the top, colour, mean and overlay rows plus a rectangle and mean per wall axis");
+        int log = registry.SlotFor(new Vintagestory.API.Common.Block { BlockId = 1 }, 0x00AABBCC);
+        int plain = registry.SlotFor(new Vintagestory.API.Common.Block { BlockId = 2 }, 0x00AABBCC);
+        int otherPage = registry.SlotFor(new Vintagestory.API.Common.Block { BlockId = 3 }, 0x00AABBCC);
+        IReadOnlyList<float> t = registry.Table;
+
+        c.Eq(trunk.x1, t[log * f + 0], "a log's top keeps the texture named for its up face");
+        c.Eq(bark.x1, t[log * f + 16], "faces along X take the texture named for them");
+        c.Eq(barkAcross.x1, t[log * f + 24], "faces along Z take theirs");
+        c.Eq(0x60 / 255f, t[log * f + 20], "a wall normalises by its own texture's mean");
+        c.Eq(0f, t[log * f + 23], "a wall with its own texture takes no top overlay");
+
+        for (int i = 0; i < 4; i++)
+        {
+            c.Eq(t[plain * f + i], t[plain * f + 16 + i],
+                "a block with no wall texture copies the top rectangle to its X walls");
+            c.Eq(t[plain * f + i], t[plain * f + 24 + i], "and to its Z walls");
+            c.Eq(t[plain * f + 8 + i], t[plain * f + 20 + i],
+                "with the top's mean and overlay flag on X");
+            c.Eq(t[plain * f + 8 + i], t[plain * f + 28 + i], "and on Z");
+            c.Eq(t[otherPage * f + i], t[otherPage * f + 16 + i],
+                "a wall texture on another atlas page falls back to the top");
+        }
+        c.Eq(2, registry.WallsAccepted, "both wall axes of the log are taken");
+        c.Eq(1, registry.WallsOtherPage, "the wall on another page is counted as refused");
+    }
+
+    /// <summary>
+    /// The face names behind those rows, against the game's own log definitions: a standing log
+    /// names bark under "all" and the cut end under "up" and "down"; a log lying north-south
+    /// names the cut end under "north" and "south" and sideways bark under "all".
+    /// </summary>
+    static void LogSidesResolveToBark(Check c)
+    {
+        static Vintagestory.API.Client.CompositeTexture Tex(int id) => new()
+        {
+            Baked = new Vintagestory.API.Client.BakedCompositeTexture { TextureSubId = id },
+        };
+        static bool Usable(int id) => id > 0;
+        const int Bark = 11, Trunk = 12, BarkAcross = 13;
+
+        var standing = new Dictionary<string, Vintagestory.API.Client.CompositeTexture>
+        {
+            ["all"] = Tex(Bark), ["up"] = Tex(Trunk), ["down"] = Tex(Trunk),
+        };
+        c.Eq(Trunk, VintageHorizonsModSystem.PickFaceTexture(standing,
+                VintageHorizonsModSystem.UpFaceTextureNames, Usable, out _),
+            "a standing log's top is the cut end");
+        c.Eq(Bark, VintageHorizonsModSystem.PickFaceTexture(standing,
+                VintageHorizonsModSystem.XWallTextureNames, Usable, out _),
+            "its east and west faces are bark");
+        c.Eq(Bark, VintageHorizonsModSystem.PickFaceTexture(standing,
+                VintageHorizonsModSystem.ZWallTextureNames, Usable, out _),
+            "its north and south faces are bark");
+
+        var lying = new Dictionary<string, Vintagestory.API.Client.CompositeTexture>
+        {
+            ["all"] = Tex(BarkAcross), ["up"] = Tex(Bark), ["down"] = Tex(Bark),
+            ["north"] = Tex(Trunk), ["south"] = Tex(Trunk),
+        };
+        c.Eq(Bark, VintageHorizonsModSystem.PickFaceTexture(lying,
+                VintageHorizonsModSystem.UpFaceTextureNames, Usable, out _),
+            "a north-south log's top is bark");
+        c.Eq(BarkAcross, VintageHorizonsModSystem.PickFaceTexture(lying,
+                VintageHorizonsModSystem.XWallTextureNames, Usable, out _),
+            "its east and west faces are sideways bark");
+        c.Eq(Trunk, VintageHorizonsModSystem.PickFaceTexture(lying,
+                VintageHorizonsModSystem.ZWallTextureNames, Usable, out _),
+            "and its cut end faces north and south");
+
+        var offAtlas = new Dictionary<string, Vintagestory.API.Client.CompositeTexture>
+        {
+            ["all"] = Tex(0),
+        };
+        c.Eq(-1, VintageHorizonsModSystem.PickFaceTexture(offAtlas,
+                VintageHorizonsModSystem.XWallTextureNames, Usable, out _),
+            "a texture that is not on the atlas is not taken");
     }
 
     static void MaterialPayloadsAndDegenerates(Check c)

@@ -1575,6 +1575,20 @@ public static class StaticAssetChecks
                 StringComparison.Ordinal),
             "while the averaged colour is still read per vertex, where the albedo is needed");
 
+        // Walls have rows of their own. The engine draws a cube's sides from the textures
+        // named for them, so a standing log is bark on its sides and the cut end on its top;
+        // one texture for every face put rings up the side of every distant trunk.
+        c.True(fragment.Contains("int vhWallRow = abs(normal.x) > 0.5 ? 4 : 6;", StringComparison.Ordinal)
+            && fragment.Contains("texelFetch(blockTable, ivec2(vhBlockSlot, vhWallRow), 0)",
+                StringComparison.Ordinal)
+            && fragment.Contains("texelFetch(blockTable, ivec2(vhBlockSlot, vhMeanRowIndex), 0)",
+                StringComparison.Ordinal),
+            "walls read their own rectangle and mean from the block table");
+        c.True(renderer.Contains(
+                "LodBlockTextureRegistry.MaxSlots, LodBlockTextureRegistry.RowsPerSlot, 0,",
+                StringComparison.Ordinal),
+            "the uploaded table is as tall as the registry's rows");
+
         // An explicit level, computed from gradients the shader works out itself. Two reasons,
         // and both matter: fract() tears once per block, so a GPU left to infer the level picks
         // the coarsest mip on every block boundary and draws a grid of grey lines; and the

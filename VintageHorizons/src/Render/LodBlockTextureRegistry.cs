@@ -51,7 +51,20 @@ public sealed class LodBlockTextureRegistry
     /// read as dirt. Vanilla draws it as soil under a grass texture composited by the grass's
     /// per-pixel alpha, and sampling both is the only way to get the real thing.
     /// </summary>
-    public const int FloatsPerSlot = 16;
+    public const int FloatsPerSlot = 32;
+
+    /// <summary>
+    /// Rows of four floats per slot: the top's rectangle, the averaged colour, the top's mean,
+    /// the overlay's rectangle, then a rectangle and a mean for each wall axis - faces along X
+    /// (east and west) in rows 4 and 5, faces along Z (north and south) in rows 6 and 7.
+    ///
+    /// Walls have rows of their own because the engine draws a cube's sides from the textures
+    /// named for those faces. A standing log names bark for its sides and the cut end for its
+    /// top and bottom, and one texture per block put rings up the side of every distant trunk.
+    /// A wall row with nothing different to say is a copy of the top's, so those walls draw
+    /// exactly what they did before.
+    /// </summary>
+    public const int RowsPerSlot = FloatsPerSlot / 4;
 
     /// <summary>
     /// Where a block's colour texture is, and what that texture averages to. Supplied by the
@@ -71,9 +84,18 @@ public sealed class LodBlockTextureRegistry
     /// texture by the grass composite's average inflated blue about threefold, because soil
     /// carries more blue than grass does, and turned grassy ground pale.
     /// </param>
+    /// <param name="WallX">
+    /// The texture the engine draws on faces along X, when it is not the top's. Null keeps the
+    /// top's texture there.
+    /// </param>
+    /// <param name="WallZ">The same for faces along Z.</param>
     public readonly record struct BlockTexture(
         TextureAtlasPosition? Position, TextureAtlasPosition? Overlay,
-        int MeanColor, int OverlayMeanColor);
+        int MeanColor, int OverlayMeanColor,
+        FaceTexture? WallX = null, FaceTexture? WallZ = null);
+
+    /// <summary>One face's atlas rectangle and that texture's own mean.</summary>
+    public readonly record struct FaceTexture(TextureAtlasPosition Position, int MeanColor);
 
     public delegate BlockTexture TextureResolver(Block block);
 
@@ -110,6 +132,10 @@ public sealed class LodBlockTextureRegistry
     /// <summary>Overlays taken, and overlays refused for sitting on another atlas page.</summary>
     public int OverlaysAccepted { get; private set; }
     public int OverlaysOtherPage { get; private set; }
+
+    /// <summary>Wall textures taken, and wall textures refused for another atlas page.</summary>
+    public int WallsAccepted { get; private set; }
+    public int WallsOtherPage { get; private set; }
 
     /// <summary>
     /// The slot for this block, assigning one on first sight. Main thread only: it reads the
@@ -202,9 +228,41 @@ public sealed class LodBlockTextureRegistry
         table[at + 14] = useOverlay ? overlay!.x2 : 0f;
         table[at + 15] = useOverlay ? overlay!.y2 : 0f;
 
+        WriteWall(at + 16, at, resolved.WallX);
+        WriteWall(at + 24, at, resolved.WallZ);
+
         slotByBlockId[block.BlockId] = slot;
         Version++;
         return slot;
+    }
+
+    /// <summary>
+    /// One wall axis's rectangle and mean. Without a texture of its own on this atlas page the
+    /// wall copies the top's rectangle, mean and overlay flag, which is exactly what every wall
+    /// drew before walls had rows. With one, the overlay stays off: a grass-style overlay is
+    /// the top's.
+    /// </summary>
+    void WriteWall(int wallAt, int topAt, FaceTexture? wall)
+    {
+        if (wall is not { } face || face.Position.atlasNumber != atlasNumber)
+        {
+            if (wall != null) WallsOtherPage++;
+            Array.Copy(table, topAt + 0, table, wallAt + 0, 4);
+            Array.Copy(table, topAt + 8, table, wallAt + 4, 4);
+            return;
+        }
+
+        WallsAccepted++;
+        table[wallAt + 0] = face.Position.x1;
+        table[wallAt + 1] = face.Position.y1;
+        table[wallAt + 2] = face.Position.x2;
+        table[wallAt + 3] = face.Position.y2;
+        (float red, float green, float blue) = Channels(face.MeanColor);
+        // Floored for the same reason as the top's mean.
+        table[wallAt + 4] = Math.Max(red, 0.02f);
+        table[wallAt + 5] = Math.Max(green, 0.02f);
+        table[wallAt + 6] = Math.Max(blue, 0.02f);
+        table[wallAt + 7] = 0f;
     }
 
     /// <summary>
@@ -241,7 +299,8 @@ public sealed class LodBlockTextureRegistry
         $"{SlotCount}/{MaxSlots} textured blocks on atlas {atlasTextureId}, "
         + $"{OverlaysAccepted} grass overlays ({OverlaysOtherPage} on another page), refused "
         + $"{RefusedNoTexture} no-texture/{RefusedOtherAtlasPage} other-page/"
-        + $"{RefusedPerPositionColour} per-position/{RefusedTableFull} table-full";
+        + $"{RefusedPerPositionColour} per-position/{RefusedTableFull} table-full, "
+        + $"{WallsAccepted} wall textures ({WallsOtherPage} on another page)";
 
     /// <summary>
     /// Drops every slot. A world change invalidates block ids and atlas positions together,
@@ -256,6 +315,7 @@ public sealed class LodBlockTextureRegistry
         atlasNumber = -1;
         RefusedNoTexture = RefusedOtherAtlasPage = RefusedPerPositionColour = RefusedTableFull = 0;
         OverlaysAccepted = OverlaysOtherPage = 0;
+        WallsAccepted = WallsOtherPage = 0;
         Version++;
     }
 }
