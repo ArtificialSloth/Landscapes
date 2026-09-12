@@ -495,6 +495,14 @@ live until the exact replacement persistence revision is acknowledged.
     over at the same size on screen. Level 0 is held past the vanilla view distance, the blend band
     and one section, because band textures exist only on level-0 quads. The player's own
     thresholds stay in the file for when automatic is off.
+36. **A block is recorded as what it shows.** A block whose look lives in its block entity has no
+    type-level colour, so capture reads the entity where the job is created and records a chisel as
+    its most visible material: the eligible material with the most exposed voxel faces, summed per
+    block, ties to the first. Server and client then store the same ordinary block, and nothing on
+    disk or on the wire changes shape. The chisel's own flags still decide the column's snow. A
+    block-entity block that reaches a type-level colour takes another of its own textures or neutral
+    grey, never the missing-texture image; a plain block whose own answer is that image (a removed
+    mod's block) keeps it, matching what the game draws up close (G180-G182).
 
 ## Concurrency invariants
 

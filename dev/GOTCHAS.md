@@ -3536,3 +3536,66 @@ literals missing from a correct build; nothing was installed until the check was
 type and compare the member directly, as the 0.4.61 check did for the anti-aliasing defaults.
 
 **Found:** 2026-09-11, Session 86.
+
+### G180 - An exact comparison against the atlas placeholder misses its opaque repack
+
+**Trigger:** deciding whether a palette colour is the missing-texture placeholder by comparing it
+to `UnknownTexturePosition.AvgColor` with `==`.
+
+**Trap:** the atlas stores that average with alpha 0 (`0x00FCFCFC` on 1.22.7), while
+`StableColorOf` averages its samples and packs them opaque (`0xFFFCFCFC`), and a colour read from
+the texture's own pixels comes to the file mean (`0xFFF9F9FF`). Neither equals the atlas value, so
+`RepairPlaceholder` never fired on that path and the grey or other-texture fallback was skipped.
+Every chiselled block a server captured was stored near-white: on the owner's cache, 2,035 of 2,387
+level-0 microblock entries.
+
+**Safer action:** compare RGB only, against both the atlas average and the file mean
+(`LodPaletteRepair.IsPlaceholder`). A zero reference matches nothing.
+
+**Found:** 2026-09-12, Session 87 (measured from the cache; fixed in 0.4.62).
+
+### G181 - A block whose look lives in its block entity has no type-level colour
+
+**Trigger:** colouring a chiselled block, a clutter piece or a cluttered bookshelf from its block
+type: on a server, which has no atlas; when recolouring a section a server captured; or when
+repairing a stored colour of 0.
+
+**Trap:** the type's own texture is the missing-texture image. The materials or props that make up
+its look are stored per position in the block entity, which only the side holding the loaded chunk
+can read. Ruins built from these blocks drew white at distance while looking right up close.
+
+**Safer action:** read the block entity where the capture job is created, while the chunk is loaded,
+and record a chisel as the ordinary block it shows, its most visible material
+(`LodChiselStandIn`); every side then stores the same block and every colour path handles it. A
+block-entity block that still reaches a type-level colour takes another of its own textures or
+neutral grey, never the placeholder. Settled decision 36.
+
+**Found:** 2026-09-12, Session 87 (measured from the cache and the decompiled engine; fixed in
+0.4.62 and human-tested).
+
+### G182 - A section's palette keeps the first colour it saw for a block id
+
+**Trigger:** expecting a fresh client capture to correct a colour stored earlier for the same block
+in the same section.
+
+**Trap:** `LodSection.FindOrAddPaletteEntry` matches on block id alone and returns the stored entry
+with its old colour. The owner stood beside the white tower while vanilla drew it and the client
+captured those columns, but the chisels reused the stored near-white entry.
+
+**Safer action:** correct stored colours on load, as `Reclassify` does for plain blocks and
+`RepairPlaceholderEntries` for block-entity blocks, or change what the run records, as chisel
+stand-ins do: a different block id gets its own entry.
+
+**Found:** 2026-09-12, Session 87 (source-traced).
+
+### G183 - The game API declares its own `Func`
+
+**Trigger:** writing `Func<...>` in a file that imports `Vintagestory.API.Common`.
+
+**Trap:** that namespace declares `Func<T1, TResult>` as well, so the build fails with CS0104,
+ambiguous between it and `System.Func`. The existing code already writes `System.Func` for this
+reason without saying so; the first 0.4.62 build failed on it.
+
+**Safer action:** write `System.Func<...>` wherever the API namespace is imported.
+
+**Found:** 2026-09-12, Session 87.

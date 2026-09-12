@@ -43,6 +43,13 @@ not require a protocol bump.
 
 Earlier blob formats existed in the original development history but have not yet been reconstructed from Git. Do not invent their meanings from the current reader; add rows only from source history or preserved release evidence.
 
+**What a palette code names at a chiselled position (0.4.62, no format change).** Capture records
+a chiselled block as its most visible material, so a format-4 row written from 0.4.62 on holds, for
+example, a plank code where the world holds a chisel. Every reader already resolves an ordinary
+block code, so neither the blob format nor the schema meaning moved. Rows written earlier still name
+the chisel, and a current client repairs their near-white stored colour to another of the block's
+own textures or neutral grey on load, until that ground is captured again.
+
 **Material-flag bits within format 4.** `0.3.140` began writing flag bit 2 (`FlagHalf`, terrain
 that fills only the lower half of its cell). The format was deliberately NOT bumped, on two
 grounds that must both hold before any future flag bit does the same: older readers test named

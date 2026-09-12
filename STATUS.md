@@ -4,23 +4,60 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-12`
-**Mod version:** `0.4.61` — current test build, verified, copy-installed and checkpointed; it makes the owner's in-game anti-aliasing tuning the defaults
-**Last accepted baseline:** `0.4.39` at base commit `8ace702`; 0.4.53's handoff-flash fix and Session 86's distant anti-aliasing are human-tested, but baseline promotion remains the owner's call
-**Active branch:** `codex/water-depth-light`; test-build checkpoints 0.4.56 `223bfbb`, 0.4.57 `1dc2907`, 0.4.58 `f255b08`, 0.4.59 `c4fbbdd`, 0.4.60 `092f518` and 0.4.61 `b1fd007`; nothing pushed
+**Mod version:** `0.4.62` — current test build, verified, copy-installed, checkpointed and human-tested; it draws chiselled blocks as their most visible material
+**Last accepted baseline:** `0.4.61` at commit `b1fd007`, accepted by the owner on 2026-09-12 in place of 0.4.39
+**Active branch:** `codex/water-depth-light`; test-build checkpoints 0.4.56 `223bfbb`, 0.4.57 `1dc2907`, 0.4.58 `f255b08`, 0.4.59 `c4fbbdd`, 0.4.60 `092f518`, 0.4.61 `b1fd007` and 0.4.62 `e565558`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `107` C# files under `VintageHorizons/src`
+**Source files:** `108` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
 
 ## Current result
 
-**Distant terrain no longer shimmers as the camera moves.** Distant anti-aliasing (0.4.57-0.4.61)
-blends the mod's distant terrain over several frames. The owner tuned it by eye on 0.4.60's new
-Anti-Aliasing tab until it looked "very good", with no remaining vibrating spots, and 0.4.61 makes
-his values the defaults. Automatic LOD thresholds, on by default since 0.4.57, hand every level over
-at the same size on screen. 0.4.55's Redwood and glacier corrections still await his visual check,
-and 0.4.53's handoff-flash fix stands.
+**Distant ruins and chiselled builds keep their colours.** Version 0.4.62 records every chiselled
+block at capture as the material that covers most of its outside, and repairs the missing-texture
+colour that had turned structures near-white at distance; the owner ran it and reported "Excellent!
+Looks fantastic." Distant terrain no longer shimmers as the camera moves (0.4.57-0.4.61, tuned by the
+owner), automatic LOD thresholds hand every level over at the same on-screen size, and the owner
+accepted 0.4.61 as the baseline and confirmed 0.4.55's Redwood and glacier corrections.
+
+## Distant structures and chiselled blocks
+
+Ruins drew near-white at distance while looking right up close. A chiselled block, a clutter piece
+or a cluttered bookshelf has no colour of its own: its look is stored in its block entity, which
+only the side holding the loaded chunk can read. The server half has no texture atlas and stores
+colour 0, and the client coloured such sections by block type, whose only texture is the game's
+missing-texture image (G181). The check meant to catch that image compared an alpha-free atlas
+value exactly against an opaque repack and never fired (G180), and a section's palette keeps its
+first colour per block id, so the client's own later capture reused the white entry (G182).
+
+- **Stand-ins (settled decision 36).** Where a capture job is created, the mod copies each chiselled
+  block's cuboids and materials; the capture worker records the block as the eligible material with
+  the most exposed voxel faces, summed per block, ties to the first material. Eligible means
+  something distant terrain draws as ground: not snow, liquid, markers, flowers or a block-entity
+  block. The chisel's own flags still decide the column's snow. Server and client store the same
+  ordinary block, so its colour, tint and band texture come from the existing paths.
+- **Placeholder fallbacks.** The missing-texture colour is recognised on RGB against both the atlas
+  average and the file mean. A block-entity block whose answer is the placeholder takes another of
+  its own textures or neutral grey, and a real entity answer is kept. A plain block whose own answer
+  is the placeholder keeps it, because the game draws a removed mod's block the same way up close. A
+  block with no colour texture stays grey.
+- **Existing caches.** Stored placeholder colours on block-entity blocks are repaired to that
+  fallback on load and written back. Their real materials arrive when the ground is captured again.
+
+| Evidence | Result | Level |
+|---|---|---|
+| Cache, 0.4.61 | 2,078 structure columns of 10+ chiselled, clutter or bookshelf blocks stored near-white against 62 real; the whites are exactly the missing-texture average | Measured offline |
+| Engine, 1.22.7 | A chiselled block's type-level colour is its placeholder texture; its contents are cuboids plus material ids | Source-traced (decompiled) |
+| Checks | 51 assertions: engine encoding parity, exposed faces, most-visible against majority-by-volume, placeholder forms, load repair, capture over proxy chunks | Harness-tested |
+| Owner's first 30 s on 0.4.62 | 4,496 chiselled blocks captured as their material, 28 with no material that can stand in, 0 failed reads; 1,105 stored placeholder colours repaired | Log-measured (client captures only) |
+| 0.4.62 in play | "Excellent! Looks fantastic." | Human-tested |
+
+Limits: clutter, bookshelves, ground storage and lamps have no single material and take one of their
+own textures' colours or grey; structures cached before 0.4.62 stay grey until recaptured; the
+server half's stand-in counts are not in the client log; the cost of copying chisel contents where
+capture jobs are created is not measured.
 
 ## Distant anti-aliasing
 
@@ -56,9 +93,10 @@ frames, so it settles on the average of what it covers.
 | Smear guard | `.vhtaa clip` | 2.25 | 0.5-4 | 1.25 |
 
 All are saved, all are sliders on the `.vhconfig` Anti-Aliasing tab, and `.vhtaa reset` restores
-the defaults. `.vhtaa` with no argument reports the state, the reach in blocks, the dials, the
-share of frames with the camera fully still, history resets and GPU cost, in chat and the client
-log. `.vhtaa show` tints what it touches.
+the defaults. The owner kept these ranges on 2026-09-12, although sharpen and both memories sit at
+their tops. `.vhtaa` with no argument reports the state, the reach in blocks, the dials, the share of
+frames with the camera fully still, history resets and GPU cost, in chat and the client log.
+`.vhtaa show` tints what it touches.
 
 | Evidence | Result | Level |
 |---|---|---|
@@ -69,7 +107,7 @@ log. `.vhtaa show` tints what it touches.
 | 0.4.59-0.4.60 | No vibrating spots; tuned "to look very good"; both tabs and all sliders work | Human-tested |
 | Cost | Resolve and composite p95 100 us, depth snapshot p95 25 us, over about 464,000 frames at 1920x1080 rendered on an RX 9070 XT | Log-measured, owner's session |
 | Stillness | 63-67% of resolved frames had the camera fully still | Log-measured, owner's session |
-| 0.4.61 | Defaults equal the owner's saved values; the packaged DLL's constants verified by decompiling | Harness- and artifact-verified; not run |
+| 0.4.61 | Defaults equal the owner's saved values; the packaged DLL's constants verified by decompiling; the defaults have been in play since 2026-09-12 | Harness- and artifact-verified; in play |
 
 ## Automatic LOD thresholds
 
@@ -91,16 +129,16 @@ closing puts them back. Defaults resets the tab that is showing. Session 77 had 
 tabbed version whose strip clipped its labels; the owner asked for tabs again and confirmed in
 0.4.60 that both labels read in full.
 
-## Tree and glacier corrections, awaiting review
+## Tree and glacier corrections: accepted
 
 Version 0.4.54 gave a block's top, X walls and Z walls their own atlas rows, so standing logs show
 bark on their sides; 0.4.55 makes wall lookup skip the already-selected top texture, so Redwood
 quarter-trunks do too, while a lying-log control preserves a real wall-facing cut end. 0.4.55 also
 limits liquid classification to Water and Lava: every `EnumBlockMaterial.Ice` block, including the
 opaque packed glacier ice of mountain summits, had been drawn as water and written to the liquid
-depth that drives underwater murk, painting a dark rim round glacier summits (G173). Stored palette
-flags are re-derived from the live block registry on load, so existing caches are corrected without
-re-exploration. Source-traced and harness-tested; the visual results await the owner.
+depth that drives underwater murk, painting a dark rim round glacier summits (G173). The owner
+confirmed all three on 2026-09-12: Redwood bark on all four sides with a cut-end top, no dark rim on
+the captured snowy peak with murk on, and frozen lake and glacier ice reading right as solid terrain.
 
 ## Handoff flash result retained
 
@@ -143,14 +181,21 @@ Protocol 1 added optional `AssistServerSettings` field 16 for the refresh rate a
 protobuf peers ignore them. New clients accept an existing-row replacement only while its submitted
 content revision is current, so a later local capture wins. Only L0 is transferred; parents rebuild
 locally. The compatibility numbers remain `1 / 4 / 6`; `dev/WIRE_HISTORY.md` records the
-append-compatible extensions. Sessions 84–86 changed nothing on the wire or on disk; Session 86 added
-client configuration keys only.
+append-compatible extensions.
+
+Since 0.4.62 a chiselled position stores its stand-in's block code, for example planks where the
+world holds a chisel. Every reader already resolves an ordinary block code, so neither the blob
+format nor the schema meaning moved; `dev/WIRE_HISTORY.md` carries the note. Sessions 84–87 changed
+nothing on the wire or in the blob format; Session 86 added client configuration keys only.
 
 ## Diagnostics
 
 Session-only unless stated; all write their findings to the client log.
 
 - `.vhtaa` reports distant anti-aliasing (above); `.vhtaa show` tints what it touches.
+- The 30-second report's `chiselled blocks:` line (0.4.62) counts chiselled blocks captured as their
+  material, those with no material that can stand in, failed reads, and stored placeholder colours
+  repaired on load.
 - `.vhdiag on|off` (0.4.56) shows or hides the diagnostics side panel for the session; off by
   default. The panel lists every `.vhtaa` dial, saved and live.
 - `.vhsky on|off` counts sky below the horizon after all opaque terrain is drawn and logs each flash
@@ -165,59 +210,62 @@ Session-only unless stated; all write their findings to the client log.
 
 ## Performance and artifact evidence
 
-The final fast tier passed **23,129 assertions with zero failures**, and the 0.4.61 Release build
-completed with zero warnings and zero errors. Distant anti-aliasing's measured cost is in the table
-above; automatic thresholds cost nothing per frame unless their inputs change. The late range check
-of 0.4.53 sweeps only on frames where the physics step changed the player's block; snow adds 1,024
-uncompressed bits-array bytes per resident section before compression; no paired large-world capture
-yet isolates winter campaign cost.
+The final fast tier passed **23,180 assertions with zero failures**, and the 0.4.62 Release build
+completed with zero warnings and zero errors. Distant anti-aliasing's measured cost is in its table
+above; automatic thresholds cost nothing per frame unless their inputs change. Chisel stand-ins add
+a copy of each chiselled block's contents where a capture job is created and arithmetic on the
+capture worker; neither is measured. The late range check of 0.4.53 sweeps only on frames where the
+physics step changed the player's block; snow adds 1,024 uncompressed bits-array bytes per resident
+section before compression; no paired large-world capture yet isolates winter campaign cost.
 
-The verified `dist/vintagehorizons_0.4.61.zip` is 529,199 bytes with 38 entries and SHA-256
-`C00F84D4024E4DC4EF9980C1C6C2AF4090BBB2272C2301BD4F3E8E8F1347B715`; its DLL's anti-aliasing
-defaults were checked by decompiling, and the installed Mods-folder copy has the same hash. Older
-test zips remain in that folder. Every incremented private test build receives an exact Git
-checkpoint after verification and installation; this does not authorize a push, tag, publication or
-public release. The assistant did not launch the game in Session 86.
+The verified `dist/vintagehorizons_0.4.62.zip` is 533,152 bytes with 38 entries and SHA-256
+`C395F437CD77FF3B5CFF75735EF4C103359C672E2463B056C0F27F590539CA73`; `modinfo.json` and the DLL both
+report 0.4.62, both new types were confirmed by decompiling, and the installed Mods-folder copy has
+the same hash. Older test zips remain in that folder. Every incremented private test build receives
+an exact Git checkpoint after verification and installation; this does not authorize a push, tag,
+publication or public release. The assistant did not launch the game in Session 87.
 
-Documentation validation passed **2,300 of 2,305 checks**. The five failures are the pre-existing
+Documentation validation passed **2,306 of 2,311 checks**. The five failures are the pre-existing
 personal Windows paths in ignored `.testdata/water-extraction` and `.testdata/water-oit`
 diagnostic logs. Current version, changelog coverage, source count, compatibility, links, session
 routing, shader ASCII and active performance-plan routing pass.
 
 ## Established product state retained
 
-- Version 0.4.39 remains the last accepted baseline until the owner accepts a later build. Its
-  settled water seam and narrowly scoped loading guard remain accepted.
+- Version 0.4.61 is the accepted baseline (owner, 2026-09-12). Its water keeps the settled seam and
+  narrowly scoped loading guard accepted in 0.4.39.
 - The client remains useful on an unmodified server. Server capture, safe sweeping, optional
   generation, dormant snow refresh and live assist remain additive.
 - Packed clustered terrain is still the required visible opaque path; dedicated OIT water remains
   required. Automatic plausible renderer fallback remains disabled.
 - Distant anti-aliasing never changes a vanilla pixel and never keys anything to a fixed distance.
+- A block is recorded as what it shows: a chiselled block as its most visible material (settled
+  decision 36).
 - The handoff fix changes when ownership's range half is decided, not what ownership means. Water
   development still may not redefine shared terrain ownership.
 
 ## Next work
 
-Begin with [Session 86](dev/sessions/SESSION_86.md) and the top of [TODO](dev/TODO.md).
+Begin with [Session 87](dev/sessions/SESSION_87.md) and the top of [TODO](dev/TODO.md).
 
-1. Optional: confirm 0.4.61 looks as tuned; `.vhtaa reset` should change nothing.
-2. Human-test 0.4.55: Redwood side bark with a cut-end top; the captured snowy peak with murk on;
-   the distant appearance of lake and glacier ice now that solid ice no longer uses water.
-3. Owner decisions: accept a later build than 0.4.39 as the baseline; whether the anti-aliasing
-   ranges should reach further than his tuning, which put three dials at their tops.
-4. Winter temporal verification: one controlled unloaded-region accumulation and melt through the
+1. Optional: at distance, look at a clutter- or bookshelf-heavy ruin, and at a ruin cached before
+   0.4.62 that you have not revisited, which stays grey until it is captured again.
+2. Winter temporal verification: one controlled unloaded-region accumulation and melt through the
    30-second signal, finite campaign, durable L0 replacement, live client offer and local mip
    convergence; campaign cost in a large explored world; `/vhrefresh` at its boundaries.
-5. Session 84 follow-ups: keep `.vhsky`, retire `.vhsnowline` and `.vhgap release`, move or retire
+3. Session 84 follow-ups: keep `.vhsky`, retire `.vhsnowline` and `.vhgap release`, move or retire
    the pre-physics `.vhgap` scan, and the stale-sphere and eviction-gap cleanups.
+4. If it matters: count the server half's chisel stand-ins, and measure the cost of copying chisel
+   contents where capture jobs are created.
 
-[Session 86](dev/sessions/SESSION_86.md) holds the anti-aliasing work,
+[Session 87](dev/sessions/SESSION_87.md) holds the chiselled-block work and the baseline decision,
+[Session 86](dev/sessions/SESSION_86.md) the anti-aliasing work,
 [Session 85](dev/sessions/SESSION_85.md) the tree/ice work and checkpoint rule,
 [Session 84](dev/sessions/SESSION_84.md) the flash investigation and fix,
 [Session 83](dev/sessions/SESSION_83.md) the 0.4.40–0.4.49 winter work, and
 [Session 82](dev/sessions/SESSION_82.md) the accepted water baseline. Architecture owns the winter
-and update invariants and settled decisions 33–35, `dev/WIRE_HISTORY.md` owns compatibility, and
-G166–G179 in `dev/GOTCHAS.md` preserve the recent traps.
+and update invariants and settled decisions 33–36, `dev/WIRE_HISTORY.md` owns compatibility, and
+G166–G183 in `dev/GOTCHAS.md` preserve the recent traps.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md); GPU renderer work

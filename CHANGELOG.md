@@ -8,10 +8,31 @@ first.
 
 ## [Unreleased]
 
-**Known open:** version 0.4.53 fixes the vanilla-to-LOD handoff flash in the owner's test; whether
-it replaces 0.4.39 as the accepted baseline is his call. Winter temporal convergence (a real
-accumulation and melt, `/vhrefresh` boundaries, campaign cost) has not yet had its acceptance
-run.
+**Known open:** winter temporal convergence (a real accumulation and melt, `/vhrefresh`
+boundaries, campaign cost) has not yet had its acceptance run. The owner accepted 0.4.61 as the
+baseline on 2026-09-12, in place of 0.4.39.
+
+## [0.4.62] - 2026-09-12
+
+**Distant ruins and chiselled builds keep their colours.** Structures built from chiselled blocks,
+which ruin mods such as Better Ruins use by the thousand, used to turn almost white past the game's
+own view distance while looking right up close. A chiselled block has no colour of its own: its look
+is the materials stored inside it, and the part of the mod that captures distant ground on the
+server cannot see those, so the block was coloured as the game's missing-texture image. Capture now
+reads what each chiselled block is made of and records it as the material that covers most of its
+outside, on the server and the client alike. A plank skin over a stone core draws as planks; a stone
+block with a thin plank trim stays stone.
+
+The check meant to catch the missing-texture colour now recognises it in every form. Clutter,
+bookshelves and similar decorations take a colour from one of their own textures, or neutral grey
+if they have none; blocks from a mod you have removed keep the game's own missing-texture look,
+matching what you see up close. Ruins already in your cache turn grey when loaded and gain their real
+materials when that ground is captured again, for example when you pass near them. The 30-second
+report in the client log counts chiselled blocks captured as their material.
+
+Release build: zero warnings/errors. Fast checks: 23,180 assertions, zero failures. The verified
+38-entry package was copy-installed with SHA-256
+`C395F437CD77FF3B5CFF75735EF4C103359C672E2463B056C0F27F590539CA73`.
 
 ## [0.4.61] - 2026-09-12
 

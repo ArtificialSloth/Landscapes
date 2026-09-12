@@ -17,6 +17,8 @@ are unaffected.
 - **Unlimited render distance**, decoupled from the vanilla view-distance slider.
 - **Real 3D terrain**, not a heightmap. Mountains, overhangs, cave mouths, forests, and
   anything you build all appear at distance, at 1-block resolution near the player.
+  Chiselled blocks, including the ones ruins are built from, are drawn in the material that
+  shows most on their outside.
 - **Translucent water**, drawn over the lake and sea floors beneath it.
 - **Live seasons and winter cover**. Grass and foliage follow the game's own climate and
   season maps at the terrain's position. Loaded vanilla chunks also teach the cache their

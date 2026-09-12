@@ -2,26 +2,39 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.61
+## Start here: 0.4.62
 
-Read [Session 86](sessions/SESSION_86.md). Version 0.4.61 makes the owner's own anti-aliasing
-tuning the defaults: reach 2.5, nudge 0.5, sharpen 1, memory 0.97 turning and 0.99 still, safety
-check 2.25. His saved configuration already holds the same values, so it should look exactly as he
-left it; `.vhtaa reset` (or Defaults on the Anti-Aliasing tab) should now change nothing.
+Read [Session 87](sessions/SESSION_87.md). Version 0.4.62 records every chiselled block at capture
+as the material that covers most of its outside, repairs the missing-texture check, and repairs
+near-white colours already stored; the owner ran it and reported "Excellent! Looks fantastic." On
+2026-09-12 the owner also accepted 0.4.61 as the baseline, passed the three 0.4.55 visual checks
+and kept the anti-aliasing slider ranges as they are ([DONE](history/DONE.md)).
 
-Still open from [Session 85](sessions/SESSION_85.md) and 0.4.55:
+## Distant structures and block-entity colours: what 0.4.62 leaves open
 
-- Confirm all four visible Redwood trunk sides use bark while the top remains the cut end.
-- Revisit the captured snowy peak with `.vhwater murk on`; the dark blue rim should be absent.
-- Glance at a frozen lake and glacier. Ice now uses the opaque distant-terrain representation;
-  removing false liquid behavior is source-proven, but that appearance tradeoff needs review.
+The white ruins are fixed and human-tested ([Session 87](sessions/SESSION_87.md), G180-G182).
+Remaining:
+
+- **Clutter, bookshelves, ground storage and lamps have no single material.** They take a colour
+  from one of their own textures, or neutral grey; how that reads at distance has not been looked
+  at specifically.
+- **Structures cached before 0.4.62 turn grey, not their real colours.** 1,105 stored placeholder
+  colours were repaired on load in the owner's first 30 seconds. They gain their materials only
+  when the ground is captured again; whether `/vhrefresh` on the server delivers the refreshed rows
+  to the client has not been checked.
+- **The server half is not counted in any log the owner sends.** In 30 seconds the client's own
+  captures recorded 4,496 chisels as their material, 28 without one and no failed reads. Whether the
+  server reads block entities on every capture path (savegame sweep, generation peeks) is
+  unmeasured.
+- **Neither half of the cost is measured:** copying chisel contents where capture jobs are created,
+  and the arithmetic on the capture worker.
+- **Snow on a chiselled roof** comes from the chisel's own flags; source-reviewed only.
 
 ## Distant anti-aliasing and automatic thresholds: what is open
 
-The shimmer is fixed and tuned by the owner ([Session 86](sessions/SESSION_86.md)). Remaining:
+The shimmer is fixed and tuned by the owner ([Session 86](sessions/SESSION_86.md)); he kept the
+dial ranges on 2026-09-12. Remaining:
 
-- **Three dials sit at the top of their ranges** in the owner's tuning (sharpen 1, memory 0.97
-  turning and 0.99 still). Whether the ranges should reach further is his call.
 - **Cost is measured on one machine.** The owner's RX 9070 XT at 1920x1080 rendered reported the
   resolve and composite at p95 100 us and the depth snapshot at p95 25 us, over about 464,000
   frames. Weaker GPUs and 4K are unmeasured; the Performance preset turns the feature off.
@@ -39,8 +52,6 @@ The vanilla-to-LOD handoff flash is fixed in 0.4.53 and confirmed by the owner. 
 change that introduced it (0.4.13) and the fix are in [Session 84](sessions/SESSION_84.md) and
 G170. Remaining:
 
-- **Owner decision:** accept 0.4.53 in place of 0.4.39. Session 83's criterion was a clean
-  vanilla-to-LOD transfer with no new terrain holes; the owner has confirmed the first.
 - **`.vhgap` scans before the physics step** (Before/0.994), so its range verdicts can be a frame
   old. Move the scan after the late range check or retire it.
 - **Comparison switches for disproved hypotheses.** Retire `.vhsnowline` (every part) and
@@ -71,9 +82,10 @@ not yet received a clean acceptance run:
   bounded (1 ms issue budget, default 1 column/s, level-zero transfer only), but no paired runtime
   performance capture isolates it yet.
 
-## Distant water: protect accepted 0.4.39 and complete continuity evidence
+## Distant water: protect the accepted water and complete continuity evidence
 
-Current accepted source is `0.4.39` on `codex/water-depth-light`. Read
+The accepted baseline is `0.4.61` on `codex/water-depth-light` (owner, 2026-09-12); the water
+behaviour accepted in `0.4.39` is what this section protects. Read
 [the current handoff](plans/HANDOFF_WATER_SEAM.md) and
 [Session 82](sessions/SESSION_82.md). The settled seam and the 0.4.37 streaming improvement are
 human-accepted in the tested scenes. Version 0.4.38's shared readiness-mask extension caused severe

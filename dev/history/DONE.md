@@ -2,6 +2,26 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-12 - Distant ruins drew white; chiselled blocks drawn as their most visible material (0.4.62)
+
+Distant structures built from chiselled, clutter and bookshelf blocks drew near-white while looking
+right up close. Measured on the owner's cache: 2,078 structure columns white against 62 real. The
+server half cannot read a block entity and the client coloured those sections by block type (G181),
+the placeholder guard missed the opaque repack of the atlas colour (G180), and a section's palette
+kept its first colour per block id, so the client's own recapture reused the white entry (G182).
+0.4.62 records every chisel at capture as its most visible material, repairs the guard and the
+stored colours, and keeps blocks from removed mods as the game draws them. The owner ran it:
+"Excellent! Looks fantastic." Checkpoint `e565558`; 23,180 assertions pass. What is still open is in
+`dev/TODO.md`.
+
+## 2026-09-12 - Owner decisions: 0.4.61 is the accepted baseline
+
+The owner accepted 0.4.61 (`b1fd007`) in place of 0.4.39, which also settles Session 83's open
+question of accepting 0.4.53. He confirmed the three 0.4.55 checks: Redwood trunks show bark on all
+four sides with a cut-end top, the captured snowy peak shows no dark rim with murk on, and frozen
+lake and glacier ice read right as solid terrain. He kept the anti-aliasing slider ranges, although
+three of his values sit at their tops.
+
 ## 2026-09-12 - Distant shimmer fixed by distant anti-aliasing; automatic LOD thresholds (0.4.56-0.4.61)
 
 Distant terrain shimmered while the camera moved, worst on snow, from about 1,000 blocks out.
