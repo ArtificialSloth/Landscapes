@@ -96,6 +96,11 @@ public partial class VintageHorizonsModSystem
         Entry(lines, ".vhslabs", visual.HalfBlockTerrain);
         Entry(lines, ".vhtaa", visual.DistantAntiAliasing);
         Entry(lines, ".vhtaa reach", Number(config.TaaReachPixels, "0.#") + " px");
+        Entry(lines, ".vhtaa nudge", Number(config.TaaNudge, "0.00"));
+        Entry(lines, ".vhtaa sharpen", Number(config.TaaSharpen, "0.00"));
+        Entry(lines, ".vhtaa blend", Number(config.TaaBlend, "0.00"));
+        Entry(lines, ".vhtaa still", Number(config.TaaStillBlend, "0.00"));
+        Entry(lines, ".vhtaa clip", Number(config.TaaClip, "0.00"));
         Entry(lines, ".vhwater fresnel", visual.WaterEffects);
         Entry(lines, ".vhwater depth", config.WaterDepthShading);
         Entry(lines, ".vhwater alpha", Number(config.WaterMaxAlpha, "0.00"));
@@ -228,8 +233,12 @@ public partial class VintageHorizonsModSystem
         Entry(lines, "GPU late depth", renderer.LateDepthPyramid);
         Entry(lines, ".vhtaa", renderer.DistantAntiAliasing);
         Entry(lines, ".vhtaa show", renderer.TaaShowWeight);
-        Entry(lines, ".vhtaa blend", Number(renderer.TaaFeedback, "0.00"));
         Entry(lines, ".vhtaa reach", Number(renderer.TaaReachPixels, "0.#") + " px");
+        Entry(lines, ".vhtaa nudge", Number(renderer.TaaNudge, "0.00"));
+        Entry(lines, ".vhtaa sharpen", Number(renderer.TaaSharpen, "0.00"));
+        Entry(lines, ".vhtaa blend", Number(renderer.TaaFeedback, "0.00"));
+        Entry(lines, ".vhtaa still", Number(renderer.TaaStillFeedback, "0.00"));
+        Entry(lines, ".vhtaa clip", Number(renderer.TaaClip, "0.00"));
     }
 
     void AddDevelopmentConfiguration(List<string> lines)

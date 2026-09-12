@@ -2,16 +2,16 @@ namespace VintageHorizons.Checks;
 
 /// <summary>
 /// Distant anti-aliasing and automatic LOD thresholds: the screen arithmetic both share, the
-/// ramp that decides where terrain is blended and nudged, and the wiring that keeps water,
-/// vanilla terrain and near cached ground out of it.
+/// ramp that decides where terrain is blended and nudged, the tuning dials, and the wiring that
+/// keeps water, vanilla terrain and near cached ground out of it.
 ///
 /// What this was built against, measured from the owner's capture on 2026-09-11: at 60 degrees
 /// and 1080 rendered rows one block is one pixel at 935 blocks, which is where the owner saw the
 /// shimmer begin, and past 512 blocks 79-89% of snow pixels were one row tall. A 20-degree FOV,
 /// three times the on-screen size with depth precision unchanged, greatly diminished it in play.
 /// 0.4.57 looked cleaner but vibrated with the camera still; the checks marked 0.4.58 keep its
-/// three measured causes shut - a per-pixel depth test the nudge itself failed, the edge against
-/// the sky never averaged, and history fading in no earlier than the nudge.
+/// three measured causes shut. 0.4.58 was much steadier but smeared, even standing still; the
+/// checks marked 0.4.59 pin what answered that.
 /// </summary>
 public static class DistantAntiAliasingChecks
 {
@@ -19,6 +19,7 @@ public static class DistantAntiAliasingChecks
     {
         ScreenScale(c);
         Ramp(c);
+        Dials(c);
         Jitter(c);
         AutomaticThresholds(c);
         Defaults(c);
@@ -89,14 +90,41 @@ public static class DistantAntiAliasingChecks
         c.Eq(LodTaaMath.MinReachPixels, LodTaaMath.ClampReach(0f), "at both ends");
         c.Eq(LodTaaMath.DefaultReachPixels, LodTaaMath.ClampReach(float.NaN),
             "and a value that is not a number is the default");
+    }
 
+    static void Dials(Check c)
+    {
         c.True(LodTaaMath.DefaultFeedback < LodTaaMath.MaxFeedback,
-            "the default turning share leaves room to raise it");
-        c.Eq(LodTaaMath.MaxFeedback, LodTaaMath.StillFeedback(LodTaaMath.DefaultFeedback),
-            "a still view blends at the higher share, so the eight nudge positions settle");
-        c.Eq(0f, LodTaaMath.StillFeedback(0f), "and blend 0 still means no history at all");
-        c.True(LodTaaMath.StillMotionPixels < LodTaaMath.MovingMotionPixels,
-            "still and moving are told apart by a ramp, not a switch");
+            "the default turning memory leaves room to raise it");
+        c.True(LodTaaMath.DefaultStillFeedback > LodTaaMath.DefaultFeedback
+                && LodTaaMath.DefaultStillFeedback < LodTaaMath.MaxStillFeedback,
+            "a still camera keeps more memory by default, with room to raise it further");
+        c.True(LodTaaMath.StillMotionPixels < LodTaaMath.MovingMotionPixels
+                && LodTaaMath.MovingMotionPixels < LodTaaMath.FastMotionPixels,
+            "still, moving and fast are told apart by ramps, in that order");
+        c.True(LodTaaMath.FastShare > 0f && LodTaaMath.FastShare < 1f,
+            "a fast turn keeps less memory, but never none");
+        c.True(LodTaaMath.MinClip < LodTaaMath.DefaultClip && LodTaaMath.DefaultClip < LodTaaMath.MaxClip,
+            "the safety check's default sits inside its range");
+        c.True(LodTaaMath.DefaultNudge > 0f && LodTaaMath.DefaultNudge <= 1f
+                && LodTaaMath.DefaultSharpen >= 0f && LodTaaMath.DefaultSharpen <= 1f,
+            "nudge and sharpening default inside 0 to 1");
+        c.True(LodTaaMath.MaxSharpenLobe > 0f && LodTaaMath.MaxSharpenLobe < 0.25f,
+            "full sharpening keeps the composite's divisor, 1 - 4 x lobe, above zero");
+        c.Eq(LodTaaMath.MaxClip, LodTaaMath.ClampDial(99f, LodTaaMath.DefaultClip,
+                LodTaaMath.MinClip, LodTaaMath.MaxClip),
+            "every dial is kept to its range");
+        c.Eq(LodTaaMath.DefaultSharpen, LodTaaMath.ClampDial(float.NaN, LodTaaMath.DefaultSharpen, 0f, 1f),
+            "and a value that is not a number falls back to the default");
+
+        // 0.4.59: the still memory waits for the whole camera and eases in. 0.4.58 decided per
+        // pixel, so walking counted as still and a turn's blur was held the moment it stopped.
+        c.Eq(0f, LodTaaMath.Stillness(0), "the still memory is not in force the frame the camera stops");
+        c.Near(0.5, LodTaaMath.Stillness(LodTaaMath.StillEaseFrames / 2), 1e-6, "it eases in");
+        c.Eq(1f, LodTaaMath.Stillness(LodTaaMath.StillEaseFrames * 4),
+            "and is fully in force once the camera has held still long enough");
+        c.True(LodTaaMath.StillStepBlocks < 0.004,
+            "a camera sneaking along at a thousand frames a second still counts as moving");
     }
 
     static void Jitter(Check c)
@@ -173,6 +201,12 @@ public static class DistantAntiAliasingChecks
             "aiming at the default on-screen size");
         c.Eq(LodTaaMath.DefaultReachPixels, config.TaaReachPixels,
             "anti-aliasing begins where a block is two pixels wide unless the player says otherwise");
+        c.True(config.TaaBlend == LodTaaMath.DefaultFeedback
+                && config.TaaStillBlend == LodTaaMath.DefaultStillFeedback
+                && config.TaaNudge == LodTaaMath.DefaultNudge
+                && config.TaaSharpen == LodTaaMath.DefaultSharpen
+                && config.TaaClip == LodTaaMath.DefaultClip,
+            "and every tuning dial starts at its default");
         c.True(LodVisualSettings.Default.DistantAntiAliasing, "the Defaults button keeps it on");
         c.True(LodVisualSettings.Quality.DistantAntiAliasing
                 && LodVisualSettings.Balanced.DistantAntiAliasing,
@@ -241,11 +275,26 @@ public static class DistantAntiAliasingChecks
                 StringComparison.Ordinal),
             "history is taken only from cached terrain or sky, never from vanilla terrain or a "
             + "creature, which would leave a trail behind anything that moves");
-        c.True(resolve.Contains("mix(stored, clamp(stored, lo, hi), moving)", StringComparison.Ordinal),
-            "the neighbourhood clamp holds history while the view moves and lets it settle while still");
-        c.True(resolve.Contains("mix(stillFeedback, feedback, moving) * clamp(2.0 * ramp, 0.0, 1.0)",
+        c.True(resolve.Contains("vec3 stored = max(HistoryCatmullRom(previousUv, vec2(size)), vec3(0.0));",
                 StringComparison.Ordinal),
+            "0.4.59: history is re-sampled by Catmull-Rom; bilinear filtering softened it a little "
+            + "every frame of a turn and that built up into a smear");
+        c.True(resolve.Contains("vec3 boxLo = max(lo, mean - clipWidth * deviation);", StringComparison.Ordinal)
+                && resolve.Contains("vec3 boxHi = min(hi, mean + clipWidth * deviation);", StringComparison.Ordinal),
+            "0.4.59: the safety check uses the typical colours around a pixel, never wider than "
+            + "those present; on snow the full range let nearly any history through");
+        c.True(resolve.Contains("vec3 previous = mix(stored, ClipToBox(stored, boxLo, boxHi), moving);",
+                StringComparison.Ordinal),
+            "the check holds history while anything moves and lets it settle once still");
+        c.True(resolve.Contains("float moving = max(1.0 - stillness,", StringComparison.Ordinal),
+            "0.4.59: and still means the whole camera, eased in, not just this pixel's ground");
+        c.True(resolve.Contains("float share = mix(stillFeedback, feedback, moving)", StringComparison.Ordinal)
+                && resolve.Contains("* clamp(2.0 * ramp, 0.0, 1.0);", StringComparison.Ordinal),
             "0.4.58: history reaches full share over the first half of the ramp, before the nudge");
+        c.False(resolve.Contains("sharpenLobe", StringComparison.Ordinal),
+            "0.4.59: sharpening never reaches the history, so it cannot build up frame on frame");
+        c.True(composite.Contains("vec3 lobe = -amount * (sharpenLobe * ramp);", StringComparison.Ordinal),
+            "the composite sharpens, adaptively and only as far as the ramp reaches");
         c.True(composite.Contains("float ramp = abs(value.a) - 1.0;", StringComparison.Ordinal)
                 && composite.Contains("if (ramp <= 0.0) discard;", StringComparison.Ordinal),
             "the composite leaves vanilla pixels and everything outside the ramp exactly as drawn");
@@ -295,14 +344,28 @@ public static class DistantAntiAliasingChecks
             && taa.Contains("resolve.Uniform(\"fullPixels\", LodTaaMath.FullPixels(taaReachPixels));",
                 StringComparison.Ordinal),
             "the nudge and the blend are both derived from the one reach setting");
+        c.True(taa.Contains("taaJitterX = 2f * x * taaNudge / taaWidth;", StringComparison.Ordinal)
+                && taa.Contains("taaJitterY = 2f * y * taaNudge / taaHeight;", StringComparison.Ordinal),
+            "the nudge dial scales how far terrain moves each frame");
+        c.True(taa.Contains("taaStillFrames = historyUsable && TaaCameraUnchanged(view)",
+                StringComparison.Ordinal),
+            "stillness is counted from the whole camera, frame by frame");
         c.True(taa.Contains("GL.ColorMask(true, true, true, false);", StringComparison.Ordinal),
             "the composite never writes alpha");
         c.True(renderer.Contains("UpdateAutoThresholds();", StringComparison.Ordinal),
             "automatic thresholds are re-evaluated every prepared frame");
         c.True(mod.Contains("if (!renderer.AutoLodThresholds)", StringComparison.Ordinal),
             "saving with automatic thresholds on keeps the player's own distances in the file");
-        c.True(mod.Contains("renderer.TaaReachPixels = config.TaaReachPixels;", StringComparison.Ordinal)
-                && mod.Contains("config.TaaReachPixels = renderer.TaaReachPixels;", StringComparison.Ordinal),
-            "the reach is restored at startup and saved with everything else");
+        foreach ((string saved, string live) in new[]
+        {
+            ("TaaReachPixels", "TaaReachPixels"), ("TaaBlend", "TaaFeedback"),
+            ("TaaStillBlend", "TaaStillFeedback"), ("TaaNudge", "TaaNudge"),
+            ("TaaSharpen", "TaaSharpen"), ("TaaClip", "TaaClip"),
+        })
+        {
+            c.True(mod.Contains($"renderer.{live} = config.{saved};", StringComparison.Ordinal)
+                    && mod.Contains($"config.{saved} = renderer.{live};", StringComparison.Ordinal),
+                $"{saved} is restored at startup and saved with everything else");
+        }
     }
 }

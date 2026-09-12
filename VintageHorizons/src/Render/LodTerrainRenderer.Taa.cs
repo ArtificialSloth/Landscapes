@@ -24,13 +24,12 @@ namespace VintageHorizons;
 /// on the average of what it covers instead of on whichever block happened to be under it.
 /// </para>
 /// <para>
-/// With the view still, a pixel's history lands exactly on itself, so it is allowed to settle:
-/// the neighbourhood clamp is let go and the history share rises to 0.97. Once its ground moves
-/// half a pixel a frame, history may only say what the current frame's 3x3 neighbourhood could
-/// also say, which is what stops it smearing while turning. The first test build (0.4.57) had no
-/// still mode, refused history wherever the nudge swapped a surface, and never averaged the edge
-/// against the sky; the owner saw the anti-aliased terrain vibrate with the camera still. See
-/// lodtaaresolve.fsh.
+/// Once the whole camera has held still for a few frames, a pixel's history lands exactly on
+/// itself, so it is allowed to settle: the safety check is let go and the memory rises to the
+/// still setting. Otherwise history may only say what the current frame's 3x3 neighbourhood
+/// could also say, which is what stops it smearing. Sharpening is applied on the way to the
+/// screen, never to the memory. Every trade-off is a saved `.vhtaa` dial; how each came to be is
+/// told in lodtaaresolve.fsh.
 /// </para>
 /// <para>
 /// Nothing here is a distance. Which pixels are touched is decided by which pass drew them - a
@@ -62,14 +61,67 @@ public partial class LodTerrainRenderer
     /// <summary>Session diagnostic: tint every anti-aliased pixel magenta by its strength.</summary>
     public bool TaaShowWeight { get; set; }
 
-    /// <summary>History share at full strength. A session tuning knob, `.vhtaa blend`.</summary>
+    // The tuning dials. All saved and all set by .vhtaa; LodTaaMath says what each one trades.
+
+    /// <summary>Memory while the view turns. `.vhtaa blend`.</summary>
     public float TaaFeedback
     {
         get => taaFeedback;
-        set => taaFeedback = Math.Clamp(
-            float.IsFinite(value) ? value : LodTaaMath.DefaultFeedback, 0f, LodTaaMath.MaxFeedback);
+        set => taaFeedback = LodTaaMath.ClampDial(value, LodTaaMath.DefaultFeedback,
+            0f, LodTaaMath.MaxFeedback);
     }
     float taaFeedback = LodTaaMath.DefaultFeedback;
+
+    /// <summary>Memory once the whole camera has held still. `.vhtaa still`.</summary>
+    public float TaaStillFeedback
+    {
+        get => taaStillFeedback;
+        set => taaStillFeedback = LodTaaMath.ClampDial(value, LodTaaMath.DefaultStillFeedback,
+            0f, LodTaaMath.MaxStillFeedback);
+    }
+    float taaStillFeedback = LodTaaMath.DefaultStillFeedback;
+
+    /// <summary>How far distant terrain is nudged, as a share of half a pixel. `.vhtaa nudge`.</summary>
+    public float TaaNudge
+    {
+        get => taaNudge;
+        set => taaNudge = LodTaaMath.ClampDial(value, LodTaaMath.DefaultNudge, 0f, 1f);
+    }
+    float taaNudge = LodTaaMath.DefaultNudge;
+
+    /// <summary>Sharpening on the way to the screen, 0 to 1. `.vhtaa sharpen`.</summary>
+    public float TaaSharpen
+    {
+        get => taaSharpen;
+        set => taaSharpen = LodTaaMath.ClampDial(value, LodTaaMath.DefaultSharpen, 0f, 1f);
+    }
+    float taaSharpen = LodTaaMath.DefaultSharpen;
+
+    /// <summary>Width of the safety check, in standard deviations. `.vhtaa clip`.</summary>
+    public float TaaClip
+    {
+        get => taaClip;
+        set => taaClip = LodTaaMath.ClampDial(value, LodTaaMath.DefaultClip,
+            LodTaaMath.MinClip, LodTaaMath.MaxClip);
+    }
+    float taaClip = LodTaaMath.DefaultClip;
+
+    /// <summary>Every tuning dial, reach included, back to its default. The on/off switch stays.</summary>
+    public void ResetTaaDials()
+    {
+        TaaReachPixels = LodTaaMath.DefaultReachPixels;
+        TaaFeedback = LodTaaMath.DefaultFeedback;
+        TaaStillFeedback = LodTaaMath.DefaultStillFeedback;
+        TaaNudge = LodTaaMath.DefaultNudge;
+        TaaSharpen = LodTaaMath.DefaultSharpen;
+        TaaClip = LodTaaMath.DefaultClip;
+    }
+
+    /// <summary>Resolved frames with the still memory fully in force, for the report.</summary>
+    public long TaaFramesStill { get; private set; }
+
+    /// <summary>Consecutive frames the whole camera has held still, up to the ease-in length.</summary>
+    int taaStillFrames;
 
     /// <summary>
     /// Saved. Where anti-aliasing begins, as the on-screen width of one block in pixels; it is
@@ -295,8 +347,8 @@ public partial class LodTerrainRenderer
 
             taaBlockScale = LodScreenScale.BlockScale(taaHeight, capi.Render.CurrentProjectionMatrix[5]);
             (float x, float y) = LodTaaMath.JitterPixels(taaJitterFrame);
-            taaJitterX = 2f * x / taaWidth;
-            taaJitterY = 2f * y / taaHeight;
+            taaJitterX = 2f * x * taaNudge / taaWidth;
+            taaJitterY = 2f * y * taaNudge / taaHeight;
             taaActiveThisFrame = taaBlockScale > 0f;
         }
         catch (Exception e)
@@ -341,6 +393,13 @@ public partial class LodTerrainRenderer
         bool historyUsable = TaaHistoryUsable(projection);
         if (historyUsable)
             Mat4f.Multiply(taaPrevViewProjection, taaPrevProjection, taaPrevView);
+
+        // The still memory waits until the whole camera has held still for a few frames: not
+        // while walking, which barely moves distant ground on screen, and not the instant a turn
+        // stops, while the history still carries the turn's blur.
+        taaStillFrames = historyUsable && TaaCameraUnchanged(view)
+            ? Math.Min(taaStillFrames + 1, LodTaaMath.StillEaseFrames) : 0;
+        float stillness = LodTaaMath.Stillness(taaStillFrames);
         taaCameraDelta.X = (float)(camPos.X - taaPrevCamX);
         taaCameraDelta.Y = (float)(camPos.Y - taaPrevCamY);
         taaCameraDelta.Z = (float)(camPos.Z - taaPrevCamZ);
@@ -394,9 +453,13 @@ public partial class LodTerrainRenderer
                     resolve.Uniform("startPixels", taaReachPixels);
                     resolve.Uniform("fullPixels", LodTaaMath.FullPixels(taaReachPixels));
                     resolve.Uniform("feedback", taaFeedback);
-                    resolve.Uniform("stillFeedback", LodTaaMath.StillFeedback(taaFeedback));
+                    resolve.Uniform("stillFeedback", taaStillFeedback);
                     resolve.Uniform("stillMotion", LodTaaMath.StillMotionPixels);
                     resolve.Uniform("movingMotion", LodTaaMath.MovingMotionPixels);
+                    resolve.Uniform("fastMotion", LodTaaMath.FastMotionPixels);
+                    resolve.Uniform("fastShare", LodTaaMath.FastShare);
+                    resolve.Uniform("stillness", stillness);
+                    resolve.Uniform("clipWidth", taaClip);
                     resolve.Uniform("historyValid", historyUsable ? 1 : 0);
                     GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
                 }
@@ -417,6 +480,7 @@ public partial class LodTerrainRenderer
                 try
                 {
                     composite.BindTexture2D("resolved", taaHistoryTexture[next], 0);
+                    composite.Uniform("sharpenLobe", taaSharpen * LodTaaMath.MaxSharpenLobe);
                     composite.Uniform("showWeight", TaaShowWeight ? 1 : 0);
                     GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
                 }
@@ -461,7 +525,26 @@ public partial class LodTerrainRenderer
         taaPrevCamZ = camPos.Z;
         taaJitterFrame++;
         TaaFramesResolved++;
+        if (stillness >= 1f) TaaFramesStill++;
         if (taaErrorChecksLeft > 0) taaErrorChecksLeft--;
+    }
+
+    /// <summary>
+    /// Whether the camera is where it was last frame and looking the same way. Tolerances, not
+    /// equality, so float noise in an idle camera cannot keep it from ever counting as still.
+    /// </summary>
+    bool TaaCameraUnchanged(float[] view)
+    {
+        double dx = camPos.X - taaPrevCamX;
+        double dy = camPos.Y - taaPrevCamY;
+        double dz = camPos.Z - taaPrevCamZ;
+        if (dx * dx + dy * dy + dz * dz > LodTaaMath.StillStepBlocks * LodTaaMath.StillStepBlocks)
+            return false;
+        for (int i = 0; i < 16; i++)
+        {
+            if (Math.Abs(view[i] - taaPrevView[i]) > LodTaaMath.StillTurn) return false;
+        }
+        return true;
     }
 
     /// <summary>Whether last frame's result can be blended in, and if not, why not.</summary>
@@ -783,7 +866,12 @@ public partial class LodTerrainRenderer
             + $"cached terrain only, vanilla terrain is never touched");
     }
 
-    /// <summary>One line for chat and the log: state, reach, activity and GPU cost.</summary>
+    /// <summary>The tuning dials in one clause, for the report and every dial command's reply.</summary>
+    public string DescribeTaaDials() => string.Create(System.Globalization.CultureInfo.InvariantCulture,
+        $"dials: nudge {taaNudge:0.00}, sharpen {taaSharpen:0.00}, blend {taaFeedback:0.00} while "
+        + $"turning, still {taaStillFeedback:0.00}, clip {taaClip:0.00}");
+
+    /// <summary>One line for chat and the log: state, reach, dials, activity and GPU cost.</summary>
     public string DescribeDistantAntiAliasing()
     {
         // Arms the delayed timers from now on, so the next report carries a real cost rather
@@ -801,10 +889,12 @@ public partial class LodTerrainRenderer
                 $"GPU resolve p95 {GpuTaaCost.P95Us:0} us over {GpuTaaCost.Calls} samples, depth "
                 + $"copy p95 {GpuTaaCopyCost.P95Us:0} us over {GpuTaaCopyCost.Calls}")
             : "GPU timing " + gpuTelemetry.DescribeTiming();
+        // How often the still memory was in force: near 0 with the camera parked would mean an
+        // idle camera still moves a little every frame and never counts as still.
+        double stillPercent = TaaFramesResolved > 0 ? 100.0 * TaaFramesStill / TaaFramesResolved : 0.0;
         return string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"distant anti-aliasing {state}; {DescribeTaaReach()}; history blend "
-            + $"{taaFeedback:0.00} while turning and {LodTaaMath.StillFeedback(taaFeedback):0.00} "
-            + $"while still, over a {LodTaaMath.JitterSamples}-position nudge; {TaaFramesResolved} "
-            + $"frames resolved, {TaaHistoryResets} history resets{resets}; {cost}.");
+            $"distant anti-aliasing {state}; {DescribeTaaReach()}; {DescribeTaaDials()}; "
+            + $"{TaaFramesResolved} frames resolved, {stillPercent:0}% of them with the camera "
+            + $"fully still, {TaaHistoryResets} history resets{resets}; {cost}.");
     }
 }

@@ -60,22 +60,75 @@ internal static class LodTaaMath
     /// </summary>
     public const float MaxReachPixels = 32f;
 
-    /// <summary>History share while the view turns: roughly the last ten frames.</summary>
+    /// <summary>Memory while the view turns (`.vhtaa blend`): roughly the last ten frames.</summary>
     public const float DefaultFeedback = 0.9f;
 
-    /// <summary>
-    /// History share while the view is still, and the most `.vhtaa blend` accepts. The nudge
-    /// repeats every eight frames, and a running blend of a repeating signal ripples: for a
-    /// feature seen in one of the eight positions, by about 4.5% of its contrast at 0.9 and
-    /// about 1.3% at 0.97.
-    /// </summary>
+    /// <summary>The most turning memory `.vhtaa blend` accepts.</summary>
     public const float MaxFeedback = 0.97f;
+
+    /// <summary>
+    /// Memory while the whole camera holds still (`.vhtaa still`). The nudge repeats every eight
+    /// frames, and a running blend of a repeating signal ripples: for a feature seen in one of
+    /// the eight positions, by about 4.5% of its contrast at 0.9 and about 1.3% at 0.97.
+    /// </summary>
+    public const float DefaultStillFeedback = 0.97f;
+
+    public const float MaxStillFeedback = 0.99f;
 
     /// <summary>A pixel whose ground moved less than this far since last frame is still.</summary>
     public const float StillMotionPixels = 0.05f;
 
-    /// <summary>From this far per frame on it is moving: full neighbourhood clamp, turning share.</summary>
+    /// <summary>From this far per frame on it is moving: full safety check, turning memory.</summary>
     public const float MovingMotionPixels = 0.5f;
+
+    /// <summary>
+    /// From this far per frame on a turn is fast and keeps only <see cref="FastShare"/> of the
+    /// turning memory: a fast turn smears most, and shimmer is hardest to see during one.
+    /// </summary>
+    public const float FastMotionPixels = 8f;
+
+    public const float FastShare = 0.85f;
+
+    /// <summary>
+    /// Frames the whole camera must hold still before the still memory is fully in force. 0.4.58
+    /// decided per pixel, so walking - which barely moves distant ground on screen - counted as
+    /// still, and the long memory held on to a turn's blur the moment the turn stopped.
+    /// </summary>
+    public const int StillEaseFrames = 16;
+
+    /// <summary>A camera step shorter than this, in blocks per frame, is not a movement.</summary>
+    public const double StillStepBlocks = 5e-4;
+
+    /// <summary>A view-matrix change smaller than this in every element is not a turn.</summary>
+    public const float StillTurn = 1e-5f;
+
+    /// <summary>
+    /// Width of the safety check (`.vhtaa clip`), in standard deviations of the colours around a
+    /// pixel, and never wider than the colours actually there. Lower is tighter: less smear,
+    /// more flicker. 4 is in effect the 0.4.58 check, the full range of the neighbourhood, which
+    /// on snow - white tops beside dark walls in nearly every 3x3 - let almost any history through.
+    /// </summary>
+    public const float DefaultClip = 1.25f;
+    public const float MinClip = 0.5f;
+    public const float MaxClip = 4f;
+
+    /// <summary>
+    /// How far terrain is nudged (`.vhtaa nudge`), as a share of the full half pixel. Lower is
+    /// crisper and shimmers more; 0 leaves only the blending.
+    /// </summary>
+    public const float DefaultNudge = 1f;
+
+    /// <summary>
+    /// Sharpening of the anti-aliased terrain (`.vhtaa sharpen`), 0 to 1. Applied to the picture
+    /// on its way to the screen and never to the memory, so it cannot build up frame on frame.
+    /// </summary>
+    public const float DefaultSharpen = 0.5f;
+
+    /// <summary>
+    /// The neighbour weight at full sharpening, before the contrast adaptation scales it down:
+    /// the strongest setting of AMD's contrast-adaptive sharpening uses -1/5.
+    /// </summary>
+    public const float MaxSharpenLobe = 0.2f;
 
     /// <summary>Sub-pixel positions visited before the nudge repeats.</summary>
     public const int JitterSamples = 8;
@@ -108,12 +161,13 @@ internal static class LodTaaMath
     /// <summary>The nudge's part: nothing until the middle of the ramp, full at its end.</summary>
     public static float NudgeStrength(float ramp) => Math.Clamp(2f * ramp - 1f, 0f, 1f);
 
-    /// <summary>
-    /// History share while still: never below the turning share, and 0 stays 0, so
-    /// `.vhtaa blend 0` still shows the raw nudge.
-    /// </summary>
-    public static float StillFeedback(float feedback) =>
-        feedback > 0f ? Math.Max(feedback, MaxFeedback) : 0f;
+    /// <summary>A dial's value kept to its range; anything that is not a number is the default.</summary>
+    public static float ClampDial(float value, float fallback, float min, float max) =>
+        Math.Clamp(float.IsFinite(value) ? value : fallback, min, max);
+
+    /// <summary>How far the still memory is in force after the camera has held still this many frames.</summary>
+    public static float Stillness(int stillFrames) =>
+        Math.Clamp(stillFrames / (float)StillEaseFrames, 0f, 1f);
 
     /// <summary>The radical inverse of index in the given base: a low-discrepancy sequence.</summary>
     public static float Halton(int index, int radix)

@@ -154,6 +154,17 @@ public class VintageHorizonsConfig
     /// writes it; larger reaches closer, but only ever over cached terrain.
     /// </summary>
     public float TaaReachPixels = LodTaaMath.DefaultReachPixels;
+
+    /// <summary>
+    /// Distant anti-aliasing's tuning dials, all set by .vhtaa and explained on LodTaaMath:
+    /// memory while turning and while still, how far terrain is nudged, sharpening, and the
+    /// width of the safety check. `.vhtaa reset` puts them back.
+    /// </summary>
+    public float TaaBlend = LodTaaMath.DefaultFeedback;
+    public float TaaStillBlend = LodTaaMath.DefaultStillFeedback;
+    public float TaaNudge = LodTaaMath.DefaultNudge;
+    public float TaaSharpen = LodTaaMath.DefaultSharpen;
+    public float TaaClip = LodTaaMath.DefaultClip;
 }
 
 /// <summary>
@@ -333,6 +344,11 @@ public partial class VintageHorizonsModSystem : ModSystem
         renderer.LodTargetPixels = config.LodTargetPixels;
         renderer.AutoLodThresholds = config.AutoLodThresholds;
         renderer.TaaReachPixels = config.TaaReachPixels;
+        renderer.TaaFeedback = config.TaaBlend;
+        renderer.TaaStillFeedback = config.TaaStillBlend;
+        renderer.TaaNudge = config.TaaNudge;
+        renderer.TaaSharpen = config.TaaSharpen;
+        renderer.TaaClip = config.TaaClip;
 
         // The GPU path someone chose last session, restored in the order the pieces depend
         // on each other: arenas hold the geometry batching draws from, batching provides the
@@ -4097,17 +4113,35 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         capi.ChatCommands.Create("vhtaa")
             .WithDescription("Distant anti-aliasing: blends distant cached terrain over several frames "
-                + "so it stops shimmering as you move. on | off | show | blend <0-0.97> | "
-                + "reach <1-32>. On by default and saved; also a switch in .vhconfig. reach is the "
-                + "on-screen block width, in pixels, where it begins (default 2; larger reaches "
-                + "closer; saved). With no argument, reports what it is doing and what it costs, in "
-                + "chat and in the client log.")
+                + "so it stops shimmering as you move. on | off | show | reach <1-32> | "
+                + "nudge <0-1> | sharpen <0-1> | blend <0-0.97> | still <0-0.99> | clip <0.5-4> | "
+                + "reset. reach is the on-screen block width, in pixels, where it begins (larger "
+                + "reaches closer); nudge is how far terrain is moved each frame (lower is crisper "
+                + "but shimmers more); sharpen restores contrast on the way to the screen; blend "
+                + "and still are the memory while turning and once the camera is still (higher is "
+                + "steadier but smears more); clip is the safety check's width (lower smears less "
+                + "but flickers more). On by default and everything is saved; also a switch in "
+                + ".vhconfig; reset puts the dials back. With no argument, reports what it is doing "
+                + "and what it costs, in chat and in the client log.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("mode"),
                       capi.ChatCommands.Parsers.OptionalWord("value"))
             .HandleWith(args =>
             {
                 string mode = args.Parsers[0].IsMissing ? "" : ((string)args[0]).Trim();
+                string value = args.Parsers[1].IsMissing ? "" : ((string)args[1]).Trim();
                 string reply;
+
+                // One tuning dial: set it when a value was given, save, and reply with them all.
+                string Dial(string name, string range, Action<float> set)
+                {
+                    if (!TryParseSetting(value, out float setting))
+                        return $"[VintageHorizons] give .vhtaa {name} a value from {range}. "
+                            + renderer.DescribeTaaDials() + ".";
+                    set(setting);
+                    SaveConfig();
+                    return "[VintageHorizons] " + renderer.DescribeTaaDials() + ". Saved.";
+                }
+
                 if (mode.Equals("on", StringComparison.OrdinalIgnoreCase)
                     || mode.Equals("off", StringComparison.OrdinalIgnoreCase))
                 {
@@ -4124,19 +4158,25 @@ public partial class VintageHorizonsModSystem : ModSystem
                             : "shown normally. ")
                         + "Session only.";
                 }
+                else if (mode.Equals("nudge", StringComparison.OrdinalIgnoreCase))
+                    reply = Dial("nudge", "0 to 1", v => renderer.TaaNudge = v);
+                else if (mode.Equals("sharpen", StringComparison.OrdinalIgnoreCase))
+                    reply = Dial("sharpen", "0 to 1", v => renderer.TaaSharpen = v);
                 else if (mode.Equals("blend", StringComparison.OrdinalIgnoreCase))
+                    reply = Dial("blend", "0 to 0.97", v => renderer.TaaFeedback = v);
+                else if (mode.Equals("still", StringComparison.OrdinalIgnoreCase))
+                    reply = Dial("still", "0 to 0.99", v => renderer.TaaStillFeedback = v);
+                else if (mode.Equals("clip", StringComparison.OrdinalIgnoreCase))
+                    reply = Dial("clip", "0.5 to 4", v => renderer.TaaClip = v);
+                else if (mode.Equals("reset", StringComparison.OrdinalIgnoreCase))
                 {
-                    string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
-                    if (TryParseSetting(value, out float feedback)) renderer.TaaFeedback = feedback;
-                    reply = string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                        $"[VintageHorizons] history blend {renderer.TaaFeedback:0.00} while turning "
-                        + $"(default {LodTaaMath.DefaultFeedback:0.00}, most {LodTaaMath.MaxFeedback:0.00}) "
-                        + $"and {LodTaaMath.StillFeedback(renderer.TaaFeedback):0.00} while still. "
-                        + $"Higher is steadier but smears more when turning. Session only.");
+                    renderer.ResetTaaDials();
+                    SaveConfig();
+                    reply = "[VintageHorizons] anti-aliasing back to its defaults: "
+                        + renderer.DescribeTaaDials() + "; " + renderer.DescribeTaaReach() + ". Saved.";
                 }
                 else if (mode.Equals("reach", StringComparison.OrdinalIgnoreCase))
                 {
-                    string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
                     if (TryParseSetting(value, out float reach))
                     {
                         renderer.TaaReachPixels = reach;
@@ -4317,6 +4357,11 @@ public partial class VintageHorizonsModSystem : ModSystem
             config.AutoLodThresholds = renderer.AutoLodThresholds;
             config.LodTargetPixels = renderer.LodTargetPixels;
             config.TaaReachPixels = renderer.TaaReachPixels;
+            config.TaaBlend = renderer.TaaFeedback;
+            config.TaaStillBlend = renderer.TaaStillFeedback;
+            config.TaaNudge = renderer.TaaNudge;
+            config.TaaSharpen = renderer.TaaSharpen;
+            config.TaaClip = renderer.TaaClip;
             // The request, never the effective state: a mask that failed this session
             // reports itself disabled, and writing that would turn it off permanently.
             config.ChunkMask = renderer.ChunkMaskRequested;
