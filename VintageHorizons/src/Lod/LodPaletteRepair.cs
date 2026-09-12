@@ -52,6 +52,49 @@ public static class LodPaletteRepair
     }
 
     /// <summary>
+    /// Whether a colour is the game's missing-texture placeholder, in any of the forms it
+    /// reaches the cache: the atlas estimate (<paramref name="atlasAverage"/>, 0x00FCFCFC on
+    /// 1.22), that estimate repacked opaque by the colour averaging, or the file's own mean
+    /// (<paramref name="fileMean"/>, 255,249,249). Compared on RGB alone: the averaging always
+    /// writes an opaque alpha, and an exact comparison against the atlas's alpha-free value is
+    /// what let 0.4.61 and earlier store near-white for every chiselled block a server
+    /// captured. A zero reference is unknown and matches nothing.
+    /// </summary>
+    public static bool IsPlaceholder(int color, int atlasAverage, int fileMean)
+    {
+        int rgb = color & 0xFFFFFF;
+        return (atlasAverage != 0 && rgb == (atlasAverage & 0xFFFFFF))
+            || (fileMean != 0 && rgb == (fileMean & 0xFFFFFF));
+    }
+
+    /// <summary>
+    /// Replace placeholder colours in a section's palette, and report how many changed.
+    /// <paramref name="replacementFor"/> takes a block id and answers the colour to use, or 0
+    /// to leave the entry alone - the answer for a block whose placeholder really is its look,
+    /// such as one from a mod that is no longer installed.
+    /// </summary>
+    public static int ReplacePlaceholders(LodSection section,
+        System.Func<int, bool> isPlaceholder, System.Func<int, int> replacementFor)
+    {
+        int repaired = 0;
+
+        for (int i = 0; i < section.Palette.Count; i++)
+        {
+            LodPaletteEntry entry = section.Palette[i];
+            if (entry.BlockId <= 0 || !isPlaceholder(entry.Color)) continue;
+
+            int replacement = replacementFor(entry.BlockId);
+            if (replacement == 0 || replacement == entry.Color) continue;
+
+            entry.Color = replacement;
+            section.Palette[i] = entry;
+            repaired++;
+        }
+
+        return repaired;
+    }
+
+    /// <summary>
     /// What a block nothing can identify is drawn as: a mid grey that reads as
     /// unremarkable stone at distance. Deliberately not black, which is what these
     /// entries were by omission, and deliberately not magenta, which would shout about

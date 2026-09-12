@@ -46,6 +46,9 @@
     <Reference Include="VSEssentials">
       <HintPath>$(GamePath)/Mods/VSEssentials.dll</HintPath>
     </Reference>
+    <Reference Include="VSSurvivalMod">
+      <HintPath>$(GamePath)/Mods/VSSurvivalMod.dll</HintPath>
+    </Reference>
     <Reference Include="0Harmony">
       <HintPath>$(GamePath)/Lib/0Harmony.dll</HintPath>
     </Reference>

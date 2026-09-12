@@ -284,7 +284,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         // Repairs a cache written while a block lookup was poisoned, which saved sections
         // with no palette colour at all and drew them as black ground. Client-side only:
         // it needs the texture atlas, and a server stores 0 on purpose.
-        pipeline.RepairUncoloredPalette = section => LodPaletteRepair.Fill(section, AtlasColorOf);
+        pipeline.RepairUncoloredPalette = section =>
+            LodPaletteRepair.Fill(section, AtlasColorOf) + RepairPlaceholderEntries(section);
         pipeline.RecolorForeignSection = RecolorForeignSection;
         renderer = new LodTerrainRenderer(
             capi, pipeline.World, pipeline.Worker, tints, () => pipeline.WorldEpoch,
@@ -818,10 +819,14 @@ public partial class VintageHorizonsModSystem : ModSystem
             paletteSamplePos.Set(blockX, blockY, blockZ);
             int sampled = block.GetColorWithoutTint(capi, paletteSamplePos);
 
-            // Keeping the sampled colour as the last resort, not grey: a chiselled block
-            // is exactly the case where the block's own texture is the placeholder and
-            // the entity already answered with the materials in it.
-            color = RepairPlaceholder(block, sampled, fallback: sampled);
+            // The last resort is what the entity answered, when it answered with a real colour.
+            // A sampled placeholder means the entity was not there to ask: the game draws an
+            // entity block from what the entity holds, never as the missing-texture image, so
+            // that last resort is neutral grey rather than near-white. A chiselled block
+            // rarely gets here now - capture records it as its most visible material
+            // (LodChiselStandIn) - but clutter and bookshelves still do.
+            color = RepairPlaceholder(block, sampled,
+                fallback: IsPlaceholderRgb(sampled) ? LodPaletteRepair.UnknownBlockColor : sampled);
         }
         else
         {
@@ -918,7 +923,16 @@ public partial class VintageHorizonsModSystem : ModSystem
             if (exact.Coverage > 0f) color = PackMean(exact);
         }
 
-        color = RepairPlaceholder(block, color, fallback: LodPaletteRepair.UnknownBlockColor);
+        // With no real texture anywhere, a plain block whose own answer is the missing-texture
+        // image is one the game itself draws as that box - typically from a mod that has since
+        // been removed - so it keeps that look and distant matches near. Anything else keeps
+        // the neutral grey it always had: a block with an entity is drawn from what the entity
+        // holds, so its placeholder only means this path cannot see it, and a block with no
+        // colour texture at all answers -1, which is no colour.
+        color = RepairPlaceholder(block, color,
+            fallback: block.EntityClass == null && IsPlaceholderRgb(color)
+                ? color
+                : LodPaletteRepair.UnknownBlockColor);
         stableColorByBlockId[block.BlockId] = color;
         return color;
     }
@@ -1394,13 +1408,28 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// test inspects the sampled value.
     /// </summary>
     bool IsPlaceholderColor(Block block, int color) =>
-        !IsUsableAtlasTexture(block.TextureSubIdForBlockColor)
-        // Guarded on non-zero: if the atlas never populated AvgColor we would be
-        // comparing against 0 and "fixing" every legitimately black block.
-        || (unknownTextureColor != 0 && color == unknownTextureColor);
+        !IsUsableAtlasTexture(block.TextureSubIdForBlockColor) || IsPlaceholderRgb(color);
+
+    /// <summary>
+    /// The placeholder in any form it reaches a palette - see LodPaletteRepair.IsPlaceholder.
+    /// Until 0.4.62 this compared the atlas's alpha-free value exactly, which the averaged
+    /// colour in StableColorOf (always opaque) could never equal, so the repair never fired
+    /// there and every chiselled block a server captured was stored near-white.
+    /// </summary>
+    bool IsPlaceholderRgb(int color) =>
+        LodPaletteRepair.IsPlaceholder(color, unknownTextureColor, unknownTextureMean);
 
     /// <summary>Average colour of unknown.png (near-white, not magenta - measured).</summary>
     int unknownTextureColor;
+
+    /// <summary>
+    /// unknown.png's own mean (255,249,249): what a colour read from a texture file comes to
+    /// when that file resolved to the placeholder. 0 if the file could not be read.
+    /// </summary>
+    int unknownTextureMean;
+
+    /// <summary>Stored placeholder colours replaced on load. See RepairPlaceholderEntries.</summary>
+    int placeholderEntriesRepaired;
 
     /// <summary>Foreign palette entries drawn as grey because no block matched.</summary>
     int uncoloredForeignEntries;
@@ -1419,6 +1448,26 @@ public partial class VintageHorizonsModSystem : ModSystem
         // to go on, so a chiselled block repairs to neutral grey here and gets its real
         // materials on the next capture.
         return StableColorOf(capi.World.Blocks[blockId]);
+    }
+
+    /// <summary>
+    /// Stored placeholder colours on blocks whose look lives in a block entity. The load path
+    /// keeps those colours as stored, because they are per position (G46), so a near-white
+    /// one written before 0.4.62 would draw white for ever. The replacement is what capture
+    /// gives the same block today when its entity cannot be read. A plain block is left to
+    /// Reclassify, which has already re-derived it from the live block.
+    /// </summary>
+    int RepairPlaceholderEntries(LodSection section)
+    {
+        int repaired = LodPaletteRepair.ReplacePlaceholders(section, IsPlaceholderRgb, blockId =>
+        {
+            Block? block = blockId < capi.World.Blocks.Count ? capi.World.Blocks[blockId] : null;
+            return block != null && block.EntityClass != null
+                ? ColorFromAnyTexture(block, LodPaletteRepair.UnknownBlockColor)
+                : 0;
+        });
+        placeholderEntriesRepaired += repaired;
+        return repaired;
     }
 
     /// <summary>
@@ -1476,7 +1525,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 if (!IsUsableAtlasTexture(subId)) continue;
 
                 int candidate = capi.BlockTextureAtlas.GetAverageColor(subId);
-                if (unknownTextureColor != 0 && candidate == unknownTextureColor) continue;
+                if (IsPlaceholderRgb(candidate)) continue;
 
                 found = candidate;
                 break;
@@ -1488,9 +1537,11 @@ public partial class VintageHorizonsModSystem : ModSystem
         if (!loggedMissingTexture)
         {
             loggedMissingTexture = true;
-            Mod.Logger.Notification(
-                "Block '{0}' has no usable block-colour texture (vanilla resolved it to unknown.png). "
-                + "The mod uses another of its own textures instead, so it does not render wrong at distance.",
+            Mod.Logger.Notification(found != 0
+                ? "Block '{0}' has no usable block-colour texture (vanilla resolved it to unknown.png). "
+                    + "The mod uses another of its own textures instead, so it does not render wrong at distance."
+                : "Block '{0}' has no usable texture of its own (vanilla draws it as the missing-texture box). "
+                    + "At distance it keeps that look, or neutral grey if its appearance lives in a block entity.",
                 block.Code);
         }
         return found != 0 ? found : fallback;
@@ -1571,7 +1622,12 @@ public partial class VintageHorizonsModSystem : ModSystem
         // Read once here rather than per palette entry: the atlas exists by now, and a
         // reload would change the position object but not what magenta looks like.
         unknownTextureColor = capi.BlockTextureAtlas.UnknownTexturePosition.AvgColor;
-        Mod.Logger.Debug("Missing-texture colour is {0:X8}{1}", unknownTextureColor,
+        // The same placeholder read from its file: a colour taken from a texture's own pixels
+        // (PackMean) comes to this rather than to the atlas estimate, and both reached caches.
+        unknownTextureMean = TryReadTextureMean(new AssetLocation("game", "textures/unknown.png"),
+            false, out TextureMean placeholderMean) ? PackMean(placeholderMean) : 0;
+        Mod.Logger.Debug("Missing-texture colour is {0:X8}, {1:X8} from its file{2}",
+            unknownTextureColor, unknownTextureMean,
             unknownTextureColor == 0 ? " (zero: magenta-block salvage disabled)" : "");
         ResolveWaterSurfaceTexture();
         renderer.ApplyZFar();
@@ -1760,6 +1816,14 @@ public partial class VintageHorizonsModSystem : ModSystem
             world.MarkChangedCalls, world.MarkChangedRenderDirtied,
             world.MarkChangedCalls > 0 ? (double)world.MarkChangedRenderDirtied / world.MarkChangedCalls : 0,
             world.MarkChangedNeighborsSkipped);
+
+        // Chiselled blocks and placeholder colours (0.4.62): whether distant structures are
+        // drawn from what they are made of, or from the missing-texture image.
+        Mod.Logger.Notification(
+            "  chiselled blocks: {0} captured as their most visible material, {1} with no material "
+            + "that can stand in, {2} column reads failed | {3} stored placeholder colours repaired on load",
+            pipeline.ChiselStandIns, pipeline.ChiselsWithoutMaterial, pipeline.ChiselCollectErrors,
+            placeholderEntriesRepaired);
 
         Mod.Logger.Notification(
             "  storage on main thread since last report: snapshot {0} calls, {1:0.00}ms avg, {2:0.00}ms max | " +

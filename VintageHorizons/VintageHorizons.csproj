@@ -8,7 +8,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>VintageHorizons</AssemblyName>
     <RootNamespace>VintageHorizons</RootNamespace>
-    <Version>0.4.61</Version>
+    <Version>0.4.62</Version>
   </PropertyGroup>
 
   <!-- No debug info in Release: the zip never ships the .pdb, and generating one
@@ -41,6 +41,11 @@
     <!-- Vanilla's public regional snow snapshots drive finite dormant-terrain refreshes. -->
     <Reference Include="VSEssentials">
       <HintPath>$(GamePath)/Mods/VSEssentials.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Chiselled blocks: capture reads what a BlockEntityMicroBlock is made of. -->
+    <Reference Include="VSSurvivalMod">
+      <HintPath>$(GamePath)/Mods/VSSurvivalMod.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="0Harmony">

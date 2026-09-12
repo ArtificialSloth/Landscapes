@@ -222,6 +222,17 @@ public class LodPipeline
     /// <summary>Palette entries given a colour on load because the cache had none.</summary>
     public int PaletteEntriesRepaired { get; private set; }
 
+    /// <summary>
+    /// Chiselled blocks captured as their most visible material, and chisels whose contents
+    /// were read but held no material that can stand in. See LodChiselStandIn.
+    /// </summary>
+    public long ChiselStandIns { get; private set; }
+    public long ChiselsWithoutMaterial { get; private set; }
+
+    /// <summary>Columns whose chisel contents could not be copied; they capture as before.</summary>
+    public int ChiselCollectErrors => Volatile.Read(ref chiselCollectErrors);
+    int chiselCollectErrors;
+
     readonly ConcurrentDictionary<long, byte> queuedColumns = new();
     readonly ConcurrentQueue<long> pendingColumns = new();
     readonly BlockPos paletteSamplePos = new(0, 0, 0);
@@ -390,6 +401,7 @@ public class LodPipeline
             SnowStateObserved = false,
             Chunks = refs,
             RainMap = (ushort[])rainMap.Clone(),
+            Chisels = CollectChisels(refs, cx, cz),
         });
         return true;
     }
@@ -769,9 +781,59 @@ public class LodPipeline
                 SnowStateObserved = true,
                 Chunks = chunks,
                 RainMap = (ushort[])rainMap.Clone(),
+                Chisels = CollectChisels(chunks, cx, cz),
             });
         }
     }
+
+    /// <summary>
+    /// Copy what the column's chiselled blocks are made of, on the thread creating the job
+    /// (LodChiselStandIn.Collect). A failure costs the column its stand-ins, never its
+    /// capture: its chisels are then recorded exactly as they were before 0.4.62.
+    /// </summary>
+    List<LodChiselRecord>? CollectChisels(IWorldChunk?[] chunks, int cx, int cz)
+    {
+        try
+        {
+            return LodChiselStandIn.Collect(chunks, cx, cz, IsChiselBlock, StandsInForChisel);
+        }
+        catch (Exception e)
+        {
+            if (Interlocked.Increment(ref chiselCollectErrors) == 1)
+            {
+                logger.Warning("Could not read a chiselled block's contents; that column records its "
+                    + "chisels as plain blocks. {0}", e);
+            }
+            return null;
+        }
+    }
+
+    /// <summary>A chisel: the engine's own block class, whichever mod registered the code.</summary>
+    bool IsChiselBlock(int blockId) =>
+        chiselByBlockId.GetOrAdd(blockId, id => BlockOrNull(id) is Vintagestory.GameContent.BlockMicroBlock);
+
+    /// <summary>
+    /// Whether a material may stand in for a chisel: something the distant terrain draws as
+    /// ground. Snow, liquid, markers and flowers would turn a carved block into a snow layer,
+    /// water or nothing at all, and a block with its own entity has no fixed colour either,
+    /// so each of those gives way to the next most visible material.
+    /// </summary>
+    bool StandsInForChisel(int blockId) =>
+        standInByBlockId.GetOrAdd(blockId, id =>
+        {
+            Block? block = BlockOrNull(id);
+            if (block == null || block.BlockId <= 0 || block.EntityClass != null) return false;
+            const byte notGround = LodPaletteEntry.FlagSkip | LodPaletteEntry.FlagSnowLayer
+                | LodPaletteEntry.FlagWater | LodPaletteEntry.FlagThin;
+            return (LodBlockPolicy.FlagsFor(block) & notGround) == 0;
+        });
+
+    Block? BlockOrNull(int blockId) =>
+        blockId > 0 && blockId < api.World.Blocks.Count ? api.World.Blocks[blockId] : null;
+
+    // Concurrent because CaptureColumn may create jobs from any thread.
+    readonly System.Collections.Concurrent.ConcurrentDictionary<int, bool> chiselByBlockId = new();
+    readonly System.Collections.Concurrent.ConcurrentDictionary<int, bool> standInByBlockId = new();
 
     // ---- Applying capture results: block ids → section palette ids ----
 
@@ -873,9 +935,10 @@ public class LodPipeline
                 if (!pidByBlockId.TryGetValue(blockId, out int pid))
                 {
                     // One palette entry per block id per section, coloured from the first
-                    // run seen. For chiselled blocks that means one chisel's material mix
-                    // stands in for the whole section - coarse, but theirs, where the
-                    // centre probe answered with the placeholder texture for all of them.
+                    // run seen. Chiselled blocks arrive already recorded as the material that
+                    // shows most (LodChiselStandIn), so they share that material's entry; only
+                    // a chisel whose contents could not be read is still a chisel here, and
+                    // one such chisel's answer then stands in for the whole section.
                     pid = RegisterPaletteEntry(section, result.SectionKey, blockId, col, runs[i]);
                     pidByBlockId[blockId] = pid;
                 }
@@ -891,6 +954,16 @@ public class LodPipeline
                 if (!foundSurface)
                 {
                     byte flags = section.Palette[pid].Flags;
+
+                    // A chisel recorded as its material keeps the chisel's own snow: a
+                    // snow-covered chisel variant is a different block from its planks.
+                    if (result.StandInOriginals != null
+                        && result.StandInOriginals.TryGetValue(
+                            LodChiselStandIn.RunKey(col, LodSection.RunYTop(runs[i])), out int chisel))
+                    {
+                        flags = LodBlockPolicy.FlagsFor(api.World.Blocks[chisel]);
+                    }
+
                     if ((flags & LodPaletteEntry.FlagSnowLayer) != 0)
                     {
                         snowCovered = true;
@@ -926,6 +999,8 @@ public class LodPipeline
         }
 
         ColumnsCaptured++;
+        ChiselStandIns += result.ChiselStandIns;
+        ChiselsWithoutMaterial += result.ChiselsWithoutMaterial;
 
         // Whether anything changed and which edges it touched are two different questions.
         // A block placed in the middle of a section changes it and touches no edge, so the

@@ -95,6 +95,13 @@ public class CaptureJob
     public bool SnowStateObserved;
     public required IWorldChunk?[] Chunks; // indexed by chunkY
     public required ushort[] RainMap;      // copied on the main thread
+
+    /// <summary>
+    /// What the column's chiselled blocks are made of, copied where the job was created
+    /// (LodChiselStandIn.Collect); null when it has none. The worker records each one as its
+    /// most visible material instead of as the chisel.
+    /// </summary>
+    public List<LodChiselRecord>? Chisels;
 }
 
 /// <summary>Runs carry raw BLOCK ids (not palette ids); the main thread remaps on apply.</summary>
@@ -107,6 +114,17 @@ public class CaptureResult
     public required ulong[]?[] RunsByColumn; // GridSize² entries, only this chunk column's 16×16 filled
     public long EstimatedBytes;
     public long ReadyAtMilliseconds;
+
+    /// <summary>
+    /// For each run whose top block is a chisel recorded as its material, the chisel's own
+    /// block id, keyed by LodChiselStandIn.RunKey. Apply reads the chisel's flags for the
+    /// column's snow, because a snowy chisel variant is not its material. Null when none.
+    /// </summary>
+    public Dictionary<int, int>? StandInOriginals;
+
+    /// <summary>Blocks recorded as their material, and read chisels with no material to use.</summary>
+    public int ChiselStandIns;
+    public int ChiselsWithoutMaterial;
 }
 
 public class MeshJob
@@ -565,7 +583,8 @@ public class LodWorker : IDisposable
 
     // ---- Capture: chunk column → RLE columns with raw block ids ----
 
-    static CaptureResult? Capture(CaptureJob job)
+    /// <summary>Internal so the fast checks can drive it over proxy chunks; nothing else calls it.</summary>
+    internal static CaptureResult? Capture(CaptureJob job)
     {
         const int step = LodSection.ColumnStepBlocks;
         const int colsPerChunk = ChunkSize / step;
@@ -582,6 +601,14 @@ public class LodWorker : IDisposable
         bool anyColumn = false;
         long estimatedBytes = 0;
 
+        // A chiselled block is recorded as the material that shows most (LodChiselStandIn),
+        // here where runs are built, so a run splits wherever the material changes and the
+        // palette never sees the chisel at all.
+        Dictionary<int, (int Chisel, int StandIn)>? standIns =
+            LodChiselStandIn.Resolve(job.Chisels, out int chiselsWithoutMaterial);
+        Dictionary<int, int>? standInOriginals = null;
+        int chiselStandIns = 0;
+
         // Rain map values can sit at/above map height on freshly streamed columns
         // (uninitialized sentinel) - clamp so the y walk stays inside the chunk stack.
         int maxY = job.Chunks.Length * ChunkSize - 1;
@@ -595,8 +622,10 @@ public class LodWorker : IDisposable
                 int startY = Math.Min(job.RainMap[lz * ChunkSize + lx], maxY);
                 if (startY <= 0) continue;
 
+                int col = LodSection.ColumnIndex(colOffsetX + cx, colOffsetZ + cz);
                 runs.Clear();
                 int currentBlock = 0;
+                int currentChisel = 0; // the chisel under the run's top block, when it stands in
                 int runTop = 0;
                 bool complete = true;
 
@@ -613,19 +642,38 @@ public class LodWorker : IDisposable
                         ((y % ChunkSize) * ChunkSize + lz) * ChunkSize + lx,
                         BlockLayersAccess.FluidOrSolid);
 
+                    // Only while the block is still the chisel that was read: one replaced
+                    // since the job was created keeps whatever is there now.
+                    int chisel = 0;
+                    if (standIns != null
+                        && standIns.TryGetValue(LodChiselStandIn.IndexOf(lx, y, lz), out var standIn)
+                        && standIn.Chisel == blockId)
+                    {
+                        chisel = blockId;
+                        blockId = standIn.StandIn;
+                        chiselStandIns++;
+                    }
+
                     if (blockId != currentBlock)
                     {
-                        if (currentBlock != 0) runs.Add(LodSection.PackRun(currentBlock, runTop, y + 1));
+                        if (currentBlock != 0)
+                        {
+                            AddRun(runs, currentBlock, runTop, y + 1, col, currentChisel, ref standInOriginals);
+                        }
                         currentBlock = blockId;
+                        currentChisel = chisel;
                         runTop = y + 1;
                     }
                 }
 
                 if (!complete) continue;
-                if (currentBlock != 0) runs.Add(LodSection.PackRun(currentBlock, runTop, 1));
+                if (currentBlock != 0)
+                {
+                    AddRun(runs, currentBlock, runTop, 1, col, currentChisel, ref standInOriginals);
+                }
 
                 ulong[] capturedRuns = runs.ToArray();
-                batch[LodSection.ColumnIndex(colOffsetX + cx, colOffsetZ + cz)] = capturedRuns;
+                batch[col] = capturedRuns;
                 estimatedBytes += capturedRuns.LongLength * sizeof(ulong);
                 anyColumn = true;
             }
@@ -643,7 +691,24 @@ public class LodWorker : IDisposable
             RunsByColumn = batch,
             EstimatedBytes = estimatedBytes,
             ReadyAtMilliseconds = Environment.TickCount64,
+            StandInOriginals = standInOriginals,
+            ChiselStandIns = chiselStandIns,
+            ChiselsWithoutMaterial = chiselsWithoutMaterial,
         };
+    }
+
+    /// <summary>
+    /// Append a run, remembering the chisel beneath its top block when that block stands in
+    /// for one: the apply step reads the chisel's own flags for the column's snow.
+    /// </summary>
+    static void AddRun(List<ulong> runs, int blockId, int yTop, int yBottom, int col, int chisel,
+        ref Dictionary<int, int>? standInOriginals)
+    {
+        runs.Add(LodSection.PackRun(blockId, yTop, yBottom));
+        if (chisel != 0)
+        {
+            (standInOriginals ??= new Dictionary<int, int>())[LodChiselStandIn.RunKey(col, yTop)] = chisel;
+        }
     }
 
     public void Dispose()

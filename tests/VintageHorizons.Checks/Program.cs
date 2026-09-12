@@ -63,6 +63,7 @@ public static class Program
         ("pure", "cave culling", CaveCullChecks.Run),
         ("pure", "cave span graph", CaveSpanChecks.Run),
         ("fixture", "block policy", PolicyChecks.Run),
+        ("fixture", "chiselled block stand-ins", ChiselStandInChecks.Run),
         ("pure", "top soil colour", TopSoilColorChecks.Run),
         ("pure", "tint slot keys", SlotKeyChecks.Run),
         ("pure", "interior changes", InteriorChangeChecks.Run),
