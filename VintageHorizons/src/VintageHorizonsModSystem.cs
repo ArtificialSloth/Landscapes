@@ -147,6 +147,13 @@ public class VintageHorizonsConfig
 
     /// <summary>The on-screen column width, in pixels, automatic thresholds hand each level over at.</summary>
     public float LodTargetPixels = LodAutoThresholds.DefaultTargetPixels;
+
+    /// <summary>
+    /// How far in distant anti-aliasing reaches: the on-screen width of one block, in pixels,
+    /// where it begins. It is full strength where a block is half that wide. `.vhtaa reach`
+    /// writes it; larger reaches closer, but only ever over cached terrain.
+    /// </summary>
+    public float TaaReachPixels = LodTaaMath.DefaultReachPixels;
 }
 
 /// <summary>
@@ -325,6 +332,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         // fixed list loaded above stands, and it stays in the file either way.
         renderer.LodTargetPixels = config.LodTargetPixels;
         renderer.AutoLodThresholds = config.AutoLodThresholds;
+        renderer.TaaReachPixels = config.TaaReachPixels;
 
         // The GPU path someone chose last session, restored in the order the pieces depend
         // on each other: arenas hold the geometry batching draws from, batching provides the
@@ -4089,9 +4097,11 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         capi.ChatCommands.Create("vhtaa")
             .WithDescription("Distant anti-aliasing: blends distant cached terrain over several frames "
-                + "so it stops shimmering as you move. on | off | show | blend <0-0.97>. On by "
-                + "default and saved; also a switch in .vhconfig. With no argument, reports what it "
-                + "is doing and what it costs, in chat and in the client log.")
+                + "so it stops shimmering as you move. on | off | show | blend <0-0.97> | "
+                + "reach <1-32>. On by default and saved; also a switch in .vhconfig. reach is the "
+                + "on-screen block width, in pixels, where it begins (default 2; larger reaches "
+                + "closer; saved). With no argument, reports what it is doing and what it costs, in "
+                + "chat and in the client log.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("mode"),
                       capi.ChatCommands.Parsers.OptionalWord("value"))
             .HandleWith(args =>
@@ -4119,9 +4129,27 @@ public partial class VintageHorizonsModSystem : ModSystem
                     string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
                     if (TryParseSetting(value, out float feedback)) renderer.TaaFeedback = feedback;
                     reply = string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                        $"[VintageHorizons] history blend {renderer.TaaFeedback:0.00} at full strength "
-                        + $"(default {LodTaaMath.DefaultFeedback:0.00}, most {LodTaaMath.MaxFeedback:0.00}). "
+                        $"[VintageHorizons] history blend {renderer.TaaFeedback:0.00} while turning "
+                        + $"(default {LodTaaMath.DefaultFeedback:0.00}, most {LodTaaMath.MaxFeedback:0.00}) "
+                        + $"and {LodTaaMath.StillFeedback(renderer.TaaFeedback):0.00} while still. "
                         + $"Higher is steadier but smears more when turning. Session only.");
+                }
+                else if (mode.Equals("reach", StringComparison.OrdinalIgnoreCase))
+                {
+                    string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
+                    if (TryParseSetting(value, out float reach))
+                    {
+                        renderer.TaaReachPixels = reach;
+                        SaveConfig();
+                        reply = "[VintageHorizons] " + renderer.DescribeTaaReach() + ". Saved.";
+                    }
+                    else
+                    {
+                        reply = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                            $"[VintageHorizons] {renderer.DescribeTaaReach()}. Give "
+                            + $"{LodTaaMath.MinReachPixels:0} to {LodTaaMath.MaxReachPixels:0} px: larger "
+                            + $"reaches closer (default {LodTaaMath.DefaultReachPixels:0}).");
+                    }
                 }
                 else
                 {
@@ -4288,6 +4316,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             }
             config.AutoLodThresholds = renderer.AutoLodThresholds;
             config.LodTargetPixels = renderer.LodTargetPixels;
+            config.TaaReachPixels = renderer.TaaReachPixels;
             // The request, never the effective state: a mask that failed this session
             // reports itself disabled, and writing that would turn it off permanently.
             config.ChunkMask = renderer.ChunkMaskRequested;

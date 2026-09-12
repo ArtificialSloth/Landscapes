@@ -118,7 +118,8 @@ void main()
 #include lodvertexsurface.vsh
 
     // Distant anti-aliasing: move the finished position by this frame's sub-pixel offset,
-    // weighted by how many pixels one block spans here. gl_Position.w is the view depth.
+    // weighted by how many pixels one block spans here. gl_Position.w is the view depth. This
+    // ramp is the second half of the resolve's, where history is already at full share.
     if (vhTaaBlockScale > 0.0 && gl_Position.w > 0.0)
     {
         float vhBlockPixels = vhTaaBlockScale / gl_Position.w;

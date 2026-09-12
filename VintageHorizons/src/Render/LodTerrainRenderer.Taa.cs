@@ -24,11 +24,22 @@ namespace VintageHorizons;
 /// on the average of what it covers instead of on whichever block happened to be under it.
 /// </para>
 /// <para>
+/// With the view still, a pixel's history lands exactly on itself, so it is allowed to settle:
+/// the neighbourhood clamp is let go and the history share rises to 0.97. Once its ground moves
+/// half a pixel a frame, history may only say what the current frame's 3x3 neighbourhood could
+/// also say, which is what stops it smearing while turning. The first test build (0.4.57) had no
+/// still mode, refused history wherever the nudge swapped a surface, and never averaged the edge
+/// against the sky; the owner saw the anti-aliased terrain vibrate with the camera still. See
+/// lodtaaresolve.fsh.
+/// </para>
+/// <para>
 /// Nothing here is a distance. Which pixels are touched is decided by which pass drew them - a
 /// depth snapshot is taken before cached terrain draws, and a pixel is ours if its depth moved
 /// nearer - and how strongly by how many pixels one block spans there, from the live projection
-/// and render resolution. Vanilla terrain, the sky, water and near cached ground keep the exact
-/// pixels they were drawn with, at any vanilla view distance, FOV or resolution scale.
+/// and render resolution, against the player's reach setting. Vanilla terrain, water and cached
+/// ground nearer than the reach keep the exact pixels they were drawn with, at any vanilla view
+/// distance, FOV or resolution scale; of the sky, only the pixels right beside cached terrain are
+/// blended, to average the edge between the two.
 /// </para>
 /// </summary>
 public partial class LodTerrainRenderer
@@ -59,6 +70,17 @@ public partial class LodTerrainRenderer
             float.IsFinite(value) ? value : LodTaaMath.DefaultFeedback, 0f, LodTaaMath.MaxFeedback);
     }
     float taaFeedback = LodTaaMath.DefaultFeedback;
+
+    /// <summary>
+    /// Saved. Where anti-aliasing begins, as the on-screen width of one block in pixels; it is
+    /// full strength at half that. Larger reaches closer. `.vhtaa reach`.
+    /// </summary>
+    public float TaaReachPixels
+    {
+        get => taaReachPixels;
+        set => taaReachPixels = LodTaaMath.ClampReach(value);
+    }
+    float taaReachPixels = LodTaaMath.DefaultReachPixels;
 
     /// <summary>Saved. Choose L1-L6 from the screen; see <see cref="LodAutoThresholds"/>.</summary>
     public bool AutoLodThresholds
@@ -369,9 +391,12 @@ public partial class LodTerrainRenderer
                     resolve.Uniform("projectionA", projection[10]);
                     resolve.Uniform("projectionB", projection[14]);
                     resolve.Uniform("blockScale", taaBlockScale);
-                    resolve.Uniform("startPixels", LodTaaMath.StartBlockPixels);
-                    resolve.Uniform("fullPixels", LodTaaMath.FullBlockPixels);
+                    resolve.Uniform("startPixels", taaReachPixels);
+                    resolve.Uniform("fullPixels", LodTaaMath.FullPixels(taaReachPixels));
                     resolve.Uniform("feedback", taaFeedback);
+                    resolve.Uniform("stillFeedback", LodTaaMath.StillFeedback(taaFeedback));
+                    resolve.Uniform("stillMotion", LodTaaMath.StillMotionPixels);
+                    resolve.Uniform("movingMotion", LodTaaMath.MovingMotionPixels);
                     resolve.Uniform("historyValid", historyUsable ? 1 : 0);
                     GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
                 }
@@ -380,8 +405,10 @@ public partial class LodTerrainRenderer
                     resolve.Stop();
                 }
 
-                // Back over the scene, through a target that holds only its colour texture, so
-                // the engine's own framebuffer and its draw-buffer list are never touched.
+                // Back over the scene - cached terrain inside the ramp and the sky pixels beside
+                // it - through a target that holds only its colour texture, so the engine's own
+                // framebuffer and its draw-buffer list are never touched. The composite reads
+                // where to write from the resolve's alpha and needs no ramp of its own.
                 AttachTaaComposite(primary);
                 // Alpha stays exactly as the terrain wrote it.
                 GL.ColorMask(true, true, true, false);
@@ -390,9 +417,6 @@ public partial class LodTerrainRenderer
                 try
                 {
                     composite.BindTexture2D("resolved", taaHistoryTexture[next], 0);
-                    composite.Uniform("blockScale", taaBlockScale);
-                    composite.Uniform("startPixels", LodTaaMath.StartBlockPixels);
-                    composite.Uniform("fullPixels", LodTaaMath.FullBlockPixels);
                     composite.Uniform("showWeight", TaaShowWeight ? 1 : 0);
                     GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
                 }
@@ -511,8 +535,9 @@ public partial class LodTerrainRenderer
 
     /// <summary>
     /// Half-float colour, because the result is blended into itself every frame and eight bits
-    /// would band. Alpha carries the view depth each pixel had, or 0 where it was not ours.
-    /// Filtered linearly for the history fetch, which lands between texels.
+    /// would band. Alpha carries each pixel's kind and ramp, signed (lodtaaresolve.fsh): 1 + ramp
+    /// on cached terrain, -(1 + ramp) on sky, 0 anywhere else. Filtered linearly for the history
+    /// colour fetch, which lands between texels; the kind is read unfiltered.
     /// </summary>
     static void AllocateTaaHistory(int texture, int framebuffer, int width, int height)
     {
@@ -738,6 +763,26 @@ public partial class LodTerrainRenderer
             + $"{AutoThresholdFloorBlocks()} blocks for the vanilla edge and blend band");
     }
 
+    /// <summary>
+    /// Where anti-aliasing works at this reach, and in blocks at the current FOV and resolution,
+    /// for `.vhtaa reach` and the report. One clause, without a closing full stop.
+    /// </summary>
+    public string DescribeTaaReach()
+    {
+        float scale = LodScreenScale.BlockScale(screenRenderHeight, screenYScale);
+        float full = LodTaaMath.FullPixels(taaReachPixels);
+        string blocks = scale > 0f
+            ? string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $" - at this FOV and resolution it begins about "
+                + $"{LodScreenScale.DepthForBlockPixels(scale, taaReachPixels):0} blocks out and is "
+                + $"full strength past about {LodScreenScale.DepthForBlockPixels(scale, full):0}")
+            : " (distances show once a frame has been drawn)";
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"anti-aliasing reach {taaReachPixels:0.#} px: it fades in where a block is "
+            + $"{taaReachPixels:0.#} px wide on screen and is full strength at {full:0.#} px{blocks}; "
+            + $"cached terrain only, vanilla terrain is never touched");
+    }
+
     /// <summary>One line for chat and the log: state, reach, activity and GPU cost.</summary>
     public string DescribeDistantAntiAliasing()
     {
@@ -749,17 +794,6 @@ public partial class LodTerrainRenderer
             : taaFailure.Length > 0 ? "on but STOPPED this session: " + taaFailure
             : !taaShaderOk ? "on but its shaders are unavailable"
             : "on";
-        string reach = "";
-        float scale = LodScreenScale.BlockScale(screenRenderHeight, screenYScale);
-        if (scale > 0f)
-        {
-            reach = string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                $"; it starts where a block is under {LodTaaMath.StartBlockPixels:0} px "
-                + $"(about {LodScreenScale.DepthForBlockPixels(scale, LodTaaMath.StartBlockPixels):0} blocks "
-                + $"at this FOV and resolution) and is full strength under "
-                + $"{LodTaaMath.FullBlockPixels:0} px (about "
-                + $"{LodScreenScale.DepthForBlockPixels(scale, LodTaaMath.FullBlockPixels):0} blocks)");
-        }
         string resets = taaLastResetReason.Length > 0
             ? $" (last: {taaLastResetReason})" : "";
         string cost = gpuTelemetry.TimingActive
@@ -768,8 +802,9 @@ public partial class LodTerrainRenderer
                 + $"copy p95 {GpuTaaCopyCost.P95Us:0} us over {GpuTaaCopyCost.Calls}")
             : "GPU timing " + gpuTelemetry.DescribeTiming();
         return string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"distant anti-aliasing {state}{reach}; history blend {taaFeedback:0.00} over a "
-            + $"{LodTaaMath.JitterSamples}-position nudge; {TaaFramesResolved} frames resolved, "
-            + $"{TaaHistoryResets} history resets{resets}; {cost}.");
+            $"distant anti-aliasing {state}; {DescribeTaaReach()}; history blend "
+            + $"{taaFeedback:0.00} while turning and {LodTaaMath.StillFeedback(taaFeedback):0.00} "
+            + $"while still, over a {LodTaaMath.JitterSamples}-position nudge; {TaaFramesResolved} "
+            + $"frames resolved, {TaaHistoryResets} history resets{resets}; {cost}.");
     }
 }

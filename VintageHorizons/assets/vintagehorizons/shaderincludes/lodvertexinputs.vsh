@@ -28,8 +28,8 @@ uniform float farViewDistance;
 
 // Distant anti-aliasing's per-frame nudge (LodTerrainRenderer.Taa.cs): a different fraction of a
 // pixel every frame, applied only in proportion to how small a block is on screen at a vertex -
-// the same ramp the resolve pass blends by - so near cached ground, the blend band and the vanilla
-// seam never move. A block scale of zero switches it off.
+// over the second half of the resolve pass's ramp, where history is already at full share - so
+// cached ground nearer than the reach setting never moves. A block scale of zero switches it off.
 //
 // DECLARED here, in the inputs every program shares, but APPLIED only in lodterrainbody.vsh. The
 // water programs receive the same frame uploads, and the engine's Uniform(name, ...) indexes a

@@ -5884,14 +5884,16 @@ public partial class LodTerrainRenderer : IRenderer
         // Keeping it tied to the established switch makes `.vhbackface off` disable both
         // the early exact rejection and OpenGL's later winding rejection together.
         prog.Uniform("packedBackfaceCull", OpaqueBackfaceCulling ? 1 : 0);
-        // Distant anti-aliasing's nudge. Only the terrain body declares these, so the water
-        // programs that share this upload ignore them. A zero scale is "off" in the shader, and
-        // the ramp is the same constant pair the resolve pass is handed.
+        // Distant anti-aliasing's nudge. Declared in the shared vertex inputs, because the water
+        // programs receive this same upload and the engine throws on a name a program never
+        // declared; only the terrain body reads them. A zero scale is "off" in the shader. The
+        // nudge's ramp is the second half of the resolve's, both from the one reach setting, so
+        // geometry only moves where history is already at full share.
         prog.Uniform("vhTaaBlockScale", taaActiveThisFrame ? taaBlockScale : 0f);
         prog.Uniform("vhTaaJitterX", taaJitterX);
         prog.Uniform("vhTaaJitterY", taaJitterY);
-        prog.Uniform("vhTaaStartPixels", LodTaaMath.StartBlockPixels);
-        prog.Uniform("vhTaaFullPixels", LodTaaMath.FullBlockPixels);
+        prog.Uniform("vhTaaStartPixels", LodTaaMath.NudgeStartPixels(taaReachPixels));
+        prog.Uniform("vhTaaFullPixels", LodTaaMath.FullPixels(taaReachPixels));
         // Per-cell ownership supersedes the radius entirely: the mask knows which
         // individual cells vanilla owns, so leaving a radius active would suppress cached
         // terrain the mask says is still ours. With the mask off, the measured radius (or

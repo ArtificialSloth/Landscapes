@@ -34,34 +34,86 @@ internal static class LodScreenScale
 
 /// <summary>
 /// Distant anti-aliasing's constants and arithmetic. The terrain vertex shader and the resolve
-/// pass are handed the same ramp through uniforms set from here, so geometry is nudged exactly
-/// where the history blend will average it back out and nowhere else.
+/// pass are handed their ramps through uniforms set from here, so geometry is nudged only where
+/// the history blend is already at full share and will average the nudge back out.
+///
+/// <para>
+/// One number sets where it works: the reach, the on-screen width of one block at which it
+/// begins. It is full strength where a block is half that wide, so the fade always spans one
+/// doubling of distance, whatever the field of view, resolution or reach. History comes in over
+/// the first half of the fade and the nudge over the second. 0.4.57 faded both in together, and
+/// a pixel nudged at half strength but blended at half share showed most of its nudge, which the
+/// owner saw as the faded-in terrain vibrating with the camera still.
+/// </para>
 /// </summary>
 internal static class LodTaaMath
 {
-    /// <summary>No anti-aliasing where a block is at least this many pixels wide.</summary>
-    public const float StartBlockPixels = 2f;
+    /// <summary>Default reach: anti-aliasing begins where a block is two pixels wide.</summary>
+    public const float DefaultReachPixels = 2f;
 
-    /// <summary>Full strength where a block is this many pixels wide or less.</summary>
-    public const float FullBlockPixels = 1f;
+    public const float MinReachPixels = 1f;
 
-    /// <summary>History share at full strength: roughly the last ten frames.</summary>
+    /// <summary>
+    /// Enough to cover every cached block at any usual resolution and FOV: at 32 px it is full
+    /// strength from about 60 blocks at 60 degrees and 1080 rendered rows. It works on cached
+    /// pixels only, so however large, it never reaches vanilla terrain.
+    /// </summary>
+    public const float MaxReachPixels = 32f;
+
+    /// <summary>History share while the view turns: roughly the last ten frames.</summary>
     public const float DefaultFeedback = 0.9f;
 
-    /// <summary>Beyond this the history can hardly ever be corrected by what is on screen.</summary>
+    /// <summary>
+    /// History share while the view is still, and the most `.vhtaa blend` accepts. The nudge
+    /// repeats every eight frames, and a running blend of a repeating signal ripples: for a
+    /// feature seen in one of the eight positions, by about 4.5% of its contrast at 0.9 and
+    /// about 1.3% at 0.97.
+    /// </summary>
     public const float MaxFeedback = 0.97f;
+
+    /// <summary>A pixel whose ground moved less than this far since last frame is still.</summary>
+    public const float StillMotionPixels = 0.05f;
+
+    /// <summary>From this far per frame on it is moving: full neighbourhood clamp, turning share.</summary>
+    public const float MovingMotionPixels = 0.5f;
 
     /// <summary>Sub-pixel positions visited before the nudge repeats.</summary>
     public const int JitterSamples = 8;
 
-    /// <summary>0 where a block is StartBlockPixels or wider, 1 at FullBlockPixels or narrower.</summary>
-    public static float Weight(float blockScale, float viewDepth)
+    public static float ClampReach(float reach) => Math.Clamp(
+        float.IsFinite(reach) ? reach : DefaultReachPixels, MinReachPixels, MaxReachPixels);
+
+    /// <summary>Full strength where a block is this wide or narrower: half the reach.</summary>
+    public static float FullPixels(float reach) => ClampReach(reach) * 0.5f;
+
+    /// <summary>
+    /// Where the nudge begins: three quarters of the reach, the middle of the fade. The vertex
+    /// shader's own ramp runs from here to <see cref="FullPixels"/>, which is exactly
+    /// <see cref="NudgeStrength"/> of <see cref="Ramp"/>.
+    /// </summary>
+    public static float NudgeStartPixels(float reach) => ClampReach(reach) * 0.75f;
+
+    /// <summary>0 where a block is the reach or wider on screen, 1 at half the reach or narrower.</summary>
+    public static float Ramp(float blockScale, float viewDepth, float reach)
     {
         if (!(blockScale > 0f) || !(viewDepth > 0f)) return 0f;
-        float blockPixels = blockScale / viewDepth;
-        return Math.Clamp((StartBlockPixels - blockPixels) / (StartBlockPixels - FullBlockPixels),
-            0f, 1f);
+        float start = ClampReach(reach);
+        float full = start * 0.5f;
+        return Math.Clamp((start - blockScale / viewDepth) / (start - full), 0f, 1f);
     }
+
+    /// <summary>The history share's part of the ramp: full by its middle.</summary>
+    public static float HistoryStrength(float ramp) => Math.Clamp(2f * ramp, 0f, 1f);
+
+    /// <summary>The nudge's part: nothing until the middle of the ramp, full at its end.</summary>
+    public static float NudgeStrength(float ramp) => Math.Clamp(2f * ramp - 1f, 0f, 1f);
+
+    /// <summary>
+    /// History share while still: never below the turning share, and 0 stays 0, so
+    /// `.vhtaa blend 0` still shows the raw nudge.
+    /// </summary>
+    public static float StillFeedback(float feedback) =>
+        feedback > 0f ? Math.Max(feedback, MaxFeedback) : 0f;
 
     /// <summary>The radical inverse of index in the given base: a low-discrepancy sequence.</summary>
     public static float Halton(int index, int radix)

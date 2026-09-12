@@ -9,12 +9,23 @@
 // fraction of a pixel every frame; this pass lines each pixel up with its own history and
 // averages, so over a few frames the pixel settles on what it actually covers.
 //
-// Only pixels cached terrain drew this frame are touched - their depth is nearer than the
-// snapshot taken before cached terrain drew - and only in proportion to how small one block is
-// on screen there. Nothing here is a fixed distance.
+// A pixel is one of three kinds. Cached terrain: its depth is nearer than the snapshot taken
+// before cached terrain drew. Sky: nothing had been drawn there before cached terrain, and
+// cached terrain did not draw it either; it joins the blend only beside cached terrain, so the
+// terrain's edge against the sky is averaged like the rest. Anything else - vanilla terrain, a
+// creature - is never changed, and its history is never used.
 //
-// Output alpha holds the view depth the pixel had, or 0 where it was not cached terrain, so the
-// next frame can tell when different ground has moved into a pixel.
+// 0.4.57 jittered with the camera still, for three measured reasons: it refused history
+// wherever the stored depth differed by more than 3%, and the nudge itself swaps a tree top
+// for the ground behind it in about one distant pixel in five; a pixel that was sky last frame
+// had no history, so the edge against the sky was never averaged; and where the nudge was
+// partial the history share was partial too. Now there is no depth test - distant terrain does
+// not move, and the neighbourhood clamp handles real change - and history is at full share
+// before the nudge begins. With the view still, history lands exactly on itself, so the clamp
+// is let go and the share raised, and the eight nudge positions settle to their average.
+//
+// Output alpha records the kind and the ramp, for the composite and for the next frame:
+// 1 + ramp on cached terrain, -(1 + ramp) on sky, 0 on anything else.
 
 uniform sampler2D sceneColor;
 uniform sampler2D sceneDepth;
@@ -31,6 +42,9 @@ uniform float blockScale;
 uniform float startPixels;
 uniform float fullPixels;
 uniform float feedback;
+uniform float stillFeedback;
+uniform float stillMotion;
+uniform float movingMotion;
 uniform int historyValid;
 
 layout(location = 0) out vec4 outResolved;
@@ -41,10 +55,11 @@ float ViewDepth(float depth)
     return projectionB / (projectionA + (2.0 * depth - 1.0));
 }
 
-// 0 where a block is startPixels or wider on screen, 1 at fullPixels or narrower. The terrain
-// vertex shader nudges by the same ramp.
-float Weight(float viewDepth)
+// 0 where a block is startPixels or wider on screen, 1 at fullPixels or narrower. History comes
+// in over the first half of this ramp; the terrain vertex shader nudges over the second half.
+float Ramp(float depth)
 {
+    float viewDepth = ViewDepth(depth);
     if (blockScale <= 0.0 || viewDepth <= 0.0) return 0.0;
     float blockPixels = blockScale / viewDepth;
     return clamp((startPixels - blockPixels) / max(startPixels - fullPixels, 0.001), 0.0, 1.0);
@@ -58,21 +73,41 @@ void main()
     float depth = texelFetch(sceneDepth, texel, 0).r;
     float before = texelFetch(beforeDepth, texel, 0).r;
 
-    // Nearer than what stood here before cached terrain drew means cached terrain drew it.
-    if (!(depth < before))
+    bool ours = depth < before;
+    bool sky = !ours && before >= 1.0;
+    if (!ours && !sky)
     {
         outResolved = vec4(current, 0.0);
         return;
     }
 
-    float viewDepth = ViewDepth(depth);
-    float weight = Weight(viewDepth);
-    vec3 result = current;
+    // One pass over the 3x3: the colour range history is held to while moving, and for a sky
+    // pixel the strongest ramp among the cached-terrain pixels beside it.
+    float ramp = ours ? Ramp(depth) : 0.0;
+    vec3 lo = current;
+    vec3 hi = current;
+    for (int y = -1; y <= 1; y++)
+    {
+        for (int x = -1; x <= 1; x++)
+        {
+            ivec2 at = clamp(texel + ivec2(x, y), ivec2(0), size - 1);
+            vec3 neighbour = texelFetch(sceneColor, at, 0).rgb;
+            lo = min(lo, neighbour);
+            hi = max(hi, neighbour);
+            if (sky)
+            {
+                float neighbourDepth = texelFetch(sceneDepth, at, 0).r;
+                if (neighbourDepth < texelFetch(beforeDepth, at, 0).r)
+                    ramp = max(ramp, Ramp(neighbourDepth));
+            }
+        }
+    }
 
-    if (weight > 0.0 && historyValid == 1)
+    vec3 result = current;
+    if (ramp > 0.0 && historyValid == 1)
     {
         // Where this pixel's ground was on screen last frame. Distant terrain does not move, so
-        // the depth and the two cameras place it exactly.
+        // the depth and the two cameras place it; for the sky the depth is the far plane.
         vec2 uv = (vec2(texel) + 0.5) / vec2(size);
         vec4 view = invProjection * vec4(uv * 2.0 - 1.0, 2.0 * depth - 1.0, 1.0);
         view /= view.w;
@@ -85,34 +120,30 @@ void main()
                 && all(lessThanEqual(previousUv, vec2(1.0))))
             {
                 ivec2 previousTexel = clamp(ivec2(previousUv * vec2(size)), ivec2(0), size - 1);
-                float storedDepth = texelFetch(history, previousTexel, 0).a;
-
-                // Different ground stood there last frame - a nearer hill moved off it, or it
-                // was not ours at all - so its history describes something else.
-                if (storedDepth > 0.0
-                    && abs(storedDepth - previousClip.w) <= previousClip.w * 0.03 + 0.5)
+                // Only history that was cached terrain or sky. Anything else was vanilla
+                // terrain or a creature, and blending it in would leave a trail behind it.
+                if (abs(texelFetch(history, previousTexel, 0).a) >= 1.0)
                 {
-                    // History may only say what this frame's neighbourhood could also say. At
-                    // distance that neighbourhood holds both the white top and the dark wall, so
-                    // the clamp lets the average through while still refusing a stale colour.
-                    vec3 lo = current;
-                    vec3 hi = current;
-                    for (int y = -1; y <= 1; y++)
-                    {
-                        for (int x = -1; x <= 1; x++)
-                        {
-                            vec3 neighbour = texelFetch(sceneColor,
-                                clamp(texel + ivec2(x, y), ivec2(0), size - 1), 0).rgb;
-                            lo = min(lo, neighbour);
-                            hi = max(hi, neighbour);
-                        }
-                    }
-                    vec3 previous = clamp(texture(history, previousUv).rgb, lo, hi);
-                    result = mix(current, previous, feedback * weight);
+                    // How far this ground moved on screen since last frame, in pixels. Still,
+                    // history lands exactly on itself and may keep all it has learned. Moving,
+                    // it may only say what this frame's neighbourhood could also say - at
+                    // distance that neighbourhood holds both the white top and the dark wall,
+                    // so the average gets through while a stale colour does not.
+                    float motion = length((previousUv - uv) * vec2(size));
+                    float moving = smoothstep(stillMotion, movingMotion, motion);
+                    vec3 stored = texture(history, previousUv).rgb;
+                    vec3 previous = mix(stored, clamp(stored, lo, hi), moving);
+                    float share = mix(stillFeedback, feedback, moving) * clamp(2.0 * ramp, 0.0, 1.0);
+                    result = mix(current, previous, share);
                 }
             }
         }
     }
 
-    outResolved = vec4(result, viewDepth);
+    // A value that is not a number would otherwise never leave the history while the view is
+    // still.
+    if (any(isnan(result)) || any(isinf(result))) result = current;
+
+    float kind = 1.0 + ramp;
+    outResolved = vec4(result, ours ? kind : -kind);
 }

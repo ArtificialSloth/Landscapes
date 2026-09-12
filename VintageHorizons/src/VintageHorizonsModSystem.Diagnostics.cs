@@ -95,6 +95,7 @@ public partial class VintageHorizonsModSystem
         Entry(lines, ".vhtint leaves", visual.LeafSeasonColours);
         Entry(lines, ".vhslabs", visual.HalfBlockTerrain);
         Entry(lines, ".vhtaa", visual.DistantAntiAliasing);
+        Entry(lines, ".vhtaa reach", Number(config.TaaReachPixels, "0.#") + " px");
         Entry(lines, ".vhwater fresnel", visual.WaterEffects);
         Entry(lines, ".vhwater depth", config.WaterDepthShading);
         Entry(lines, ".vhwater alpha", Number(config.WaterMaxAlpha, "0.00"));
@@ -228,6 +229,7 @@ public partial class VintageHorizonsModSystem
         Entry(lines, ".vhtaa", renderer.DistantAntiAliasing);
         Entry(lines, ".vhtaa show", renderer.TaaShowWeight);
         Entry(lines, ".vhtaa blend", Number(renderer.TaaFeedback, "0.00"));
+        Entry(lines, ".vhtaa reach", Number(renderer.TaaReachPixels, "0.#") + " px");
     }
 
     void AddDevelopmentConfiguration(List<string> lines)

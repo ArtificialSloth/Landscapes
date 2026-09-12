@@ -2,13 +2,16 @@ namespace VintageHorizons.Checks;
 
 /// <summary>
 /// Distant anti-aliasing and automatic LOD thresholds: the screen arithmetic both share, the
-/// ramp that decides where terrain is nudged and blended, and the wiring that keeps water,
+/// ramp that decides where terrain is blended and nudged, and the wiring that keeps water,
 /// vanilla terrain and near cached ground out of it.
 ///
 /// What this was built against, measured from the owner's capture on 2026-09-11: at 60 degrees
 /// and 1080 rendered rows one block is one pixel at 935 blocks, which is where the owner saw the
 /// shimmer begin, and past 512 blocks 79-89% of snow pixels were one row tall. A 20-degree FOV,
 /// three times the on-screen size with depth precision unchanged, greatly diminished it in play.
+/// 0.4.57 looked cleaner but vibrated with the camera still; the checks marked 0.4.58 keep its
+/// three measured causes shut - a per-pixel depth test the nudge itself failed, the edge against
+/// the sky never averaged, and history fading in no earlier than the nudge.
 /// </summary>
 public static class DistantAntiAliasingChecks
 {
@@ -42,17 +45,58 @@ public static class DistantAntiAliasingChecks
     static void Ramp(Check c)
     {
         const float scale = 1000f;
-        c.Eq(0f, LodTaaMath.Weight(scale, 400f), "a block 2.5 px across is left exactly as drawn");
-        c.Eq(0f, LodTaaMath.Weight(scale, 500f), "and so is one exactly 2 px across");
-        c.Near(0.5, LodTaaMath.Weight(scale, 2000f / 3f), 1e-4, "1.5 px is half strength");
-        c.Eq(1f, LodTaaMath.Weight(scale, 1000f), "1 px is full strength");
-        c.Eq(1f, LodTaaMath.Weight(scale, 8000f), "and so is anything smaller");
-        c.Eq(0f, LodTaaMath.Weight(0f, 8000f), "a zero scale switches it off everywhere");
-        c.Eq(0f, LodTaaMath.Weight(scale, 0f), "and a zero depth is never weighted");
-        c.True(LodTaaMath.StartBlockPixels > LodTaaMath.FullBlockPixels,
-            "the ramp runs from larger blocks to smaller ones");
+        const float reach = LodTaaMath.DefaultReachPixels;
+        c.Eq(0f, LodTaaMath.Ramp(scale, 400f, reach), "a block 2.5 px across is left exactly as drawn");
+        c.Eq(0f, LodTaaMath.Ramp(scale, 500f, reach), "and so is one exactly 2 px across");
+        c.Near(0.5, LodTaaMath.Ramp(scale, 2000f / 3f, reach), 1e-4, "1.5 px is the middle of the fade");
+        c.Eq(1f, LodTaaMath.Ramp(scale, 1000f, reach), "1 px is full strength");
+        c.Eq(1f, LodTaaMath.Ramp(scale, 8000f, reach), "and so is anything smaller");
+        c.Eq(0f, LodTaaMath.Ramp(0f, 8000f, reach), "a zero scale switches it off everywhere");
+        c.Eq(0f, LodTaaMath.Ramp(scale, 0f, reach), "and a zero depth is never weighted");
+
+        // 0.4.58: history first, then the nudge. 0.4.57 faded both in together, and the faded
+        // zone showed most of its nudge; the owner saw it vibrate with the camera still.
+        c.Eq(1f, LodTaaMath.HistoryStrength(0.5f), "history is at full share by the middle of the fade");
+        c.Eq(0f, LodTaaMath.NudgeStrength(0.5f), "where the nudge has not begun");
+        c.Eq(1f, LodTaaMath.NudgeStrength(1f), "and the nudge is full at the end of it");
+        bool historyLeads = true;
+        for (float t = 0f; t <= 1f; t += 1f / 64f)
+            historyLeads &= LodTaaMath.NudgeStrength(t) <= 0f || LodTaaMath.HistoryStrength(t) >= 1f;
+        c.True(historyLeads, "no pixel is ever nudged before its history is at full share");
+
+        // The vertex shader computes the nudge from its own two endpoints. They must describe
+        // exactly the second half of the resolve's ramp, at any reach.
+        bool same = true;
+        foreach (float r in new[] { 1f, 2f, 5f, 12f, 32f })
+        {
+            float start = LodTaaMath.NudgeStartPixels(r);
+            float full = LodTaaMath.FullPixels(r);
+            for (float depth = 10f; depth < 4000f; depth *= 1.07f)
+            {
+                float blockPixels = scale / depth;
+                float vertex = Math.Clamp((start - blockPixels) / Math.Max(start - full, 0.001f), 0f, 1f);
+                same &= Math.Abs(vertex - LodTaaMath.NudgeStrength(LodTaaMath.Ramp(scale, depth, r))) < 1e-4f;
+            }
+        }
+        c.True(same, "the vertex shader's nudge ramp is the second half of the resolve's, at any reach");
+
+        c.True(LodScreenScale.DepthForBlockPixels(scale, 12f)
+                < LodScreenScale.DepthForBlockPixels(scale, reach),
+            "a larger reach begins closer");
+        c.Near(0.5, LodTaaMath.FullPixels(12f) / 12f, 1e-6,
+            "and is full strength at half its width, one doubling of distance further out");
+        c.Eq(LodTaaMath.MaxReachPixels, LodTaaMath.ClampReach(1000f), "the reach is kept to its range");
+        c.Eq(LodTaaMath.MinReachPixels, LodTaaMath.ClampReach(0f), "at both ends");
+        c.Eq(LodTaaMath.DefaultReachPixels, LodTaaMath.ClampReach(float.NaN),
+            "and a value that is not a number is the default");
+
         c.True(LodTaaMath.DefaultFeedback < LodTaaMath.MaxFeedback,
-            "the default history share leaves room to raise it");
+            "the default turning share leaves room to raise it");
+        c.Eq(LodTaaMath.MaxFeedback, LodTaaMath.StillFeedback(LodTaaMath.DefaultFeedback),
+            "a still view blends at the higher share, so the eight nudge positions settle");
+        c.Eq(0f, LodTaaMath.StillFeedback(0f), "and blend 0 still means no history at all");
+        c.True(LodTaaMath.StillMotionPixels < LodTaaMath.MovingMotionPixels,
+            "still and moving are told apart by a ramp, not a switch");
     }
 
     static void Jitter(Check c)
@@ -127,6 +171,8 @@ public static class DistantAntiAliasingChecks
         c.True(config.AutoLodThresholds, "and so are automatic LOD thresholds");
         c.Eq(LodAutoThresholds.DefaultTargetPixels, config.LodTargetPixels,
             "aiming at the default on-screen size");
+        c.Eq(LodTaaMath.DefaultReachPixels, config.TaaReachPixels,
+            "anti-aliasing begins where a block is two pixels wide unless the player says otherwise");
         c.True(LodVisualSettings.Default.DistantAntiAliasing, "the Defaults button keeps it on");
         c.True(LodVisualSettings.Quality.DistantAntiAliasing
                 && LodVisualSettings.Balanced.DistantAntiAliasing,
@@ -138,6 +184,9 @@ public static class DistantAntiAliasingChecks
     static string Asset(string folder, string file) => File.ReadAllText(Path.Combine(
         GameAssemblies.RepoRoot, "VintageHorizons", "assets", "vintagehorizons", folder, file))
         .Replace("\r\n", "\n");
+
+    static string Source(params string[] parts) => File.ReadAllText(Path.Combine(
+        new[] { GameAssemblies.RepoRoot, "VintageHorizons", "src" }.Concat(parts).ToArray()));
 
     static void ShaderWiring(Check c)
     {
@@ -163,8 +212,7 @@ public static class DistantAntiAliasingChecks
         // programs receive the same frame uploads as the terrain. The first build of this put the
         // declarations in the terrain body alone, which would have thrown in every water pass.
         string inputs = Asset("shaderincludes", "lodvertexinputs.vsh");
-        string rendererSource = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot,
-            "VintageHorizons", "src", "Render", "LodTerrainRenderer.cs"));
+        string rendererSource = Source("Render", "LodTerrainRenderer.cs");
         string[] uploaded = System.Text.RegularExpressions.Regex
             .Matches(rendererSource, @"prog\.Uniform\(""(?<name>vhTaa\w+)""")
             .Select(match => match.Groups["name"].Value)
@@ -180,23 +228,53 @@ public static class DistantAntiAliasingChecks
             "and the shared inputs only declare them; the nudge is the terrain body's alone");
 
         string resolve = Asset("shaders", "lodtaaresolve.fsh");
-        c.True(resolve.Contains("if (!(depth < before))", StringComparison.Ordinal),
-            "the resolve touches only pixels cached terrain drew this frame");
-        c.True(resolve.Contains("abs(storedDepth - previousClip.w)", StringComparison.Ordinal),
-            "rejects history where different ground stood last frame");
-        c.True(resolve.Contains("clamp(texture(history, previousUv).rgb, lo, hi)",
+        string composite = Asset("shaders", "lodtaacomposite.fsh");
+        c.True(resolve.Contains("bool ours = depth < before;", StringComparison.Ordinal),
+            "the resolve blends the pixels cached terrain drew this frame");
+        c.True(resolve.Contains("bool sky = !ours && before >= 1.0;", StringComparison.Ordinal),
+            "0.4.58: and the sky beside them, so the terrain's edge against the sky is averaged too");
+        c.False(resolve.Contains("storedDepth", StringComparison.Ordinal),
+            "0.4.58: without a per-pixel depth test - the nudge swaps a tree top for the ground "
+            + "behind it in about one distant pixel in five, and refusing their history made the "
+            + "image jitter with the camera still");
+        c.True(resolve.Contains("abs(texelFetch(history, previousTexel, 0).a) >= 1.0",
                 StringComparison.Ordinal),
-            "and clamps history to what this frame's neighbourhood can show");
-        c.True(Asset("shaders", "lodtaacomposite.fsh").Contains("discard", StringComparison.Ordinal),
-            "the composite leaves every other pixel exactly as drawn");
+            "history is taken only from cached terrain or sky, never from vanilla terrain or a "
+            + "creature, which would leave a trail behind anything that moves");
+        c.True(resolve.Contains("mix(stored, clamp(stored, lo, hi), moving)", StringComparison.Ordinal),
+            "the neighbourhood clamp holds history while the view moves and lets it settle while still");
+        c.True(resolve.Contains("mix(stillFeedback, feedback, moving) * clamp(2.0 * ramp, 0.0, 1.0)",
+                StringComparison.Ordinal),
+            "0.4.58: history reaches full share over the first half of the ramp, before the nudge");
+        c.True(composite.Contains("float ramp = abs(value.a) - 1.0;", StringComparison.Ordinal)
+                && composite.Contains("if (ramp <= 0.0) discard;", StringComparison.Ordinal),
+            "the composite leaves vanilla pixels and everything outside the ramp exactly as drawn");
+
+        // Every uniform and sampler the two passes are handed must be declared by their shader,
+        // for the same reason as the frame uploads above.
+        string taa = Source("Render", "LodTerrainRenderer.Taa.cs");
+        foreach ((string pass, string shader) in new[] { ("resolve", resolve), ("composite", composite) })
+        {
+            string[] names = System.Text.RegularExpressions.Regex
+                .Matches(taa, pass + @"\.(?:Uniform|UniformMatrix|BindTexture2D)\(""(?<name>\w+)""")
+                .Select(match => match.Groups["name"].Value)
+                .Distinct()
+                .ToArray();
+            string[] missing = names
+                .Where(name => !System.Text.RegularExpressions.Regex.IsMatch(shader,
+                    @"uniform\s+\w+\s+" + name + @"\s*;"))
+                .ToArray();
+            c.True(names.Length > 0 && missing.Length == 0,
+                $"every uniform the {pass} pass is handed is declared by its shader"
+                + (missing.Length > 0 ? " (missing: " + string.Join(", ", missing) + ")" : ""));
+        }
     }
 
     static void RendererWiring(Check c)
     {
-        string src = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src");
-        string renderer = File.ReadAllText(Path.Combine(src, "Render", "LodTerrainRenderer.cs"));
-        string taa = File.ReadAllText(Path.Combine(src, "Render", "LodTerrainRenderer.Taa.cs"));
-        string mod = File.ReadAllText(Path.Combine(src, "VintageHorizonsModSystem.cs"));
+        string renderer = Source("Render", "LodTerrainRenderer.cs");
+        string taa = Source("Render", "LodTerrainRenderer.Taa.cs");
+        string mod = Source("VintageHorizonsModSystem.cs");
 
         int begin = renderer.IndexOf("BeginTaaFrame();", StringComparison.Ordinal);
         int pyramid = begin < 0 ? -1
@@ -207,16 +285,24 @@ public static class DistantAntiAliasingChecks
             "the before-terrain depth snapshot is taken before a single cached draw");
         c.True(water >= 0 && resolve > water,
             "and the resolve runs after thin cover, which the terrain program also nudged");
-        c.True(renderer.Contains("prog.Uniform(\"vhTaaStartPixels\", LodTaaMath.StartBlockPixels);",
+        c.True(renderer.Contains(
+                "prog.Uniform(\"vhTaaStartPixels\", LodTaaMath.NudgeStartPixels(taaReachPixels));",
                 StringComparison.Ordinal)
-            && taa.Contains("resolve.Uniform(\"startPixels\", LodTaaMath.StartBlockPixels);",
+            && renderer.Contains(
+                "prog.Uniform(\"vhTaaFullPixels\", LodTaaMath.FullPixels(taaReachPixels));",
+                StringComparison.Ordinal)
+            && taa.Contains("resolve.Uniform(\"startPixels\", taaReachPixels);", StringComparison.Ordinal)
+            && taa.Contains("resolve.Uniform(\"fullPixels\", LodTaaMath.FullPixels(taaReachPixels));",
                 StringComparison.Ordinal),
-            "the nudge and the blend read one ramp");
+            "the nudge and the blend are both derived from the one reach setting");
         c.True(taa.Contains("GL.ColorMask(true, true, true, false);", StringComparison.Ordinal),
             "the composite never writes alpha");
         c.True(renderer.Contains("UpdateAutoThresholds();", StringComparison.Ordinal),
             "automatic thresholds are re-evaluated every prepared frame");
         c.True(mod.Contains("if (!renderer.AutoLodThresholds)", StringComparison.Ordinal),
             "saving with automatic thresholds on keeps the player's own distances in the file");
+        c.True(mod.Contains("renderer.TaaReachPixels = config.TaaReachPixels;", StringComparison.Ordinal)
+                && mod.Contains("config.TaaReachPixels = renderer.TaaReachPixels;", StringComparison.Ordinal),
+            "the reach is restored at startup and saved with everything else");
     }
 }
