@@ -2530,12 +2530,16 @@ public static class StaticAssetChecks
             && dialog.Contains("LodVisualSettings.Quality", StringComparison.Ordinal),
             "and the three presets are offered");
 
-        // One page, and the explanations live on hover. Printing them under the titles was
-        // tried and does not fit: a medium-weight title is taller than the box it is given, so
-        // every row overran the two lines beneath it and the window read as a wall.
-        c.True(!dialog.Contains("AddHorizontalTabs", StringComparison.Ordinal)
-            && !dialog.Contains("activeTab", StringComparison.Ordinal),
-            "the settings window is one page rather than tabs");
+        // The explanations live on hover. Printing them under the titles was tried and does not
+        // fit: a medium-weight title is taller than the box it is given, so every row overran
+        // the two lines beneath it and the window read as a wall. That build also had tabs whose
+        // strip clipped the labels to "Det" and "Visual fe", and the window went to one page.
+        // In 0.4.60 the owner asked for a second tab, to tune anti-aliasing with sliders: a tab
+        // is as wide as its label, and the strip sits above the window with room for both.
+        c.True(dialog.Contains("AddHorizontalTabs(", StringComparison.Ordinal)
+                && dialog.Contains("Name = \"General\"", StringComparison.Ordinal)
+                && dialog.Contains("Name = \"Anti-Aliasing\"", StringComparison.Ordinal),
+            "the settings window has a General tab and an Anti-Aliasing tab");
         c.True(dialog.Contains("composer.AddHoverText(row.Tip", StringComparison.Ordinal),
             "and each feature explains itself on hover");
         c.True(dialog.Contains("AddDropDown(PresetCodes, PresetNames", StringComparison.Ordinal),

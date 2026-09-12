@@ -2339,7 +2339,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         // Available even while deferring, because these are persisted player settings;
         // they will apply normally after the competing renderer is switched off.
         capi.ChatCommands.Create("vhconfig")
-            .WithDescription("Open the Vintage Horizons settings window: detail and draw distance, and which optional visual features are drawn")
+            .WithDescription("Open the Vintage Horizons settings window: detail and draw distance, which optional visual features are drawn, and an Anti-Aliasing tab of tuning sliders")
             .HandleWith(_ =>
             {
                 if (configDialog?.IsOpened() == true)
@@ -2361,9 +2361,17 @@ public partial class VintageHorizonsModSystem : ModSystem
                     ? renderer.PreviewAutoThresholds()
                     : thresholds;
                 int farCap = deferringTo == null ? renderer.FarViewDistanceCap : config.FarViewDistanceCap;
+                // The Anti-Aliasing tab shows each slider's effect at once and puts back what was
+                // in force if the window closes without Save. With no renderer there is nothing to
+                // show, and Save writes the file.
+                var taaTuning = new TaaTuning(
+                    deferringTo == null ? renderer.TaaDials : ConfiguredTaaDials(),
+                    deferringTo == null && renderer.TaaShowWeight,
+                    PreviewTaaTuning,
+                    () => deferringTo == null ? renderer.ScreenBlockScale : 0f);
                 configDialog = new VintageHorizonsConfigDialog(
                     capi, thresholds, automaticThresholds, automatic, farCap, CurrentVisualSettings(),
-                    ApplyGuiConfig);
+                    taaTuning, ApplyGuiConfig);
 
                 return configDialog.TryOpen()
                     ? TextCommandResult.Success("[VintageHorizons] configuration window opened.")
@@ -4218,7 +4226,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             System.Globalization.CultureInfo.CurrentCulture, out value);
 
     void ApplyGuiConfig(int[] thresholds, bool autoThresholds, int farViewDistanceCap,
-        LodVisualSettings visuals)
+        LodVisualSettings visuals, LodTaaDials taaDials)
     {
         // The fixed list is the player's own and is kept whichever mode is chosen; automatic mode
         // only stops it being the one in force.
@@ -4234,6 +4242,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             if (!autoThresholds) LodWorld.SetLevelThresholds(normalized);
             renderer.FarViewDistanceCap = farViewDistanceCap;
             ApplyVisualSettings(visuals);
+            renderer.TaaDials = taaDials;
         }
         else
         {
@@ -4241,9 +4250,23 @@ public partial class VintageHorizonsModSystem : ModSystem
             // exists. SaveConfig leaves every renderer-derived key alone while deferring, so
             // writing them here is what makes the window work at all in that state.
             WriteVisualSettings(visuals);
+            WriteTaaDials(taaDials);
         }
 
         SaveConfig();
+    }
+
+    /// <summary>
+    /// The settings window's Anti-Aliasing tab, showing a slider's effect as it moves. Nothing is
+    /// saved here; Save goes through <see cref="ApplyGuiConfig"/>, and closing without it calls
+    /// this again with what was in force when the window opened. Every dial it carries is on
+    /// the side panel under its own `.vhtaa` name.
+    /// </summary>
+    void PreviewTaaTuning(LodTaaDials dials, bool show)
+    {
+        if (deferringTo != null) return;
+        renderer.TaaDials = dials;
+        renderer.TaaShowWeight = show;
     }
 
     /// <summary>The renderer's current visual settings, as the window shows them.</summary>
@@ -4271,6 +4294,21 @@ public partial class VintageHorizonsModSystem : ModSystem
         HalfBlockTerrain: config.HalfBlockTerrain,
         WaterEffects: config.WaterEffects,
         DistantAntiAliasing: config.DistantAntiAliasing);
+
+    /// <summary>What the config file says for the anti-aliasing dials, for the deferring case.</summary>
+    LodTaaDials ConfiguredTaaDials() => new(config.TaaReachPixels, config.TaaNudge,
+        config.TaaSharpen, config.TaaBlend, config.TaaStillBlend, config.TaaClip);
+
+    /// <summary>The anti-aliasing dials straight into the file, when no renderer exists to hold them.</summary>
+    void WriteTaaDials(LodTaaDials dials)
+    {
+        config.TaaReachPixels = dials.Reach;
+        config.TaaNudge = dials.Nudge;
+        config.TaaSharpen = dials.Sharpen;
+        config.TaaBlend = dials.Blend;
+        config.TaaStillBlend = dials.Still;
+        config.TaaClip = dials.Clip;
+    }
 
     void WriteVisualSettings(LodVisualSettings v)
     {

@@ -196,6 +196,18 @@ internal static class LodTaaMath
 }
 
 /// <summary>
+/// Distant anti-aliasing's tuning dials as one value, so the settings window can show a change
+/// at once and put back what was in force when it opened.
+/// </summary>
+internal readonly record struct LodTaaDials(
+    float Reach, float Nudge, float Sharpen, float Blend, float Still, float Clip)
+{
+    public static LodTaaDials Default => new(
+        LodTaaMath.DefaultReachPixels, LodTaaMath.DefaultNudge, LodTaaMath.DefaultSharpen,
+        LodTaaMath.DefaultFeedback, LodTaaMath.DefaultStillFeedback, LodTaaMath.DefaultClip);
+}
+
+/// <summary>
 /// L1-L6 chosen from the screen rather than typed in blocks.
 ///
 /// <para>

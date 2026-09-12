@@ -25,6 +25,7 @@ public static class DistantAntiAliasingChecks
         Defaults(c);
         ShaderWiring(c);
         RendererWiring(c);
+        SettingsWindow(c);
     }
 
     /// <summary>The projection's Y scale for a vertical field of view in degrees.</summary>
@@ -367,5 +368,58 @@ public static class DistantAntiAliasingChecks
                     && mod.Contains($"config.{saved} = renderer.{live};", StringComparison.Ordinal),
                 $"{saved} is restored at startup and saved with everything else");
         }
+    }
+
+    /// <summary>0.4.60: the settings window's Anti-Aliasing tab, asked for to tune by eye.</summary>
+    static void SettingsWindow(Check c)
+    {
+        // Each slider spans exactly its dial's range and every default lands on one of its
+        // steps, so opening the window and saving without touching anything changes nothing.
+        var expected = new (string Key, float Min, float Max, float Default)[]
+        {
+            ("taa-reach", LodTaaMath.MinReachPixels, LodTaaMath.MaxReachPixels, LodTaaMath.DefaultReachPixels),
+            ("taa-nudge", 0f, 1f, LodTaaMath.DefaultNudge),
+            ("taa-sharpen", 0f, 1f, LodTaaMath.DefaultSharpen),
+            ("taa-blend", 0f, LodTaaMath.MaxFeedback, LodTaaMath.DefaultFeedback),
+            ("taa-still", 0f, LodTaaMath.MaxStillFeedback, LodTaaMath.DefaultStillFeedback),
+            ("taa-clip", LodTaaMath.MinClip, LodTaaMath.MaxClip, LodTaaMath.DefaultClip),
+        };
+        c.Eq(expected.Length, LodTaaSliders.All.Length, "the Anti-Aliasing tab has one slider per dial");
+        LodTaaDials defaults = LodTaaDials.Default;
+        foreach ((string key, float min, float max, float fallback) in expected)
+        {
+            LodTaaSliders.Row row = Array.Find(LodTaaSliders.All, r => r.Key == key);
+            bool found = row.Key == key;
+            c.True(found && Math.Abs(row.FromSlider(row.Min) - min) < 1e-5f
+                    && Math.Abs(row.FromSlider(row.Max) - max) < 1e-5f,
+                $"{key} spans exactly its dial's range");
+            int slot = found ? row.ToSlider(fallback) : -1;
+            c.True(found && (slot - row.Min) % row.Step == 0
+                    && Math.Abs(row.FromSlider(slot) - fallback) < 1e-5f
+                    && Math.Abs(row.Read(defaults) - fallback) < 1e-6f,
+                $"{key}'s default lands on one of its steps");
+
+            float moved = found ? row.FromSlider(row.Min + row.Step) : 0f;
+            LodTaaDials written = found ? row.Write(defaults, moved) : defaults;
+            bool othersKept = LodTaaSliders.All.Where(other => other.Key != key)
+                .All(other => other.Read(written) == other.Read(defaults));
+            c.True(found && Math.Abs(row.Read(written) - moved) < 1e-6f && othersKept,
+                $"{key} moves its own dial and no other");
+        }
+
+        string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
+        string mod = Source("VintageHorizonsModSystem.cs");
+        c.True(dialog.Contains("taa.Preview(pendingTaa, pendingShowTaa);", StringComparison.Ordinal),
+            "a slider shows its effect at once, so it can be judged by eye");
+        c.True(dialog.Contains("if (!saved) taa.Preview(taa.Initial, taa.ShowInitial);",
+                StringComparison.Ordinal),
+            "and Cancel, or closing the window, puts back what was in force when it opened");
+        c.True(dialog.Contains(
+                "save(pendingThresholds, pendingAutomatic, pendingFarCap, pendingVisuals, pendingTaa);",
+                StringComparison.Ordinal),
+            "Save keeps them with every other setting");
+        c.True(mod.Contains("renderer.TaaDials = taaDials;", StringComparison.Ordinal)
+                && mod.Contains("WriteTaaDials(taaDials);", StringComparison.Ordinal),
+            "and they reach the renderer, or the file while another LOD mod is drawing");
     }
 }

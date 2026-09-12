@@ -4,17 +4,29 @@ using Vintagestory.API.Client;
 namespace VintageHorizons;
 
 /// <summary>
+/// What the Anti-Aliasing tab needs from the mod: the dials in force when the window opened and
+/// whether the tint was showing, a way to show a change at once, and the screen's block scale
+/// for turning the reach into distances.
+/// </summary>
+internal sealed record TaaTuning(LodTaaDials Initial, bool ShowInitial,
+    Action<LodTaaDials, bool> Preview, Func<float> BlockScale);
+
+/// <summary>
 /// Client-only settings window opened by .vhconfig.
 ///
 /// <para>
-/// One page. The top half is how far and how finely cached terrain is drawn; the bottom half
-/// is which of the optional passes are drawn at all - the settings a machine that cannot
-/// afford them needs to be able to give up, each one measured rather than guessed.
+/// Two tabs. General is how far and how finely cached terrain is drawn, and which of the
+/// optional passes are drawn at all - the settings a machine that cannot afford them needs to
+/// be able to give up, each one measured rather than guessed. Anti-Aliasing holds distant
+/// anti-aliasing's tuning dials as sliders, added at the owner's request in 0.4.60 so it can be
+/// tuned by eye rather than by typed commands.
 /// </para>
 /// <para>
-/// Each feature is a title and a switch, with what it does on hover. The descriptions were
+/// Each feature is a title and a control, with what it does on hover. The descriptions were
 /// printed under the titles for one build and it did not work: a medium-weight title is taller
-/// than its box, so every row overran the two lines beneath it.
+/// than its box, so every row overran the two lines beneath it. That build also had tabs, and
+/// its strip clipped the labels to "Det" and "Visual fe". A tab here is as wide as its label,
+/// and the strip sits above the window, as vanilla's character window has it, with room for both.
 /// </para>
 /// <para>
 /// The LOD distances are either the player's own, dragged on the scale, or automatic - chosen
@@ -23,8 +35,10 @@ namespace VintageHorizons;
 /// own distances are kept underneath and come back when it is switched off.
 /// </para>
 /// <para>
-/// Nothing is applied until Save. The pending values below are the whole state of the window,
-/// so switching tabs re-composes freely without losing an edit.
+/// On General nothing is applied until Save. The anti-aliasing sliders show their effect as they
+/// move, because judging them by eye is the point: Save keeps them, and Cancel or closing the
+/// window any other way puts back what was in force when it opened. The pending values below are
+/// the whole state of the window, so switching tabs re-composes freely without losing an edit.
 /// </para>
 /// </summary>
 internal sealed class VintageHorizonsConfigDialog : GuiDialog
@@ -46,18 +60,39 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     const double SwitchX = 716;
     const double RowHeight = 40;
 
+    const int GeneralTab = 0;
+    const int AntiAliasingTab = 1;
+
+    // The anti-aliasing rows: where each slider starts, how wide it is, and the row pitch.
+    const double DialSliderX = 300;
+    const double DialSliderWidth = 330;
+    const double DialRowHeight = 54;
+
     const string AutomaticTip =
         "Chooses L1-L6 from your field of view and render resolution, so every level hands over "
         + "at the same size on screen and follows those settings when you change them. Off uses "
         + "the distances you drag on the scale.";
 
-    readonly Action<int[], bool, int, LodVisualSettings> save;
+    const string ShowTip =
+        "Tints anti-aliased terrain magenta, stronger where it is fully applied, to show what the "
+        + "sliders reach. For this session only; it is never saved. (.vhtaa show)";
+
+    readonly Action<int[], bool, int, LodVisualSettings, LodTaaDials> save;
+    readonly TaaTuning taa;
     readonly int[] pendingThresholds;
     readonly int[] automaticThresholds;
     bool pendingAutomatic;
     int pendingFarCap;
     LodVisualSettings pendingVisuals;
+    LodTaaDials pendingTaa;
+    bool pendingShowTaa;
     LodThresholdScaleElement? scale;
+
+    /// <summary>Which tab is showing: <see cref="GeneralTab"/> or <see cref="AntiAliasingTab"/>.</summary>
+    int shownTab = GeneralTab;
+
+    /// <summary>Set by Save, so closing afterwards keeps the anti-aliasing dials rather than putting them back.</summary>
+    bool saved;
 
     public override string DebugName => "vintagehorizons-config";
     public override string? ToggleKeyCombinationCode => null;
@@ -67,9 +102,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// <param name="automaticThresholds">What automatic mode would use right now, for display.</param>
     public VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
-        LodVisualSettings visuals, Action<int[], bool, int, LodVisualSettings> save) : base(capi)
+        LodVisualSettings visuals, TaaTuning taa,
+        Action<int[], bool, int, LodVisualSettings, LodTaaDials> save) : base(capi)
     {
         this.save = save;
+        this.taa = taa;
         pendingThresholds = LodWorld.NormalizeLevelThresholds(
             thresholds, LodWorld.DefaultLevelThresholds[0]);
         this.automaticThresholds = LodWorld.NormalizeLevelThresholds(
@@ -78,6 +115,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         pendingFarCap = Math.Clamp(farCap <= 0 ? MaxDrawDistance : farCap,
             MinDrawDistance, MaxDrawDistance);
         pendingVisuals = visuals;
+        pendingTaa = taa.Initial;
+        pendingShowTaa = taa.ShowInitial;
         ComposeDialog();
     }
 
@@ -154,7 +193,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         new("distant-aa", "Distant Anti-Aliasing",
             "Stops distant terrain shimmering as you move by blending it over several frames. "
-            + "Only terrain where a block is smaller than about two pixels on screen is touched.",
+            + "Tune it on the Anti-Aliasing tab.",
             "Low",
             v => v.DistantAntiAliasing,
             (v, on) => v with { DistantAntiAliasing = on }),
@@ -168,12 +207,50 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         ElementBounds dialogBounds = ElementBounds.Fixed(0, 0, Width, Height)
             .WithAlignment(EnumDialogArea.CenterMiddle);
 
+        // A re-compose on a tab switch needs no disposal of its own: the engine's CreateCompo
+        // disposes the composer already registered under this dialog's name (GuiComposerManager,
+        // decompiled 1.22.7), which is why the switch waits until the click that asked for it
+        // has finished with the old one.
         GuiComposer composer = capi.Gui
             .CreateCompo(DebugName, dialogBounds)
             .AddShadedDialogBG(ElementBounds.Fill, true)
             .AddDialogTitleBar("Vintage Horizons", OnTitleClose)
             .BeginChildElements();
 
+        scale = null;
+        if (shownTab == AntiAliasingTab) ComposeAntiAliasing(composer);
+        else ComposeGeneral(composer);
+
+        double buttonsY = Height - 58;
+        composer.AddButton("Defaults", OnDefaults,
+            ElementBounds.Fixed(Margin, buttonsY, 140, 38), EnumButtonStyle.Normal, "defaults");
+        composer.AddButton("Cancel", OnCancel,
+            ElementBounds.Fixed(Width - Margin - 275, buttonsY, 130, 38),
+            EnumButtonStyle.Normal, "cancel");
+        composer.AddButton("Save", OnSave,
+            ElementBounds.Fixed(Width - Margin - 140, buttonsY, 140, 38),
+            EnumButtonStyle.Normal, "save");
+
+        // Added after the children, so the strip hangs off the window itself and sits above it.
+        composer.EndChildElements().AddHorizontalTabs(
+            new[]
+            {
+                new GuiTab { Name = "General", DataInt = GeneralTab },
+                new GuiTab { Name = "Anti-Aliasing", DataInt = AntiAliasingTab },
+            },
+            ElementBounds.Fixed(12, -28, 420, 28), OnTabClicked,
+            CairoFont.WhiteSmallText(), CairoFont.WhiteSmallText().WithColor(GuiStyle.ActiveButtonTextColor),
+            "tabs");
+
+        SingleComposer = composer.Compose();
+        SingleComposer.GetHorizontalTabs("tabs").activeElement = shownTab;
+
+        if (shownTab == AntiAliasingTab) SetAntiAliasingValues();
+        else SetGeneralValues();
+    }
+
+    void ComposeGeneral(GuiComposer composer)
+    {
         composer.AddStaticText("LOD transition distances",
             CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, 48, 480, 30));
         composer.AddStaticText("Automatic", CairoFont.WhiteSmallText(),
@@ -241,19 +318,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 $"tip-{row.Key}");
             y += RowHeight;
         }
+    }
 
-        double buttonsY = Height - 58;
-        composer.AddButton("Defaults", OnDefaults,
-            ElementBounds.Fixed(Margin, buttonsY, 140, 38), EnumButtonStyle.Normal, "defaults");
-        composer.AddButton("Cancel", OnCancel,
-            ElementBounds.Fixed(Width - Margin - 275, buttonsY, 130, 38),
-            EnumButtonStyle.Normal, "cancel");
-        composer.AddButton("Save", OnSave,
-            ElementBounds.Fixed(Width - Margin - 140, buttonsY, 140, 38),
-            EnumButtonStyle.Normal, "save");
-
-        SingleComposer = composer.EndChildElements().Compose();
-
+    void SetGeneralValues()
+    {
         GuiElementSlider drawSlider = SingleComposer.GetSlider("draw-distance");
         drawSlider.SetValues(pendingFarCap, MinDrawDistance, MaxDrawDistance, DrawDistanceStep,
             " blocks");
@@ -263,6 +331,111 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         {
             SingleComposer.GetSwitch(row.Key).On = row.Read(pendingVisuals);
         }
+    }
+
+    void ComposeAntiAliasing(GuiComposer composer)
+    {
+        composer.AddStaticText("Distant anti-aliasing", CairoFont.WhiteMediumText(),
+            ElementBounds.Fixed(Margin, 48, 480, 30));
+        composer.AddStaticText(
+            "Changes show at once. Save keeps them, Cancel puts them back, Defaults resets this tab.",
+            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, 80, 740, 22));
+        composer.AddDynamicText(ReachHelp(), CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(Margin, 104, 740, 22), "taa-reach-help");
+
+        double y = 146;
+        foreach (LodTaaSliders.Row row in LodTaaSliders.All)
+        {
+            composer.AddStaticText(row.Title, CairoFont.WhiteMediumText(),
+                ElementBounds.Fixed(Margin, y, DialSliderX - Margin - 10, 30));
+            // Over the title only. A slider is dragged by mouse moves, and a tip region lying over
+            // it could be the element that gets them.
+            composer.AddHoverText(row.Tip, CairoFont.WhiteSmallText(), 380,
+                ElementBounds.Fixed(Margin, y - 2, DialSliderX - Margin - 10, 34), $"tip-{row.Key}");
+            composer.AddSlider(value => OnDialChanged(row, value),
+                ElementBounds.Fixed(DialSliderX, y, DialSliderWidth, 30), row.Key);
+            composer.AddDynamicText(row.Label(row.Read(pendingTaa)), CairoFont.WhiteSmallText(),
+                ElementBounds.Fixed(DialSliderX + DialSliderWidth + 15, y + 4, 110, 22),
+                $"{row.Key}-label");
+            y += DialRowHeight;
+        }
+
+        composer.AddStaticText("Show Anti-Aliased Area", CairoFont.WhiteMediumText(),
+            ElementBounds.Fixed(Margin, y + 2, 560, 30));
+        composer.AddSwitch(OnShowChanged, ElementBounds.Fixed(SwitchX, y, 32, 32), "taa-show");
+        composer.AddHoverText(ShowTip, CairoFont.WhiteSmallText(), 380,
+            ElementBounds.Fixed(Margin, y, SwitchX + 32 - Margin, RowHeight - 2), "tip-taa-show");
+    }
+
+    void SetAntiAliasingValues()
+    {
+        foreach (LodTaaSliders.Row row in LodTaaSliders.All)
+        {
+            GuiElementSlider slider = SingleComposer.GetSlider(row.Key);
+            slider.SetValues(row.ToSlider(row.Read(pendingTaa)), row.Min, row.Max, row.Step);
+            slider.ShowTextWhenResting = false;
+            slider.OnSliderTooltip = value => row.Label(row.FromSlider(value));
+        }
+        SingleComposer.GetSwitch("taa-show").On = pendingShowTaa;
+    }
+
+    void OnTabClicked(int tab)
+    {
+        if (tab == shownTab) return;
+        shownTab = tab;
+        // Once this click has finished with the composer it came from, not in the middle of it:
+        // the re-compose disposes that composer.
+        capi.Event.EnqueueMainThreadTask(() =>
+        {
+            if (IsOpened()) ComposeDialog();
+        }, "vintagehorizons-config-tab");
+    }
+
+    bool OnDialChanged(LodTaaSliders.Row row, int value)
+    {
+        pendingTaa = row.Write(pendingTaa, row.FromSlider(value));
+        taa.Preview(pendingTaa, pendingShowTaa);
+        if (SingleComposer?.Composed == true && shownTab == AntiAliasingTab)
+        {
+            SingleComposer.GetDynamicText($"{row.Key}-label")
+                .SetNewText(row.Label(row.Read(pendingTaa)), false, true, false);
+            SingleComposer.GetDynamicText("taa-reach-help")
+                .SetNewText(ReachHelp(), false, true, false);
+        }
+        return true;
+    }
+
+    void OnShowChanged(bool on)
+    {
+        pendingShowTaa = on;
+        taa.Preview(pendingTaa, pendingShowTaa);
+    }
+
+    /// <summary>Every slider and label on the Anti-Aliasing tab rewritten from the pending dials.</summary>
+    void RefreshDials()
+    {
+        if (SingleComposer?.Composed != true || shownTab != AntiAliasingTab) return;
+        foreach (LodTaaSliders.Row row in LodTaaSliders.All)
+        {
+            SingleComposer.GetSlider(row.Key).SetValue(row.ToSlider(row.Read(pendingTaa)));
+            SingleComposer.GetDynamicText($"{row.Key}-label")
+                .SetNewText(row.Label(row.Read(pendingTaa)), false, true, false);
+        }
+        SingleComposer.GetDynamicText("taa-reach-help")
+            .SetNewText(ReachHelp(), false, true, false);
+    }
+
+    /// <summary>The reach as distances, at the field of view and resolution of the last frame drawn.</summary>
+    string ReachHelp()
+    {
+        float blockScale = taa.BlockScale();
+        if (!(blockScale > 0f)) return "Distances show once a frame has been drawn.";
+        float reach = LodTaaMath.ClampReach(pendingTaa.Reach);
+        int begins = (int)MathF.Round(LodScreenScale.DepthForBlockPixels(blockScale, reach));
+        int full = (int)MathF.Round(LodScreenScale.DepthForBlockPixels(blockScale,
+            LodTaaMath.FullPixels(reach)));
+        return $"At this FOV and resolution: starts about {FormatBlocks(begins)} blocks out, "
+            + $"full strength past {FormatBlocks(full)}.";
     }
 
     /// <summary>Which preset the current combination is, or the trailing "Custom" entry.</summary>
@@ -300,7 +473,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void RefreshVisuals()
     {
-        if (SingleComposer?.Composed != true) return;
+        if (SingleComposer?.Composed != true || shownTab != GeneralTab) return;
         foreach (VisualRow other in Rows)
         {
             GuiElementSwitch element = SingleComposer.GetSwitch(other.Key);
@@ -325,7 +498,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void RefreshThresholds()
     {
-        if (SingleComposer?.Composed != true) return;
+        if (SingleComposer?.Composed != true || shownTab != GeneralTab) return;
         if (scale != null)
         {
             scale.ReadOnly = pendingAutomatic;
@@ -347,7 +520,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         // The scale is read-only while automatic is on, so a drag can only be the player's own.
         if (pendingAutomatic) return;
         pendingThresholds[index] = value;
-        if (SingleComposer?.Composed == true)
+        if (SingleComposer?.Composed == true && shownTab == GeneralTab)
         {
             SingleComposer.GetDynamicText($"threshold-{index}")
                 .SetNewText(ThresholdLabel(index), false, true, false);
@@ -357,7 +530,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     bool OnDrawDistanceChanged(int blocks)
     {
         pendingFarCap = Math.Clamp(blocks, MinDrawDistance, MaxDrawDistance);
-        if (SingleComposer?.Composed == true)
+        if (SingleComposer?.Composed == true && shownTab == GeneralTab)
         {
             SingleComposer.GetDynamicText("draw-distance-label")
                 .SetNewText(DrawDistanceLabel(), false, true, false);
@@ -365,9 +538,20 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         return true;
     }
 
-    /// <summary>Everything back to what a fresh install draws, both halves of the page.</summary>
+    /// <summary>
+    /// The tab that is showing, back to what a fresh install draws. On Anti-Aliasing that shows
+    /// at once, like any slider; on General nothing applies until Save.
+    /// </summary>
     bool OnDefaults()
     {
+        if (shownTab == AntiAliasingTab)
+        {
+            pendingTaa = LodTaaDials.Default;
+            taa.Preview(pendingTaa, pendingShowTaa);
+            RefreshDials();
+            return true;
+        }
+
         Array.Copy(LodWorld.DefaultLevelThresholds, pendingThresholds,
             pendingThresholds.Length);
         pendingAutomatic = true;
@@ -385,7 +569,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     bool OnSave()
     {
-        save(pendingThresholds, pendingAutomatic, pendingFarCap, pendingVisuals);
+        saved = true;
+        save(pendingThresholds, pendingAutomatic, pendingFarCap, pendingVisuals, pendingTaa);
         TryClose();
         return true;
     }
@@ -397,6 +582,17 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     }
 
     void OnTitleClose() => TryClose();
+
+    /// <summary>
+    /// Closing without Save - Cancel, the title bar's cross, or Escape - puts the anti-aliasing
+    /// dials and the tint back to what was in force when the window opened, because the sliders
+    /// showed their effect as they moved.
+    /// </summary>
+    public override void OnGuiClosed()
+    {
+        if (!saved) taa.Preview(taa.Initial, taa.ShowInitial);
+        base.OnGuiClosed();
+    }
 
     string ThresholdLabel(int index) =>
         $"L{index + 1}: {FormatBlocks(DisplayedThresholds()[index])}";

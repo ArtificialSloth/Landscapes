@@ -107,15 +107,28 @@ public partial class LodTerrainRenderer
     float taaClip = LodTaaMath.DefaultClip;
 
     /// <summary>Every tuning dial, reach included, back to its default. The on/off switch stays.</summary>
-    public void ResetTaaDials()
+    public void ResetTaaDials() => TaaDials = LodTaaDials.Default;
+
+    /// <summary>Every tuning dial at once, for the settings window's live preview and revert.</summary>
+    internal LodTaaDials TaaDials
     {
-        TaaReachPixels = LodTaaMath.DefaultReachPixels;
-        TaaFeedback = LodTaaMath.DefaultFeedback;
-        TaaStillFeedback = LodTaaMath.DefaultStillFeedback;
-        TaaNudge = LodTaaMath.DefaultNudge;
-        TaaSharpen = LodTaaMath.DefaultSharpen;
-        TaaClip = LodTaaMath.DefaultClip;
+        get => new(taaReachPixels, taaNudge, taaSharpen, taaFeedback, taaStillFeedback, taaClip);
+        set
+        {
+            TaaReachPixels = value.Reach;
+            TaaNudge = value.Nudge;
+            TaaSharpen = value.Sharpen;
+            TaaFeedback = value.Blend;
+            TaaStillFeedback = value.Still;
+            TaaClip = value.Clip;
+        }
     }
+
+    /// <summary>
+    /// Pixels one block spans at one block of view depth, from the last perspective frame; 0
+    /// before there has been one. The settings window turns the reach into distances with it.
+    /// </summary>
+    public float ScreenBlockScale => LodScreenScale.BlockScale(screenRenderHeight, screenYScale);
 
     /// <summary>Resolved frames with the still memory fully in force, for the report.</summary>
     public long TaaFramesStill { get; private set; }
