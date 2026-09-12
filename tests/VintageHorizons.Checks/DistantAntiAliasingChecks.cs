@@ -47,7 +47,8 @@ public static class DistantAntiAliasingChecks
     static void Ramp(Check c)
     {
         const float scale = 1000f;
-        const float reach = LodTaaMath.DefaultReachPixels;
+        // The ramp's arithmetic at a reach of 2 px; the default itself is pinned in Defaults.
+        const float reach = 2f;
         c.Eq(0f, LodTaaMath.Ramp(scale, 400f, reach), "a block 2.5 px across is left exactly as drawn");
         c.Eq(0f, LodTaaMath.Ramp(scale, 500f, reach), "and so is one exactly 2 px across");
         c.Near(0.5, LodTaaMath.Ramp(scale, 2000f / 3f, reach), 1e-4, "1.5 px is the middle of the fade");
@@ -95,11 +96,11 @@ public static class DistantAntiAliasingChecks
 
     static void Dials(Check c)
     {
-        c.True(LodTaaMath.DefaultFeedback < LodTaaMath.MaxFeedback,
-            "the default turning memory leaves room to raise it");
-        c.True(LodTaaMath.DefaultStillFeedback > LodTaaMath.DefaultFeedback
-                && LodTaaMath.DefaultStillFeedback < LodTaaMath.MaxStillFeedback,
-            "a still camera keeps more memory by default, with room to raise it further");
+        c.True(LodTaaMath.DefaultFeedback <= LodTaaMath.MaxFeedback,
+            "the default turning memory is inside its range");
+        c.True(LodTaaMath.DefaultStillFeedback >= LodTaaMath.DefaultFeedback
+                && LodTaaMath.DefaultStillFeedback <= LodTaaMath.MaxStillFeedback,
+            "a still camera keeps at least as much memory as a turning one, inside its range");
         c.True(LodTaaMath.StillMotionPixels < LodTaaMath.MovingMotionPixels
                 && LodTaaMath.MovingMotionPixels < LodTaaMath.FastMotionPixels,
             "still, moving and fast are told apart by ramps, in that order");
@@ -201,7 +202,12 @@ public static class DistantAntiAliasingChecks
         c.Eq(LodAutoThresholds.DefaultTargetPixels, config.LodTargetPixels,
             "aiming at the default on-screen size");
         c.Eq(LodTaaMath.DefaultReachPixels, config.TaaReachPixels,
-            "anti-aliasing begins where a block is two pixels wide unless the player says otherwise");
+            "anti-aliasing begins at the default reach unless the player says otherwise");
+        // 0.4.61: the owner tuned these by eye in the settings tab on 2026-09-12 and asked for
+        // them as the defaults. A change here changes what every fresh install looks like.
+        c.True(LodTaaDials.Default == new LodTaaDials(2.5f, 0.5f, 1f, 0.97f, 0.99f, 2.25f),
+            "the defaults are the owner's tuning: reach 2.5, nudge 0.5, sharpen 1, memory 0.97 "
+            + "turning and 0.99 still, safety check 2.25");
         c.True(config.TaaBlend == LodTaaMath.DefaultFeedback
                 && config.TaaStillBlend == LodTaaMath.DefaultStillFeedback
                 && config.TaaNudge == LodTaaMath.DefaultNudge

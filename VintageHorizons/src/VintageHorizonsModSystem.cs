@@ -4196,7 +4196,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                         reply = string.Create(System.Globalization.CultureInfo.InvariantCulture,
                             $"[VintageHorizons] {renderer.DescribeTaaReach()}. Give "
                             + $"{LodTaaMath.MinReachPixels:0} to {LodTaaMath.MaxReachPixels:0} px: larger "
-                            + $"reaches closer (default {LodTaaMath.DefaultReachPixels:0}).");
+                            + $"reaches closer (default {LodTaaMath.DefaultReachPixels:0.#}).");
                     }
                 }
                 else

@@ -38,6 +38,12 @@ internal static class LodScreenScale
 /// the history blend is already at full share and will average the nudge back out.
 ///
 /// <para>
+/// The defaults are the owner's own tuning, set by eye in 0.4.60's settings tab on 2026-09-12
+/// and made the defaults in 0.4.61: reach 2.5 px, nudge 0.5, sharpen 1, memory 0.97 turning and
+/// 0.99 still, safety check 2.25. Until then they were 2, 1, 0.5, 0.9, 0.97 and 1.25. Sharpen and
+/// both memories sit at the top of their ranges, which is where the owner put them.
+/// </para>
+/// <para>
 /// One number sets where it works: the reach, the on-screen width of one block at which it
 /// begins. It is full strength where a block is half that wide, so the fade always spans one
 /// doubling of distance, whatever the field of view, resolution or reach. History comes in over
@@ -48,8 +54,8 @@ internal static class LodScreenScale
 /// </summary>
 internal static class LodTaaMath
 {
-    /// <summary>Default reach: anti-aliasing begins where a block is two pixels wide.</summary>
-    public const float DefaultReachPixels = 2f;
+    /// <summary>Default reach: anti-aliasing begins where a block is 2.5 pixels wide.</summary>
+    public const float DefaultReachPixels = 2.5f;
 
     public const float MinReachPixels = 1f;
 
@@ -60,8 +66,8 @@ internal static class LodTaaMath
     /// </summary>
     public const float MaxReachPixels = 32f;
 
-    /// <summary>Memory while the view turns (`.vhtaa blend`): roughly the last ten frames.</summary>
-    public const float DefaultFeedback = 0.9f;
+    /// <summary>Memory while the view turns (`.vhtaa blend`): about the last thirty frames.</summary>
+    public const float DefaultFeedback = 0.97f;
 
     /// <summary>The most turning memory `.vhtaa blend` accepts.</summary>
     public const float MaxFeedback = 0.97f;
@@ -69,9 +75,9 @@ internal static class LodTaaMath
     /// <summary>
     /// Memory while the whole camera holds still (`.vhtaa still`). The nudge repeats every eight
     /// frames, and a running blend of a repeating signal ripples: for a feature seen in one of
-    /// the eight positions, by about 4.5% of its contrast at 0.9 and about 1.3% at 0.97.
+    /// the eight positions, by about 4.5% of its contrast at 0.9, 1.3% at 0.97 and 0.4% at 0.99.
     /// </summary>
-    public const float DefaultStillFeedback = 0.97f;
+    public const float DefaultStillFeedback = 0.99f;
 
     public const float MaxStillFeedback = 0.99f;
 
@@ -108,21 +114,22 @@ internal static class LodTaaMath
     /// more flicker. 4 is in effect the 0.4.58 check, the full range of the neighbourhood, which
     /// on snow - white tops beside dark walls in nearly every 3x3 - let almost any history through.
     /// </summary>
-    public const float DefaultClip = 1.25f;
+    public const float DefaultClip = 2.25f;
     public const float MinClip = 0.5f;
     public const float MaxClip = 4f;
 
     /// <summary>
     /// How far terrain is nudged (`.vhtaa nudge`), as a share of the full half pixel. Lower is
-    /// crisper and shimmers more; 0 leaves only the blending.
+    /// crisper and shimmers more; 0 leaves only the blending. Half by default: sharper than the
+    /// full nudge, with the long memory holding it steady.
     /// </summary>
-    public const float DefaultNudge = 1f;
+    public const float DefaultNudge = 0.5f;
 
     /// <summary>
     /// Sharpening of the anti-aliased terrain (`.vhtaa sharpen`), 0 to 1. Applied to the picture
     /// on its way to the screen and never to the memory, so it cannot build up frame on frame.
     /// </summary>
-    public const float DefaultSharpen = 0.5f;
+    public const float DefaultSharpen = 1f;
 
     /// <summary>
     /// The neighbour weight at full sharpening, before the contrast adaptation scales it down:
