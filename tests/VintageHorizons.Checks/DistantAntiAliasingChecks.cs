@@ -218,6 +218,10 @@ public static class DistantAntiAliasingChecks
         c.True(LodVisualSettings.Quality.DistantAntiAliasing
                 && LodVisualSettings.Balanced.DistantAntiAliasing,
             "so do Quality and Balanced");
+        c.True(LodVisualSettings.Quality == LodVisualSettings.Default,
+            "Quality is the fresh-install visual set");
+        c.False(LodVisualSettings.Quality.FarBiomeColours,
+            "Quality keeps the deliberately expensive Far Biome Colors option off");
         c.False(LodVisualSettings.Performance.DistantAntiAliasing,
             "and Performance gives it up with everything else optional");
     }
@@ -421,7 +425,7 @@ public static class DistantAntiAliasingChecks
                 StringComparison.Ordinal),
             "and Cancel, or closing the window, puts back what was in force when it opened");
         c.True(dialog.Contains(
-                "save(pendingThresholds, pendingAutomatic, pendingFarCap, pendingVisuals, pendingTaa);",
+                "save(pendingThresholds, pendingAutomatic, pendingFarCap, pendingLoadWhilePaused,",
                 StringComparison.Ordinal),
             "Save keeps them with every other setting");
         c.True(mod.Contains("renderer.TaaDials = taaDials;", StringComparison.Ordinal)

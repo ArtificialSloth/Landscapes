@@ -16,6 +16,7 @@ public static class ConfigChecks
         Clamps(c);
         Description(c);
         ClientGpuDefaults(c);
+        ClientLoadingDefaults(c);
     }
 
     static void Defaults(Check c)
@@ -235,5 +236,19 @@ public static class ConfigChecks
         c.True(config.BlendPipeline,
             "seam blending and L0 textures stay on for a fresh install");
         c.False(config.IgnoreOtherLodMods, "and deferring to another LOD mod stays the default");
+    }
+
+    static void ClientLoadingDefaults(Check c)
+    {
+        c.True(new VintageHorizonsConfig().LoadWhilePaused,
+            "a fresh install keeps bounded LOD loading moving behind the pause menu");
+        c.True(PausedLodLoadingPolicy.IsDue(1_000, long.MinValue),
+            "the first paused render may pump immediately");
+        c.False(PausedLodLoadingPolicy.IsDue(1_049, 1_000),
+            "paused renders cannot pump faster than the ordinary game-tick cadence");
+        c.True(PausedLodLoadingPolicy.IsDue(1_050, 1_000),
+            "paused loading resumes exactly at the 50 ms cadence");
+        c.True(PausedLodLoadingPolicy.IsDue(5, 100),
+            "a monotonic-clock reset cannot strand paused loading");
     }
 }

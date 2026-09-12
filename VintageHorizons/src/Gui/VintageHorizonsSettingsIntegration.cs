@@ -17,7 +17,7 @@ internal sealed class VintageHorizonsSettingsIntegration : IDisposable
     internal const string HarmonyId = "vintagehorizons.settingstab";
     internal const string PageCode = "vintagehorizons";
     const string ComposerName = "gamesettings-vintagehorizons";
-    const double HorizonsButtonWidth = 92;
+    const double HorizonsButtonWidth = 116;
     const double HeaderGap = 15;
 
     static VintageHorizonsSettingsIntegration? active;

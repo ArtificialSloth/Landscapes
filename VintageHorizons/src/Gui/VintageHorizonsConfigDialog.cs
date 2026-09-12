@@ -12,6 +12,12 @@ internal sealed record TaaTuning(LodTaaDials Initial, bool ShowInitial,
     Action<LodTaaDials, bool> Preview, Func<float> BlockScale);
 
 /// <summary>
+/// Vanilla owns this setting. The editor mirrors its Graphics slider and asks for refreshed
+/// automatic LOD values after a committed drag so the whole map stays truthful.
+/// </summary>
+internal sealed record VanillaDistanceTuning(int Initial, Func<int, int[]> Apply);
+
+/// <summary>
 /// One set of coordinates for both the standalone command window and the page embedded in
 /// vanilla Settings. Keeping the row edges here makes clipping a testable rule instead of a
 /// collection of unrelated literals.
@@ -39,10 +45,10 @@ internal static class VintageHorizonsConfigLayout
     internal const double DialRowHeight = 58;
     internal const double ShowTaaY = 510;
 
-    internal const double EmbeddedTabsY = 48;
-    // The vanilla header ends at 75. Its selected Horizons tab supplies the outer page context,
-    // secondary strip can share the lower header edge and the content needs only this offset.
-    internal const double EmbeddedContentY = 44;
+    internal const double EmbeddedTabsY = 82;
+    // Vanilla's header ends at 75. The editor's own two tabs begin below that edge, with their
+    // content following beneath, instead of sitting through the header's bottom rule.
+    internal const double EmbeddedContentY = 78;
     internal const double EmbeddedHeight = Height + EmbeddedContentY;
 }
 
@@ -70,10 +76,12 @@ internal static class VintageHorizonsConfigLayout
 /// own distances are kept underneath and come back when it is switched off.
 /// </para>
 /// <para>
-/// On General nothing is applied until Save. The anti-aliasing sliders show their effect as they
-/// move, because judging them by eye is the point: Save keeps them, and Cancel or closing the
-/// window any other way puts back what was in force when it opened. The pending values below are
-/// the whole state of the window, so switching tabs re-composes freely without losing an edit.
+/// On General no MOD setting is applied until Save. Vanilla render distance is the deliberate
+/// exception: it is a second copy of the game's own control and commits on mouse-up whether this
+/// editor is later saved or cancelled. The anti-aliasing sliders show their effect as they move,
+/// because judging them by eye is the point: Save keeps them, and Cancel or closing the window
+/// any other way puts back what was in force when it opened. The pending values below are the
+/// whole mod state of the window, so switching tabs re-composes freely without losing an edit.
 /// </para>
 /// </summary>
 internal sealed class VintageHorizonsConfigDialog : GuiDialog
@@ -108,13 +116,17 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         + "at the same size on screen and follows those settings when you change them. Off uses "
         + "the distances you drag on the scale.";
 
+    const string PausedLoadingTip =
+        "Keeps cache loading, LOD preparation and bounded terrain updates moving while the "
+        + "singleplayer pause menu is open. It does not unpause the game simulation.";
+
     const string ShowTip =
         "Tints anti-aliased terrain magenta, stronger where it is fully applied, to show what the "
         + "sliders reach. For this session only; it is never saved. (.vhtaa show)";
 
-    readonly Action<int[], bool, int, LodVisualSettings, LodTaaDials> save;
+    readonly Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials> save;
     readonly TaaTuning taa;
-    readonly int vanillaViewDistance;
+    readonly VanillaDistanceTuning vanilla;
     readonly bool embedded;
     readonly Action? requestEmbeddedRecompose;
     readonly Action? requestEmbeddedClose;
@@ -122,6 +134,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     readonly int[] automaticThresholds;
     bool pendingAutomatic;
     int pendingFarCap;
+    bool pendingLoadWhilePaused;
+    int vanillaViewDistance;
     LodVisualSettings pendingVisuals;
     LodTaaDials pendingTaa;
     bool pendingShowTaa;
@@ -144,10 +158,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// <param name="automaticThresholds">What automatic mode would use right now, for display.</param>
     public VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
-        int vanillaViewDistance, LodVisualSettings visuals, TaaTuning taa,
-        Action<int[], bool, int, LodVisualSettings, LodTaaDials> save)
-        : this(capi, thresholds, automaticThresholds, automatic, farCap,
-            vanillaViewDistance, visuals, taa, false, null, null, save)
+        bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
+        TaaTuning taa, Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials> save)
+        : this(capi, thresholds, automaticThresholds, automatic, farCap, loadWhilePaused,
+            visuals, vanilla, taa, false, null, null, save)
     {
         ComposeDialog();
     }
@@ -158,23 +172,28 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// </summary>
     internal VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
-        int vanillaViewDistance, LodVisualSettings visuals, TaaTuning taa,
+        bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
+        TaaTuning taa,
         Action requestRecompose, Action requestClose,
-        Action<int[], bool, int, LodVisualSettings, LodTaaDials> save)
-        : this(capi, thresholds, automaticThresholds, automatic, farCap,
-            vanillaViewDistance, visuals, taa, true, requestRecompose, requestClose, save)
+        Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials> save)
+        : this(capi, thresholds, automaticThresholds, automatic, farCap, loadWhilePaused,
+            visuals, vanilla, taa, true, requestRecompose, requestClose, save)
     {
     }
 
     VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
-        int vanillaViewDistance, LodVisualSettings visuals, TaaTuning taa, bool embedded,
+        bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
+        TaaTuning taa, bool embedded,
         Action? requestRecompose, Action? requestClose,
-        Action<int[], bool, int, LodVisualSettings, LodTaaDials> save) : base(capi)
+        Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials> save) : base(capi)
     {
         this.save = save;
         this.taa = taa;
-        this.vanillaViewDistance = Math.Max(1, vanillaViewDistance);
+        this.vanilla = vanilla;
+        vanillaViewDistance = Math.Clamp(vanilla.Initial,
+            LodThresholdScaleLayout.MinVanillaDistance,
+            LodThresholdScaleLayout.MaxVanillaDistance);
         this.embedded = embedded;
         requestEmbeddedRecompose = requestRecompose;
         requestEmbeddedClose = requestClose;
@@ -185,6 +204,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         pendingAutomatic = automatic;
         pendingFarCap = Math.Clamp(farCap <= 0 ? MaxDrawDistance : farCap,
             MinDrawDistance, MaxDrawDistance);
+        pendingLoadWhilePaused = loadWhilePaused;
         pendingVisuals = visuals;
         pendingTaa = taa.Initial;
         pendingShowTaa = taa.ShowInitial;
@@ -373,7 +393,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             ElementBounds.Fixed(Margin, Y(72), Width - 2 * Margin, 22), "threshold-help");
 
         scale = new LodThresholdScaleElement(capi, DisplayedThresholds(),
-            vanillaViewDistance, OnThresholdChanged,
+            vanillaViewDistance, OnThresholdChanged, OnVanillaDistanceChanged,
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ScaleY),
                 Width - 2 * Margin, VintageHorizonsConfigLayout.ScaleHeight))
         {
@@ -392,7 +412,16 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         }
 
         composer.AddStaticText("Cached terrain draw distance", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.DrawHeadingY), 700, 30));
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.DrawHeadingY), 500, 30));
+        composer.AddStaticText("Load terrain while paused", CairoFont.WhiteSmallishText(),
+            EnumTextOrientation.Right,
+            ElementBounds.Fixed(552, Y(VintageHorizonsConfigLayout.DrawHeadingY + 5), 262, 26));
+        composer.AddSwitch(OnPausedLoadingChanged,
+            ElementBounds.Fixed(SwitchX, Y(VintageHorizonsConfigLayout.DrawHeadingY), 32, 32),
+            "load-while-paused");
+        composer.AddHoverText(PausedLoadingTip, CairoFont.WhiteSmallText(), 380,
+            ElementBounds.Fixed(552, Y(VintageHorizonsConfigLayout.DrawHeadingY),
+                SwitchX + 32 - 552, 34), "tip-load-while-paused");
         composer.AddSlider(OnDrawDistanceChanged,
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.DrawHeadingY + 34), 680, 30),
             "draw-distance");
@@ -448,6 +477,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             " blocks");
         drawSlider.ShowTextWhenResting = false;
         activeComposer.GetSwitch("auto-thresholds").On = pendingAutomatic;
+        activeComposer.GetSwitch("load-while-paused").On = pendingLoadWhilePaused;
         foreach (VisualRow row in Rows)
         {
             activeComposer.GetSwitch(row.Key).On = row.Read(pendingVisuals);
@@ -615,10 +645,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     int[] DisplayedThresholds() => pendingAutomatic ? automaticThresholds : pendingThresholds;
 
     string ThresholdHelp() => pendingAutomatic
-        ? $"Automatic from FOV and resolution. Bands show L0-L6; white is vanilla "
-            + $"({FormatBlocks(vanillaViewDistance)} blocks)."
-        : $"Drag L1-L6; bands show what draws between them. White is vanilla "
-            + $"({FormatBlocks(vanillaViewDistance)} blocks).";
+        ? "Drag Vanilla in 32-block steps (applies immediately). Grey is vanilla; colour starts at L0. "
+            + "L1-L6 are automatic."
+        : "Drag Vanilla (applies immediately) or L1-L6. Grey is vanilla; colour starts at L0.";
 
     void OnAutomaticChanged(bool on)
     {
@@ -657,6 +686,33 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         }
     }
 
+    void OnVanillaDistanceChanged(int value)
+    {
+        vanillaViewDistance = Math.Clamp(value,
+            LodThresholdScaleLayout.MinVanillaDistance,
+            LodThresholdScaleLayout.MaxVanillaDistance);
+        int[] refreshed = vanilla.Apply(vanillaViewDistance);
+        if (refreshed.Length == automaticThresholds.Length)
+        {
+            int[] normalized = LodWorld.NormalizeLevelThresholds(
+                refreshed, LodWorld.DefaultLevelThresholds[0]);
+            Array.Copy(normalized, automaticThresholds, automaticThresholds.Length);
+        }
+
+        scale?.SetVanillaDistance(vanillaViewDistance);
+        if (pendingAutomatic) scale?.SetValues(automaticThresholds);
+        if (activeComposer?.Composed != true || shownTab != GeneralTab) return;
+        for (int i = 0; i < pendingThresholds.Length; i++)
+        {
+            activeComposer.GetDynamicText($"threshold-{i}")
+                .SetNewText(ThresholdLabel(i), false, true, false);
+        }
+        activeComposer.GetDynamicText("threshold-help")
+            .SetNewText(ThresholdHelp(), false, true, false);
+    }
+
+    void OnPausedLoadingChanged(bool on) => pendingLoadWhilePaused = on;
+
     bool OnDrawDistanceChanged(int blocks)
     {
         pendingFarCap = Math.Clamp(blocks, MinDrawDistance, MaxDrawDistance);
@@ -686,6 +742,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             pendingThresholds.Length);
         pendingAutomatic = true;
         pendingFarCap = DefaultDrawDistance;
+        pendingLoadWhilePaused = true;
         pendingVisuals = LodVisualSettings.Default;
 
         RefreshThresholds();
@@ -694,6 +751,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             pendingFarCap, MinDrawDistance, MaxDrawDistance, DrawDistanceStep, " blocks");
         activeComposer.GetDynamicText("draw-distance-label")
             .SetNewText(DrawDistanceLabel(), false, true, false);
+        activeComposer.GetSwitch("load-while-paused").On = pendingLoadWhilePaused;
         RefreshVisuals();
         return true;
     }
@@ -702,7 +760,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         if (sessionClosed) return true;
         saved = true;
-        save(pendingThresholds, pendingAutomatic, pendingFarCap, pendingVisuals, pendingTaa);
+        save(pendingThresholds, pendingAutomatic, pendingFarCap, pendingLoadWhilePaused,
+            pendingVisuals, pendingTaa);
         if (embedded)
         {
             sessionClosed = true;

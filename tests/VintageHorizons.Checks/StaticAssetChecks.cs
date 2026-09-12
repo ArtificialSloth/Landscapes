@@ -2455,19 +2455,24 @@ public static class StaticAssetChecks
         string scale = File.ReadAllText(Path.Combine(src, "Gui", "LodThresholdScaleElement.cs"));
         string settings = File.ReadAllText(Path.Combine(
             src, "Gui", "VintageHorizonsSettingsIntegration.cs"));
+        string renderer = File.ReadAllText(Path.Combine(src, "Render", "LodTerrainRenderer.cs"));
 
         c.True(mod.Contains("ChatCommands.Create(\"vhconfig\")", StringComparison.Ordinal),
             "the player-facing config command remains registered");
         c.True(dialog.Contains("new LodThresholdScaleElement", StringComparison.Ordinal),
             "the config window uses one shared multi-marker LOD scale");
-        c.True(scale.Contains("BandColors", StringComparison.Ordinal)
-            && scale.Contains("LodThresholdScaleLayout.Band(values, level)", StringComparison.Ordinal)
+        c.True(scale.Contains("LevelColors", StringComparison.Ordinal)
+            && scale.Contains("LodThresholdScaleLayout.VisibleBand(", StringComparison.Ordinal)
             && scale.Contains("$\"L{i}\"", StringComparison.Ordinal),
             "the distance map shades and labels all seven LOD bands");
         c.True(scale.Contains("vanillaViewDistance", StringComparison.Ordinal)
-            && scale.Contains("Vanilla {this.vanillaViewDistance:N0}", StringComparison.Ordinal)
-            && mod.Contains("capi.Settings.Int[\"viewDistance\"]", StringComparison.Ordinal),
-            "the scale marks and labels the current vanilla render distance");
+            && scale.Contains("Vanilla {vanillaViewDistance:N0}", StringComparison.Ordinal)
+            && mod.Contains("ClientSettings.ViewDistance = value;", StringComparison.Ordinal)
+            && mod.Contains("GraphicsPreset.Custom.PresetId", StringComparison.Ordinal),
+            "the scale adjusts the real vanilla render distance and marks its preset Custom");
+        c.True(scale.Contains("if (vanillaChanged) onVanillaChanged(vanillaViewDistance);",
+                StringComparison.Ordinal),
+            "the vanilla setting commits once on mouse-up, like the game's own slider");
 
         c.Near(0, LodThresholdScaleLayout.FractionFor(
             LodThresholdScaleLayout.MinScaleDistance), 1e-6,
@@ -2484,6 +2489,27 @@ public static class StaticAssetChecks
             previousEnd = end;
         }
         c.Near(1, previousEnd, 1e-6, "the LOD bands cover the entire distance map");
+        (float l0Start, float l0End) = LodThresholdScaleLayout.VisibleBand(
+            mapThresholds, 0, 128);
+        c.Near(LodThresholdScaleLayout.FractionFor(128), l0Start, 1e-6,
+            "the visible L0 band starts at the vanilla edge");
+        c.Near(LodThresholdScaleLayout.FractionFor(256), l0End, 1e-6,
+            "and still ends at the L1 marker");
+        (float hiddenStart, float hiddenEnd) = LodThresholdScaleLayout.VisibleBand(
+            mapThresholds, 0, 512);
+        c.Near(hiddenStart, hiddenEnd, 1e-6,
+            "L0 is empty rather than overlapping vanilla when its threshold falls inside it");
+        c.Eq(32, LodThresholdScaleLayout.MinVanillaDistance,
+            "the mirrored vanilla slider starts at 32 blocks");
+        c.Eq(1536, LodThresholdScaleLayout.MaxVanillaDistance,
+            "and stops at the game's 1,536-block maximum");
+        c.Eq(32, LodThresholdScaleLayout.VanillaDistanceStep,
+            "with the same 32-block increment as the Graphics page");
+        c.Eq(192, LodThresholdScaleLayout.SnapVanillaDistance(201),
+            "a dragged vanilla marker snaps to that increment");
+        c.True(scale.Contains("LevelColors[i + 1].Border", StringComparison.Ordinal)
+                && scale.Contains("LevelColors[level].Fill", StringComparison.Ordinal),
+            "each L1-L6 handle border uses the exact palette entry of the region to its right");
         c.True(dialog.Contains("AddButton(\"Defaults\"", StringComparison.Ordinal)
             && dialog.Contains("AddButton(\"Save\"", StringComparison.Ordinal)
             && dialog.Contains("AddButton(\"Cancel\"", StringComparison.Ordinal),
@@ -2612,6 +2638,22 @@ public static class StaticAssetChecks
         c.True(settings.Contains("BeforeLeavingSettings", StringComparison.Ordinal)
             && settings.Contains("oldEditor?.CloseEmbedded();", StringComparison.Ordinal),
             "leaving Settings cancels an unsaved live anti-aliasing preview");
+        c.True(settings.Contains("const double HorizonsButtonWidth = 116", StringComparison.Ordinal),
+            "the full Horizons label fits its vanilla Settings header button");
+        c.True(VintageHorizonsConfigLayout.EmbeddedTabsY >= 80
+                && VintageHorizonsConfigLayout.EmbeddedTabsY + 28
+                    < VintageHorizonsConfigLayout.EmbeddedContentY + 42,
+            "the editor tabs sit below vanilla's header and above their page title");
+
+        c.True(dialog.Contains("\"load-while-paused\"", StringComparison.Ordinal)
+                && mod.Contains("public bool LoadWhilePaused = true;", StringComparison.Ordinal)
+                && mod.Contains("renderer.ContinueLoadingWhilePaused = loadWhilePaused;",
+                    StringComparison.Ordinal),
+            "the General page saves and applies its load-while-paused switch");
+        c.True(mod.Contains("PumpLodWork(PausedLodLoadingPolicy.IntervalMilliseconds / 1000f);",
+                    StringComparison.Ordinal)
+                && renderer.Contains("PausedLoadingPump?.Invoke();", StringComparison.Ordinal),
+            "paused render frames feed the same bounded owner-thread work at the normal cadence");
 
         // Far biome colour is the far half of ONE shader threshold, so it cannot be on with
         // the near half off. Both directions of that are enforced where the switch is written,

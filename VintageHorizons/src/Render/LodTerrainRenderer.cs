@@ -1701,6 +1701,15 @@ public partial class LodTerrainRenderer : IRenderer
     /// <summary>Dev/testing: keep the game unpaused even without window focus.</summary>
     public bool AutoUnpause;
 
+    /// <summary>Saved player choice: keep the bounded LOD work source moving behind pause UI.</summary>
+    public bool ContinueLoadingWhilePaused { get; set; } = true;
+
+    /// <summary>
+    /// Supplied by the owning mod system. Called only on the render/main thread while paused;
+    /// that owner rate-limits it to the normal game-tick cadence.
+    /// </summary>
+    public Action? PausedLoadingPump { get; set; }
+
     // Live seasonal state, refreshed incrementally and fed to the shader as uniforms.
     const long SeasonalRefreshIntervalMs = 30_000;
     const long SnowObservationRefreshDebounceMs = 1_000;
@@ -5556,6 +5565,7 @@ public partial class LodTerrainRenderer : IRenderer
         waterFrame.Invalidate();
         drawList.Clear();
         if (AutoUnpause && capi.IsGamePaused) capi.PauseGame(false);
+        if (ContinueLoadingWhilePaused && capi.IsGamePaused) PausedLoadingPump?.Invoke();
 
         var rapi = capi.Render;
         if (rapi.FrameWidth == 0) return;

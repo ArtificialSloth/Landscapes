@@ -2,6 +2,8 @@ using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
+using Vintagestory.Client;
+using Vintagestory.Client.NoObf;
 using VintageHorizons.Net;
 using VintageHorizons.Render;
 
@@ -145,6 +147,13 @@ public class VintageHorizonsConfig
     /// </summary>
     public bool AutoLodThresholds = true;
 
+    /// <summary>
+    /// Continue the existing bounded cache and mesh publication work while singleplayer is
+    /// paused. Rendering already continues behind that menu; this keeps its terrain source fed
+    /// without unpausing simulation. Missing keys in older config files therefore load as on.
+    /// </summary>
+    public bool LoadWhilePaused = true;
+
     /// <summary>The on-screen column width, in pixels, automatic thresholds hand each level over at.</summary>
     public float LodTargetPixels = LodAutoThresholds.DefaultTargetPixels;
 
@@ -165,6 +174,15 @@ public class VintageHorizonsConfig
     public float TaaNudge = LodTaaMath.DefaultNudge;
     public float TaaSharpen = LodTaaMath.DefaultSharpen;
     public float TaaClip = LodTaaMath.DefaultClip;
+}
+
+/// <summary>The normal 50 ms game-tick cadence, expressed over a pause-safe monotonic clock.</summary>
+internal static class PausedLodLoadingPolicy
+{
+    internal const long IntervalMilliseconds = 50;
+
+    internal static bool IsDue(long now, long previous) =>
+        previous == long.MinValue || now < previous || now - previous >= IntervalMilliseconds;
 }
 
 /// <summary>
@@ -192,6 +210,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// </summary>
     LodBlockTextureRegistry blockTextures = null!;
     long tickListenerId;
+    long lastLodWorkMs = long.MinValue;
 
     readonly BlockPos paletteSamplePos = new(0, 0, 0);
 
@@ -331,6 +350,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             DepthPyramidEnabled =
                 Environment.GetEnvironmentVariable("VINTAGEHORIZONS_DEPTH_PYRAMID") != "0",
         };
+        renderer.ContinueLoadingWhilePaused = config.LoadWhilePaused;
+        renderer.PausedLoadingPump = PumpPausedLoading;
 
         // Install only after the competing-LOD return above. The adapter changes no
         // atmosphere, client setting, culling or streaming state: it moves only vanilla
@@ -509,6 +530,25 @@ public partial class VintageHorizonsModSystem : ModSystem
     }
 
     void OnGameTick(float dt)
+    {
+        lastLodWorkMs = Environment.TickCount64;
+        PumpLodWork(dt);
+    }
+
+    /// <summary>
+    /// Render stages still run behind the pause menu, while ordinary game ticks do not. Drain
+    /// exactly the same bounded owner-thread work at its usual cadence; no simulation tick is
+    /// synthesized and no second thread is introduced.
+    /// </summary>
+    void PumpPausedLoading()
+    {
+        long now = Environment.TickCount64;
+        if (!PausedLodLoadingPolicy.IsDue(now, lastLodWorkMs)) return;
+        lastLodWorkMs = now;
+        PumpLodWork(PausedLodLoadingPolicy.IntervalMilliseconds / 1000f);
+    }
+
+    void PumpLodWork(float dt)
     {
         if (!pipeline.Active) return;
 
@@ -2367,16 +2407,35 @@ public partial class VintageHorizonsModSystem : ModSystem
             deferringTo == null && renderer.TaaShowWeight,
             PreviewTaaTuning,
             () => deferringTo == null ? renderer.ScreenBlockScale : 0f);
-        int vanillaViewDistance = Math.Max(1, capi.Settings.Int["viewDistance"]);
+        var vanilla = new VanillaDistanceTuning(
+            Math.Max(1, ClientSettings.ViewDistance), ApplyVanillaViewDistance);
+        bool loadWhilePaused = deferringTo == null
+            ? renderer.ContinueLoadingWhilePaused
+            : config.LoadWhilePaused;
 
         return requestRecompose != null && requestClose != null
             ? new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
-                vanillaViewDistance, CurrentVisualSettings(), taaTuning,
+                loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning,
                 requestRecompose, requestClose, ApplyGuiConfig)
             : new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
-                vanillaViewDistance, CurrentVisualSettings(), taaTuning, ApplyGuiConfig);
+                loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, ApplyGuiConfig);
+    }
+
+    /// <summary>
+    /// Mirror the vanilla Graphics slider's exact setting and Custom-preset side effect. Its own
+    /// control commits only on mouse-up too; returning a new automatic sequence keeps the map in
+    /// step with the new vanilla edge immediately.
+    /// </summary>
+    int[] ApplyVanillaViewDistance(int blocks)
+    {
+        int value = LodThresholdScaleLayout.SnapVanillaDistance(blocks);
+        ClientSettings.ViewDistance = value;
+        ClientSettings.GraphicsPresetId = GraphicsPreset.Custom.PresetId;
+        return deferringTo == null
+            ? renderer.PreviewAutoThresholds()
+            : LodWorld.NormalizeLevelThresholds(config.LodThresholds, config.DetailDistance);
     }
 
     void RegisterCommands()
@@ -4334,7 +4393,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             System.Globalization.CultureInfo.CurrentCulture, out value);
 
     void ApplyGuiConfig(int[] thresholds, bool autoThresholds, int farViewDistanceCap,
-        LodVisualSettings visuals, LodTaaDials taaDials)
+        bool loadWhilePaused, LodVisualSettings visuals, LodTaaDials taaDials)
     {
         // The fixed list is the player's own and is kept whichever mode is chosen; automatic mode
         // only stops it being the one in force.
@@ -4343,12 +4402,14 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.DetailDistance = normalized[0];
         config.AutoLodThresholds = autoThresholds;
         config.FarViewDistanceCap = farViewDistanceCap;
+        config.LoadWhilePaused = loadWhilePaused;
 
         if (deferringTo == null)
         {
             renderer.AutoLodThresholds = autoThresholds;
             if (!autoThresholds) LodWorld.SetLevelThresholds(normalized);
             renderer.FarViewDistanceCap = farViewDistanceCap;
+            renderer.ContinueLoadingWhilePaused = loadWhilePaused;
             ApplyVisualSettings(visuals);
             renderer.TaaDials = taaDials;
         }
@@ -4501,6 +4562,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 config.LodThresholds = LodWorld.GetLevelThresholds();
             }
             config.AutoLodThresholds = renderer.AutoLodThresholds;
+            config.LoadWhilePaused = renderer.ContinueLoadingWhilePaused;
             config.LodTargetPixels = renderer.LodTargetPixels;
             config.TaaReachPixels = renderer.TaaReachPixels;
             config.TaaBlend = renderer.TaaFeedback;

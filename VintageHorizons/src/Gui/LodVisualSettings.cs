@@ -31,7 +31,7 @@ internal readonly record struct LodVisualSettings(
     ///
     /// Everything except the FAR half of the biome colour, which is off because it is the most
     /// expensive single thing here and the whole point of the 0.3.195 work was to stop paying
-    /// for it by default. Quality turns it on.
+    /// for it by default. Quality keeps that deliberate exception too.
     /// </summary>
     public static LodVisualSettings Default => new(
         BlendPipeline: true,
@@ -107,11 +107,8 @@ internal readonly record struct LodVisualSettings(
         WaterEffects: true,
         DistantAntiAliasing: true);
 
-    /// <summary>Everything, including biome colour at every level. The most the mod draws.</summary>
-    public static LodVisualSettings Quality => Default with
-    {
-        ClimateTintRange = FullClimateTintRange,
-    };
+    /// <summary>Every default visual feature, while keeping costly far biome colour off.</summary>
+    public static LodVisualSettings Quality => Default;
 
     /// <summary>
     /// Which named preset this matches, or null for a hand-made combination. Used only to

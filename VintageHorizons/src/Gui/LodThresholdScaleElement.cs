@@ -12,6 +12,9 @@ namespace VintageHorizons;
 internal static class LodThresholdScaleLayout
 {
     internal const int MinScaleDistance = 32;
+    internal const int MinVanillaDistance = 32;
+    internal const int MaxVanillaDistance = 1536;
+    internal const int VanillaDistanceStep = 32;
 
     internal static float FractionFor(double value)
     {
@@ -30,59 +33,85 @@ internal static class LodThresholdScaleLayout
         float end = level == LodWorld.MaxLevel ? 1f : FractionFor(thresholds[level]);
         return (start, end);
     }
+
+    /// <summary>
+    /// The picture gives vanilla exclusive ownership of everything up to its marker. L0 begins
+    /// at that edge, even though the real renderer may overlap the two briefly for its seam.
+    /// Empty spans are kept empty when a hand-made LOD threshold falls inside vanilla's range.
+    /// </summary>
+    internal static (float Start, float End) VisibleBand(
+        IReadOnlyList<int> thresholds, int level, int vanillaViewDistance)
+    {
+        (float start, float end) = Band(thresholds, level);
+        float vanillaEnd = FractionFor(vanillaViewDistance);
+        return (Math.Max(start, vanillaEnd), Math.Max(end, vanillaEnd));
+    }
+
+    internal static int SnapVanillaDistance(double value)
+    {
+        int snapped = (int)Math.Round(value / VanillaDistanceStep) * VanillaDistanceStep;
+        return Math.Clamp(snapped, MinVanillaDistance, MaxVanillaDistance);
+    }
 }
 
 /// <summary>
 /// One logarithmic distance map with six draggable LOD boundaries. The coloured spans answer the
 /// question the old bare line did not: which LOD is used between any two markers. A separate white
-/// marker shows the player's configured vanilla render distance on the same scale.
+/// handle adjusts the player's vanilla render distance on the same scale.
 /// </summary>
 internal sealed class LodThresholdScaleElement : GuiElementControl
 {
-    // L0 through L6. Labels carry the meaning too; colour is never the only distinction.
-    static readonly Vec4f[] BandColors =
+    readonly record struct LevelColor(byte R, byte G, byte B)
     {
-        new(0.24f, 0.61f, 0.82f, 0.30f),
-        new(0.31f, 0.76f, 0.69f, 0.30f),
-        new(0.53f, 0.78f, 0.40f, 0.30f),
-        new(0.88f, 0.74f, 0.29f, 0.30f),
-        new(0.93f, 0.53f, 0.25f, 0.30f),
-        new(0.75f, 0.39f, 0.82f, 0.30f),
-        new(0.88f, 0.32f, 0.47f, 0.30f),
-    };
+        internal Vec4f Fill => new(R / 255f, G / 255f, B / 255f, 0.30f);
+        internal int Border => ColorUtil.ToRgba(255, R, G, B);
+    }
 
-    static readonly int[] MarkerColors =
+    // L0 through L6. A boundary's box takes the colour of the region to its right: the L1
+    // marker is therefore exactly the L1 colour, rather than the old one-place-shifted palette.
+    static readonly LevelColor[] LevelColors =
     {
-        ColorUtil.ToRgba(255, 104, 190, 255),
-        ColorUtil.ToRgba(255, 108, 230, 170),
-        ColorUtil.ToRgba(255, 190, 225, 95),
-        ColorUtil.ToRgba(255, 245, 190, 75),
-        ColorUtil.ToRgba(255, 245, 135, 75),
-        ColorUtil.ToRgba(255, 220, 105, 145),
+        new(61, 156, 209),
+        new(79, 194, 176),
+        new(135, 199, 102),
+        new(224, 189, 74),
+        new(237, 135, 64),
+        new(191, 99, 209),
+        new(224, 82, 120),
     };
 
     readonly Action<int, int> onChanged;
-    readonly int vanillaViewDistance;
+    readonly Action<int> onVanillaChanged;
     readonly int[] values = new int[LodWorld.MaxLevel];
     readonly LoadedTexture[] markerLabels = new LoadedTexture[LodWorld.MaxLevel];
     readonly LoadedTexture[] bandLabels = new LoadedTexture[LodWorld.MaxLevel + 1];
-    readonly LoadedTexture vanillaLabel;
+    readonly LoadedTexture vanillaBandLabel;
+    LoadedTexture vanillaLabel;
     LoadedTexture solidTexture;
-    int dragging = -1;
+    int vanillaViewDistance;
+    int vanillaAtDragStart;
+    int dragging = NoMarker;
+
+    const int NoMarker = -1;
+    const int VanillaMarker = LodWorld.MaxLevel;
 
     public override bool Focusable => true;
 
     /// <summary>
-    /// Shows the boundaries without letting them move. While automatic thresholds are on the
-    /// values come from the screen, and a drag would be overwritten on the next frame.
+    /// Shows the LOD boundaries without letting those six move. The vanilla handle stays live:
+    /// automatic mode owns only the mod's thresholds, not the game's render-distance setting.
     /// </summary>
     public bool ReadOnly { get; set; }
 
     public LodThresholdScaleElement(ICoreClientAPI api, IReadOnlyList<int> initialValues,
-        int vanillaViewDistance, Action<int, int> onChanged, ElementBounds bounds) : base(api, bounds)
+        int vanillaViewDistance, Action<int, int> onChanged, Action<int> onVanillaChanged,
+        ElementBounds bounds) : base(api, bounds)
     {
         this.onChanged = onChanged;
-        this.vanillaViewDistance = Math.Max(1, vanillaViewDistance);
+        this.onVanillaChanged = onVanillaChanged;
+        this.vanillaViewDistance = Math.Clamp(vanillaViewDistance,
+            LodThresholdScaleLayout.MinVanillaDistance,
+            LodThresholdScaleLayout.MaxVanillaDistance);
         SetValues(initialValues);
         MouseOverCursor = "move";
 
@@ -104,9 +133,10 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
                 null!, EnumTextOrientation.Center, true);
         }
 
-        vanillaLabel = api.Gui.TextTexture.GenTextTexture(
-            $"Vanilla {this.vanillaViewDistance:N0}", CairoFont.WhiteDetailText(),
-            scaledi(104), scaledi(18), null!, EnumTextOrientation.Center, true);
+        vanillaBandLabel = api.Gui.TextTexture.GenTextTexture(
+            "Vanilla", CairoFont.WhiteDetailText(), scaledi(54), scaledi(20),
+            null!, EnumTextOrientation.Center, true);
+        vanillaLabel = NewVanillaLabel();
 
         solidTexture = new LoadedTexture(api, 0, 1, 1);
         api.Render.LoadOrUpdateTextureFromRgba(
@@ -122,6 +152,16 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
 
     public int[] GetValues() => (int[])values.Clone();
 
+    public void SetVanillaDistance(int value)
+    {
+        int clamped = Math.Clamp(value, LodThresholdScaleLayout.MinVanillaDistance,
+            LodThresholdScaleLayout.MaxVanillaDistance);
+        if (vanillaViewDistance == clamped) return;
+        vanillaViewDistance = clamped;
+        vanillaLabel.Dispose();
+        vanillaLabel = NewVanillaLabel();
+    }
+
     public override void RenderInteractiveElements(float deltaTime)
     {
         float left = (float)Bounds.renderX + (float)scaled(12);
@@ -130,17 +170,32 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
         float bandHeight = (float)scaled(34);
         const float z = 50;
 
-        // Seven translucent spans turn the axis into a map: L0 before the first boundary,
-        // L1 between the first two, and so on through L6 at the far end.
+        // Vanilla owns a separate neutral span. The coloured L0-L6 spans begin only at its
+        // edge, so the diagram never implies that L0 and vanilla cover the same area.
+        float vanillaEnd = LodThresholdScaleLayout.FractionFor(vanillaViewDistance);
+        float vanillaWidth = Math.Max(1, width * vanillaEnd);
+        api.Render.Render2DTexture(solidTexture.TextureId, left, bandY,
+            vanillaWidth, bandHeight, z, new Vec4f(0.32f, 0.34f, 0.38f, 0.48f));
+        RenderBandBorder(left, bandY, vanillaWidth, bandHeight, z + 0.1f,
+            ColorUtil.ToRgba(180, 205, 210, 218));
+        if (vanillaWidth >= vanillaBandLabel.Width + scaled(6))
+        {
+            api.Render.Render2DLoadedTexture(vanillaBandLabel,
+                left + (vanillaWidth - vanillaBandLabel.Width) / 2f,
+                bandY + (bandHeight - vanillaBandLabel.Height) / 2f, z + 1);
+        }
+
         for (int level = 0; level <= LodWorld.MaxLevel; level++)
         {
-            (float start, float end) = LodThresholdScaleLayout.Band(values, level);
+            (float start, float end) = LodThresholdScaleLayout.VisibleBand(
+                values, level, vanillaViewDistance);
+            if (end <= start) continue;
             float x = left + width * start;
             float segmentWidth = Math.Max(1, width * (end - start));
             api.Render.Render2DTexture(solidTexture.TextureId, x, bandY,
-                segmentWidth, bandHeight, z, BandColors[level]);
-            api.Render.RenderRectangle(x, bandY, z + 0.1f,
-                segmentWidth, bandHeight, ColorUtil.ToRgba(150, 210, 215, 220));
+                segmentWidth, bandHeight, z, LevelColors[level].Fill);
+            RenderBandBorder(x, bandY, segmentWidth, bandHeight, z + 0.1f,
+                ColorUtil.ToRgba(150, 210, 215, 220));
 
             LoadedTexture label = bandLabels[level];
             if (segmentWidth >= label.Width + scaled(6))
@@ -161,36 +216,39 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
                 1, (float)scaled(5), ColorUtil.ToRgba(210, 125, 130, 140));
         }
 
-        // The configured vanilla distance is context, not another editable threshold. White and
-        // slightly heavier makes it legible over every band colour.
+        // Vanilla is a real slider too. Its value follows the handle while dragging, while the
+        // game's setting changes once on mouse-up just like vanilla's own Graphics slider.
         float vanillaX = left + width * LodThresholdScaleLayout.FractionFor(vanillaViewDistance);
         int vanillaColor = ColorUtil.ToRgba(255, 245, 245, 235);
         api.Render.RenderRectangle(vanillaX - 1, bandY - (float)scaled(8), z + 2,
             3, bandHeight + (float)scaled(16), vanillaColor);
         float vanillaLabelX = Math.Clamp(vanillaX - vanillaLabel.Width / 2f,
             left, left + width - vanillaLabel.Width);
-        float vanillaLabelY = bandY - (float)scaled(51);
+        float vanillaLabelY = bandY - (float)scaled(52);
+        api.Render.RenderRectangle(vanillaLabelX - (float)scaled(3), vanillaLabelY,
+            z + 1, vanillaLabel.Width + (float)scaled(6),
+            vanillaLabel.Height + (float)scaled(2), vanillaColor);
         api.Render.Render2DTexture(solidTexture.TextureId,
-            vanillaLabelX - (float)scaled(3), vanillaLabelY,
-            vanillaLabel.Width + (float)scaled(6), vanillaLabel.Height, z + 1,
-            new Vec4f(0.08f, 0.08f, 0.08f, 0.82f));
+            vanillaLabelX - (float)scaled(2), vanillaLabelY + (float)scaled(1),
+            vanillaLabel.Width + (float)scaled(4), vanillaLabel.Height, z + 1.1f,
+            new Vec4f(0.08f, 0.08f, 0.08f, 0.92f));
         api.Render.Render2DLoadedTexture(vanillaLabel, vanillaLabelX, vanillaLabelY, z + 2);
 
         for (int i = 0; i < values.Length; i++)
         {
             float x = left + width * LodThresholdScaleLayout.FractionFor(values[i]);
             bool above = (i & 1) == 0;
-            float handleY = bandY + (above ? -(float)scaled(38) : (float)scaled(46));
+            float handleY = bandY + (above ? -(float)scaled(30) : (float)scaled(46));
             float connectorY = above ? handleY + (float)scaled(24) : bandY + bandHeight;
             float connectorHeight = Math.Abs(bandY - connectorY) + (float)scaled(1);
-            int color = MarkerColors[i];
+            int color = LevelColors[i + 1].Border;
 
             api.Render.RenderRectangle(x, Math.Min(connectorY, bandY), z + 1,
                 1, connectorHeight, color);
             api.Render.RenderRectangle(x - (float)scaled(17), handleY, z + 1,
                 (float)scaled(34), (float)scaled(24), color);
             api.Render.RenderRectangle(x - (float)scaled(16), handleY + (float)scaled(1), z + 1,
-                (float)scaled(32), (float)scaled(22), color);
+                (float)scaled(32), (float)scaled(22), ColorUtil.ToRgba(235, 28, 31, 35));
             api.Render.Render2DLoadedTexture(markerLabels[i],
                 x - markerLabels[i].Width / 2f, handleY, z + 2);
             if (dragging == i)
@@ -203,24 +261,33 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
 
     public override void OnMouseDownOnElement(ICoreClientAPI api, MouseEvent args)
     {
-        if (ReadOnly || args.Button != EnumMouseButton.Left) return;
+        if (args.Button != EnumMouseButton.Left) return;
         dragging = NearestMarker(args.X, args.Y);
+        if (ReadOnly && dragging != VanillaMarker)
+        {
+            dragging = NoMarker;
+            return;
+        }
+        vanillaAtDragStart = vanillaViewDistance;
         UpdateDragging(args.X);
         args.Handled = true;
     }
 
     public override void OnMouseMove(ICoreClientAPI api, MouseEvent args)
     {
-        if (dragging < 0) return;
+        if (dragging == NoMarker) return;
         UpdateDragging(args.X);
         args.Handled = true;
     }
 
     public override void OnMouseUp(ICoreClientAPI api, MouseEvent args)
     {
-        if (dragging < 0) return;
+        if (dragging == NoMarker) return;
         UpdateDragging(args.X);
-        dragging = -1;
+        bool vanillaChanged = dragging == VanillaMarker
+            && vanillaViewDistance != vanillaAtDragStart;
+        dragging = NoMarker;
+        if (vanillaChanged) onVanillaChanged(vanillaViewDistance);
         args.Handled = true;
     }
 
@@ -229,13 +296,20 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
         double left = Bounds.renderX + scaled(12);
         double width = Math.Max(1, Bounds.InnerWidth - scaled(24));
         double bandY = Bounds.renderY + scaled(54);
-        int nearest = 0;
+        int nearest = VanillaMarker;
         double nearestDistance = double.MaxValue;
+
+        double vanillaX = left + width
+            * LodThresholdScaleLayout.FractionFor(vanillaViewDistance);
+        double vanillaY = bandY - scaled(41);
+        double vanillaDx = mouseX - vanillaX;
+        double vanillaDy = mouseY - vanillaY;
+        nearestDistance = vanillaDx * vanillaDx + vanillaDy * vanillaDy;
 
         for (int i = 0; i < values.Length; i++)
         {
             double x = left + width * LodThresholdScaleLayout.FractionFor(values[i]);
-            double y = bandY + (((i & 1) == 0) ? -scaled(26) : scaled(58));
+            double y = bandY + (((i & 1) == 0) ? -scaled(18) : scaled(58));
             double dx = mouseX - x;
             double dy = mouseY - y;
             double distance = dx * dx + dy * dy;
@@ -248,7 +322,7 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
 
     void UpdateDragging(int mouseX)
     {
-        if (dragging < 0) return;
+        if (dragging == NoMarker) return;
 
         double left = Bounds.renderX + scaled(12);
         double width = Math.Max(1, Bounds.InnerWidth - scaled(24));
@@ -256,6 +330,12 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
         double ratio = LodWorld.MaxLevelThreshold
             / (double)LodThresholdScaleLayout.MinScaleDistance;
         double raw = LodThresholdScaleLayout.MinScaleDistance * Math.Pow(ratio, fraction);
+        if (dragging == VanillaMarker)
+        {
+            SetVanillaDistance(LodThresholdScaleLayout.SnapVanillaDistance(raw));
+            return;
+        }
+
         int value = (int)Math.Round(raw / LodWorld.ThresholdStepBlocks)
             * LodWorld.ThresholdStepBlocks;
 
@@ -276,8 +356,21 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
     {
         foreach (LoadedTexture label in markerLabels) label?.Dispose();
         foreach (LoadedTexture label in bandLabels) label?.Dispose();
+        vanillaBandLabel.Dispose();
         vanillaLabel.Dispose();
         solidTexture?.Dispose();
         base.Dispose();
+    }
+
+    LoadedTexture NewVanillaLabel() => api.Gui.TextTexture.GenTextTexture(
+        $"Vanilla {vanillaViewDistance:N0}", CairoFont.WhiteDetailText(),
+        scaledi(112), scaledi(20), null!, EnumTextOrientation.Center, true);
+
+    void RenderBandBorder(float x, float y, float width, float height, float z, int color)
+    {
+        api.Render.RenderRectangle(x, y, z, width, 1, color);
+        api.Render.RenderRectangle(x, y + height - 1, z, width, 1, color);
+        api.Render.RenderRectangle(x, y, z, 1, height, color);
+        api.Render.RenderRectangle(x + width - 1, y, z, 1, height, color);
     }
 }
