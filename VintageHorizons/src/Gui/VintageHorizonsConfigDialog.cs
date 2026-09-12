@@ -12,7 +12,42 @@ internal sealed record TaaTuning(LodTaaDials Initial, bool ShowInitial,
     Action<LodTaaDials, bool> Preview, Func<float> BlockScale);
 
 /// <summary>
-/// Client-only settings window opened by .vhconfig.
+/// One set of coordinates for both the standalone command window and the page embedded in
+/// vanilla Settings. Keeping the row edges here makes clipping a testable rule instead of a
+/// collection of unrelated literals.
+/// </summary>
+internal static class VintageHorizonsConfigLayout
+{
+    internal const double Width = 900;
+    internal const double Height = 740;
+    internal const double Margin = 32;
+    internal const double SwitchX = 824;
+    internal const double ButtonY = Height - 58;
+
+    internal const double ScaleY = 96;
+    internal const double ScaleHeight = 150;
+    internal const double ThresholdLabelsY = 248;
+    internal const double DrawHeadingY = 280;
+    internal const double VisualHeadingY = 362;
+    internal const double VisualRowsY = 400;
+    internal const double VisualRowHeight = 36;
+    internal const int VisualRowCount = 7;
+
+    internal const double DialSliderX = 330;
+    internal const double DialSliderWidth = 400;
+    internal const double DialRowsY = 146;
+    internal const double DialRowHeight = 58;
+    internal const double ShowTaaY = 510;
+
+    internal const double EmbeddedTabsY = 48;
+    // The vanilla header ends at 75. Its selected Horizons tab supplies the outer page context,
+    // secondary strip can share the lower header edge and the content needs only this offset.
+    internal const double EmbeddedContentY = 44;
+    internal const double EmbeddedHeight = Height + EmbeddedContentY;
+}
+
+/// <summary>
+/// Client-only settings editor shared by the in-game Settings page and .vhconfig window.
 ///
 /// <para>
 /// Two tabs. General is how far and how finely cached terrain is drawn, and which of the
@@ -54,19 +89,19 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// </summary>
     const int DefaultDrawDistance = 4096;
 
-    const double Width = 800;
-    const double Height = 740;
-    const double Margin = 30;
-    const double SwitchX = 716;
-    const double RowHeight = 40;
+    const double Width = VintageHorizonsConfigLayout.Width;
+    const double Height = VintageHorizonsConfigLayout.Height;
+    const double Margin = VintageHorizonsConfigLayout.Margin;
+    const double SwitchX = VintageHorizonsConfigLayout.SwitchX;
+    const double RowHeight = VintageHorizonsConfigLayout.VisualRowHeight;
 
     const int GeneralTab = 0;
     const int AntiAliasingTab = 1;
 
     // The anti-aliasing rows: where each slider starts, how wide it is, and the row pitch.
-    const double DialSliderX = 300;
-    const double DialSliderWidth = 330;
-    const double DialRowHeight = 54;
+    const double DialSliderX = VintageHorizonsConfigLayout.DialSliderX;
+    const double DialSliderWidth = VintageHorizonsConfigLayout.DialSliderWidth;
+    const double DialRowHeight = VintageHorizonsConfigLayout.DialRowHeight;
 
     const string AutomaticTip =
         "Chooses L1-L6 from your field of view and render resolution, so every level hands over "
@@ -79,6 +114,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     readonly Action<int[], bool, int, LodVisualSettings, LodTaaDials> save;
     readonly TaaTuning taa;
+    readonly int vanillaViewDistance;
+    readonly bool embedded;
+    readonly Action? requestEmbeddedRecompose;
+    readonly Action? requestEmbeddedClose;
     readonly int[] pendingThresholds;
     readonly int[] automaticThresholds;
     bool pendingAutomatic;
@@ -87,6 +126,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     LodTaaDials pendingTaa;
     bool pendingShowTaa;
     LodThresholdScaleElement? scale;
+    GuiComposer? activeComposer;
+    bool sessionClosed;
+    double contentTop;
 
     /// <summary>Which tab is showing: <see cref="GeneralTab"/> or <see cref="AntiAliasingTab"/>.</summary>
     int shownTab = GeneralTab;
@@ -102,11 +144,40 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// <param name="automaticThresholds">What automatic mode would use right now, for display.</param>
     public VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
-        LodVisualSettings visuals, TaaTuning taa,
+        int vanillaViewDistance, LodVisualSettings visuals, TaaTuning taa,
+        Action<int[], bool, int, LodVisualSettings, LodTaaDials> save)
+        : this(capi, thresholds, automaticThresholds, automatic, farCap,
+            vanillaViewDistance, visuals, taa, false, null, null, save)
+    {
+        ComposeDialog();
+    }
+
+    /// <summary>
+    /// The same stateful editor without its own dialog chrome. The vanilla Settings adapter
+    /// owns the surrounding composer and asks us to fill it, re-compose it, or leave it.
+    /// </summary>
+    internal VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
+        IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
+        int vanillaViewDistance, LodVisualSettings visuals, TaaTuning taa,
+        Action requestRecompose, Action requestClose,
+        Action<int[], bool, int, LodVisualSettings, LodTaaDials> save)
+        : this(capi, thresholds, automaticThresholds, automatic, farCap,
+            vanillaViewDistance, visuals, taa, true, requestRecompose, requestClose, save)
+    {
+    }
+
+    VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
+        IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
+        int vanillaViewDistance, LodVisualSettings visuals, TaaTuning taa, bool embedded,
+        Action? requestRecompose, Action? requestClose,
         Action<int[], bool, int, LodVisualSettings, LodTaaDials> save) : base(capi)
     {
         this.save = save;
         this.taa = taa;
+        this.vanillaViewDistance = Math.Max(1, vanillaViewDistance);
+        this.embedded = embedded;
+        requestEmbeddedRecompose = requestRecompose;
+        requestEmbeddedClose = requestClose;
         pendingThresholds = LodWorld.NormalizeLevelThresholds(
             thresholds, LodWorld.DefaultLevelThresholds[0]);
         this.automaticThresholds = LodWorld.NormalizeLevelThresholds(
@@ -117,7 +188,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         pendingVisuals = visuals;
         pendingTaa = taa.Initial;
         pendingShowTaa = taa.ShowInitial;
-        ComposeDialog();
     }
 
     /// <summary>
@@ -204,6 +274,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void ComposeDialog()
     {
+        if (sessionClosed) return;
         ElementBounds dialogBounds = ElementBounds.Fixed(0, 0, Width, Height)
             .WithAlignment(EnumDialogArea.CenterMiddle);
 
@@ -217,104 +288,153 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             .AddDialogTitleBar("Vintage Horizons", OnTitleClose)
             .BeginChildElements();
 
+        activeComposer = composer;
+        ComposePage(composer, 0);
+
+        // Added after the children, so the strip hangs off the window itself and sits above it.
+        AddTabs(composer.EndChildElements(), ElementBounds.Fixed(12, -28, 420, 28));
+
+        SingleComposer = composer.Compose();
+        activeComposer = SingleComposer;
+        CompleteComposition();
+    }
+
+    /// <summary>Add this editor to the composer made by vanilla's Settings header.</summary>
+    internal void ComposeEmbedded(GuiComposer composer)
+    {
+        if (!embedded || sessionClosed)
+            throw new InvalidOperationException("This Vintage Horizons editor is not active in Settings.");
+
+        activeComposer = composer;
+        AddTabs(composer, ElementBounds.Fixed(Margin,
+            VintageHorizonsConfigLayout.EmbeddedTabsY, 420, 28));
+        ComposePage(composer, VintageHorizonsConfigLayout.EmbeddedContentY);
+    }
+
+    internal void CompleteEmbeddedComposition() => CompleteComposition();
+
+    internal void CloseEmbedded() => CloseSession();
+
+    void ComposePage(GuiComposer composer, double top)
+    {
+        contentTop = top;
         scale = null;
         if (shownTab == AntiAliasingTab) ComposeAntiAliasing(composer);
         else ComposeGeneral(composer);
 
-        double buttonsY = Height - 58;
         composer.AddButton("Defaults", OnDefaults,
-            ElementBounds.Fixed(Margin, buttonsY, 140, 38), EnumButtonStyle.Normal, "defaults");
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY), 140, 38),
+            EnumButtonStyle.Normal, "defaults");
         composer.AddButton("Cancel", OnCancel,
-            ElementBounds.Fixed(Width - Margin - 275, buttonsY, 130, 38),
+            ElementBounds.Fixed(Width - Margin - 275, Y(VintageHorizonsConfigLayout.ButtonY), 130, 38),
             EnumButtonStyle.Normal, "cancel");
         composer.AddButton("Save", OnSave,
-            ElementBounds.Fixed(Width - Margin - 140, buttonsY, 140, 38),
+            ElementBounds.Fixed(Width - Margin - 140, Y(VintageHorizonsConfigLayout.ButtonY), 140, 38),
             EnumButtonStyle.Normal, "save");
+    }
 
-        // Added after the children, so the strip hangs off the window itself and sits above it.
-        composer.EndChildElements().AddHorizontalTabs(
+    void AddTabs(GuiComposer composer, ElementBounds bounds)
+    {
+        composer.AddHorizontalTabs(
             new[]
             {
                 new GuiTab { Name = "General", DataInt = GeneralTab },
                 new GuiTab { Name = "Anti-Aliasing", DataInt = AntiAliasingTab },
             },
-            ElementBounds.Fixed(12, -28, 420, 28), OnTabClicked,
+            bounds, OnTabClicked,
             CairoFont.WhiteSmallText(), CairoFont.WhiteSmallText().WithColor(GuiStyle.ActiveButtonTextColor),
             "tabs");
+    }
 
-        SingleComposer = composer.Compose();
-        SingleComposer.GetHorizontalTabs("tabs").activeElement = shownTab;
+    void CompleteComposition()
+    {
+        if (activeComposer?.Composed != true) return;
+        activeComposer.GetHorizontalTabs("tabs").activeElement = shownTab;
 
         if (shownTab == AntiAliasingTab) SetAntiAliasingValues();
         else SetGeneralValues();
     }
 
+    double Y(double y) => contentTop + y;
+
     void ComposeGeneral(GuiComposer composer)
     {
         composer.AddStaticText("LOD transition distances",
-            CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, 48, 480, 30));
+            CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, Y(42), 480, 30));
         composer.AddStaticText("Automatic", CairoFont.WhiteSmallText(),
-            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 190, 54, 180, 22));
+            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 190, Y(48), 180, 22));
         composer.AddSwitch(OnAutomaticChanged,
-            ElementBounds.Fixed(SwitchX, 48, 32, 32), "auto-thresholds");
+            ElementBounds.Fixed(SwitchX, Y(42), 32, 32), "auto-thresholds");
         // Over the label and the switch alike. GuiElementHoverText handles no mouse-down, so it
         // cannot swallow the click on the switch underneath it.
         composer.AddHoverText(AutomaticTip, CairoFont.WhiteSmallText(), 380,
-            ElementBounds.Fixed(SwitchX - 190, 46, 222, 36), "tip-auto-thresholds");
+            ElementBounds.Fixed(SwitchX - 190, Y(40), 222, 36), "tip-auto-thresholds");
         composer.AddDynamicText(ThresholdHelp(), CairoFont.WhiteSmallText(),
-            ElementBounds.Fixed(Margin, 78, 700, 22), "threshold-help");
+            ElementBounds.Fixed(Margin, Y(72), Width - 2 * Margin, 22), "threshold-help");
 
         scale = new LodThresholdScaleElement(capi, DisplayedThresholds(),
-            OnThresholdChanged, ElementBounds.Fixed(Margin, 100, 700, 104))
+            vanillaViewDistance, OnThresholdChanged,
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ScaleY),
+                Width - 2 * Margin, VintageHorizonsConfigLayout.ScaleHeight))
         {
             ReadOnly = pendingAutomatic,
         };
         composer.AddInteractiveElement(scale, "lod-threshold-scale");
 
-        composer.AddStaticText("256", CairoFont.WhiteSmallText(),
-            ElementBounds.Fixed(Margin + 8, 206, 80, 20));
-        composer.AddStaticText("32,768 blocks", CairoFont.WhiteSmallText(),
-            EnumTextOrientation.Right, ElementBounds.Fixed(630, 206, 100, 20));
-
+        double thresholdWidth = (Width - 2 * Margin) / LodWorld.MaxLevel;
         for (int i = 0; i < LodWorld.MaxLevel; i++)
         {
-            composer.AddDynamicText(ThresholdLabel(i), CairoFont.WhiteSmallText(),
-                ElementBounds.Fixed(Margin + i * 116, 228, 112, 22), $"threshold-{i}");
+            composer.AddDynamicText(ThresholdLabel(i),
+                CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Center),
+                ElementBounds.Fixed(Margin + i * thresholdWidth,
+                    Y(VintageHorizonsConfigLayout.ThresholdLabelsY), thresholdWidth, 22),
+                $"threshold-{i}");
         }
 
         composer.AddStaticText("Cached terrain draw distance", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, 262, 700, 30));
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.DrawHeadingY), 700, 30));
         composer.AddSlider(OnDrawDistanceChanged,
-            ElementBounds.Fixed(Margin, 296, 590, 30), "draw-distance");
-        composer.AddDynamicText(DrawDistanceLabel(), CairoFont.WhiteSmallText(),
-            ElementBounds.Fixed(635, 300, 130, 22), "draw-distance-label");
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.DrawHeadingY + 34), 680, 30),
+            "draw-distance");
+        composer.AddDynamicText(DrawDistanceLabel(),
+            CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Right),
+            ElementBounds.Fixed(Width - Margin - 120,
+                Y(VintageHorizonsConfigLayout.DrawHeadingY + 38), 120, 22),
+            "draw-distance-label");
 
         composer.AddStaticText("Visual features", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, 344, 190, 30));
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.VisualHeadingY), 230, 30));
+        composer.AddStaticText("Preset", CairoFont.WhiteDetailText(),
+            EnumTextOrientation.Right,
+            ElementBounds.Fixed(250, Y(VintageHorizonsConfigLayout.VisualHeadingY + 8), 80, 22));
         composer.AddDropDown(PresetCodes, PresetNames, PresetIndex(), OnPresetSelected,
-            ElementBounds.Fixed(Margin + 190, 342, 224, 32), "preset");
+            ElementBounds.Fixed(342, Y(VintageHorizonsConfigLayout.VisualHeadingY - 2), 224, 32),
+            "preset");
 
         // The cost words are a column, so they get a column heading. It sits over the same box
         // the words themselves use and shares their right edge, because a right-aligned word
         // under a left-aligned heading does not read as one column.
         composer.AddStaticText("Cost", CairoFont.WhiteDetailText(),
-            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 110, 358, 100, 22));
+            EnumTextOrientation.Right,
+            ElementBounds.Fixed(SwitchX - 110,
+                Y(VintageHorizonsConfigLayout.VisualHeadingY + 10), 100, 22));
 
-        double y = 386;
+        double y = VintageHorizonsConfigLayout.VisualRowsY;
         foreach (VisualRow row in Rows)
         {
-            composer.AddStaticText(row.Title, CairoFont.WhiteMediumText(),
-                ElementBounds.Fixed(Margin, y + 2, 560, 30));
+            composer.AddStaticText(row.Title, CairoFont.WhiteSmallishText(),
+                ElementBounds.Fixed(Margin, Y(y + 5), 650, 26));
             composer.AddStaticText(row.Cost, CairoFont.WhiteDetailText(),
-                EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 110, y + 8, 100, 22));
+                EnumTextOrientation.Right,
+                ElementBounds.Fixed(SwitchX - 110, Y(y + 8), 100, 22));
             composer.AddSwitch(on => OnVisualChanged(row, on),
-                ElementBounds.Fixed(SwitchX, y, 32, 32), row.Key);
+                ElementBounds.Fixed(SwitchX, Y(y), 32, 32), row.Key);
 
             // One hover region over the whole row, so the tip appears from the title, the cost
             // word or the switch alike. GuiElementHoverText handles no mouse-down, so this
             // cannot swallow the click that lands on the switch underneath it.
             composer.AddHoverText(row.Tip, CairoFont.WhiteSmallText(), 380,
-                ElementBounds.Fixed(Margin, y, SwitchX + 32 - Margin, RowHeight - 2),
+                ElementBounds.Fixed(Margin, Y(y), SwitchX + 32 - Margin, RowHeight - 2),
                 $"tip-{row.Key}");
             y += RowHeight;
         }
@@ -322,61 +442,67 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void SetGeneralValues()
     {
-        GuiElementSlider drawSlider = SingleComposer.GetSlider("draw-distance");
+        if (activeComposer?.Composed != true) return;
+        GuiElementSlider drawSlider = activeComposer.GetSlider("draw-distance");
         drawSlider.SetValues(pendingFarCap, MinDrawDistance, MaxDrawDistance, DrawDistanceStep,
             " blocks");
         drawSlider.ShowTextWhenResting = false;
-        SingleComposer.GetSwitch("auto-thresholds").On = pendingAutomatic;
+        activeComposer.GetSwitch("auto-thresholds").On = pendingAutomatic;
         foreach (VisualRow row in Rows)
         {
-            SingleComposer.GetSwitch(row.Key).On = row.Read(pendingVisuals);
+            activeComposer.GetSwitch(row.Key).On = row.Read(pendingVisuals);
         }
     }
 
     void ComposeAntiAliasing(GuiComposer composer)
     {
         composer.AddStaticText("Distant anti-aliasing", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, 48, 480, 30));
+            ElementBounds.Fixed(Margin, Y(42), 480, 30));
         composer.AddStaticText(
             "Changes show at once. Save keeps them, Cancel puts them back, Defaults resets this tab.",
-            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, 80, 740, 22));
+            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(74), Width - 2 * Margin, 22));
         composer.AddDynamicText(ReachHelp(), CairoFont.WhiteSmallText(),
-            ElementBounds.Fixed(Margin, 104, 740, 22), "taa-reach-help");
+            ElementBounds.Fixed(Margin, Y(100), Width - 2 * Margin, 22), "taa-reach-help");
 
-        double y = 146;
+        double y = VintageHorizonsConfigLayout.DialRowsY;
         foreach (LodTaaSliders.Row row in LodTaaSliders.All)
         {
-            composer.AddStaticText(row.Title, CairoFont.WhiteMediumText(),
-                ElementBounds.Fixed(Margin, y, DialSliderX - Margin - 10, 30));
+            composer.AddStaticText(row.Title, CairoFont.WhiteSmallishText(),
+                ElementBounds.Fixed(Margin, Y(y + 3), DialSliderX - Margin - 12, 26));
             // Over the title only. A slider is dragged by mouse moves, and a tip region lying over
             // it could be the element that gets them.
             composer.AddHoverText(row.Tip, CairoFont.WhiteSmallText(), 380,
-                ElementBounds.Fixed(Margin, y - 2, DialSliderX - Margin - 10, 34), $"tip-{row.Key}");
+                ElementBounds.Fixed(Margin, Y(y - 2), DialSliderX - Margin - 12, 34),
+                $"tip-{row.Key}");
             composer.AddSlider(value => OnDialChanged(row, value),
-                ElementBounds.Fixed(DialSliderX, y, DialSliderWidth, 30), row.Key);
+                ElementBounds.Fixed(DialSliderX, Y(y), DialSliderWidth, 30), row.Key);
             composer.AddDynamicText(row.Label(row.Read(pendingTaa)), CairoFont.WhiteSmallText(),
-                ElementBounds.Fixed(DialSliderX + DialSliderWidth + 15, y + 4, 110, 22),
+                ElementBounds.Fixed(DialSliderX + DialSliderWidth + 15, Y(y + 4), 110, 22),
                 $"{row.Key}-label");
             y += DialRowHeight;
         }
 
         composer.AddStaticText("Show Anti-Aliased Area", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, y + 2, 560, 30));
-        composer.AddSwitch(OnShowChanged, ElementBounds.Fixed(SwitchX, y, 32, 32), "taa-show");
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ShowTaaY + 2), 650, 30));
+        composer.AddSwitch(OnShowChanged,
+            ElementBounds.Fixed(SwitchX, Y(VintageHorizonsConfigLayout.ShowTaaY), 32, 32),
+            "taa-show");
         composer.AddHoverText(ShowTip, CairoFont.WhiteSmallText(), 380,
-            ElementBounds.Fixed(Margin, y, SwitchX + 32 - Margin, RowHeight - 2), "tip-taa-show");
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ShowTaaY),
+                SwitchX + 32 - Margin, RowHeight - 2), "tip-taa-show");
     }
 
     void SetAntiAliasingValues()
     {
+        if (activeComposer?.Composed != true) return;
         foreach (LodTaaSliders.Row row in LodTaaSliders.All)
         {
-            GuiElementSlider slider = SingleComposer.GetSlider(row.Key);
+            GuiElementSlider slider = activeComposer.GetSlider(row.Key);
             slider.SetValues(row.ToSlider(row.Read(pendingTaa)), row.Min, row.Max, row.Step);
             slider.ShowTextWhenResting = false;
             slider.OnSliderTooltip = value => row.Label(row.FromSlider(value));
         }
-        SingleComposer.GetSwitch("taa-show").On = pendingShowTaa;
+        activeComposer.GetSwitch("taa-show").On = pendingShowTaa;
     }
 
     void OnTabClicked(int tab)
@@ -387,7 +513,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         // the re-compose disposes that composer.
         capi.Event.EnqueueMainThreadTask(() =>
         {
-            if (IsOpened()) ComposeDialog();
+            if (sessionClosed) return;
+            if (embedded) requestEmbeddedRecompose?.Invoke();
+            else if (IsOpened()) ComposeDialog();
         }, "vintagehorizons-config-tab");
     }
 
@@ -395,11 +523,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         pendingTaa = row.Write(pendingTaa, row.FromSlider(value));
         taa.Preview(pendingTaa, pendingShowTaa);
-        if (SingleComposer?.Composed == true && shownTab == AntiAliasingTab)
+        if (activeComposer?.Composed == true && shownTab == AntiAliasingTab)
         {
-            SingleComposer.GetDynamicText($"{row.Key}-label")
+            activeComposer.GetDynamicText($"{row.Key}-label")
                 .SetNewText(row.Label(row.Read(pendingTaa)), false, true, false);
-            SingleComposer.GetDynamicText("taa-reach-help")
+            activeComposer.GetDynamicText("taa-reach-help")
                 .SetNewText(ReachHelp(), false, true, false);
         }
         return true;
@@ -414,14 +542,14 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// <summary>Every slider and label on the Anti-Aliasing tab rewritten from the pending dials.</summary>
     void RefreshDials()
     {
-        if (SingleComposer?.Composed != true || shownTab != AntiAliasingTab) return;
+        if (activeComposer?.Composed != true || shownTab != AntiAliasingTab) return;
         foreach (LodTaaSliders.Row row in LodTaaSliders.All)
         {
-            SingleComposer.GetSlider(row.Key).SetValue(row.ToSlider(row.Read(pendingTaa)));
-            SingleComposer.GetDynamicText($"{row.Key}-label")
+            activeComposer.GetSlider(row.Key).SetValue(row.ToSlider(row.Read(pendingTaa)));
+            activeComposer.GetDynamicText($"{row.Key}-label")
                 .SetNewText(row.Label(row.Read(pendingTaa)), false, true, false);
         }
-        SingleComposer.GetDynamicText("taa-reach-help")
+        activeComposer.GetDynamicText("taa-reach-help")
             .SetNewText(ReachHelp(), false, true, false);
     }
 
@@ -473,22 +601,24 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void RefreshVisuals()
     {
-        if (SingleComposer?.Composed != true || shownTab != GeneralTab) return;
+        if (activeComposer?.Composed != true || shownTab != GeneralTab) return;
         foreach (VisualRow other in Rows)
         {
-            GuiElementSwitch element = SingleComposer.GetSwitch(other.Key);
+            GuiElementSwitch element = activeComposer.GetSwitch(other.Key);
             bool wanted = other.Read(pendingVisuals);
             if (element.On != wanted) element.On = wanted;
         }
-        SingleComposer.GetDropDown("preset").SetSelectedIndex(PresetIndex());
+        activeComposer.GetDropDown("preset").SetSelectedIndex(PresetIndex());
     }
 
     /// <summary>What the scale shows: automatic's live values, or the player's own.</summary>
     int[] DisplayedThresholds() => pendingAutomatic ? automaticThresholds : pendingThresholds;
 
     string ThresholdHelp() => pendingAutomatic
-        ? "Automatic: set from your field of view and resolution. Switch it off to drag L1-L6."
-        : "Drag L1-L6 on one logarithmic scale. Markers stop at their neighbours.";
+        ? $"Automatic from FOV and resolution. Bands show L0-L6; white is vanilla "
+            + $"({FormatBlocks(vanillaViewDistance)} blocks)."
+        : $"Drag L1-L6; bands show what draws between them. White is vanilla "
+            + $"({FormatBlocks(vanillaViewDistance)} blocks).";
 
     void OnAutomaticChanged(bool on)
     {
@@ -498,7 +628,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void RefreshThresholds()
     {
-        if (SingleComposer?.Composed != true || shownTab != GeneralTab) return;
+        if (activeComposer?.Composed != true || shownTab != GeneralTab) return;
         if (scale != null)
         {
             scale.ReadOnly = pendingAutomatic;
@@ -506,12 +636,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         }
         for (int i = 0; i < pendingThresholds.Length; i++)
         {
-            SingleComposer.GetDynamicText($"threshold-{i}")
+            activeComposer.GetDynamicText($"threshold-{i}")
                 .SetNewText(ThresholdLabel(i), false, true, false);
         }
-        SingleComposer.GetDynamicText("threshold-help")
+        activeComposer.GetDynamicText("threshold-help")
             .SetNewText(ThresholdHelp(), false, true, false);
-        GuiElementSwitch automatic = SingleComposer.GetSwitch("auto-thresholds");
+        GuiElementSwitch automatic = activeComposer.GetSwitch("auto-thresholds");
         if (automatic.On != pendingAutomatic) automatic.On = pendingAutomatic;
     }
 
@@ -520,9 +650,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         // The scale is read-only while automatic is on, so a drag can only be the player's own.
         if (pendingAutomatic) return;
         pendingThresholds[index] = value;
-        if (SingleComposer?.Composed == true && shownTab == GeneralTab)
+        if (activeComposer?.Composed == true && shownTab == GeneralTab)
         {
-            SingleComposer.GetDynamicText($"threshold-{index}")
+            activeComposer.GetDynamicText($"threshold-{index}")
                 .SetNewText(ThresholdLabel(index), false, true, false);
         }
     }
@@ -530,9 +660,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     bool OnDrawDistanceChanged(int blocks)
     {
         pendingFarCap = Math.Clamp(blocks, MinDrawDistance, MaxDrawDistance);
-        if (SingleComposer?.Composed == true && shownTab == GeneralTab)
+        if (activeComposer?.Composed == true && shownTab == GeneralTab)
         {
-            SingleComposer.GetDynamicText("draw-distance-label")
+            activeComposer.GetDynamicText("draw-distance-label")
                 .SetNewText(DrawDistanceLabel(), false, true, false);
         }
         return true;
@@ -559,9 +689,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         pendingVisuals = LodVisualSettings.Default;
 
         RefreshThresholds();
-        SingleComposer.GetSlider("draw-distance").SetValues(
+        if (activeComposer?.Composed != true) return true;
+        activeComposer.GetSlider("draw-distance").SetValues(
             pendingFarCap, MinDrawDistance, MaxDrawDistance, DrawDistanceStep, " blocks");
-        SingleComposer.GetDynamicText("draw-distance-label")
+        activeComposer.GetDynamicText("draw-distance-label")
             .SetNewText(DrawDistanceLabel(), false, true, false);
         RefreshVisuals();
         return true;
@@ -569,15 +700,33 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     bool OnSave()
     {
+        if (sessionClosed) return true;
         saved = true;
         save(pendingThresholds, pendingAutomatic, pendingFarCap, pendingVisuals, pendingTaa);
-        TryClose();
+        if (embedded)
+        {
+            sessionClosed = true;
+            activeComposer = null;
+            requestEmbeddedClose?.Invoke();
+        }
+        else
+        {
+            TryClose();
+        }
         return true;
     }
 
     bool OnCancel()
     {
-        TryClose();
+        if (embedded)
+        {
+            CloseSession();
+            requestEmbeddedClose?.Invoke();
+        }
+        else
+        {
+            TryClose();
+        }
         return true;
     }
 
@@ -590,8 +739,22 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// </summary>
     public override void OnGuiClosed()
     {
-        if (!saved) taa.Preview(taa.Initial, taa.ShowInitial);
+        CloseSession();
         base.OnGuiClosed();
+    }
+
+    public override void Dispose()
+    {
+        CloseSession();
+        base.Dispose();
+    }
+
+    void CloseSession()
+    {
+        if (sessionClosed) return;
+        sessionClosed = true;
+        activeComposer = null;
+        if (!saved) taa.Preview(taa.Initial, taa.ShowInitial);
     }
 
     string ThresholdLabel(int index) =>

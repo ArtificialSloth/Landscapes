@@ -2453,11 +2453,37 @@ public static class StaticAssetChecks
         string mod = File.ReadAllText(Path.Combine(src, "VintageHorizonsModSystem.cs"));
         string dialog = File.ReadAllText(Path.Combine(src, "Gui", "VintageHorizonsConfigDialog.cs"));
         string scale = File.ReadAllText(Path.Combine(src, "Gui", "LodThresholdScaleElement.cs"));
+        string settings = File.ReadAllText(Path.Combine(
+            src, "Gui", "VintageHorizonsSettingsIntegration.cs"));
 
         c.True(mod.Contains("ChatCommands.Create(\"vhconfig\")", StringComparison.Ordinal),
             "the player-facing config command remains registered");
         c.True(dialog.Contains("new LodThresholdScaleElement", StringComparison.Ordinal),
             "the config window uses one shared multi-marker LOD scale");
+        c.True(scale.Contains("BandColors", StringComparison.Ordinal)
+            && scale.Contains("LodThresholdScaleLayout.Band(values, level)", StringComparison.Ordinal)
+            && scale.Contains("$\"L{i}\"", StringComparison.Ordinal),
+            "the distance map shades and labels all seven LOD bands");
+        c.True(scale.Contains("vanillaViewDistance", StringComparison.Ordinal)
+            && scale.Contains("Vanilla {this.vanillaViewDistance:N0}", StringComparison.Ordinal)
+            && mod.Contains("capi.Settings.Int[\"viewDistance\"]", StringComparison.Ordinal),
+            "the scale marks and labels the current vanilla render distance");
+
+        c.Near(0, LodThresholdScaleLayout.FractionFor(
+            LodThresholdScaleLayout.MinScaleDistance), 1e-6,
+            "the expanded distance map starts at its documented near endpoint");
+        c.Near(1, LodThresholdScaleLayout.FractionFor(LodWorld.MaxLevelThreshold), 1e-6,
+            "the expanded distance map reaches the far endpoint");
+        int[] mapThresholds = { 256, 512, 1024, 2048, 4096, 8192 };
+        float previousEnd = 0;
+        for (int level = 0; level <= LodWorld.MaxLevel; level++)
+        {
+            (float start, float end) = LodThresholdScaleLayout.Band(mapThresholds, level);
+            c.Near(previousEnd, start, 1e-6, $"LOD map band L{level} begins at the prior edge");
+            c.True(end >= start, $"LOD map band L{level} has non-negative width");
+            previousEnd = end;
+        }
+        c.Near(1, previousEnd, 1e-6, "the LOD bands cover the entire distance map");
         c.True(dialog.Contains("AddButton(\"Defaults\"", StringComparison.Ordinal)
             && dialog.Contains("AddButton(\"Save\"", StringComparison.Ordinal)
             && dialog.Contains("AddButton(\"Cancel\"", StringComparison.Ordinal),
@@ -2546,9 +2572,46 @@ public static class StaticAssetChecks
             "the presets are a drop-down carrying the current combination as its selection");
         c.True(dialog.Contains("composer.AddStaticText(\"Cost\", CairoFont.WhiteDetailText()",
                 StringComparison.Ordinal)
-            && dialog.Contains("ElementBounds.Fixed(SwitchX - 110, 358, 100, 22)",
+            && dialog.Contains("ElementBounds.Fixed(SwitchX - 110,", StringComparison.Ordinal)
+            && dialog.Contains("VintageHorizonsConfigLayout.VisualHeadingY + 10",
                 StringComparison.Ordinal),
             "the per-row cost words carry a column heading over the same box they use");
+
+        double featureBottom = VintageHorizonsConfigLayout.VisualRowsY
+            + (VintageHorizonsConfigLayout.VisualRowCount - 1)
+                * VintageHorizonsConfigLayout.VisualRowHeight
+            + 32;
+        c.True(featureBottom < VintageHorizonsConfigLayout.ButtonY,
+            "all visual rows finish above the action buttons");
+        c.True(VintageHorizonsConfigLayout.ShowTaaY + 32
+                < VintageHorizonsConfigLayout.ButtonY,
+            "the anti-aliasing footer finishes above the action buttons");
+        c.True(VintageHorizonsConfigLayout.DialSliderX
+                - VintageHorizonsConfigLayout.Margin - 12 >= 280
+            && dialog.Contains("row.Title, CairoFont.WhiteSmallishText()", StringComparison.Ordinal),
+            "long anti-aliasing labels get a wide single-line smallish-text column");
+
+        c.True(settings.Contains(
+                "internal const string HarmonyId = \"vintagehorizons.settingstab\"",
+                StringComparison.Ordinal)
+            && settings.Contains(
+                "internal const string PageCode = \"vintagehorizons\"",
+                StringComparison.Ordinal)
+            && settings.Contains("AddToggleButton(\"Horizons\"", StringComparison.Ordinal),
+            "the in-world vanilla Settings header carries a dedicated Horizons tab");
+        c.True(settings.Contains("onMainscreen", StringComparison.Ordinal)
+            && settings.Contains("if ((bool)(mainScreenField?.GetValue(settings) ?? true)) return;",
+                StringComparison.Ordinal),
+            "the added Settings tab is limited to an active game");
+        c.True(settings.Contains("EnqueueMainThreadTask", StringComparison.Ordinal)
+            && settings.Contains("ComposeEmbedded(composer)", StringComparison.Ordinal),
+            "the vanilla Settings page re-composes only after its originating click finishes");
+        c.True(settings.Contains("use .vhconfig instead", StringComparison.Ordinal)
+            && mod.Contains("ChatCommands.Create(\"vhconfig\")", StringComparison.Ordinal),
+            "a changed vanilla Settings seam fails back to the command window");
+        c.True(settings.Contains("BeforeLeavingSettings", StringComparison.Ordinal)
+            && settings.Contains("oldEditor?.CloseEmbedded();", StringComparison.Ordinal),
+            "leaving Settings cancels an unsaved live anti-aliasing preview");
 
         // Far biome colour is the far half of ONE shader threshold, so it cannot be on with
         // the near half off. Both directions of that are enforced where the switch is written,

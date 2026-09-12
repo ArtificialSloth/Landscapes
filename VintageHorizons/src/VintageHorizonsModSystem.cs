@@ -181,6 +181,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     LodPipeline pipeline = null!;
     LodTerrainRenderer renderer = null!;
     VanillaHorizonEffects? horizonEffects;
+    VintageHorizonsSettingsIntegration? settingsIntegration;
 
     /// <summary>Block -> live tint slot; shared by capture, cache loads and the renderer.</summary>
     readonly LodTintRegistry tints = new();
@@ -248,6 +249,19 @@ public partial class VintageHorizonsModSystem : ModSystem
         // the player with nothing at all.
         deferringTo = ChooseDeferralTarget();
         InstallDiagnostics();
+
+        // Vanilla has no public mod-settings page registry in 1.22. The guarded adapter adds
+        // one in-world header button and leaves .vhconfig as the permanent fallback if the
+        // private seam ever moves. Install before the deferral return: persisted settings are
+        // still useful while a competing LOD renderer is active.
+        settingsIntegration = new VintageHorizonsSettingsIntegration(
+            capi, CreateEmbeddedConfigDialog);
+        if (!settingsIntegration.Install(Mod.Logger))
+        {
+            settingsIntegration.Dispose();
+            settingsIntegration = null;
+        }
+
         if (deferringTo != null)
         {
             Mod.Logger.Notification(
@@ -2256,6 +2270,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
     void OnLeaveWorld()
     {
+        settingsIntegration?.CancelActivePage();
         configDialog?.TryClose();
         assist?.Reset();
         // Belongs to the world being left: the next one is a different savegame with a
@@ -2313,6 +2328,57 @@ public partial class VintageHorizonsModSystem : ModSystem
             Mod.Logger.Notification("  {0}: {1}", label, line.Trim());
         }
     }
+
+    VintageHorizonsConfigDialog CreateStandaloneConfigDialog() =>
+        BuildConfigDialog(null, null);
+
+    VintageHorizonsConfigDialog CreateEmbeddedConfigDialog(
+        Action requestRecompose, Action requestClose) =>
+        BuildConfigDialog(requestRecompose, requestClose);
+
+    /// <summary>
+    /// One editor-state factory for both entry points. Keeping the snapshot and save callback
+    /// here prevents the Settings page from becoming a subtly different configuration system
+    /// from .vhconfig.
+    /// </summary>
+    VintageHorizonsConfigDialog BuildConfigDialog(
+        Action? requestRecompose, Action? requestClose)
+    {
+        // The player's own distances, which automatic mode leaves untouched in the file,
+        // and what automatic mode would use right now, which the scale shows while it is on.
+        bool automatic = deferringTo == null
+            ? renderer.AutoLodThresholds
+            : config.AutoLodThresholds;
+        int[] thresholds = deferringTo == null && !automatic
+            ? LodWorld.GetLevelThresholds()
+            : LodWorld.NormalizeLevelThresholds(config.LodThresholds, config.DetailDistance);
+        int[] automaticThresholds = deferringTo == null
+            ? renderer.PreviewAutoThresholds()
+            : thresholds;
+        int farCap = deferringTo == null
+            ? renderer.FarViewDistanceCap
+            : config.FarViewDistanceCap;
+
+        // The Anti-Aliasing tab shows each slider's effect at once and puts back what was
+        // in force if the editor closes without Save. With no renderer there is nothing to
+        // preview, and Save still writes the file.
+        var taaTuning = new TaaTuning(
+            deferringTo == null ? renderer.TaaDials : ConfiguredTaaDials(),
+            deferringTo == null && renderer.TaaShowWeight,
+            PreviewTaaTuning,
+            () => deferringTo == null ? renderer.ScreenBlockScale : 0f);
+        int vanillaViewDistance = Math.Max(1, capi.Settings.Int["viewDistance"]);
+
+        return requestRecompose != null && requestClose != null
+            ? new VintageHorizonsConfigDialog(
+                capi, thresholds, automaticThresholds, automatic, farCap,
+                vanillaViewDistance, CurrentVisualSettings(), taaTuning,
+                requestRecompose, requestClose, ApplyGuiConfig)
+            : new VintageHorizonsConfigDialog(
+                capi, thresholds, automaticThresholds, automatic, farCap,
+                vanillaViewDistance, CurrentVisualSettings(), taaTuning, ApplyGuiConfig);
+    }
+
     void RegisterCommands()
     {
         capi.ChatCommands.Create("vhdiag")
@@ -2413,29 +2479,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 }
 
                 configDialog?.Dispose();
-                // The player's own distances, which automatic mode leaves untouched in the file,
-                // and what automatic mode would use right now, which the scale shows while it is on.
-                bool automatic = deferringTo == null
-                    ? renderer.AutoLodThresholds
-                    : config.AutoLodThresholds;
-                int[] thresholds = deferringTo == null && !automatic
-                    ? LodWorld.GetLevelThresholds()
-                    : LodWorld.NormalizeLevelThresholds(config.LodThresholds, config.DetailDistance);
-                int[] automaticThresholds = deferringTo == null
-                    ? renderer.PreviewAutoThresholds()
-                    : thresholds;
-                int farCap = deferringTo == null ? renderer.FarViewDistanceCap : config.FarViewDistanceCap;
-                // The Anti-Aliasing tab shows each slider's effect at once and puts back what was
-                // in force if the window closes without Save. With no renderer there is nothing to
-                // show, and Save writes the file.
-                var taaTuning = new TaaTuning(
-                    deferringTo == null ? renderer.TaaDials : ConfiguredTaaDials(),
-                    deferringTo == null && renderer.TaaShowWeight,
-                    PreviewTaaTuning,
-                    () => deferringTo == null ? renderer.ScreenBlockScale : 0f);
-                configDialog = new VintageHorizonsConfigDialog(
-                    capi, thresholds, automaticThresholds, automatic, farCap, CurrentVisualSettings(),
-                    taaTuning, ApplyGuiConfig);
+                configDialog = CreateStandaloneConfigDialog();
 
                 return configDialog.TryOpen()
                     ? TextCommandResult.Success("[VintageHorizons] configuration window opened.")
@@ -4517,11 +4561,14 @@ public partial class VintageHorizonsModSystem : ModSystem
             localOffers = null;
         });
 
+        // Editors restore any unsaved live AA preview while the renderer still exists.
+        Quietly(() => settingsIntegration?.Dispose());
+        Quietly(() => configDialog?.Dispose());
+
         // Stops the storage writer before the connection it writes through.
         Quietly(() => horizonEffects?.Dispose());
         Quietly(() => pipeline?.Dispose());
         Quietly(() => renderer?.Dispose());
-        Quietly(() => configDialog?.Dispose());
         Quietly(DisposeDiagnostics);
     }
 
