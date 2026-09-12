@@ -2,6 +2,19 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-12 - Distant shimmer fixed by distant anti-aliasing; automatic LOD thresholds (0.4.56-0.4.61)
+
+Distant terrain shimmered while the camera moved, worst on snow, from about 1,000 blocks out.
+Measured offline on a capture it was sub-pixel aliasing: at 60 degrees and 1,080 rendered rows one
+block spans one pixel at 935 blocks, and past 512 blocks 79-89% of snow pixels were one row tall;
+the owner's FOV-20 test confirmed it. Version 0.4.57 added distant anti-aliasing confined to
+cached terrain, and automatic LOD thresholds that hand every level over at the same on-screen
+size. 0.4.58 removed the still-camera vibration (G175); 0.4.59 reduced smear and added sharpening
+and saved dials; 0.4.60 put the dials on a `.vhconfig` Anti-Aliasing tab, where the owner tuned it
+"to look very good" and found no remaining vibrating spots; 0.4.61 makes his values the defaults.
+0.4.56 had added `.vhdiag`. Checkpoints `223bfbb`, `1dc2907`, `f255b08`, `c4fbbdd`, `092f518` and
+`b1fd007`; 23,129 assertions pass. What is still open is in `dev/TODO.md`.
+
 ## 2026-09-11 - Tree wall textures and false glacier liquid depth fixed (0.4.54-0.4.55)
 
 Standing logs had one block texture applied to every face, so their top cut-end tile appeared on

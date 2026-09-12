@@ -2,16 +2,36 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: test 0.4.55
+## Start here: 0.4.61
 
-Read [Session 85](sessions/SESSION_85.md). Version 0.4.55 is built, verified, copy-installed and
-checkpointed for the owner to test. Its source fixes the remaining Redwood wall texture and stops
-solid glacier/ice blocks entering the water, wave, OIT and liquid-depth paths.
+Read [Session 86](sessions/SESSION_86.md). Version 0.4.61 makes the owner's own anti-aliasing
+tuning the defaults: reach 2.5, nudge 0.5, sharpen 1, memory 0.97 turning and 0.99 still, safety
+check 2.25. His saved configuration already holds the same values, so it should look exactly as he
+left it; `.vhtaa reset` (or Defaults on the Anti-Aliasing tab) should now change nothing.
+
+Still open from [Session 85](sessions/SESSION_85.md) and 0.4.55:
 
 - Confirm all four visible Redwood trunk sides use bark while the top remains the cut end.
 - Revisit the captured snowy peak with `.vhwater murk on`; the dark blue rim should be absent.
 - Glance at a frozen lake and glacier. Ice now uses the opaque distant-terrain representation;
   removing false liquid behavior is source-proven, but that appearance tradeoff needs review.
+
+## Distant anti-aliasing and automatic thresholds: what is open
+
+The shimmer is fixed and tuned by the owner ([Session 86](sessions/SESSION_86.md)). Remaining:
+
+- **Three dials sit at the top of their ranges** in the owner's tuning (sharpen 1, memory 0.97
+  turning and 0.99 still). Whether the ranges should reach further is his call.
+- **Cost is measured on one machine.** The owner's RX 9070 XT at 1920x1080 rendered reported the
+  resolve and composite at p95 100 us and the depth snapshot at p95 25 us, over about 464,000
+  frames. Weaker GPUs and 4K are unmeasured; the Performance preset turns the feature off.
+- **Not specifically looked at:** a large reach across the vanilla edge, distant water's edges, and
+  smear at low frame rates, where each frame of memory lasts longer on screen.
+- **The shaders are compiled only in game.** No GLSL validator is installed here; a compile failure
+  switches the feature off for the session with one log line, and `.vhtaa` reports it.
+- **Automatic thresholds have been in use since 0.4.57 without complaint**, but not evaluated at
+  other FOVs, render scales or larger vanilla view distances, where re-selection and the level-0
+  floor move.
 
 ## Handoff flash follow-ups
 
@@ -98,12 +118,12 @@ Branch `codex/vertex-tint-cost`, `0.4.0`. The regression is measured and its unr
 is closed; what follows is what a sandbox run cannot answer. Read `dev/sessions/SESSION_77.md`
 before touching this.
 
-- **The settings window has never been seen running.** 0.3.196's layout was wrong in a way
-  only an owner screenshot caught - a medium-weight title is taller than the box it is given,
-  so every row overran its own description - and 0.3.197 moved every element on the page. The
-  window is source-traced and harness-tested only. **The tell: open `.vhconfig` and check the
-  six feature rows clear the buttons at the bottom.** The window grew from 640 to 700 tall to
-  fit them, and nothing has confirmed 700 is enough at the owner's GUI scale.
+- **The General page's row clearance is not confirmed at the owner's GUI scale.** 0.3.196's
+  layout was wrong in a way only an owner screenshot caught - a medium-weight title is taller
+  than the box it is given, so every row overran its own description. The owner has since used
+  the window: in 0.4.60 he confirmed both tab labels read in full, tab switching works and every
+  anti-aliasing slider works. **The tell: the seven feature rows on General should clear the
+  buttons at the bottom** of the 740-tall window; that was not specifically reported.
 - **The fixes are measured in the sandbox, not in the owner's scene.** 100 us of 270 recovered
   at one seam viewpoint that runs about 2.9x lighter than his. The proportion should carry and
   the mechanism does not depend on the scene, but the number in his world is inference. **The

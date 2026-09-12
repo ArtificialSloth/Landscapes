@@ -481,6 +481,20 @@ live until the exact replacement persistence revision is acknowledged.
     given, which exists only after the player's physics step at Before/1.0. The preparation stays
     at 0.994 for the water passes; the late range check at 1.001 is loss-only, goes through the
     ordinary publication handshake, and defers water's footprint by one frame (G170).
+34. **Distant anti-aliasing belongs to the pixels cached terrain drew.** A depth snapshot taken
+    before the first cached draw decides which pixels cached terrain drew (nearer than the
+    snapshot). Only those, and sky pixels beside them, are nudged, blended and written back;
+    vanilla terrain, creatures and water keep the pixels they were drawn with. Strength follows
+    on-screen block size, from the live projection and render height against the player's reach,
+    never a distance in blocks, so it holds at any vanilla view distance, FOV or render scale.
+    History reaches full share before the nudge begins, is re-sampled by Catmull-Rom, and settles
+    fully only once the whole camera holds still; sharpening applies to the output, never to the
+    history (G175).
+35. **Automatic LOD thresholds follow the screen.** L1 is where a level-0 column reaches the target
+    on-screen width (1.5 px by default) and each later threshold doubles it, so every level hands
+    over at the same size on screen. Level 0 is held past the vanilla view distance, the blend band
+    and one section, because band textures exist only on level-0 quads. The player's own
+    thresholds stay in the file for when automatic is off.
 
 ## Concurrency invariants
 

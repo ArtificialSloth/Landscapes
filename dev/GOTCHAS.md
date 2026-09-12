@@ -3437,3 +3437,102 @@ blocks when cached sections load so a corrected policy fixes existing worlds wit
 
 **Found:** 2026-09-11, Session 85. Fixed in 0.4.55 by returning Ice to the ordinary solid-terrain
 path; the end-to-end visual result remains awaiting owner acceptance.
+
+### G174 - A shared frame-uniform upload reaches programs that never declared the uniform
+
+**Trigger:** adding a uniform to the setter every cached-terrain program shares
+(`ApplyFrameUniforms`) while declaring it only in the one shader body that reads it.
+
+**Trap:** `ShaderProgramBase.Uniform(name, ...)` indexes a dictionary the engine fills from the
+uniform declarations it finds in the program's source, so a name the program never declared
+throws instead of being ignored. The water programs receive the same frame upload as the terrain
+program. 0.4.57's nudge uniforms were first declared in the terrain body alone and would have
+thrown in every water pass; self-review caught it before the build shipped.
+
+**Safer action:** declare such uniforms in the include every frame-uniform program shares
+(`lodvertexinputs.vsh`). A declared but unused uniform has location -1 and its upload is ignored.
+`DistantAntiAliasingChecks` proves every uploaded `vhTaa*` name is declared there, and that every
+uniform the anti-aliasing resolve and composite passes are handed is declared by their shaders.
+
+**Found:** 2026-09-11, Session 86 (source-traced from the decompiled 1.22.7 engine).
+
+### G175 - Per-pixel depth validation of temporal history fights the sub-pixel nudge
+
+**Trigger:** refusing a pixel's history when its reprojected depth differs from the depth it
+stored last frame, in a temporal anti-aliasing pass whose geometry is nudged a fraction of a
+pixel every frame.
+
+**Trap:** the nudge itself swaps which surface a pixel shows wherever a nearer edge meets farther
+ground: tree tops, ridges and steps. On the owner's capture 17.9-23.1% of anti-aliased pixels had
+a 3x3 neighbour beyond 0.4.57's 3% + 0.5-block tolerance. Those pixels refused their history every
+frame and showed the raw nudge, so the anti-aliased terrain vibrated with the camera still. Two
+smaller causes compounded it: pixels alternating with the sky had no history at all, and where the
+nudge faded in, the history share faded in with it instead of arriving first.
+
+**Safer action:** for static distant terrain, let the neighbourhood colour check reject stale
+history rather than depth; take history only from pixels that were cached terrain or sky; blend
+the sky pixels beside cached terrain; bring history to full share before the nudge begins. 0.4.58
+did this and the owner found the still-camera vibration gone. The checks forbid a stored-depth
+test in `lodtaaresolve.fsh`.
+
+**Found:** 2026-09-11, Session 86 (measured on a capture; fixed and human-tested in 0.4.58).
+
+### G176 - The render-scale upscale is read from the Luma target, not the primary one
+
+**Trigger:** judging how the game upscales a render scale below 100% from the primary
+framebuffer's texture filter.
+
+**Trap:** at `ssaa <= 1` the primary colour texture is NEAREST-filtered, which suggests blocky
+nearest-neighbour upscaling. The final pass samples the Luma framebuffer instead, which is always
+LINEAR, so the upscale is smooth. Session 86 told the owner the wrong answer once before
+decompiling the final pass.
+
+**Safer action:** follow the texture the final pass actually reads before drawing a conclusion
+about scaling artefacts.
+
+**Found:** 2026-09-11, Session 86 (source-traced, decompiled 1.22.7).
+
+### G177 - Changing FOV in game moves the near plane until restart
+
+**Trigger:** an in-game FOV comparison, such as the 60-to-20-degree test that confirmed distant
+shimmer was aliasing.
+
+**Trap:** the camera starts with a 0.1-block near plane, but `OnFowChanged` sets it to
+`clamp(0.1 - fov/90/25, 0.025, 0.1)` whenever FOV changes mid-session: 0.091 at 20 degrees and
+0.073 back at 60, until the game restarts. Depth precision, and anything measured from it, then
+differs from a fresh start at the same FOV.
+
+**Safer action:** restart the game after an FOV test before taking depth or precision evidence at
+the original FOV, or record the projection with the evidence (`.vhwater capture` stores it).
+
+**Found:** 2026-09-11, Session 86 (source-traced, decompiled 1.22.7).
+
+### G178 - A dialog re-composed inside its own click
+
+**Trigger:** switching a `GuiDialog`'s tab by building a new composer in the tab strip's click
+handler.
+
+**Trap:** `capi.Gui.CreateCompo(name, ...)` disposes the composer already registered under that
+name (`GuiComposerManager.Create`), while assigning `SingleComposer` disposes nothing. Re-composing
+inside the handler disposes the composer whose element is still handling the click, and disposing
+the old composer again by hand afterwards would dispose it twice.
+
+**Safer action:** queue the re-compose with `capi.Event.EnqueueMainThreadTask`, so it runs once the
+click has finished, and let `CreateCompo` do the disposal. The `.vhconfig` tabs work this way; the
+owner confirmed tab switching in 0.4.60.
+
+**Found:** 2026-09-12, Session 86 (source-traced, decompiled 1.22.7; human-tested).
+
+### G179 - String literals in a built DLL can start at either byte alignment
+
+**Trigger:** verifying that a packaged DLL contains a new string literal by decoding the whole file
+as UTF-16 and searching the result.
+
+**Trap:** user-string literals are UTF-16, but a literal can start at an odd byte offset, and a
+decode from offset 0 finds only those that start on an even one. 0.4.58's zip check reported two
+literals missing from a correct build; nothing was installed until the check was fixed.
+
+**Safer action:** search both alignments (decode from offset 0 and from offset 1), or decompile the
+type and compare the member directly, as the 0.4.61 check did for the anti-aliasing defaults.
+
+**Found:** 2026-09-11, Session 86.

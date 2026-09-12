@@ -13,6 +13,44 @@ it replaces 0.4.39 as the accepted baseline is his call. Winter temporal converg
 accumulation and melt, `/vhrefresh` boundaries, campaign cost) has not yet had its acceptance
 run.
 
+## [0.4.61] - 2026-09-12
+
+**Distant terrain no longer shimmers as you move.** Far terrain, snowy mountains most of all,
+used to sparkle whenever the camera moved. Past about a thousand blocks one pixel on screen covers
+several blocks but can show only the one under its centre, so the smallest camera movement swapped
+a white snow top for the dark wall beside it. Distant anti-aliasing now moves distant terrain by a
+different fraction of a pixel every frame and blends each pixel with where the same ground was in
+earlier frames, so it settles on the average of what it covers. It touches only the mod's own
+distant terrain and the sky at its very edge, never the game's own terrain, creatures or water, and
+it starts where blocks become small on screen rather than at a fixed distance, so it follows any
+view distance, field of view or resolution. On the owner's machine it costs about 0.1 ms of
+graphics time per frame; the Performance preset turns it off.
+
+The owner tuned it by eye in 0.4.60, and 0.4.61 makes his values the defaults: reach 2.5 px, nudge
+0.5, sharpen 1, memory 0.97 while turning and 0.99 when still, safety check 2.25. `.vhtaa` sets and
+reports each one; all are saved, and all are sliders on the new **Anti-Aliasing** tab of
+`.vhconfig`, where changes show at once, Save keeps them and Cancel puts them back.
+
+**LOD transition distances can follow the screen.** An **Automatic** switch in `.vhconfig` (on by
+default) chooses L1-L6 from the field of view and render resolution, so every level hands over at
+the same size on screen; your own distances stay saved for when it is off. `.vhdetail` gains `auto`,
+`manual` and `target <px>`.
+
+Release build: zero warnings/errors. Fast checks: 23,129 assertions, zero failures. The verified
+38-entry package was copy-installed with SHA-256
+`C00F84D4024E4DC4EF9980C1C6C2AF4090BBB2272C2301BD4F3E8E8F1347B715`.
+
+## [0.4.56-0.4.60] - 2026-09-11 to 2026-09-12
+
+Private builds on the way to 0.4.61. 0.4.56 added `.vhdiag` to show or hide the diagnostics side
+panel for the session (off by default). 0.4.57 was the first distant anti-aliasing and automatic
+thresholds; it looked cleaner but vibrated with the camera still, because it refused history
+wherever the nudge itself changed a pixel's depth. 0.4.58 fixed that, blended the edge against the
+sky and added `.vhtaa reach`; it was steady but smeared. 0.4.59 kept detail while turning,
+tightened the check on snow, waited for the whole camera to hold still before settling, and added
+sharpening and saved dials. 0.4.60 added the Anti-Aliasing tab. Each was verified, copy-installed
+and checkpointed (`223bfbb`, `1dc2907`, `f255b08`, `c4fbbdd`, `092f518`).
+
 ## [0.4.55] - 2026-09-11
 
 **Standing logs now use bark on their walls instead of repeating the cut end on every face.**
