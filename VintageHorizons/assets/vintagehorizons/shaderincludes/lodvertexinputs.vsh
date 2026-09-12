@@ -26,6 +26,22 @@ uniform float fogDensityIn;
 
 uniform float farViewDistance;
 
+// Distant anti-aliasing's per-frame nudge (LodTerrainRenderer.Taa.cs): a different fraction of a
+// pixel every frame, applied only in proportion to how small a block is on screen at a vertex -
+// the same ramp the resolve pass blends by - so near cached ground, the blend band and the vanilla
+// seam never move. A block scale of zero switches it off.
+//
+// DECLARED here, in the inputs every program shares, but APPLIED only in lodterrainbody.vsh. The
+// water programs receive the same frame uploads, and the engine's Uniform(name, ...) indexes a
+// dictionary built from the names a program's source declares: a name water never declared would
+// throw. Declared and unused, water gets location -1 and ignores the value. Water must not be
+// nudged, because it is drawn after the blend and would wobble.
+uniform float vhTaaBlockScale;
+uniform float vhTaaJitterX;
+uniform float vhTaaJitterY;
+uniform float vhTaaStartPixels;
+uniform float vhTaaFullPixels;
+
 // The packed path knows a quad's exact axis-aligned face before it does any material,
 // tint, warp, fog or projection work. Fixed-function back-face culling happens after the
 // complete vertex shader, so rejecting vertical faces here avoids paying that full price

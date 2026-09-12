@@ -290,6 +290,8 @@ internal sealed class LodGpuTelemetry : IDisposable
     readonly LodGpuTimerRing hzbTimer;
     readonly LodGpuTimerRing splitHzbTimer;
     readonly LodGpuTimerRing classifyTimer;
+    readonly LodGpuTimerRing taaTimer;
+    readonly LodGpuTimerRing taaCopyTimer;
     readonly LodGpuTimestampRing ordinaryCullTimer;
     readonly LodGpuTimestampRing splitNearCullTimer;
     readonly LodGpuTimestampRing splitFarCullTimer;
@@ -331,21 +333,32 @@ internal sealed class LodGpuTelemetry : IDisposable
     public LodPhaseCost SplitNearCullGpuCost;
     public LodPhaseCost SplitFarCullGpuCost;
 
+    /// <summary>
+    /// Distant anti-aliasing, split the way it runs: the resolve and composite together after
+    /// cached terrain, and the depth snapshot before it. The owner asked what the pass costs in
+    /// frame rate, and only GPU time can answer that.
+    /// </summary>
+    public LodPhaseCost TaaGpuCost;
+    public LodPhaseCost TaaCopyGpuCost;
+
     public int PendingResults =>
         opaqueTimer.PendingCount + splitNearTimer.PendingCount + splitFarTimer.PendingCount
         + waterTimer.PendingCount + waterDepthTimer.PendingCount + hzbTimer.PendingCount + splitHzbTimer.PendingCount
         + classifyTimer.PendingCount + ordinaryCullTimer.PendingCount
-        + splitNearCullTimer.PendingCount + splitFarCullTimer.PendingCount;
+        + splitNearCullTimer.PendingCount + splitFarCullTimer.PendingCount
+        + taaTimer.PendingCount + taaCopyTimer.PendingCount;
     public int UnavailableSlots =>
         opaqueTimer.UnavailableSlots + splitNearTimer.UnavailableSlots
         + splitFarTimer.UnavailableSlots + waterTimer.UnavailableSlots + waterDepthTimer.UnavailableSlots + hzbTimer.UnavailableSlots
         + splitHzbTimer.UnavailableSlots + classifyTimer.UnavailableSlots
         + ordinaryCullTimer.UnavailableSlots + splitNearCullTimer.UnavailableSlots
-        + splitFarCullTimer.UnavailableSlots;
+        + splitFarCullTimer.UnavailableSlots
+        + taaTimer.UnavailableSlots + taaCopyTimer.UnavailableSlots;
     public int TargetBusy => opaqueTimer.TargetBusy + splitNearTimer.TargetBusy
         + splitFarTimer.TargetBusy + waterTimer.TargetBusy + waterDepthTimer.TargetBusy + hzbTimer.TargetBusy
         + splitHzbTimer.TargetBusy
-        + classifyTimer.TargetBusy;
+        + classifyTimer.TargetBusy
+        + taaTimer.TargetBusy + taaCopyTimer.TargetBusy;
 
     public LodGpuTelemetry(
         bool timingRequested,
@@ -367,6 +380,8 @@ internal sealed class LodGpuTelemetry : IDisposable
         hzbTimer = new LodGpuTimerRing(timerApi);
         splitHzbTimer = new LodGpuTimerRing(timerApi);
         classifyTimer = new LodGpuTimerRing(timerApi);
+        taaTimer = new LodGpuTimerRing(timerApi);
+        taaCopyTimer = new LodGpuTimerRing(timerApi);
         ordinaryCullTimer = new LodGpuTimestampRing(timerApi);
         splitNearCullTimer = new LodGpuTimestampRing(timerApi);
         splitFarCullTimer = new LodGpuTimestampRing(timerApi);
@@ -444,6 +459,8 @@ internal sealed class LodGpuTelemetry : IDisposable
             hzbTimer.Poll(ref HzbGpuCost);
             splitHzbTimer.Poll(ref SplitHzbGpuCost);
             classifyTimer.Poll(ref ClassifyGpuCost);
+            taaTimer.Poll(ref TaaGpuCost);
+            taaCopyTimer.Poll(ref TaaCopyGpuCost);
             ordinaryCullTimer.Poll(ref OrdinaryCullGpuCost);
             splitNearCullTimer.Poll(ref SplitNearCullGpuCost);
             splitFarCullTimer.Poll(ref SplitFarCullGpuCost);
@@ -478,6 +495,10 @@ internal sealed class LodGpuTelemetry : IDisposable
     public void EndHzb() => End(hzbTimer);
     public bool BeginSplitHzb() => Begin(splitHzbTimer);
     public void EndSplitHzb() => End(splitHzbTimer);
+    public bool BeginTaa() => Begin(taaTimer);
+    public void EndTaa() => End(taaTimer);
+    public bool BeginTaaCopy() => Begin(taaCopyTimer);
+    public void EndTaaCopy() => End(taaCopyTimer);
 
     /// <summary>Closes the pyramid's timer without recording it, for a build that did not run.</summary>
     public void DiscardHzb()
@@ -513,6 +534,8 @@ internal sealed class LodGpuTelemetry : IDisposable
         OrdinaryCullGpuCost.Reset();
         SplitNearCullGpuCost.Reset();
         SplitFarCullGpuCost.Reset();
+        TaaGpuCost.Reset();
+        TaaCopyGpuCost.Reset();
         opaqueTimer.ResetInterval();
         splitNearTimer.ResetInterval();
         splitFarTimer.ResetInterval();
@@ -521,6 +544,8 @@ internal sealed class LodGpuTelemetry : IDisposable
         hzbTimer.ResetInterval();
         splitHzbTimer.ResetInterval();
         classifyTimer.ResetInterval();
+        taaTimer.ResetInterval();
+        taaCopyTimer.ResetInterval();
         ordinaryCullTimer.ResetInterval();
         splitNearCullTimer.ResetInterval();
         splitFarCullTimer.ResetInterval();
@@ -664,6 +689,8 @@ internal sealed class LodGpuTelemetry : IDisposable
         hzbTimer.Dispose();
         splitHzbTimer.Dispose();
         classifyTimer.Dispose();
+        taaTimer.Dispose();
+        taaCopyTimer.Dispose();
         ordinaryCullTimer.Dispose();
         splitNearCullTimer.Dispose();
         splitFarCullTimer.Dispose();

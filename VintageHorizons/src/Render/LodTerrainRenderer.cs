@@ -2162,6 +2162,7 @@ public partial class LodTerrainRenderer : IRenderer
         LoadWaterSurfaceShader();
         LoadWaterOitShader();
         LoadSkyWitnessShader();
+        LoadTaaShaders();
         if (!ShaderLoadIsProvisional
             && gpuFailureInjection.Take(LodGpuFailureStage.FastShaders))
         {
@@ -5563,6 +5564,8 @@ public partial class LodTerrainRenderer : IRenderer
         frameCounter++;
         gpuTelemetry.BeginFrame();
         ConfigureRenderPaths();
+        // Before anything reads a threshold: radial demand, residency and traversal all do.
+        UpdateAutoThresholds();
         ApplyGpuShadowRequest();
         ApplyGpuDrawFailureInjection();
         float viewDistance = ApprovedViewDistance();
@@ -5708,6 +5711,9 @@ public partial class LodTerrainRenderer : IRenderer
         var rapi = capi.Render;
         float viewDistance = ApprovedViewDistance();
         LodPhaseStart phaseStart;
+        // Distant anti-aliasing freezes the depth buffer before a single cached draw, so the
+        // resolve at the end of this callback can tell exactly which pixels cached terrain drew.
+        BeginTaaFrame();
         // The water capture already separated opaque ground from cached water, but that
         // still left two possible authors for a band in the opaque image: vanilla terrain
         // that was present before this callback, and cached ground added below. Freeze both
@@ -5800,6 +5806,10 @@ public partial class LodTerrainRenderer : IRenderer
 
         rapi.GlEnableCullFace();
         prog.Stop();
+
+        // After thin cover as well as opaque ground: both are drawn by the terrain program, so
+        // both were nudged, and both have to be blended back or they would wobble.
+        ResolveTaa();
     }
 
     /// <summary>
@@ -5874,6 +5884,14 @@ public partial class LodTerrainRenderer : IRenderer
         // Keeping it tied to the established switch makes `.vhbackface off` disable both
         // the early exact rejection and OpenGL's later winding rejection together.
         prog.Uniform("packedBackfaceCull", OpaqueBackfaceCulling ? 1 : 0);
+        // Distant anti-aliasing's nudge. Only the terrain body declares these, so the water
+        // programs that share this upload ignore them. A zero scale is "off" in the shader, and
+        // the ramp is the same constant pair the resolve pass is handed.
+        prog.Uniform("vhTaaBlockScale", taaActiveThisFrame ? taaBlockScale : 0f);
+        prog.Uniform("vhTaaJitterX", taaJitterX);
+        prog.Uniform("vhTaaJitterY", taaJitterY);
+        prog.Uniform("vhTaaStartPixels", LodTaaMath.StartBlockPixels);
+        prog.Uniform("vhTaaFullPixels", LodTaaMath.FullBlockPixels);
         // Per-cell ownership supersedes the radius entirely: the mask knows which
         // individual cells vanilla owns, so leaving a radius active would suppress cached
         // terrain the mask says is still ours. With the mask off, the measured radius (or
@@ -8665,6 +8683,7 @@ public partial class LodTerrainRenderer : IRenderer
         DisposeSeamFieldTexture();
         DisposeBlockTableTexture();
         DisposeSkyWitnessResources();
+        DisposeTaaResources();
         world.SectionBecameResident -= OnSectionBecameResident;
         capi.Event.ChunkDirty -= OnReadinessChunkDirty;
         capi.Event.ReloadShader -= LoadShader;

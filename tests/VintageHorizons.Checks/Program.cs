@@ -76,6 +76,7 @@ public static class Program
         ("pure", "chunk generation", GenerateChecks.Run),
         ("fixture", "server assist", ServerAssistChecks.Run),
         ("pure", "wire format", WireFormatChecks.Run),
+        ("pure", "distant anti-aliasing", DistantAntiAliasingChecks.Run),
         ("static", "assets and constants", StaticAssetChecks.Run),
     };
 

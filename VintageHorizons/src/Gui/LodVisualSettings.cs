@@ -4,9 +4,9 @@ namespace VintageHorizons;
 /// The visual features a player can give up to get frame time back, as one value.
 ///
 /// <para>
-/// One type rather than seven parameters, because these travel together everywhere: out of
+/// One type rather than nine parameters, because these travel together everywhere: out of
 /// the config file at startup, into the settings window, back out of it on Save, and into the
-/// renderer. A seven-argument callback is where a caller eventually swaps two bools of the
+/// renderer. A nine-argument callback is where a caller eventually swaps two bools of the
 /// same type and nothing complains.
 /// </para>
 /// <para>
@@ -23,7 +23,8 @@ internal readonly record struct LodVisualSettings(
     float ClimateTintRange,
     bool LeafSeasonColours,
     bool HalfBlockTerrain,
-    bool WaterEffects)
+    bool WaterEffects,
+    bool DistantAntiAliasing)
 {
     /// <summary>
     /// What a fresh install draws, and what the Defaults button restores.
@@ -40,7 +41,8 @@ internal readonly record struct LodVisualSettings(
         ClimateTintRange: CloseClimateTintRange,
         LeafSeasonColours: true,
         HalfBlockTerrain: true,
-        WaterEffects: true);
+        WaterEffects: true,
+        DistantAntiAliasing: true);
 
     /// <summary>
     /// Biome colour out to four blocks per voxel - levels L0, L1 and L2. The window calls this
@@ -71,7 +73,8 @@ internal readonly record struct LodVisualSettings(
 
     /// <summary>
     /// Nothing optional drawn. The floor for a machine that cannot afford any of it, and the
-    /// state measured as matching 0.3.127's frame time exactly.
+    /// state measured as matching 0.3.127's frame time exactly - which is why distant
+    /// anti-aliasing, a pass that did not exist then, is off here too.
     /// </summary>
     public static LodVisualSettings Performance => new(
         BlendPipeline: false,
@@ -81,7 +84,8 @@ internal readonly record struct LodVisualSettings(
         ClimateTintRange: CloseClimateTintRange,
         LeafSeasonColours: false,
         HalfBlockTerrain: false,
-        WaterEffects: false);
+        WaterEffects: false,
+        DistantAntiAliasing: false);
 
     /// <summary>
     /// The two cheapest-per-pixel features kept, the two per-vertex ones given up.
@@ -89,7 +93,8 @@ internal readonly record struct LodVisualSettings(
     /// The split follows the measurement rather than taste: the seam band and the water terms
     /// are paid by the fragments that show them, which is a ring and a lake surface, while the
     /// biome colour and the block textures are paid by every vertex in the view whether or not
-    /// anything on screen ends up showing them.
+    /// anything on screen ends up showing them. Distant anti-aliasing is a per-pixel pass over
+    /// distant terrain alone and stays.
     /// </summary>
     public static LodVisualSettings Balanced => new(
         BlendPipeline: false,
@@ -99,7 +104,8 @@ internal readonly record struct LodVisualSettings(
         ClimateTintRange: CloseClimateTintRange,
         LeafSeasonColours: false,
         HalfBlockTerrain: true,
-        WaterEffects: true);
+        WaterEffects: true,
+        DistantAntiAliasing: true);
 
     /// <summary>Everything, including biome colour at every level. The most the mod draws.</summary>
     public static LodVisualSettings Quality => Default with

@@ -117,6 +117,16 @@ void main()
 #endif
 #include lodvertexsurface.vsh
 
+    // Distant anti-aliasing: move the finished position by this frame's sub-pixel offset,
+    // weighted by how many pixels one block spans here. gl_Position.w is the view depth.
+    if (vhTaaBlockScale > 0.0 && gl_Position.w > 0.0)
+    {
+        float vhBlockPixels = vhTaaBlockScale / gl_Position.w;
+        float vhTaaWeight = clamp((vhTaaStartPixels - vhBlockPixels)
+            / max(vhTaaStartPixels - vhTaaFullPixels, 0.001), 0.0, 1.0);
+        gl_Position.xy += vec2(vhTaaJitterX, vhTaaJitterY) * (vhTaaWeight * gl_Position.w);
+    }
+
 #ifdef VH_INDIRECT
     vhColumnBlocks = vhRecordNoise.z;
     vhMaskSectionOrigin = vhRecordMask.xy;

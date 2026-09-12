@@ -83,6 +83,8 @@ public partial class VintageHorizonsModSystem
         Entry(lines, ".vhdefer", !config.IgnoreOtherLodMods);
         Entry(lines, ".vhfar", DistanceOrUnlimited(config.FarViewDistanceCap));
         AddThresholds(lines, thresholds);
+        Entry(lines, ".vhdetail auto", config.AutoLodThresholds);
+        Entry(lines, ".vhdetail target", Number(config.LodTargetPixels, "0.00") + " px");
         Entry(lines, ".vhmask", config.ChunkMask);
         Entry(lines, ".vhblend", visual.BlendPipeline);
         Entry(lines, ".vhband", visual.SeamBand);
@@ -92,6 +94,7 @@ public partial class VintageHorizonsModSystem
         Entry(lines, ".vhtint climatewide", visual.FarBiomeColours);
         Entry(lines, ".vhtint leaves", visual.LeafSeasonColours);
         Entry(lines, ".vhslabs", visual.HalfBlockTerrain);
+        Entry(lines, ".vhtaa", visual.DistantAntiAliasing);
         Entry(lines, ".vhwater fresnel", visual.WaterEffects);
         Entry(lines, ".vhwater depth", config.WaterDepthShading);
         Entry(lines, ".vhwater alpha", Number(config.WaterMaxAlpha, "0.00"));
@@ -112,6 +115,8 @@ public partial class VintageHorizonsModSystem
         Entry(lines, ".vhdefer", !config.IgnoreOtherLodMods);
         Entry(lines, ".vhfar", DistanceOrUnlimited(renderer.FarViewDistanceCap));
         AddThresholds(lines, thresholds);
+        Entry(lines, ".vhdetail auto", renderer.AutoLodThresholds);
+        Entry(lines, ".vhdetail target", Number(renderer.LodTargetPixels, "0.00") + " px");
         Entry(lines, ".vhmask", renderer.ChunkMaskEnabled);
         Entry(lines, ".vhgap", renderer.HandoffGapLog);
         Entry(lines, ".vhgap release", renderer.HandoffGapRelease);
@@ -220,6 +225,9 @@ public partial class VintageHorizonsModSystem
         Entry(lines, "GPU depth cull", renderer.GpuCullEnabled);
         Entry(lines, ".vhhzb", renderer.DepthPyramidEnabled);
         Entry(lines, "GPU late depth", renderer.LateDepthPyramid);
+        Entry(lines, ".vhtaa", renderer.DistantAntiAliasing);
+        Entry(lines, ".vhtaa show", renderer.TaaShowWeight);
+        Entry(lines, ".vhtaa blend", Number(renderer.TaaFeedback, "0.00"));
     }
 
     void AddDevelopmentConfiguration(List<string> lines)

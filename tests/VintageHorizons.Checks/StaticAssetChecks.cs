@@ -2491,6 +2491,7 @@ public static class StaticAssetChecks
         {
             "BlendPipeline", "SeamBand", "BlockTextures", "ClimateTint",
             "ClimateTintRange", "LeafSeasonColours", "HalfBlockTerrain", "WaterEffects",
+            "DistantAntiAliasing",
         };
         foreach (string name in settingNames)
         {
@@ -2516,7 +2517,7 @@ public static class StaticAssetChecks
         foreach (string key in new[]
         {
             "seam-blending", "climate-tint", "climate-range", "leaf-season",
-            "half-blocks", "water-effects",
+            "half-blocks", "water-effects", "distant-aa",
         })
         {
             c.True(dialog.Contains($"\"{key}\"", StringComparison.Ordinal),

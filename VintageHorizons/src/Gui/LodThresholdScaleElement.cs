@@ -29,6 +29,12 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
 
     public override bool Focusable => true;
 
+    /// <summary>
+    /// Shows the markers without letting them move. While automatic thresholds are on the values
+    /// come from the screen, and a drag would be overwritten on the next frame.
+    /// </summary>
+    public bool ReadOnly { get; set; }
+
     public LodThresholdScaleElement(ICoreClientAPI api, IReadOnlyList<int> initialValues,
         Action<int, int> onChanged, ElementBounds bounds) : base(api, bounds)
     {
@@ -102,7 +108,7 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
 
     public override void OnMouseDownOnElement(ICoreClientAPI api, MouseEvent args)
     {
-        if (args.Button != EnumMouseButton.Left) return;
+        if (ReadOnly || args.Button != EnumMouseButton.Left) return;
         dragging = NearestMarker(args.X, args.Y);
         UpdateDragging(args.X);
         args.Handled = true;

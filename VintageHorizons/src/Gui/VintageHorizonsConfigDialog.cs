@@ -17,6 +17,12 @@ namespace VintageHorizons;
 /// than its box, so every row overran the two lines beneath it.
 /// </para>
 /// <para>
+/// The LOD distances are either the player's own, dragged on the scale, or automatic - chosen
+/// from the field of view and render resolution so every level hands over at the same size on
+/// screen. Automatic shows its live values on the scale and does not let them move; the player's
+/// own distances are kept underneath and come back when it is switched off.
+/// </para>
+/// <para>
 /// Nothing is applied until Save. The pending values below are the whole state of the window,
 /// so switching tabs re-composes freely without losing an edit.
 /// </para>
@@ -35,13 +41,20 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     const int DefaultDrawDistance = 4096;
 
     const double Width = 800;
-    const double Height = 700;
+    const double Height = 740;
     const double Margin = 30;
     const double SwitchX = 716;
     const double RowHeight = 40;
 
-    readonly Action<int[], int, LodVisualSettings> save;
+    const string AutomaticTip =
+        "Chooses L1-L6 from your field of view and render resolution, so every level hands over "
+        + "at the same size on screen and follows those settings when you change them. Off uses "
+        + "the distances you drag on the scale.";
+
+    readonly Action<int[], bool, int, LodVisualSettings> save;
     readonly int[] pendingThresholds;
+    readonly int[] automaticThresholds;
+    bool pendingAutomatic;
     int pendingFarCap;
     LodVisualSettings pendingVisuals;
     LodThresholdScaleElement? scale;
@@ -50,13 +63,18 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     public override string? ToggleKeyCombinationCode => null;
     public override bool PrefersUngrabbedMouse => true;
 
+    /// <param name="thresholds">The player's own distances, kept whether or not automatic is on.</param>
+    /// <param name="automaticThresholds">What automatic mode would use right now, for display.</param>
     public VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
-        int farCap, LodVisualSettings visuals,
-        Action<int[], int, LodVisualSettings> save) : base(capi)
+        IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
+        LodVisualSettings visuals, Action<int[], bool, int, LodVisualSettings> save) : base(capi)
     {
         this.save = save;
         pendingThresholds = LodWorld.NormalizeLevelThresholds(
             thresholds, LodWorld.DefaultLevelThresholds[0]);
+        this.automaticThresholds = LodWorld.NormalizeLevelThresholds(
+            automaticThresholds, LodWorld.DefaultLevelThresholds[0]);
+        pendingAutomatic = automatic;
         pendingFarCap = Math.Clamp(farCap <= 0 ? MaxDrawDistance : farCap,
             MinDrawDistance, MaxDrawDistance);
         pendingVisuals = visuals;
@@ -133,6 +151,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             "Varies",
             v => v.WaterEffects,
             (v, on) => v with { WaterEffects = on }),
+
+        new("distant-aa", "Distant Anti-Aliasing",
+            "Stops distant terrain shimmering as you move by blending it over several frames. "
+            + "Only terrain where a block is smaller than about two pixels on screen is touched.",
+            "Low",
+            v => v.DistantAntiAliasing,
+            (v, on) => v with { DistantAntiAliasing = on }),
     };
 
     static readonly string[] PresetCodes = { "performance", "balanced", "quality", "custom" };
@@ -150,13 +175,23 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             .BeginChildElements();
 
         composer.AddStaticText("LOD transition distances",
-            CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, 48, 700, 30));
-        composer.AddStaticText(
-            "Drag L1-L6 on one logarithmic scale. Markers stop at their neighbours.",
-            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, 78, 700, 22));
+            CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, 48, 480, 30));
+        composer.AddStaticText("Automatic", CairoFont.WhiteSmallText(),
+            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 190, 54, 180, 22));
+        composer.AddSwitch(OnAutomaticChanged,
+            ElementBounds.Fixed(SwitchX, 48, 32, 32), "auto-thresholds");
+        // Over the label and the switch alike. GuiElementHoverText handles no mouse-down, so it
+        // cannot swallow the click on the switch underneath it.
+        composer.AddHoverText(AutomaticTip, CairoFont.WhiteSmallText(), 380,
+            ElementBounds.Fixed(SwitchX - 190, 46, 222, 36), "tip-auto-thresholds");
+        composer.AddDynamicText(ThresholdHelp(), CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(Margin, 78, 700, 22), "threshold-help");
 
-        scale = new LodThresholdScaleElement(capi, pendingThresholds,
-            OnThresholdChanged, ElementBounds.Fixed(Margin, 100, 700, 104));
+        scale = new LodThresholdScaleElement(capi, DisplayedThresholds(),
+            OnThresholdChanged, ElementBounds.Fixed(Margin, 100, 700, 104))
+        {
+            ReadOnly = pendingAutomatic,
+        };
         composer.AddInteractiveElement(scale, "lod-threshold-scale");
 
         composer.AddStaticText("256", CairoFont.WhiteSmallText(),
@@ -223,6 +258,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         drawSlider.SetValues(pendingFarCap, MinDrawDistance, MaxDrawDistance, DrawDistanceStep,
             " blocks");
         drawSlider.ShowTextWhenResting = false;
+        SingleComposer.GetSwitch("auto-thresholds").On = pendingAutomatic;
         foreach (VisualRow row in Rows)
         {
             SingleComposer.GetSwitch(row.Key).On = row.Read(pendingVisuals);
@@ -274,8 +310,42 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         SingleComposer.GetDropDown("preset").SetSelectedIndex(PresetIndex());
     }
 
+    /// <summary>What the scale shows: automatic's live values, or the player's own.</summary>
+    int[] DisplayedThresholds() => pendingAutomatic ? automaticThresholds : pendingThresholds;
+
+    string ThresholdHelp() => pendingAutomatic
+        ? "Automatic: set from your field of view and resolution. Switch it off to drag L1-L6."
+        : "Drag L1-L6 on one logarithmic scale. Markers stop at their neighbours.";
+
+    void OnAutomaticChanged(bool on)
+    {
+        pendingAutomatic = on;
+        RefreshThresholds();
+    }
+
+    void RefreshThresholds()
+    {
+        if (SingleComposer?.Composed != true) return;
+        if (scale != null)
+        {
+            scale.ReadOnly = pendingAutomatic;
+            scale.SetValues(DisplayedThresholds());
+        }
+        for (int i = 0; i < pendingThresholds.Length; i++)
+        {
+            SingleComposer.GetDynamicText($"threshold-{i}")
+                .SetNewText(ThresholdLabel(i), false, true, false);
+        }
+        SingleComposer.GetDynamicText("threshold-help")
+            .SetNewText(ThresholdHelp(), false, true, false);
+        GuiElementSwitch automatic = SingleComposer.GetSwitch("auto-thresholds");
+        if (automatic.On != pendingAutomatic) automatic.On = pendingAutomatic;
+    }
+
     void OnThresholdChanged(int index, int value)
     {
+        // The scale is read-only while automatic is on, so a drag can only be the player's own.
+        if (pendingAutomatic) return;
         pendingThresholds[index] = value;
         if (SingleComposer?.Composed == true)
         {
@@ -300,15 +370,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         Array.Copy(LodWorld.DefaultLevelThresholds, pendingThresholds,
             pendingThresholds.Length);
+        pendingAutomatic = true;
         pendingFarCap = DefaultDrawDistance;
         pendingVisuals = LodVisualSettings.Default;
 
-        scale?.SetValues(pendingThresholds);
-        for (int i = 0; i < pendingThresholds.Length; i++)
-        {
-            SingleComposer.GetDynamicText($"threshold-{i}")
-                .SetNewText(ThresholdLabel(i), false, true, false);
-        }
+        RefreshThresholds();
         SingleComposer.GetSlider("draw-distance").SetValues(
             pendingFarCap, MinDrawDistance, MaxDrawDistance, DrawDistanceStep, " blocks");
         SingleComposer.GetDynamicText("draw-distance-label")
@@ -319,7 +385,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     bool OnSave()
     {
-        save(pendingThresholds, pendingFarCap, pendingVisuals);
+        save(pendingThresholds, pendingAutomatic, pendingFarCap, pendingVisuals);
         TryClose();
         return true;
     }
@@ -332,7 +398,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void OnTitleClose() => TryClose();
 
-    string ThresholdLabel(int index) => $"L{index + 1}: {FormatBlocks(pendingThresholds[index])}";
+    string ThresholdLabel(int index) =>
+        $"L{index + 1}: {FormatBlocks(DisplayedThresholds()[index])}";
 
     string DrawDistanceLabel() => $"{FormatBlocks(pendingFarCap)} blocks";
 

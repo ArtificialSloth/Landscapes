@@ -130,6 +130,23 @@ public class VintageHorizonsConfig
     /// of the path; `.vhgpu off` disables it along with everything above it.
     /// </summary>
     public bool LateDepthPicture = true;
+
+    /// <summary>
+    /// Blend distant cached terrain over several frames so it stops shimmering as the camera
+    /// moves. See LodTerrainRenderer.Taa.cs. The window's "Distant Anti-Aliasing" row and .vhtaa
+    /// write it; on by default, and an older config file with no such key loads as on.
+    /// </summary>
+    public bool DistantAntiAliasing = true;
+
+    /// <summary>
+    /// Choose L1-L6 from the field of view and render resolution instead of the fixed
+    /// LodThresholds above, so every level hands over at the same size on screen and follows
+    /// those settings when they change. The fixed list is kept untouched for when this is off.
+    /// </summary>
+    public bool AutoLodThresholds = true;
+
+    /// <summary>The on-screen column width, in pixels, automatic thresholds hand each level over at.</summary>
+    public float LodTargetPixels = LodAutoThresholds.DefaultTargetPixels;
 }
 
 /// <summary>
@@ -303,6 +320,11 @@ public partial class VintageHorizonsModSystem : ModSystem
         // that gave a feature up does not pay for it once on the way in - and no re-mesh is
         // needed here whatever it says, because nothing is resident yet.
         ApplyVisualSettings(ConfiguredVisualSettings());
+
+        // Automatic thresholds are worked out from the screen on the first frame; until then the
+        // fixed list loaded above stands, and it stays in the file either way.
+        renderer.LodTargetPixels = config.LodTargetPixels;
+        renderer.AutoLodThresholds = config.AutoLodThresholds;
 
         // The GPU path someone chose last session, restored in the order the pieces depend
         // on each other: arenas hold the geometry batching draws from, batching provides the
@@ -2000,6 +2022,14 @@ public partial class VintageHorizonsModSystem : ModSystem
                     splitNearCullGpu.Calls,
                     splitFarCullGpu.P95Us, splitFarCullGpu.P99Us, splitFarCullGpu.MaxUs,
                     splitFarCullGpu.Calls);
+
+                LodPhaseCost taaGpu = renderer.GpuTaaCost;
+                LodPhaseCost taaCopyGpu = renderer.GpuTaaCopyCost;
+                Mod.Logger.Notification(
+                    "  delayed GPU distant anti-aliasing p95/p99/max us: resolve {0:0}/{1:0}/{2:0} "
+                    + "over {3} samples | depth copy {4:0}/{5:0}/{6:0} over {7}",
+                    taaGpu.P95Us, taaGpu.P99Us, taaGpu.MaxUs, taaGpu.Calls,
+                    taaCopyGpu.P95Us, taaCopyGpu.P99Us, taaCopyGpu.MaxUs, taaCopyGpu.Calls);
             }
 
             // Collections since the last report, beside the phase maxima, because the
@@ -2295,12 +2325,21 @@ public partial class VintageHorizonsModSystem : ModSystem
                 }
 
                 configDialog?.Dispose();
-                int[] thresholds = deferringTo == null
+                // The player's own distances, which automatic mode leaves untouched in the file,
+                // and what automatic mode would use right now, which the scale shows while it is on.
+                bool automatic = deferringTo == null
+                    ? renderer.AutoLodThresholds
+                    : config.AutoLodThresholds;
+                int[] thresholds = deferringTo == null && !automatic
                     ? LodWorld.GetLevelThresholds()
                     : LodWorld.NormalizeLevelThresholds(config.LodThresholds, config.DetailDistance);
+                int[] automaticThresholds = deferringTo == null
+                    ? renderer.PreviewAutoThresholds()
+                    : thresholds;
                 int farCap = deferringTo == null ? renderer.FarViewDistanceCap : config.FarViewDistanceCap;
                 configDialog = new VintageHorizonsConfigDialog(
-                    capi, thresholds, farCap, CurrentVisualSettings(), ApplyGuiConfig);
+                    capi, thresholds, automaticThresholds, automatic, farCap, CurrentVisualSettings(),
+                    ApplyGuiConfig);
 
                 return configDialog.TryOpen()
                     ? TextCommandResult.Success("[VintageHorizons] configuration window opened.")
@@ -3977,38 +4016,154 @@ public partial class VintageHorizonsModSystem : ModSystem
             });
 
         capi.ChatCommands.Create("vhdetail")
-            .WithDescription("Reset all LOD thresholds to a doubling sequence beginning at this distance")
-            .WithArgs(capi.ChatCommands.Parsers.OptionalInt("blocks"))
+            .WithDescription("LOD thresholds. auto (the default) chooses them from your field of view "
+                + "and render resolution so every level hands over at the same size on screen; "
+                + "<blocks> sets a fixed doubling sequence from that distance and switches automatic "
+                + "off; manual goes back to your own distances; target <pixels> sets the on-screen "
+                + "size automatic mode aims for. Saved; automatic is also a switch in .vhconfig.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("mode"),
+                      capi.ChatCommands.Parsers.OptionalWord("value"))
             .HandleWith(args =>
             {
-                if (args.Parsers[0].IsMissing)
+                string mode = args.Parsers[0].IsMissing ? "" : ((string)args[0]).Trim();
+                string reply;
+                if (mode.Length == 0)
                 {
-                    return TextCommandResult.Success(
-                        $"[VintageHorizons] LOD thresholds {string.Join(", ", LodWorld.GetLevelThresholds())}. " +
-                        $".vhdetail resets them to a doubling sequence; .vhconfig edits them individually. " +
-                        $"Set between {(int)LodWorld.MinDetailDistance} and {(int)LodWorld.MaxDetailDistance}.");
+                    reply = "[VintageHorizons] " + DescribeLodThresholds();
                 }
+                else if (mode.Equals("auto", StringComparison.OrdinalIgnoreCase))
+                {
+                    renderer.AutoLodThresholds = true;
+                    SaveConfig();
+                    reply = "[VintageHorizons] automatic LOD thresholds on (saved); terrain "
+                        + "re-selects over the next few seconds. " + DescribeLodThresholds();
+                }
+                else if (mode.Equals("manual", StringComparison.OrdinalIgnoreCase))
+                {
+                    renderer.AutoLodThresholds = false;
+                    LodWorld.SetLevelThresholds(LodWorld.NormalizeLevelThresholds(
+                        config.LodThresholds, config.DetailDistance));
+                    SaveConfig();
+                    reply = "[VintageHorizons] automatic LOD thresholds off; back to your own "
+                        + "distances (saved). " + DescribeLodThresholds();
+                }
+                else if (mode.Equals("target", StringComparison.OrdinalIgnoreCase))
+                {
+                    string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
+                    if (TryParseSetting(value, out float pixels))
+                    {
+                        renderer.LodTargetPixels = pixels;
+                        SaveConfig();
+                        reply = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                            $"[VintageHorizons] automatic LOD target {renderer.LodTargetPixels:0.00} px (saved). ")
+                            + DescribeLodThresholds();
+                    }
+                    else
+                    {
+                        reply = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                            $"[VintageHorizons] automatic LOD target {renderer.LodTargetPixels:0.00} px. "
+                            + $"Give {LodAutoThresholds.MinTargetPixels:0.#} to "
+                            + $"{LodAutoThresholds.MaxTargetPixels:0.#}: smaller keeps finer detail "
+                            + $"further out, larger saves GPU time.");
+                    }
+                }
+                else if (int.TryParse(mode, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out int blocks))
+                {
+                    renderer.AutoLodThresholds = false;
+                    LodWorld.DetailDistance = GameMath.Clamp(blocks,
+                        (int)LodWorld.MinDetailDistance, (int)LodWorld.MaxDetailDistance);
+                    SaveConfig();
+                    reply = "[VintageHorizons] LOD thresholds reset to "
+                        + $"{string.Join(", ", LodWorld.GetLevelThresholds())} (saved; automatic "
+                        + "off). Terrain re-selects over the next few seconds.";
+                }
+                else
+                {
+                    reply = "[VintageHorizons] .vhdetail auto | manual | target <pixels> | <blocks>. "
+                        + DescribeLodThresholds();
+                }
+                capi.Logger.Notification(reply);
+                return TextCommandResult.Success(reply);
+            });
 
-                LodWorld.DetailDistance = GameMath.Clamp((int)args[0],
-                    (int)LodWorld.MinDetailDistance, (int)LodWorld.MaxDetailDistance);
-                SaveConfig();
-                return TextCommandResult.Success(
-                    $"[VintageHorizons] LOD thresholds reset to " +
-                    $"{string.Join(", ", LodWorld.GetLevelThresholds())} (saved). " +
-                    "Terrain re-selects over the next few seconds.");
+        capi.ChatCommands.Create("vhtaa")
+            .WithDescription("Distant anti-aliasing: blends distant cached terrain over several frames "
+                + "so it stops shimmering as you move. on | off | show | blend <0-0.97>. On by "
+                + "default and saved; also a switch in .vhconfig. With no argument, reports what it "
+                + "is doing and what it costs, in chat and in the client log.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("mode"),
+                      capi.ChatCommands.Parsers.OptionalWord("value"))
+            .HandleWith(args =>
+            {
+                string mode = args.Parsers[0].IsMissing ? "" : ((string)args[0]).Trim();
+                string reply;
+                if (mode.Equals("on", StringComparison.OrdinalIgnoreCase)
+                    || mode.Equals("off", StringComparison.OrdinalIgnoreCase))
+                {
+                    renderer.DistantAntiAliasing = mode.Equals("on", StringComparison.OrdinalIgnoreCase);
+                    SaveConfig();
+                    reply = "[VintageHorizons] " + renderer.DescribeDistantAntiAliasing() + " Saved.";
+                }
+                else if (mode.Equals("show", StringComparison.OrdinalIgnoreCase))
+                {
+                    renderer.TaaShowWeight = !renderer.TaaShowWeight;
+                    reply = "[VintageHorizons] anti-aliased pixels "
+                        + (renderer.TaaShowWeight
+                            ? "tinted magenta by strength; nothing else is touched. "
+                            : "shown normally. ")
+                        + "Session only.";
+                }
+                else if (mode.Equals("blend", StringComparison.OrdinalIgnoreCase))
+                {
+                    string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
+                    if (TryParseSetting(value, out float feedback)) renderer.TaaFeedback = feedback;
+                    reply = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                        $"[VintageHorizons] history blend {renderer.TaaFeedback:0.00} at full strength "
+                        + $"(default {LodTaaMath.DefaultFeedback:0.00}, most {LodTaaMath.MaxFeedback:0.00}). "
+                        + $"Higher is steadier but smears more when turning. Session only.");
+                }
+                else
+                {
+                    reply = "[VintageHorizons] " + renderer.DescribeDistantAntiAliasing();
+                }
+                capi.Logger.Notification(reply);
+                return TextCommandResult.Success(reply);
             });
     }
 
-    void ApplyGuiConfig(int[] thresholds, int farViewDistanceCap, LodVisualSettings visuals)
+    /// <summary>The thresholds in force, and where they come from.</summary>
+    string DescribeLodThresholds()
     {
+        string live = string.Join(", ", LodWorld.GetLevelThresholds());
+        return renderer.AutoLodThresholds
+            ? $"LOD thresholds {live}; automatic: {renderer.DescribeAutoThresholds()}."
+            : $"LOD thresholds {live}; fixed. '.vhdetail auto' chooses them from your field of "
+                + "view and resolution instead.";
+    }
+
+    /// <summary>A number typed in chat, with either decimal separator.</summary>
+    static bool TryParseSetting(string text, out float value) =>
+        float.TryParse(text, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out value)
+        || float.TryParse(text, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.CurrentCulture, out value);
+
+    void ApplyGuiConfig(int[] thresholds, bool autoThresholds, int farViewDistanceCap,
+        LodVisualSettings visuals)
+    {
+        // The fixed list is the player's own and is kept whichever mode is chosen; automatic mode
+        // only stops it being the one in force.
         int[] normalized = LodWorld.NormalizeLevelThresholds(thresholds, config.DetailDistance);
         config.LodThresholds = normalized;
         config.DetailDistance = normalized[0];
+        config.AutoLodThresholds = autoThresholds;
         config.FarViewDistanceCap = farViewDistanceCap;
 
         if (deferringTo == null)
         {
-            LodWorld.SetLevelThresholds(normalized);
+            renderer.AutoLodThresholds = autoThresholds;
+            if (!autoThresholds) LodWorld.SetLevelThresholds(normalized);
             renderer.FarViewDistanceCap = farViewDistanceCap;
             ApplyVisualSettings(visuals);
         }
@@ -4034,7 +4189,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             ClimateTintRange: renderer.ClimateFadeBlocks,
             LeafSeasonColours: renderer.LeafSeasonVariation > 0f,
             HalfBlockTerrain: renderer.HalfBlockLevels > 0,
-            WaterEffects: renderer.WaterFresnel);
+            WaterEffects: renderer.WaterFresnel,
+            DistantAntiAliasing: renderer.DistantAntiAliasing);
 
     /// <summary>What the config file says, for the deferring case and for startup.</summary>
     LodVisualSettings ConfiguredVisualSettings() => new(
@@ -4045,7 +4201,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         ClimateTintRange: Math.Max(0f, config.ClimateTintRange),
         LeafSeasonColours: config.LeafSeasonColours,
         HalfBlockTerrain: config.HalfBlockTerrain,
-        WaterEffects: config.WaterEffects);
+        WaterEffects: config.WaterEffects,
+        DistantAntiAliasing: config.DistantAntiAliasing);
 
     void WriteVisualSettings(LodVisualSettings v)
     {
@@ -4057,6 +4214,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.LeafSeasonColours = v.LeafSeasonColours;
         config.HalfBlockTerrain = v.HalfBlockTerrain;
         config.WaterEffects = v.WaterEffects;
+        config.DistantAntiAliasing = v.DistantAntiAliasing;
     }
 
     /// <summary>
@@ -4087,6 +4245,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         renderer.WaterFresnel = v.WaterEffects;
         renderer.WaterGlint = v.WaterEffects ? 1f : 0f;
         renderer.WaterFoam = v.WaterEffects ? 1.6f : 0f;
+        // A pass after the terrain, not a change to it: no re-mesh.
+        renderer.DistantAntiAliasing = v.DistantAntiAliasing;
 
         if (shapeChanged) renderer.RemeshAll();
     }
@@ -4119,8 +4279,15 @@ public partial class VintageHorizonsModSystem : ModSystem
         if (deferringTo == null)
         {
             config.FarViewDistanceCap = renderer.FarViewDistanceCap;
-            config.DetailDistance = (int)LodWorld.DetailDistance;
-            config.LodThresholds = LodWorld.GetLevelThresholds();
+            // Automatic thresholds are re-derived from the screen every session. Writing them over
+            // the fixed list would lose the player's own distances for when automatic is off.
+            if (!renderer.AutoLodThresholds)
+            {
+                config.DetailDistance = (int)LodWorld.DetailDistance;
+                config.LodThresholds = LodWorld.GetLevelThresholds();
+            }
+            config.AutoLodThresholds = renderer.AutoLodThresholds;
+            config.LodTargetPixels = renderer.LodTargetPixels;
             // The request, never the effective state: a mask that failed this session
             // reports itself disabled, and writing that would turn it off permanently.
             config.ChunkMask = renderer.ChunkMaskRequested;
