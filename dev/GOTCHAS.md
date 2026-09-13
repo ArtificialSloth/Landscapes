@@ -3599,3 +3599,92 @@ reason without saying so; the first 0.4.62 build failed on it.
 **Safer action:** write `System.Func<...>` wherever the API namespace is imported.
 
 **Found:** 2026-09-12, Session 87.
+
+### G184 - A boundary marker takes the colour of the region it introduces
+
+**Trigger:** maintaining separate colour arrays for the shaded LOD regions and the L1-L6 boundary
+markers.
+
+**Trap:** the marker number names the region to its right, not the zero-based boundary index. Using
+the same index in both arrays shifts every frame by one colour, so a correct map still teaches the
+wrong legend. The first 0.4.63 owner screenshots caught exactly this mismatch.
+
+**Safer action:** keep one L0-L6 palette. Shade region `level` from entry `level`, and draw boundary
+marker `i` from entry `i + 1`.
+
+**Found:** 2026-09-12, Session 88 (human-observed; fixed and accepted in 0.4.64).
+
+### G185 - A mirrored vanilla setting must remain vanilla-owned
+
+**Trigger:** exposing a base-game setting in a mod editor as a convenience control.
+
+**Trap:** copying the current value into mod configuration creates two sources of truth. Different
+ranges, increments, commit timing, preset side effects or Cancel behavior then make the mod page
+disagree with the game's own Settings page.
+
+**Safer action:** source-trace the vanilla control and write its real setting with the same
+interaction contract. The Horizons marker writes `ClientSettings.ViewDistance` at mouse-up, uses
+32-1,536 in steps of 32, marks Graphics Custom, and is not rolled back by mod Cancel.
+
+**Found:** 2026-09-12, Session 88 (source-traced from Vintage Story 1.22.7; harness-tested and
+human-accepted in 0.4.64).
+
+### G186 - The pause menu stops game ticks, not render stages
+
+**Trigger:** expecting owner-thread loading and publication registered only on the ordinary game
+tick to continue behind the single-player pause menu.
+
+**Trap:** completed worker results, cache requests and mesh publication stop draining even though
+the renderer is still being called. Forcing the game to unpause or synthesizing simulation ticks
+would fix the symptom by changing game behavior.
+
+**Safer action:** make the behavior optional and invoke the same bounded owner-thread work from the
+continuing render stage at the ordinary 50 ms cadence. Do not advance simulation and do not add a
+second publisher.
+
+**Found:** 2026-09-12, Session 88 (source-traced and harness-tested; direct runtime progress witness
+remains open).
+
+### G184 - A boundary marker takes the colour of the region it introduces
+
+**Trigger:** keeping separate, similarly indexed palettes for LOD region fills and L1-L6 boundary
+markers.
+
+**Trap:** a boundary is named for the region to its right, while a zero-based marker array is named
+for the boundary after the region to its left. Indexing both arrays the same way shifts every
+marker frame by one colour even though both arrays look internally consistent.
+
+**Safer action:** keep one L0-L6 palette. Shade region `level` from entry `level`, and shade boundary
+`i` from entry `i + 1`. The 0.4.64 scale does this.
+
+**Found:** 2026-09-12, Session 88 (owner screenshot; fixed and human-accepted).
+
+### G185 - A mirrored vanilla setting must remain vanilla-owned
+
+**Trigger:** exposing a game setting, such as render distance, in a mod's own editor.
+
+**Trap:** copying it into mod configuration creates two values that can disagree, and a superficially
+similar slider can still diverge in range, increments, commit timing, preset side effects or Cancel
+behavior. The first distance map showed vanilla's value as context but did not provide the second
+real control the owner expected.
+
+**Safer action:** source-trace the game's control and write the actual setting with the same
+semantics. The 0.4.64 marker uses 32-1,536 in 32-block steps, commits on mouse-up, marks Graphics
+Custom, refreshes automatic thresholds, and is not rolled back by the mod's Cancel action.
+
+**Found:** 2026-09-12, Session 88 (decompiled Vintage Story 1.22.7; human-accepted UI).
+
+### G186 - Game ticks stop behind pause while render stages continue
+
+**Trigger:** expecting owner-thread cache, install or mesh drains registered only on the ordinary
+game tick to continue behind the single-player pause menu.
+
+**Trap:** workers may finish, but their bounded publication path stops draining, so distant terrain
+appears to stop loading even though the game keeps rendering the paused scene. Unpausing or
+synthesizing a simulation tick would change unrelated game behavior.
+
+**Safer action:** when the saved option is on, use a continuing render stage to invoke the same
+bounded owner-thread work at its ordinary 50 ms cadence. Do not advance simulation or introduce a
+second publisher.
+
+**Found:** 2026-09-12, Session 88 (source-traced and harness-tested; runtime progress witness open).

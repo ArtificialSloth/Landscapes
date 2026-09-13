@@ -9,8 +9,35 @@ first.
 ## [Unreleased]
 
 **Known open:** winter temporal convergence (a real accumulation and melt, `/vhrefresh`
-boundaries, campaign cost) has not yet had its acceptance run. The owner accepted 0.4.61 as the
-baseline on 2026-09-12, in place of 0.4.39.
+boundaries, campaign cost) has not yet had its acceptance run. The owner accepted 0.4.64 as the
+current baseline on 2026-09-12.
+
+## [0.4.64] - 2026-09-12
+
+**Vintage Horizons now has its own tab in the in-game Settings screen.** Open Settings from the
+pause menu and choose **Horizons**; `.vhconfig` remains available as a fallback. Both routes use the
+same General and Anti-Aliasing editor, with compact rows, descriptions on hover, secondary tabs
+clear of the vanilla header and controls sized to keep labels inside the window. If a future game
+version changes the private 1.22 Settings seam, the guarded integration leaves vanilla Settings
+alone and tells the player to use `.vhconfig`.
+
+**The LOD transition map now explains every part of the distance range.** Vanilla's current render
+distance is a separate neutral band, and the coloured, labelled L0–L6 regions begin after it. Each
+boundary frame matches the region it introduces. The Vanilla marker is a second real control for
+the game's own render-distance setting: it uses the same 32–1,536 range, 32-block steps, mouse-up
+commit and Custom graphics-preset result as the vanilla Graphics page. Changing it refreshes
+automatic LOD thresholds immediately; because the value belongs to the game, cancelling the mod
+page does not undo it.
+
+**LOD terrain may continue loading behind the single-player pause menu.** A saved, default-on
+switch runs the same bounded owner-thread cache and mesh work at its usual 50 ms cadence while
+rendering continues; it does not unpause the world or advance simulation. The Quality preset now
+keeps Far Biome Colors off, matching the deliberate default for that expensive option.
+
+0.4.63 was the first private build of the Settings integration; 0.4.64 is the owner's accepted
+layout and interaction refinement. Release build: zero warnings/errors. Fast checks: 23,227
+assertions, zero failures. The verified 38-entry package was copy-installed with SHA-256
+`91B2CDA032A5AE5C1E99DCA1F2B32A1D1078E697CF434AACA5932BF881856FB6`.
 
 ## [0.4.62] - 2026-09-12
 

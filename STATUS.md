@@ -4,23 +4,24 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-12`
-**Mod version:** `0.4.62` — current test build, verified, copy-installed, checkpointed and human-tested; it draws chiselled blocks as their most visible material
-**Last accepted baseline:** `0.4.61` at commit `b1fd007`, accepted by the owner on 2026-09-12 in place of 0.4.39
-**Active branch:** `codex/water-depth-light`; test-build checkpoints 0.4.56 `223bfbb`, 0.4.57 `1dc2907`, 0.4.58 `f255b08`, 0.4.59 `c4fbbdd`, 0.4.60 `092f518`, 0.4.61 `b1fd007` and 0.4.62 `e565558`; nothing pushed
+**Mod version:** `0.4.64` — current test build, verified, copy-installed, checkpointed and human-tested; its polished config editor is available from in-game Settings and `.vhconfig`
+**Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
+**Active branch:** `codex/water-depth-light`; test-build checkpoints 0.4.56 `223bfbb`, 0.4.57 `1dc2907`, 0.4.58 `f255b08`, 0.4.59 `c4fbbdd`, 0.4.60 `092f518`, 0.4.61 `b1fd007`, 0.4.62 `e565558`, 0.4.63 `0ec6d93` and 0.4.64 `dd0394c`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `108` C# files under `VintageHorizons/src`
+**Source files:** `109` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
 
 ## Current result
 
-**Distant ruins and chiselled builds keep their colours.** Version 0.4.62 records every chiselled
-block at capture as the material that covers most of its outside, and repairs the missing-texture
-colour that had turned structures near-white at distance; the owner ran it and reported "Excellent!
-Looks fantastic." Distant terrain no longer shimmers as the camera moves (0.4.57-0.4.61, tuned by the
-owner), automatic LOD thresholds hand every level over at the same on-screen size, and the owner
-accepted 0.4.61 as the baseline and confirmed 0.4.55's Redwood and glacier corrections.
+**The polished Vintage Horizons editor is part of the in-game Settings screen.** Version 0.4.64
+adds the dedicated **Horizons** header tab, retains `.vhconfig`, gives Vanilla and L0-L6 clear
+labelled regions, and lets the Vanilla marker adjust the game's real render-distance setting. It
+also adds default-on loading while paused and keeps Far Biome Colors off in Quality; the owner
+reviewed the final window and said, "This looked good." The accepted 0.4.62 chiselled-block colour
+fix, the 0.4.61 distant anti-aliasing and automatic thresholds, and the earlier tree, glacier,
+handoff and water results remain in place.
 
 ## Distant structures and chiselled blocks
 
@@ -120,14 +121,37 @@ for `.vhdetail manual`. It re-selects at most once a second, only when the rende
 or target changes, and logs what it applies. In use since 0.4.57 without complaint; not evaluated
 at other FOVs, render scales or view distances.
 
-## Settings window
+## Settings integration and editor
 
-`.vhconfig` has had two tabs above the window since 0.4.60. **General** holds the distances with the
-Automatic switch, the draw distance, and the visual features with their presets; it applies on
-Save. **Anti-Aliasing** holds a slider per dial, previewed live; Save keeps them and Cancel or
-closing puts them back. Defaults resets the tab that is showing. Session 77 had removed an earlier
-tabbed version whose strip clipped its labels; the owner asked for tabs again and confirmed in
-0.4.60 that both labels read in full.
+In an active world, the vanilla Settings header has a dedicated **Horizons** tab. Vintage Story
+1.22 exposes no public page registry, so one guarded adapter extends the private
+`GuiCompositeSettings.ComposerHeader` seam and the established Settings leave paths. It validates
+every reflected member before patching; if the seam moves, vanilla Settings remains usable and the
+log directs the player to `.vhconfig`. Both entries compose one stateful editor (settled decision
+37), so behavior cannot drift between two implementations.
+
+- **General** holds automatic/manual LOD distances, far draw cap, the saved **Load terrain while
+  paused** switch, and visual features with presets. **Anti-Aliasing** holds a slider for every
+  dial. Descriptions appear on hover; secondary tabs sit below the vanilla header; compact rows and
+  independently placed actions keep text and controls inside the page. Defaults resets the current
+  page. Save keeps mod changes; Cancel or closing restores live anti-aliasing previews.
+- **Distance map.** A logarithmic map begins at 32 blocks. Vanilla's range is neutral grey; the
+  coloured and labelled L0-L6 spans begin at its edge, and each L1-L6 marker frame matches the
+  region it introduces. This picture is explanatory and does not remove the renderer's internal
+  seam overlap.
+- **Vanilla render distance.** The white Vanilla marker is a second control for
+  `ClientSettings.ViewDistance`, not mod configuration. It uses the game's exact 32-1,536 range,
+  32-block increments, mouse-up commit and Graphics-Custom side effect, then refreshes automatic
+  thresholds immediately. Mod Cancel deliberately does not undo it.
+- **Paused loading.** Render stages continue when ordinary single-player game ticks stop. When the
+  saved default-on switch is enabled, the renderer invokes the same bounded owner-thread LOD work
+  at 50 ms cadence; it neither unpauses nor advances simulation. Source and harness verification
+  are complete; a direct runtime progress observation remains open.
+- **Presets.** Quality now equals the deliberate default visual set and leaves costly Far Biome
+  Colors off. Players may enable the feature individually, producing a Custom configuration.
+
+The owner's first 0.4.63 screenshots exposed the remaining tab, colour and Vanilla/L0 separation
+defects. He reviewed the corrected 0.4.64 window and said, "This looked good."
 
 ## Tree and glacier corrections: accepted
 
@@ -185,8 +209,8 @@ append-compatible extensions.
 
 Since 0.4.62 a chiselled position stores its stand-in's block code, for example planks where the
 world holds a chisel. Every reader already resolves an ordinary block code, so neither the blob
-format nor the schema meaning moved; `dev/WIRE_HISTORY.md` carries the note. Sessions 84–87 changed
-nothing on the wire or in the blob format; Session 86 added client configuration keys only.
+format nor the schema meaning moved; `dev/WIRE_HISTORY.md` carries the note. Sessions 84-88 changed
+nothing on the wire or in the blob format; Sessions 86 and 88 added client configuration keys only.
 
 ## Diagnostics
 
@@ -210,29 +234,32 @@ Session-only unless stated; all write their findings to the client log.
 
 ## Performance and artifact evidence
 
-The final fast tier passed **23,180 assertions with zero failures**, and the 0.4.62 Release build
+The final fast tier passed **23,227 assertions with zero failures**, and the 0.4.64 Release build
 completed with zero warnings and zero errors. Distant anti-aliasing's measured cost is in its table
-above; automatic thresholds cost nothing per frame unless their inputs change. Chisel stand-ins add
-a copy of each chiselled block's contents where a capture job is created and arithmetic on the
-capture worker; neither is measured. The late range check of 0.4.53 sweeps only on frames where the
-physics step changed the player's block; snow adds 1,024 uncompressed bits-array bytes per resident
-section before compression; no paired large-world capture yet isolates winter campaign cost.
+above; automatic thresholds cost nothing per frame unless their inputs change. The pause-time path
+runs the already-bounded owner-thread work at 50 ms cadence but has no paired frame-time capture.
+Chisel stand-ins add a copy of each chiselled block's contents where a capture job is created and
+arithmetic on the capture worker; neither is measured. The late range check of 0.4.53 sweeps only on
+frames where the physics step changed the player's block; snow adds 1,024 uncompressed bits-array
+bytes per resident section before compression; no paired large-world capture yet isolates winter
+campaign cost.
 
-The verified `dist/vintagehorizons_0.4.62.zip` is 533,152 bytes with 38 entries and SHA-256
-`C395F437CD77FF3B5CFF75735EF4C103359C672E2463B056C0F27F590539CA73`; `modinfo.json` and the DLL both
-report 0.4.62, both new types were confirmed by decompiling, and the installed Mods-folder copy has
-the same hash. Older test zips remain in that folder. Every incremented private test build receives
-an exact Git checkpoint after verification and installation; this does not authorize a push, tag,
-publication or public release. The assistant did not launch the game in Session 87.
+The verified `dist/vintagehorizons_0.4.64.zip` is 541,112 bytes with 38 entries and SHA-256
+`91B2CDA032A5AE5C1E99DCA1F2B32A1D1078E697CF434AACA5932BF881856FB6`; `modinfo.json` and the DLL both
+report 0.4.64, the zip DLL matches the Release output, no PDB is present, and the installed
+Mods-folder copy has the same hash. Older test zips remain in that folder. Every incremented private
+test build receives an exact Git checkpoint after verification and installation; this does not
+authorize a push, tag, publication or public release. The assistant did not launch the game in
+Session 88.
 
-Documentation validation passed **2,306 of 2,311 checks**. The five failures are the pre-existing
+Documentation validation passed **2,311 of 2,316 checks**. The five failures are the pre-existing
 personal Windows paths in ignored `.testdata/water-extraction` and `.testdata/water-oit`
 diagnostic logs. Current version, changelog coverage, source count, compatibility, links, session
 routing, shader ASCII and active performance-plan routing pass.
 
 ## Established product state retained
 
-- Version 0.4.61 is the accepted baseline (owner, 2026-09-12). Its water keeps the settled seam and
+- Version 0.4.64 is the accepted baseline (owner, 2026-09-12). Its water keeps the settled seam and
   narrowly scoped loading guard accepted in 0.4.39.
 - The client remains useful on an unmodified server. Server capture, safe sweeping, optional
   generation, dormant snow refresh and live assist remain additive.
@@ -241,31 +268,36 @@ routing, shader ASCII and active performance-plan routing pass.
 - Distant anti-aliasing never changes a vanilla pixel and never keys anything to a fixed distance.
 - A block is recorded as what it shows: a chiselled block as its most visible material (settled
   decision 36).
+- Settings has one editor with two entry points, while the mirrored vanilla distance remains
+  vanilla-owned and pause loading reuses bounded owner-thread work (settled decision 37).
 - The handoff fix changes when ownership's range half is decided, not what ownership means. Water
   development still may not redefine shared terrain ownership.
 
 ## Next work
 
-Begin with [Session 87](dev/sessions/SESSION_87.md) and the top of [TODO](dev/TODO.md).
+Begin with [Session 88](dev/sessions/SESSION_88.md) and the top of [TODO](dev/TODO.md).
 
 1. Optional: at distance, look at a clutter- or bookshelf-heavy ruin, and at a ruin cached before
    0.4.62 that you have not revisited, which stays grey until it is captured again.
-2. Winter temporal verification: one controlled unloaded-region accumulation and melt through the
+2. Specifically witness LOD cache/mesh progress while the single-player pause menu remains open,
+   then switch **Load terrain while paused** off and confirm work stops without unpausing the world.
+3. Winter temporal verification: one controlled unloaded-region accumulation and melt through the
    30-second signal, finite campaign, durable L0 replacement, live client offer and local mip
    convergence; campaign cost in a large explored world; `/vhrefresh` at its boundaries.
-3. Session 84 follow-ups: keep `.vhsky`, retire `.vhsnowline` and `.vhgap release`, move or retire
+4. Session 84 follow-ups: keep `.vhsky`, retire `.vhsnowline` and `.vhgap release`, move or retire
    the pre-physics `.vhgap` scan, and the stale-sphere and eviction-gap cleanups.
-4. If it matters: count the server half's chisel stand-ins, and measure the cost of copying chisel
+5. If it matters: count the server half's chisel stand-ins, and measure the cost of copying chisel
    contents where capture jobs are created.
 
-[Session 87](dev/sessions/SESSION_87.md) holds the chiselled-block work and the baseline decision,
+[Session 88](dev/sessions/SESSION_88.md) holds the Settings integration and accepted polish,
+[Session 87](dev/sessions/SESSION_87.md) holds the chiselled-block work and the earlier baseline decision,
 [Session 86](dev/sessions/SESSION_86.md) the anti-aliasing work,
 [Session 85](dev/sessions/SESSION_85.md) the tree/ice work and checkpoint rule,
 [Session 84](dev/sessions/SESSION_84.md) the flash investigation and fix,
 [Session 83](dev/sessions/SESSION_83.md) the 0.4.40–0.4.49 winter work, and
 [Session 82](dev/sessions/SESSION_82.md) the accepted water baseline. Architecture owns the winter
-and update invariants and settled decisions 33–36, `dev/WIRE_HISTORY.md` owns compatibility, and
-G166–G183 in `dev/GOTCHAS.md` preserve the recent traps.
+and update invariants and settled decisions 33–37, `dev/WIRE_HISTORY.md` owns compatibility, and
+G166–G186 in `dev/GOTCHAS.md` preserve the recent traps.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md); GPU renderer work

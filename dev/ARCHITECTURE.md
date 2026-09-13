@@ -503,6 +503,13 @@ live until the exact replacement persistence revision is acknowledged.
     block-entity block that reaches a type-level colour takes another of its own textures or neutral
     grey, never the missing-texture image; a plain block whose own answer is that image (a removed
     mod's block) keeps it, matching what the game draws up close (G180-G182).
+37. **Settings has one editor and each setting keeps its real owner.** The guarded in-game
+    **Horizons** tab and `.vhconfig` compose the same editor; the command remains the fallback if
+    Vintage Story's private Settings header seam moves. The Vanilla distance marker writes the
+    actual game setting with the game's range, step, mouse-up commit and Custom-preset side effect,
+    so mod Cancel never rolls it back. Its neutral visual band ends before the coloured L0 band.
+    The saved pause-loading choice reuses the same bounded owner-thread LOD work from a render stage
+    at 50 ms cadence; it never unpauses or advances simulation (G184-G186).
 
 ## Concurrency invariants
 

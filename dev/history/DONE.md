@@ -2,6 +2,22 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-12 - Vanilla Settings integration and accepted config polish (0.4.63-0.4.64)
+
+Vintage Horizons now has a guarded dedicated **Horizons** tab in the in-game Settings header, with
+`.vhconfig` retained as its fallback and both routes using the same General/Anti-Aliasing editor.
+The final page keeps its secondary tabs below the vanilla header and its text inside compact rows.
+Its logarithmic map gives Vanilla a neutral exclusive band, shades and labels L0-L6, and matches
+each L1-L6 marker frame to the region it introduces. The Vanilla marker writes the real game
+render distance with the vanilla 32-1,536 range, 32-block step, mouse-up commit and Custom-preset
+side effect; mod Cancel does not roll it back.
+
+Version 0.4.64 also adds a saved, default-on option to drain the same bounded owner-thread LOD work
+at 50 ms cadence while the single-player pause menu is open, without unpausing simulation, and
+makes Quality keep Far Biome Colors off. The owner accepted the final window: "This looked good."
+Checkpoints `0ec6d93` and `dd0394c`; 23,227 assertions pass. Runtime observation of actual loading
+progress under pause remains in `dev/TODO.md`.
+
 ## 2026-09-12 - Distant ruins drew white; chiselled blocks drawn as their most visible material (0.4.62)
 
 Distant structures built from chiselled, clutter and bookshelf blocks drew near-white while looking

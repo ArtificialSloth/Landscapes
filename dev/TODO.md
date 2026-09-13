@@ -2,13 +2,13 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.62
+## Start here: 0.4.64
 
-Read [Session 87](sessions/SESSION_87.md). Version 0.4.62 records every chiselled block at capture
-as the material that covers most of its outside, repairs the missing-texture check, and repairs
-near-white colours already stored; the owner ran it and reported "Excellent! Looks fantastic." On
-2026-09-12 the owner also accepted 0.4.61 as the baseline, passed the three 0.4.55 visual checks
-and kept the anti-aliasing slider ranges as they are ([DONE](history/DONE.md)).
+Read [Session 88](sessions/SESSION_88.md). Versions 0.4.63-0.4.64 put the shared config editor in a
+dedicated in-game **Horizons** Settings tab, polish its layout and labelled LOD map, make its Vanilla
+marker control the actual game render distance, add optional loading while paused, and keep Far
+Biome Colors off in Quality. The owner accepted the final window: "This looked good." Session 87
+holds the accepted 0.4.62 chiselled-block correction ([DONE](history/DONE.md)).
 
 ## Distant structures and block-entity colours: what 0.4.62 leaves open
 
@@ -84,7 +84,7 @@ not yet received a clean acceptance run:
 
 ## Distant water: protect the accepted water and complete continuity evidence
 
-The accepted baseline is `0.4.61` on `codex/water-depth-light` (owner, 2026-09-12); the water
+The accepted baseline is `0.4.64` on `codex/water-depth-light` (owner, 2026-09-12); the water
 behaviour accepted in `0.4.39` is what this section protects. Read
 [the current handoff](plans/HANDOFF_WATER_SEAM.md) and
 [Session 82](sessions/SESSION_82.md). The settled seam and the 0.4.37 streaming improvement are
@@ -124,18 +124,12 @@ terrain/seabed holes and was completely removed in 0.4.39.
   shoreline detail need their own evidence. The owner's current wave-strip value of zero is a
   separate saved choice, not part of the accepted material defaults.
 
-## Frame-time regression and the settings window: what Session 77 has not proven
+## Frame-time regression and Settings: what remains
 
 Branch `codex/vertex-tint-cost`, `0.4.0`. The regression is measured and its unreachable half
 is closed; what follows is what a sandbox run cannot answer. Read `dev/sessions/SESSION_77.md`
 before touching this.
 
-- **The General page's row clearance is not confirmed at the owner's GUI scale.** 0.3.196's
-  layout was wrong in a way only an owner screenshot caught - a medium-weight title is taller
-  than the box it is given, so every row overran its own description. The owner has since used
-  the window: in 0.4.60 he confirmed both tab labels read in full, tab switching works and every
-  anti-aliasing slider works. **The tell: the seven feature rows on General should clear the
-  buttons at the bottom** of the 740-tall window; that was not specifically reported.
 - **The fixes are measured in the sandbox, not in the owner's scene.** 100 us of 270 recovered
   at one seam viewpoint that runs about 2.9x lighter than his. The proportion should carry and
   the mechanism does not depend on the scene, but the number in his world is inference. **The
@@ -147,9 +141,10 @@ before touching this.
   crosses the horizon and compare Far on against Far off.** If it shows, the answer is a wider
   Close range, not a wider fade: `LodVisualSettings.CloseClimateTintRange`. That constant was
   briefly 1 (L0 alone) in 0.3.197-0.4.0 and is 4 again from 0.4.1; see G151 for why.
-- **The three preset compositions are a judgement call.** Balanced keeps the features paid by
-  the fragments that show them and gives up the two paid by every vertex; that split follows
-  the measurement, but which features a player would rather keep does not.
+- **The pause-time loading mechanism needs a direct runtime witness.** The source and harness
+  establish that it runs the same bounded owner-thread work at 50 ms cadence without unpausing
+  simulation. Hold the single-player pause menu open and observe cache/mesh progress, then turn
+  **Load terrain while paused** off and confirm progress stops while the world stays paused.
 - **The residue is closed as an aggregate, not item by item.** All-features-off on 0.3.195
   measures exactly 0.3.127, so the three named costs are gone between them. Their individual
   shares were never separated, and doing so would need a shader edit per hypothesis.
