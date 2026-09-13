@@ -9,6 +9,7 @@ public static class GpuRendererChecks
         RuntimeEntryPoints(c);
         GlErrorIsolation(c);
         DepthCopyPolicy(c);
+        ProbeRetryPolicy(c);
         RenderPathPolicy(c);
         RenderPathLifecycle(c);
         GlStateOwnership(c);
@@ -50,15 +51,92 @@ public static class GpuRendererChecks
         c.Eq(1, LodGpuDepthCopyProbe.CalculateMipLevels(1, 1),
             "a 1x1 private depth texture has one mip");
         c.Eq(11, LodGpuDepthCopyProbe.CalculateMipLevels(1920, 1080),
-            "a non-power-of-two viewport allocates through a 1x1 mip");
+            "a non-power-of-two frame allocates through a 1x1 mip");
         c.Eq(12, LodGpuDepthCopyProbe.CalculateMipLevels(2048, 1),
-            "mip allocation follows the largest viewport dimension");
+            "mip allocation follows the largest frame dimension");
         c.Eq(0, LodGpuDepthCopyProbe.CalculateMipLevels(0, 1080),
-            "an empty viewport cannot allocate a private depth chain");
+            "an empty frame cannot allocate a private depth chain");
         c.True(LodGpuDepthCopyProbe.IsSupportedDepthFormat(0x8CAC),
             "32-bit floating-point depth is accepted for an exact-format private copy");
         c.False(LodGpuDepthCopyProbe.IsSupportedDepthFormat(0x88F0),
             "depth/stencil sources fail closed until their copy semantics are validated");
+
+        LodGpuDepthCopySizeDecision windowViewport = LodGpuDepthCopyProbe.EvaluateCopySize(
+            new LodGpuDepthCopyDimensions(
+                1920, 1080,
+                0, 0, 2560, 1440,
+                1920, 1080));
+        c.True(windowViewport.Succeeded,
+            "a window-sized 2560x1440 viewport cannot reject a 1920x1080 rendered frame and texture");
+
+        LodGpuDepthCopySizeDecision undersizedTexture = LodGpuDepthCopyProbe.EvaluateCopySize(
+            new LodGpuDepthCopyDimensions(
+                2560, 1440,
+                0, 0, 2560, 1440,
+                1920, 1080));
+        c.False(undersizedTexture.Succeeded,
+            "a rendered frame larger than its depth texture is rejected");
+        c.True(undersizedTexture.Retryable,
+            "a frame/texture resize race remains retryable");
+        c.True(undersizedTexture.FailureReason.Contains(
+                "frame 2560x1440, viewport 0,0 2560x1440, depth texture 1920x1080",
+                StringComparison.Ordinal),
+            "a size failure records frame, viewport, and texture dimensions together");
+
+        LodGpuDepthCopySizeDecision emptyFrame = LodGpuDepthCopyProbe.EvaluateCopySize(
+            new LodGpuDepthCopyDimensions(0, 0, 0, 0, 0, 0, 0, 0));
+        c.False(emptyFrame.Succeeded,
+            "a zero-area rendered frame is not validated");
+        c.True(emptyFrame.Retryable,
+            "a zero-area rendered frame waits for a later visible frame");
+    }
+
+    static void ProbeRetryPolicy(Check c)
+    {
+        c.True(LodGpuProbeRetryPolicy.ShouldRetry(retryable: true, attempts: 1),
+            "the first transient depth-size failure is retried");
+        c.True(LodGpuProbeRetryPolicy.ShouldRetry(
+                retryable: true, attempts: LodGpuProbeRetryPolicy.MaximumAttempts - 1),
+            "the final allowed retry remains reachable");
+        c.False(LodGpuProbeRetryPolicy.ShouldRetry(
+                retryable: true, attempts: LodGpuProbeRetryPolicy.MaximumAttempts),
+            "a transient failure becomes final after the bounded attempt count");
+        c.False(LodGpuProbeRetryPolicy.ShouldRetry(retryable: false, attempts: 1),
+            "a real capability failure latches immediately");
+
+        const long frequency = 1_000;
+        const long now = 10_000;
+        long next = LodGpuProbeRetryPolicy.NextAttemptTimestamp(now, frequency);
+        c.Eq(now + LodGpuProbeRetryPolicy.RetryDelayMilliseconds, next,
+            "retry delay uses monotonic timestamp units");
+        c.False(LodGpuProbeRetryPolicy.IsAttemptDue(next - 1, next),
+            "consecutive frames cannot burn through every retry");
+        c.True(LodGpuProbeRetryPolicy.IsAttemptDue(next, next),
+            "a retry becomes due at its monotonic deadline");
+        c.False(LodGpuProbeRetryPolicy.NeedsManualRecheck(
+                validationRequested: true,
+                probeFinalized: true,
+                runtimeSucceeded: true,
+                depthCopySucceeded: true),
+            "a completely validated GPU path does not re-run its disposable probes");
+        c.True(LodGpuProbeRetryPolicy.NeedsManualRecheck(
+                validationRequested: true,
+                probeFinalized: true,
+                runtimeSucceeded: true,
+                depthCopySucceeded: false),
+            ".vhgpu on re-arms a finalized depth-copy failure even when compute already passed");
+        c.True(LodGpuProbeRetryPolicy.NeedsManualRecheck(
+                validationRequested: true,
+                probeFinalized: true,
+                runtimeSucceeded: false,
+                depthCopySucceeded: false),
+            ".vhgpu on can explicitly re-check a permanent capability failure");
+
+        string renderer = File.ReadAllText(Path.Combine(
+            GameAssemblies.RepoRoot, "VintageHorizons", "src", "Render", "LodTerrainRenderer.cs"));
+        c.True(renderer.Contains("ShowChatMessage", StringComparison.Ordinal)
+            && renderer.Contains("Run .vhgpu on to re-check", StringComparison.Ordinal),
+            "a final GPU-path failure gives the player the explicit re-check command");
     }
 
     static void RuntimeEntryPoints(Check c)

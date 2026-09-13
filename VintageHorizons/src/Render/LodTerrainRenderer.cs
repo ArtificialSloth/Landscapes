@@ -172,6 +172,7 @@ public partial class LodTerrainRenderer : IRenderer
     readonly LodGpuShadowRenderPath gpuShadow;
     readonly LodRenderPathCoordinator renderPaths;
     bool renderPathConfigured;
+    string? requiredTerrainCapabilityFailure;
     float renderCullDistanceSquared = float.MaxValue;
     /// <summary>
     /// What the renderer's own frame costs, by phase, since the last stats report. Each
@@ -2033,7 +2034,8 @@ public partial class LodTerrainRenderer : IRenderer
             gpuTimingRequested,
             LodRenderPathPolicy.RequestsRuntimeValidation(gpuRendererPreference),
             message => capi.Logger.Notification("{0}", message),
-            message => capi.Logger.Warning("{0}", message));
+            message => capi.Logger.Warning("{0}", message),
+            () => (capi.Render.FrameWidth, capi.Render.FrameHeight));
         gpuShadow = new LodGpuShadowRenderPath();
         renderPaths = new LodRenderPathCoordinator(
             new LodLegacyRenderPath(
@@ -5568,11 +5570,11 @@ public partial class LodTerrainRenderer : IRenderer
         if (ContinueLoadingWhilePaused && capi.IsGamePaused) PausedLoadingPump?.Invoke();
 
         var rapi = capi.Render;
+        gpuTelemetry.BeginFrame();
         if (rapi.FrameWidth == 0) return;
 
         camPos = capi.World.Player.Entity.CameraPos;
         frameCounter++;
-        gpuTelemetry.BeginFrame();
         ConfigureRenderPaths();
         // Before anything reads a threshold: radial demand, residency and traversal all do.
         UpdateAutoThresholds();
@@ -6277,7 +6279,18 @@ public partial class LodTerrainRenderer : IRenderer
             "[VintageHorizons] Opaque renderer: packed GPU path required; per-section and "
             + "expanded fallbacks disabled. Capability result: {0}.",
             selection.Reason);
-        if (selection.ShadowEnabled) AttachShadowArenas();
+        if (selection.ShadowEnabled)
+        {
+            requiredTerrainCapabilityFailure = null;
+            AttachShadowArenas();
+        }
+        else if (LodRenderPathPolicy.RequestsRuntimeValidation(gpuRendererPreference))
+        {
+            requiredTerrainCapabilityFailure = DescribeGpuValidationFailure();
+            capi.ShowChatMessage(
+                "[VintageHorizons] Distant terrain's GPU check did not pass, so cached terrain "
+                + "is hidden. Run .vhgpu on to re-check; details are in the client log.");
+        }
     }
 
     /// <summary>
@@ -6428,6 +6441,7 @@ public partial class LodTerrainRenderer : IRenderer
 
         if (mode == LodGpuArenaMode.Off)
         {
+            requiredTerrainCapabilityFailure = null;
             renderPaths.SetShadowEnabled(false, selection);
             gpuShadow.DetachMirror();
             shadowBuilder = null;
@@ -6461,11 +6475,17 @@ public partial class LodTerrainRenderer : IRenderer
 
         if (!renderPaths.SetShadowEnabled(true, selection))
         {
+            requiredTerrainCapabilityFailure = DescribeGpuValidationFailure();
             capi.Logger.Warning(
-                "[VintageHorizons] GPU measurement shadow refused: {0}", selection.Reason);
+                "[VintageHorizons] GPU measurement shadow refused: {0}. Run .vhgpu on to "
+                + "re-check after the frame or window changes.", selection.Reason);
+            capi.ShowChatMessage(
+                "[VintageHorizons] Distant terrain's GPU check still did not pass. Run "
+                + ".vhgpu on to re-check; details are in the client log.");
             return;
         }
 
+        requiredTerrainCapabilityFailure = null;
         AttachShadowArenas(mode);
         RemeshForShadowBackfill();
     }
@@ -6831,7 +6851,8 @@ public partial class LodTerrainRenderer : IRenderer
 
     string DescribeRequiredTerrainFailure()
     {
-        if (!renderPaths.ShadowEnabled) return "regional GPU publication is disabled";
+        if (!renderPaths.ShadowEnabled)
+            return requiredTerrainCapabilityFailure ?? "regional GPU publication is disabled";
         if (!IndirectDrawEnabled) return "GPU drawing was explicitly disabled";
         if (!PackedDrawEnabled) return "packed drawing was explicitly disabled";
         if (!packedShaderOk || packedProg == null || packedProg.LoadError)
@@ -6842,6 +6863,16 @@ public partial class LodTerrainRenderer : IRenderer
         if (ClusterDrawEnabled && clusterBuilder == null)
             return "clustered packed drawing was requested but its builder is unavailable";
         return "the required packed renderer did not become ready";
+    }
+
+    string DescribeGpuValidationFailure()
+    {
+        LodGpuDepthCopyValidation depthCopy = gpuTelemetry.DepthCopyValidation;
+        string depthReason = string.IsNullOrEmpty(depthCopy.FailureReason)
+            ? gpuTelemetry.Decision.Reason
+            : depthCopy.FailureReason;
+        return "GPU runtime validation did not pass: " + depthReason + "; "
+            + depthCopy.Dimensions.Describe() + ". Run .vhgpu on to re-check";
     }
 
     /// <summary>

@@ -3,6 +3,31 @@ using OpenTK.Graphics.OpenGL4;
 
 namespace VintageHorizons;
 
+internal static class LodGpuProbeRetryPolicy
+{
+    // The first attempt is immediate; six half-second retries span three seconds. A
+    // resize/minimise race gets time to settle, while a genuinely incompatible frame
+    // still reaches the required-path failure promptly and visibly.
+    public const int MaximumAttempts = 7;
+    public const int RetryDelayMilliseconds = 500;
+
+    public static bool ShouldRetry(bool retryable, int attempts) =>
+        retryable && attempts < MaximumAttempts;
+
+    public static long NextAttemptTimestamp(long now, long timestampFrequency) =>
+        now + Math.Max(1, timestampFrequency * RetryDelayMilliseconds / 1000);
+
+    public static bool IsAttemptDue(long now, long nextAttemptAt) =>
+        nextAttemptAt == 0 || now >= nextAttemptAt;
+
+    public static bool NeedsManualRecheck(
+        bool validationRequested,
+        bool probeFinalized,
+        bool runtimeSucceeded,
+        bool depthCopySucceeded) =>
+        !validationRequested || !probeFinalized || !runtimeSucceeded || !depthCopySucceeded;
+}
+
 internal interface ILodGpuTimerApi
 {
     int CreateQuery();
@@ -295,7 +320,10 @@ internal sealed class LodGpuTelemetry : IDisposable
     readonly LodGpuTimestampRing ordinaryCullTimer;
     readonly LodGpuTimestampRing splitNearCullTimer;
     readonly LodGpuTimestampRing splitFarCullTimer;
+    readonly Func<(int Width, int Height)> frameSize;
     bool probeAttempted;
+    int probeAttempts;
+    long nextProbeAttemptAt;
     bool timingFailureReported;
 
     public bool TimingRequested { get; private set; }
@@ -365,12 +393,14 @@ internal sealed class LodGpuTelemetry : IDisposable
         bool runtimeValidationRequested,
         Action<string> log,
         Action<string> warn,
+        Func<(int Width, int Height)> frameSize,
         ILodGpuTimerApi? timerApi = null)
     {
         TimingRequested = timingRequested;
         RuntimeValidationRequested = runtimeValidationRequested || timingRequested;
         this.log = log;
         this.warn = warn;
+        this.frameSize = frameSize;
         timerApi ??= new LodOpenGlTimerApi();
         opaqueTimer = new LodGpuTimerRing(timerApi);
         splitNearTimer = new LodGpuTimerRing(timerApi);
@@ -439,14 +469,28 @@ internal sealed class LodGpuTelemetry : IDisposable
     /// </summary>
     public void RequestRuntimeValidation()
     {
-        if (RuntimeValidationRequested && probeAttempted && RuntimeValidation.Succeeded) return;
+        if (!LodGpuProbeRetryPolicy.NeedsManualRecheck(
+                RuntimeValidationRequested,
+                probeAttempted,
+                RuntimeValidation.Succeeded,
+                DepthCopyValidation.Succeeded))
+        {
+            return;
+        }
         RuntimeValidationRequested = true;
         probeAttempted = false;
+        probeAttempts = 0;
+        nextProbeAttemptAt = 0;
     }
 
     public void BeginFrame()
     {
-        if (!probeAttempted) ProbeAndReport();
+        long now = Stopwatch.GetTimestamp();
+        if (!probeAttempted
+            && LodGpuProbeRetryPolicy.IsAttemptDue(now, nextProbeAttemptAt))
+        {
+            ProbeAndReport(now);
+        }
         if (!TimingActive) return;
 
         try
@@ -551,34 +595,56 @@ internal sealed class LodGpuTelemetry : IDisposable
         splitFarCullTimer.ResetInterval();
     }
 
-    void ProbeAndReport()
+    void ProbeAndReport(long now)
     {
-        probeAttempted = true;
+        probeAttempts++;
         try
         {
-            Capabilities = LodGpuCapabilities.Probe();
-            RuntimeValidation = RuntimeValidationRequested
-                ? LodGpuRuntimeProbe.Probe(Capabilities)
-                : new LodGpuRuntimeValidation(
-                    false, false, LodGpuRuntimeProbe.ProbeValue, 0,
-                    "runtime resource validation was not requested");
-            Capabilities = Capabilities with
+            if (probeAttempts == 1)
             {
-                RequiredEntryPointsValidated =
-                    RuntimeValidation.RequiredEntryPointsValidated,
-                MinimalComputeValidated = RuntimeValidation.MinimalComputeValidated,
-            };
+                Capabilities = LodGpuCapabilities.Probe();
+                RuntimeValidation = RuntimeValidationRequested
+                    ? LodGpuRuntimeProbe.Probe(Capabilities)
+                    : new LodGpuRuntimeValidation(
+                        false, false, LodGpuRuntimeProbe.ProbeValue, 0,
+                        "runtime resource validation was not requested");
+                Capabilities = Capabilities with
+                {
+                    RequiredEntryPointsValidated =
+                        RuntimeValidation.RequiredEntryPointsValidated,
+                    MinimalComputeValidated = RuntimeValidation.MinimalComputeValidated,
+                };
+            }
+            (int frameWidth, int frameHeight) = frameSize();
             Depth = LodGpuCapabilities.ProbeActiveDepth();
             DepthCopyValidation = RuntimeValidationRequested && RuntimeValidation.Succeeded
-                ? LodGpuDepthCopyProbe.Probe(Depth)
+                ? LodGpuDepthCopyProbe.Probe(Depth, frameWidth, frameHeight)
                 : new LodGpuDepthCopyValidation(
-                    false, false, false, 0, 0, 0, 0,
+                    false, false, false, frameWidth, frameHeight, 0, 0,
                     RuntimeValidationRequested
                         ? "compute/SSBO validation did not pass"
-                        : "runtime resource validation was not requested");
+                        : "runtime resource validation was not requested",
+                    Dimensions: new LodGpuDepthCopyDimensions(
+                        frameWidth, frameHeight, 0, 0, 0, 0, 0, 0));
             Depth = Depth with { CopyValidated = DepthCopyValidation.Succeeded };
             Decision = LodGpuCapabilityPolicy.Evaluate(Capabilities, Depth);
             TimingActive = TimingRequested && Decision.TimerQueriesAvailable;
+
+            if (!DepthCopyValidation.Succeeded
+                && LodGpuProbeRetryPolicy.ShouldRetry(
+                    DepthCopyValidation.Retryable, probeAttempts))
+            {
+                nextProbeAttemptAt = LodGpuProbeRetryPolicy.NextAttemptTimestamp(
+                    now, Stopwatch.Frequency);
+                log($"[VintageHorizons] GPU depth-copy check found a temporary frame-size "
+                    + $"condition on attempt {probeAttempts}/{LodGpuProbeRetryPolicy.MaximumAttempts}; "
+                    + $"retrying in {LodGpuProbeRetryPolicy.RetryDelayMilliseconds} ms: "
+                    + DepthCopyValidation.FailureReason);
+                return;
+            }
+
+            probeAttempted = true;
+            nextProbeAttemptAt = 0;
 
             string depth = string.IsNullOrEmpty(Depth.FailureReason)
                 ? $"FBO draw/read {Depth.DrawFramebuffer}/{Depth.ReadFramebuffer}, "
@@ -596,7 +662,9 @@ internal sealed class LodGpuTelemetry : IDisposable
                     ? $"validated {DepthCopyValidation.Width}x{DepthCopyValidation.Height}/"
                         + $"{DepthCopyValidation.MipLevels} levels/0x{DepthCopyValidation.InternalFormat:X}"
                     : "not validated")}; "
+                + $"{DepthCopyValidation.Dimensions.Describe()}; "
                 + $"depth {depth}; GPU timing {(TimingActive ? "on" : "off")}. "
+                + $"Probe completed after {probeAttempts} attempt(s). "
                 + (Decision.Tier1RuntimeValidated
                     ? "Fast-path prerequisites validated."
                     : $"Fast path unavailable: {Decision.Reason}.")
@@ -615,6 +683,8 @@ internal sealed class LodGpuTelemetry : IDisposable
         }
         catch (Exception e)
         {
+            probeAttempted = true;
+            nextProbeAttemptAt = 0;
             TimingActive = false;
             warn("[VintageHorizons] GPU capability probe failed; legacy rendering remains active: "
                 + e.Message);

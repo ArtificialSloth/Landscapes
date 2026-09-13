@@ -54,6 +54,7 @@ internal sealed class LodGpuDepthPyramid : IDisposable
     int height;
     int levels;
     int internalFormat;
+    bool reportedViewportMismatch;
 
     public int Width => width;
     public int Height => height;
@@ -65,7 +66,7 @@ internal sealed class LodGpuDepthPyramid : IDisposable
     public long BuildsAttempted { get; private set; }
     public long BuildsCompleted { get; private set; }
 
-    /// <summary>Frames that never asked, because the window was minimised.</summary>
+    /// <summary>Frames that never asked, because the rendered frame had no area.</summary>
     public long BuildsSkipped { get; private set; }
     public long Reallocations { get; private set; }
     public string LastFailure { get; private set; } = "";
@@ -86,16 +87,30 @@ internal sealed class LodGpuDepthPyramid : IDisposable
     /// </summary>
     public LodHzbBuildResult Build(LodGpuDepthFacts depth)
     {
-        // A minimised window keeps rendering frames with a zero-area viewport. That is not
+        // A minimised window can keep rendering frames with a zero-area frame. That is not
         // a failure to report or even an attempt to count - it is the game being in the
         // background - and counting it made two thirds of a real session's builds look
         // broken. Checked before anything else, including the attempt counter.
+        int frameWidth = capi.Render.FrameWidth;
+        int frameHeight = capi.Render.FrameHeight;
         int[] viewportProbe = new int[4];
         GL.GetInteger(GetPName.Viewport, viewportProbe);
-        if (viewportProbe[2] <= 0 || viewportProbe[3] <= 0)
+        if (frameWidth <= 0 || frameHeight <= 0)
         {
             BuildsSkipped++;
-            return LodHzbBuildResult.Failed("the window has no visible area");
+            return LodHzbBuildResult.Failed("the rendered frame has no area");
+        }
+
+        if (!reportedViewportMismatch
+            && (viewportProbe[0] != 0 || viewportProbe[1] != 0
+                || viewportProbe[2] != frameWidth || viewportProbe[3] != frameHeight))
+        {
+            reportedViewportMismatch = true;
+            capi.Logger.Notification(
+                "[VintageHorizons] depth pyramid uses rendered frame {0}x{1}; the GL "
+                + "viewport is {2},{3} {4}x{5} and is not used as the copy size.",
+                frameWidth, frameHeight,
+                viewportProbe[0], viewportProbe[1], viewportProbe[2], viewportProbe[3]);
         }
 
         BuildsAttempted++;
@@ -129,13 +144,6 @@ internal sealed class LodGpuDepthPyramid : IDisposable
             if (existing != ErrorCode.NoError)
                 return Fail($"a pre-existing OpenGL error {existing} prevented an isolated build");
 
-            int[] viewport = new int[4];
-            GL.GetInteger(GetPName.Viewport, viewport);
-            int frameWidth = viewport[2];
-            int frameHeight = viewport[3];
-            if (frameWidth <= 0 || frameHeight <= 0)
-                return Fail("the active viewport has no area");
-
             state = LodGlStateGuard.Capture(
                 stateApi,
                 LodGlStateMask.Framebuffers | LodGlStateMask.Texture2DUnit0
@@ -148,7 +156,7 @@ internal sealed class LodGpuDepthPyramid : IDisposable
             if (!TryEnsureStorage(depth, frameWidth, frameHeight, out string storageFailure))
                 return Fail(storageFailure);
 
-            CopyLevelZero(depth, viewport);
+            CopyLevelZero(depth);
             ReduceLevels(program);
 
             ErrorCode error = GL.GetError();
@@ -206,7 +214,7 @@ internal sealed class LodGpuDepthPyramid : IDisposable
         if (sourceWidth < frameWidth || sourceHeight < frameHeight)
         {
             failure = $"depth texture {sourceWidth}x{sourceHeight} does not contain the "
-                + $"{frameWidth}x{frameHeight} viewport";
+                + $"{frameWidth}x{frameHeight} rendered frame";
             return false;
         }
 
@@ -254,7 +262,7 @@ internal sealed class LodGpuDepthPyramid : IDisposable
     }
 
     /// <summary>Blits the live depth into level zero, the one level not produced by reduction.</summary>
-    void CopyLevelZero(LodGpuDepthFacts depth, int[] viewport)
+    void CopyLevelZero(LodGpuDepthFacts depth)
     {
         GL.BindFramebuffer(FramebufferTarget.Framebuffer, framebuffer);
         GL.FramebufferTexture2D(
@@ -273,7 +281,7 @@ internal sealed class LodGpuDepthPyramid : IDisposable
         GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, depth.DrawFramebuffer);
         GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, framebuffer);
         GL.BlitFramebuffer(
-            viewport[0], viewport[1], viewport[0] + width, viewport[1] + height,
+            0, 0, width, height,
             0, 0, width, height,
             ClearBufferMask.DepthBufferBit, BlitFramebufferFilter.Nearest);
     }
@@ -359,7 +367,7 @@ internal sealed class LodGpuDepthPyramid : IDisposable
         if (!Allocated) return "no pyramid allocated";
         string failure = LastFailure.Length > 0 ? $" | last failure: {LastFailure}" : "";
         string minimised = BuildsSkipped > 0
-            ? $", {BuildsSkipped} frames skipped with the window minimised" : "";
+            ? $", {BuildsSkipped} frames skipped with no rendered area" : "";
         return $"{width}x{height}, {levels} levels, format 0x{internalFormat:X} | "
             + $"{BuildsCompleted}/{BuildsAttempted} builds completed, "
             + $"{Reallocations} (re)allocations{minimised}{failure}";
