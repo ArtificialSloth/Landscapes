@@ -26,6 +26,18 @@ internal readonly record struct LodGpuDepthCopySizeDecision(
     bool Retryable,
     string FailureReason);
 
+internal static class LodGpuFrameSizePolicy
+{
+    public static (int Width, int Height) Select(
+        int apiFrameWidth,
+        int apiFrameHeight,
+        int primaryFramebufferWidth,
+        int primaryFramebufferHeight) =>
+        primaryFramebufferWidth > 0 && primaryFramebufferHeight > 0
+            ? (primaryFramebufferWidth, primaryFramebufferHeight)
+            : (apiFrameWidth, apiFrameHeight);
+}
+
 internal readonly record struct LodGpuDepthCopyValidation(
     bool CopyValidated,
     bool MipAllocationValidated,

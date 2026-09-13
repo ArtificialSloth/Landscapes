@@ -173,6 +173,7 @@ public partial class LodTerrainRenderer : IRenderer
     readonly LodRenderPathCoordinator renderPaths;
     bool renderPathConfigured;
     string? requiredTerrainCapabilityFailure;
+    bool reportedGpuFrameSizeDisagreement;
     float renderCullDistanceSquared = float.MaxValue;
     /// <summary>
     /// What the renderer's own frame costs, by phase, since the last stats report. Each
@@ -2035,7 +2036,7 @@ public partial class LodTerrainRenderer : IRenderer
             LodRenderPathPolicy.RequestsRuntimeValidation(gpuRendererPreference),
             message => capi.Logger.Notification("{0}", message),
             message => capi.Logger.Warning("{0}", message),
-            () => (capi.Render.FrameWidth, capi.Render.FrameHeight));
+            GpuFrameSize);
         gpuShadow = new LodGpuShadowRenderPath();
         renderPaths = new LodRenderPathCoordinator(
             new LodLegacyRenderPath(
@@ -6293,6 +6294,28 @@ public partial class LodTerrainRenderer : IRenderer
         }
     }
 
+    (int Width, int Height) GpuFrameSize()
+    {
+        FrameBufferRef? primary = PrimaryFrameBuffer();
+        int apiWidth = capi.Render.FrameWidth;
+        int apiHeight = capi.Render.FrameHeight;
+        (int width, int height) = LodGpuFrameSizePolicy.Select(
+            apiWidth,
+            apiHeight,
+            primary?.Width ?? 0,
+            primary?.Height ?? 0);
+        if (!reportedGpuFrameSizeDisagreement && primary != null
+            && (apiWidth != width || apiHeight != height))
+        {
+            reportedGpuFrameSizeDisagreement = true;
+            capi.Logger.Notification(
+                "[VintageHorizons] GPU copy size comes from the concrete primary framebuffer "
+                + "{0}x{1}; IRenderAPI reports {2}x{3} and is diagnostic only.",
+                width, height, apiWidth, apiHeight);
+        }
+        return (width, height);
+    }
+
     /// <summary>
     /// Regional arenas for the validated GPU path. They retain only its selected geometry
     /// representation and stay bounded by a draw-distance-derived ceiling.
@@ -7883,11 +7906,12 @@ public partial class LodTerrainRenderer : IRenderer
             // framebuffer it draws into, and a pyramid copied out of last frame's
             // attachment would be wrong in exactly the way nobody would notice.
             LodGpuDepthFacts depth = LodGpuCapabilities.ProbeActiveDepth();
+            (int frameWidth, int frameHeight) = GpuFrameSize();
 
             timing = splitMid
                 ? gpuTelemetry.BeginSplitHzb()
                 : gpuTelemetry.BeginHzb();
-            LastHzbBuild = depthPyramid.Build(depth);
+            LastHzbBuild = depthPyramid.Build(depth, frameWidth, frameHeight);
 
             if (!LastHzbBuild.Built && !reportedHzbFailure)
             {

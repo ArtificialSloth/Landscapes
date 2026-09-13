@@ -68,6 +68,25 @@ public static class GpuRendererChecks
                 1920, 1080));
         c.True(windowViewport.Succeeded,
             "a window-sized 2560x1440 viewport cannot reject a 1920x1080 rendered frame and texture");
+        (int selectedWidth, int selectedHeight) = LodGpuFrameSizePolicy.Select(
+            apiFrameWidth: 2560,
+            apiFrameHeight: 1440,
+            primaryFramebufferWidth: 1920,
+            primaryFramebufferHeight: 1080);
+        c.Eq(1920, selectedWidth,
+            "the concrete primary framebuffer overrides the API's window-sized width");
+        c.Eq(1080, selectedHeight,
+            "the concrete primary framebuffer overrides the API's window-sized height");
+
+        (selectedWidth, selectedHeight) = LodGpuFrameSizePolicy.Select(
+            apiFrameWidth: 2560,
+            apiFrameHeight: 1440,
+            primaryFramebufferWidth: 0,
+            primaryFramebufferHeight: 0);
+        c.Eq(2560, selectedWidth,
+            "the documented API frame width remains the fallback before a primary framebuffer exists");
+        c.Eq(1440, selectedHeight,
+            "the documented API frame height remains the fallback before a primary framebuffer exists");
 
         LodGpuDepthCopySizeDecision undersizedTexture = LodGpuDepthCopyProbe.EvaluateCopySize(
             new LodGpuDepthCopyDimensions(

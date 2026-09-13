@@ -85,14 +85,15 @@ internal sealed class LodGpuDepthPyramid : IDisposable
     /// format nobody has validated. A failed build leaves no pyramid, and a caller with no
     /// pyramid must draw everything, which is the only safe direction.
     /// </summary>
-    public LodHzbBuildResult Build(LodGpuDepthFacts depth)
+    public LodHzbBuildResult Build(
+        LodGpuDepthFacts depth,
+        int frameWidth,
+        int frameHeight)
     {
         // A minimised window can keep rendering frames with a zero-area frame. That is not
         // a failure to report or even an attempt to count - it is the game being in the
         // background - and counting it made two thirds of a real session's builds look
         // broken. Checked before anything else, including the attempt counter.
-        int frameWidth = capi.Render.FrameWidth;
-        int frameHeight = capi.Render.FrameHeight;
         int[] viewportProbe = new int[4];
         GL.GetInteger(GetPName.Viewport, viewportProbe);
         if (frameWidth <= 0 || frameHeight <= 0)
