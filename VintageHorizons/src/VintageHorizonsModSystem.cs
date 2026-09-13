@@ -1850,7 +1850,8 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         Mod.Logger.Notification(
             "{0}: {1} sections resident [{2}] ({3} RAM-evicted, {4} from cache), {5} meshes ({6} evicted, {23} seam repairs), " +
-            "{7} selected [{8}] minus {9} draw-culled ({22} subtrees traversal-culled), {10} columns captured, {11} pending, " +
+            "{7} selected [{8}] minus {9} draw-culled ({22} subtrees traversal-culled), {10} columns captured, {11} pending " +
+            "({24} unloaded-before-capture drops), " +
             "worker: {12} captures / {13} meshes / {14} mips queued / {15}+{16}+{17} errors, " +
             "{18} awaiting mip ({19} in flight), {20} render-dirty, {21} unsaved",
             prefix, world.Sections.Count, world.DescribeLevels(), world.EvictedSectionsTotal, pipeline.CachedSectionsLoaded,
@@ -1859,7 +1860,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             worker.PendingCaptures, worker.PendingMeshes, worker.PendingMips,
             worker.CaptureErrors, worker.MeshErrors, worker.MipErrors,
             world.MipDirty.Count, world.MipInFlightCount, world.RenderDirty.Count, world.SaveDirty.Count,
-            renderer.LastTraversalCulledCount, renderer.SeamRepairsQueued);
+            renderer.LastTraversalCulledCount, renderer.SeamRepairsQueued,
+            pipeline.CaptureDropsUnloaded);
 
         // The amplification between real changes and mesh rebuilds, counted rather than
         // inferred. A stationary run previously had to estimate it from 64 changed
@@ -2477,6 +2479,8 @@ public partial class VintageHorizonsModSystem : ModSystem
                 $"({renderer.LastTraversalCulledCount} subtrees traversal-culled, " +
                 $"{renderer.LastCulledCount} selected nodes draw-culled), " +
                 $"columns captured: {pipeline.ColumnsCaptured}, pending: {pipeline.PendingColumns}, " +
+                $"unloaded-before-capture drops: {pipeline.CaptureDropsUnloaded}, " +
+                $"capture errors: {pipeline.CaptureErrors}, " +
                 $"worker: {pipeline.Worker.PendingCaptures}c/{pipeline.Worker.PendingMeshes}m/" +
                 $"{pipeline.Worker.PendingMeshResults}u/{pipeline.Worker.PendingMips}p, " +
                 $"awaiting mip: {pipeline.World.MipDirty.Count} ({pipeline.World.MipInFlightCount} in flight), " +

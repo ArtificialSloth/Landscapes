@@ -22,6 +22,7 @@ namespace VintageHorizons.Net;
 public class LodServerCaptureSystem : ModSystem
 {
     const string ConfigFile = "vintagehorizons-server.json";
+    const long ActiveWorkStatusLogIntervalMs = 60_000;
 
     ICoreServerAPI sapi = null!;
     LodPipeline? pipeline;
@@ -35,6 +36,7 @@ public class LodServerCaptureSystem : ModSystem
     bool allocationTelemetryEnabled;
     LodPhaseCost pipelineTickCost;
     readonly HashSet<long> persistedLevelZeroChanges = new();
+    long nextActiveWorkStatusLogMs;
 
     /// <summary>
     /// Whether chunk loads drive capture on this server. Dedicated: yes, every load.
@@ -61,6 +63,26 @@ public class LodServerCaptureSystem : ModSystem
     public int SectionCount => pipeline?.World.HasDataSet.Count ?? 0;
 
     public int ColumnsCaptured => pipeline?.ColumnsCaptured ?? 0;
+
+    /// <summary>Persistence and capture health for /vhserver and the active-work minute log.</summary>
+    public string CacheWorkStatusLine => FormatCacheWorkStatus(
+        pipeline?.DirtySections ?? 0,
+        pipeline?.OldestDirtyAgeMs ?? 0,
+        pipeline?.SavesPerSecond ?? 0,
+        pipeline?.SectionsSaved ?? 0,
+        pipeline?.CaptureBacklogTotal ?? 0,
+        pipeline?.CaptureDropsUnloaded ?? 0,
+        pipeline?.CaptureErrors ?? 0);
+
+    internal static string FormatCacheWorkStatus(
+        int dirtySections, long oldestDirtyAgeMs, double savesPerSecond,
+        long sectionsSaved, int captureBacklog, long captureDropsUnloaded,
+        int captureErrors) => string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "[VintageHorizons] Cache work: {0} dirty, oldest dirty {1:0.0}s, "
+            + "{2:0.00} saves/s ({3} saved); capture backlog {4}, "
+            + "unloaded-before-capture drops {5}, capture errors {6}.",
+            dirtySections, oldestDirtyAgeMs / 1000.0, savesPerSecond,
+            sectionsSaved, captureBacklog, captureDropsUnloaded, captureErrors);
 
     /// <summary>Progress line for /vhserver, or null when no pre-generation is running.</summary>
     public string? PregenStatus => pregen?.Status;
@@ -249,6 +271,7 @@ public class LodServerCaptureSystem : ModSystem
         pipeline.SnowStateCaptured = (cx, cz, observed, covered) =>
             sweep?.ObserveSnowState(cx, cz, observed, covered);
         pipeline.Open("ModData/vintagehorizons", "-server");
+        nextActiveWorkStatusLogMs = Environment.TickCount64 + ActiveWorkStatusLogIntervalMs;
 
         tickListenerId = sapi.Event.RegisterGameTickListener(_ => TickPipeline(), 50);
         if (allocationTelemetryEnabled && !statsRegistered)
@@ -608,7 +631,26 @@ public class LodServerCaptureSystem : ModSystem
         LodPhaseStart phaseStart = LodPhaseCost.Start(allocationTelemetryEnabled);
         pipeline!.Tick();
         pipelineTickCost.Add(phaseStart);
+
+        long now = Environment.TickCount64;
+        if (HasActiveCacheWork())
+        {
+            if (now < nextActiveWorkStatusLogMs) return;
+            Mod.Logger.Notification("{0}", CacheWorkStatusLine);
+            nextActiveWorkStatusLogMs = now + ActiveWorkStatusLogIntervalMs;
+        }
+        else
+        {
+            // A later job gets a full minute before its first coarse progress line.
+            nextActiveWorkStatusLogMs = now + ActiveWorkStatusLogIntervalMs;
+        }
     }
+
+    bool HasActiveCacheWork() =>
+        sweep is { Done: false }
+        || pregen is { Done: false }
+        || generate is { Done: false }
+        || refresh is { Done: false };
 
     void LogStats()
     {

@@ -77,19 +77,27 @@ public class LodAssistServerSystem : ModSystem
             {
                 LodServerCaptureSystem? capture = api.ModLoader.GetModSystem<LodServerCaptureSystem>();
                 LodServerConfig config = capture?.Config ?? new LodServerConfig();
-                return TextCommandResult.Success(
+                var lines = new List<string>
+                {
                     $"[VintageHorizons] {config.Describe()}. Cache: {capture?.SectionCount ?? 0} sections, "
                     + $"{capture?.ColumnsCaptured ?? 0} columns captured. Served {sectionsServed} sections "
                     + $"({bytesServed / 1e6:0.0} MB, {(sectionsServed > 0 ? blobReadMs / sectionsServed : 0):0.00}ms avg read), "
                     + $"{sectionsOutsideRadius} refused as out of radius, {sectionsRefused} refused unserved, "
                     + $"{pendingByPlayer.Count} players waiting, "
                     + $"{manifestDeltasSent} new-key and {refreshManifestsSent} refresh offers "
-                    + "sent to connected players. "
-                    + (capture?.SweepStatus is string sw ? sw + ". " : "")
-                    + (capture?.PregenStatus is string pg ? pg + ". " : "")
-                    + (capture?.GenerateStatus is string gn ? gn + ". " : "")
-                    + (capture?.RefreshStatus is string rf ? rf + ". " : "")
-                    + "Settings live in ModConfig/vintagehorizons-server.json (restart to apply).");
+                    + "sent to connected players.",
+                    capture?.CacheWorkStatusLine
+                        ?? LodServerCaptureSystem.FormatCacheWorkStatus(0, 0, 0, 0, 0, 0, 0),
+                };
+                if (capture?.SweepStatus is string sw) lines.Add("[VintageHorizons] " + sw + ".");
+                if (capture?.PregenStatus is string pg) lines.Add("[VintageHorizons] " + pg + ".");
+                if (capture?.GenerateStatus is string gn) lines.Add("[VintageHorizons] " + gn + ".");
+                if (capture?.RefreshStatus is string rf) lines.Add("[VintageHorizons] " + rf + ".");
+                lines.Add("[VintageHorizons] Settings live in "
+                    + "ModConfig/vintagehorizons-server.json (restart to apply).");
+
+                foreach (string line in lines) Mod.Logger.Notification("{0}", line);
+                return TextCommandResult.Success(string.Join(Environment.NewLine, lines));
             });
 
         Mod.Logger.Notification(

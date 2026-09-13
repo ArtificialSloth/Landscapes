@@ -3,6 +3,71 @@ using Vintagestory.API.MathTools;
 namespace VintageHorizons;
 
 /// <summary>
+/// Exact persistence obligations in first-dirtied order. Re-dirtying a key advances its
+/// revision in <see cref="LodWorld"/> but deliberately leaves its original queue position
+/// and age intact, so a continuous stream of new terrain cannot overtake old unsaved rows.
+/// </summary>
+public sealed class LodSaveDirtySet : IEnumerable<long>
+{
+    readonly LinkedList<(long Key, long FirstDirtyMs)> order = new();
+    readonly Dictionary<long, LinkedListNode<(long Key, long FirstDirtyMs)>> nodes = new();
+    readonly Func<long> clock;
+
+    public LodSaveDirtySet()
+        : this(() => Environment.TickCount64)
+    {
+    }
+
+    /// <summary>Deterministic clock seam for the fast tier.</summary>
+    internal LodSaveDirtySet(Func<long> clock)
+    {
+        this.clock = clock;
+    }
+
+    public int Count => nodes.Count;
+
+    public long OldestAgeMilliseconds => order.First == null
+        ? 0
+        : Math.Max(0, clock() - order.First.Value.FirstDirtyMs);
+
+    public bool Add(long key)
+    {
+        if (nodes.ContainsKey(key)) return false;
+        LinkedListNode<(long Key, long FirstDirtyMs)> node =
+            order.AddLast((key, clock()));
+        nodes.Add(key, node);
+        return true;
+    }
+
+    public bool Contains(long key) => nodes.ContainsKey(key);
+
+    public bool Remove(long key)
+    {
+        if (!nodes.Remove(key, out LinkedListNode<(long Key, long FirstDirtyMs)>? node))
+            return false;
+        order.Remove(node);
+        return true;
+    }
+
+    public void Clear()
+    {
+        order.Clear();
+        nodes.Clear();
+    }
+
+    public IEnumerator<long> GetEnumerator()
+    {
+        for (LinkedListNode<(long Key, long FirstDirtyMs)>? node = order.First;
+            node != null; node = node.Next)
+        {
+            yield return node.Value.Key;
+        }
+    }
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+/// <summary>
 /// The in-memory section pyramid: all detail levels of LodSections, dirty tracking,
 /// and child→parent mip propagation. All mutation happens on the main thread; the
 /// worker thread only ever reads immutable snapshots (Runs/ColumnStart arrays are
@@ -133,8 +198,8 @@ public class LodWorld
     /// <summary>Sections whose mesh is stale.</summary>
     public readonly LodRenderDirtySet RenderDirty = new();
 
-    /// <summary>Sections whose DB row is stale.</summary>
-    public readonly HashSet<long> SaveDirty = new();
+    /// <summary>Sections whose DB row is stale, oldest first by initial dirty time.</summary>
+    public readonly LodSaveDirtySet SaveDirty = new();
 
     /// <summary>Sections whose parent still needs to absorb their content (persisted as ApplyToParent).</summary>
     public readonly HashSet<long> MipDirty = new();

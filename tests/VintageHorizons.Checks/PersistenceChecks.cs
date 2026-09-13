@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using VintageHorizons.Net;
 
 namespace VintageHorizons.Checks;
 
@@ -7,6 +8,11 @@ public static class PersistenceChecks
 {
     public static void Run(Check c)
     {
+        DirtyOrderAndAgeAreStable(c);
+        SustainedInflowCannotStarveOldKeys(c);
+        CheckpointCadenceAndBudget(c);
+        BackToBackCheckpointBatches(c);
+        ServerStatusNamesTheBacklogs(c);
         ExactAcknowledgements(c);
         PendingSnapshotsCoalesce(c);
         FailedWritesAcknowledgeAndRecover(c);
@@ -14,6 +20,145 @@ public static class PersistenceChecks
         FullWorkerBacklogDrains(c);
         NewestRevisionSurvivesRestart(c);
         RetryDelayIsBounded(c);
+    }
+
+    static void DirtyOrderAndAgeAreStable(Check c)
+    {
+        long now = 1_000;
+        var dirty = new LodSaveDirtySet(() => now);
+        c.True(dirty.Add(11), "the first dirty key enters the ordered set");
+        now = 1_100;
+        c.True(dirty.Add(22), "a later dirty key enters behind it");
+        now = 1_400;
+        c.False(dirty.Add(11), "re-dirtying does not create a second obligation");
+        c.SeqEq(new long[] { 11, 22 }, dirty.ToArray(),
+            "re-dirtying preserves the key's original oldest-first position");
+        c.Eq(400L, dirty.OldestAgeMilliseconds,
+            "re-dirtying preserves the original first-dirty age");
+
+        c.True(dirty.Remove(11), "a durable acknowledgement removes the oldest key");
+        now = 1_500;
+        c.True(dirty.Add(11), "a later mutation can create a new obligation");
+        c.SeqEq(new long[] { 22, 11 }, dirty.ToArray(),
+            "a newly dirty revision joins at the tail after the old one became durable");
+        c.Eq(400L, dirty.OldestAgeMilliseconds,
+            "oldest age advances to the next surviving obligation");
+    }
+
+    static void SustainedInflowCannotStarveOldKeys(Check c)
+    {
+        long now = 0;
+        var dirty = new LodSaveDirtySet(() => now);
+        const int originalCount = 600;
+        for (long key = 0; key < originalCount; key++)
+        {
+            dirty.Add(key);
+            now++;
+        }
+
+        var originalRemaining = new HashSet<long>(Enumerable.Range(0, originalCount)
+            .Select(value => (long)value));
+        long nextNewKey = 10_000;
+        for (int checkpoint = 1; checkpoint <= 3; checkpoint++)
+        {
+            long[] batch = dirty.Take(LodPipeline.MaxStorageBacklog).ToArray();
+            c.Eq(LodPipeline.MaxStorageBacklog, batch.Length,
+                $"checkpoint {checkpoint} fills its bounded batch under sustained inflow");
+            if (checkpoint == 1)
+            {
+                c.SeqEq(Enumerable.Range(0, LodPipeline.MaxStorageBacklog)
+                        .Select(value => (long)value).ToArray(), batch,
+                    "the first checkpoint takes the oldest keys in exact order");
+            }
+            foreach (long key in batch)
+            {
+                dirty.Remove(key);
+                originalRemaining.Remove(key);
+            }
+
+            // More arrives than one checkpoint can save. The original tail must still
+            // stay ahead of all of it and finish within ceil(600 / 256) checkpoints.
+            for (int added = 0; added < 300; added++)
+            {
+                dirty.Add(nextNewKey++);
+                now++;
+            }
+        }
+
+        c.Eq(0, originalRemaining.Count,
+            "inflow above the checkpoint cap cannot starve any pre-existing key");
+    }
+
+    static void CheckpointCadenceAndBudget(Check c)
+    {
+        const long now = 12_345;
+        c.Eq(now, LodPipeline.NextPersistenceCheckpointStart(now, readyFollowUp: true),
+            "a ready save backlog starts its next checkpoint immediately");
+        c.Eq(now + LodPipeline.PersistenceCheckpointIntervalMs,
+            LodPipeline.NextPersistenceCheckpointStart(now, readyFollowUp: false),
+            "an idle pipeline retains the coarse thirty-second checkpoint cadence");
+        c.True(LodPipeline.PersistenceSnapshotsPerTick > 1,
+            "an owning-thread tick may freeze several sections");
+    }
+
+    static void BackToBackCheckpointBatches(Check c)
+    {
+        const int count = 600;
+        var dirty = new LodSaveDirtySet();
+        for (int sx = 0; sx < count; sx++) dirty.Add(LodWorld.SectionKey(0, sx, 0));
+
+        var written = new ConcurrentQueue<long>();
+        using var store = new LodStore(null!);
+        using var worker = new LodStorageThread(store,
+            snapshot => written.Enqueue(snapshot.Key), autoCommitSaves: false);
+        LodSection section = Fixtures.SolidSection();
+        int checkpoints = 0;
+
+        while (dirty.Count > 0)
+        {
+            long[] batch = dirty.Take(LodPipeline.MaxStorageBacklog).ToArray();
+            foreach (long key in batch)
+            {
+                c.True(worker.Enqueue(Fixtures.Snapshot(section,
+                    sx: LodWorld.KeySx(key), revision: 1)),
+                    "the fake storage owner accepts the ordered checkpoint snapshot");
+            }
+            worker.CommitPendingSaves();
+            c.True(worker.Drain(5000),
+                "a published checkpoint becomes durable before the next begins");
+
+            int acknowledged = 0;
+            while (worker.TryTakeSaveCompletion(out LodSaveCompletion completion))
+            {
+                c.True(completion.Succeeded,
+                    "the fake storage owner acknowledges a checkpoint row");
+                dirty.Remove(completion.Key);
+                acknowledged++;
+            }
+            c.Eq(batch.Length, acknowledged,
+                "every row in the checkpoint receives an exact acknowledgement");
+            checkpoints++;
+        }
+
+        c.Eq(3, checkpoints, "six hundred rows drain as three back-to-back checkpoints");
+        c.Eq((long)count, worker.SectionsWritten,
+            "the fake storage owner writes the complete sustained backlog");
+        c.SeqEq(Enumerable.Range(0, count)
+                .Select(sx => LodWorld.SectionKey(0, sx, 0)).ToArray(),
+            written.ToArray(), "back-to-back storage batches retain oldest-first order");
+    }
+
+    static void ServerStatusNamesTheBacklogs(Check c)
+    {
+        string line = LodServerCaptureSystem.FormatCacheWorkStatus(
+            17, 125_000, 8.5, 901, 23, 4, 2);
+        c.True(line.Contains("17 dirty", StringComparison.Ordinal)
+            && line.Contains("oldest dirty 125.0s", StringComparison.Ordinal)
+            && line.Contains("8.50 saves/s", StringComparison.Ordinal)
+            && line.Contains("capture backlog 23", StringComparison.Ordinal)
+            && line.Contains("unloaded-before-capture drops 4", StringComparison.Ordinal)
+            && line.Contains("capture errors 2", StringComparison.Ordinal),
+            "the server status line exposes every persistence and capture health signal");
     }
 
     static void ExactAcknowledgements(Check c)
