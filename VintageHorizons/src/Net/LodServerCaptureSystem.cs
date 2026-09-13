@@ -218,7 +218,8 @@ public class LodServerCaptureSystem : ModSystem
             }
             sweep = new LodSavegameSweep(sapi, Mod.Logger,
                 Config.SweepRadiusChunks, Config.SweepColumnsPerSecond,
-                Config.RefreshColumnsPerSecond, weather, pipeline!.QueueColumn)
+                Config.RefreshColumnsPerSecond, weather, pipeline!.QueueColumn,
+                () => pipeline?.CaptureBacklogTotal ?? 0)
             {
                 TrackPhaseAllocations = allocationTelemetryEnabled,
             };

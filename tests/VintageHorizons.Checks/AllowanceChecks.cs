@@ -10,6 +10,16 @@ public static class AllowanceChecks
         c.Eq(1, LodTickAllowance.MaxPerTick(16), "the default sweep rate issues one per tick");
         c.Eq(4, LodTickAllowance.MaxPerTick(64), "a high rate rounds one tick's share upward");
 
+        // A sweep loads only as fast as capture drains. Past the limit a swept column waits
+        // longer than the engine keeps it loaded, and is dropped uncaptured.
+        c.Eq(1, LodSavegameSweep.LoadsAllowed(1, 0), "an idle capture queue lets the sweep load at its rate");
+        c.Eq(2, LodSavegameSweep.LoadsAllowed(4, LodSavegameSweep.MaxCaptureBacklogForLoads - 2),
+            "a nearly full capture queue admits only the loads it has room for");
+        c.Eq(0, LodSavegameSweep.LoadsAllowed(4, LodSavegameSweep.MaxCaptureBacklogForLoads),
+            "a full capture queue holds the sweep");
+        c.Eq(0, LodSavegameSweep.LoadsAllowed(4, 792),
+            "the owner's backed-up queue holds the sweep instead of going negative");
+
         var low = new LodTickAllowance();
         c.Eq(1, low.Available(0, 8), "a new low-rate queue can serve one item immediately");
         low.Spend(1);

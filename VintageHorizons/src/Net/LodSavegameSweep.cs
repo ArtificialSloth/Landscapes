@@ -117,8 +117,25 @@ public class LodSavegameSweep
     public long RefreshCampaigns => snowRefresh.Campaigns;
     bool AutomaticSnowRefresh => refreshPerSecond > 0 && weather != null && snowAccumulationEnabled;
 
+    /// <summary>
+    /// Loads wait while this many columns are queued for capture or being captured. A swept
+    /// column is not kept loaded: the engine unloads it again within seconds, and a column
+    /// still queued for capture by then is dropped. Loading at the configured rate regardless
+    /// let the queue reach 792 and dropped 4,043 columns in the owner's first 0.4.68 session.
+    /// Near the capture worker's own depth, every load is captured before it can unload.
+    /// </summary>
+    internal const int MaxCaptureBacklogForLoads = 32;
+
+    /// <summary>Loads one tick may issue: the rate allowance, held back by the capture queue.</summary>
+    internal static int LoadsAllowed(int allowance, int captureBacklog) =>
+        Math.Max(0, Math.Min(allowance, MaxCaptureBacklogForLoads - captureBacklog));
+
+    /// <summary>Columns queued for capture or in the capture worker; see MaxCaptureBacklogForLoads.</summary>
+    readonly Func<int> captureBacklog;
+
     public LodSavegameSweep(ICoreServerAPI sapi, ILogger logger, int radiusChunks, int perSecond,
-        int refreshPerSecond, WeatherSystemBase? weather, Action<int, int> queueColumn)
+        int refreshPerSecond, WeatherSystemBase? weather, Action<int, int> queueColumn,
+        Func<int> captureBacklog)
     {
         this.sapi = sapi;
         this.logger = logger;
@@ -127,6 +144,7 @@ public class LodSavegameSweep
         this.refreshPerSecond = Math.Max(0, refreshPerSecond);
         this.weather = weather;
         this.queueColumn = queueColumn;
+        this.captureBacklog = captureBacklog;
         chunksPerRegion = Math.Max(1, sapi.WorldManager.RegionSize / GlobalConstants.ChunkSize);
         snowAccumulationEnabled = sapi.World.Config.GetBool("snowAccum", true);
     }
@@ -222,7 +240,8 @@ public class LodSavegameSweep
 
     void StepLoad()
     {
-        int allowance = loadAllowance.Available(sapi.World.ElapsedMilliseconds, perSecond);
+        int allowance = LoadsAllowed(
+            loadAllowance.Available(sapi.World.ElapsedMilliseconds, perSecond), captureBacklog());
         var tickBudget = new LodWorkBudget(TickWorkBudgetMs);
         int loaded = 0;
         while (loadIndex < LoadTotal && loaded < allowance && !tickBudget.Expired)
