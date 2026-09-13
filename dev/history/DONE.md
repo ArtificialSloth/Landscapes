@@ -2,6 +2,17 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-12 - GPU validation and starvation-free server cache draining (0.4.66-0.4.67)
+
+P1 and P2 of the world-generation/LOD-coverage plan are complete. Version 0.4.66 validates the GPU
+depth copy against the concrete primary framebuffer after an owner run proved the nominal API frame
+size can disagree under render scaling; the owner passed the corrected build. Version 0.4.67 makes
+dirty cache persistence first-dirtied/oldest-first, takes bounded follow-up snapshots without an
+extra 30-second wait, and exposes cache age, rate, capture backlog, unload drops and errors. The
+owner's real refresh run kept the backlog small with zero drops/errors. Checkpoints `0ed190c` and
+`28746a7`; 24,475 assertions pass. The still-visible holes are not completed work: P3 must fill
+missing columns into existing client copies, and remains at the top of `dev/TODO.md`.
+
 ## 2026-09-12 - Vanilla Settings integration and accepted config polish (0.4.63-0.4.64)
 
 Vintage Horizons now has a guarded dedicated **Horizons** tab in the in-game Settings header, with

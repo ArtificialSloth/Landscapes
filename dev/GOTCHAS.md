@@ -3688,3 +3688,18 @@ bounded owner-thread work at its ordinary 50 ms cadence. Do not advance simulati
 second publisher.
 
 **Found:** 2026-09-12, Session 88 (source-traced and harness-tested; runtime progress witness open).
+
+### G187 - Nominal frame dimensions can disagree with the framebuffer being copied
+
+**Trigger:** validating a GPU depth-copy path against the client API's reported frame width and
+height while render scaling or another internal render-size choice is active.
+
+**Trap:** the API can report the window's nominal 2560x1440 frame while the concrete primary
+framebuffer, viewport and depth texture are all 1920x1080. A strict compatibility check then rejects
+a valid depth copy and `.vhgpu on` fails even though the source and destination resources agree.
+
+**Safer action:** use the concrete primary `FrameBufferRef` dimensions as the authority for resources
+attached to that framebuffer. Keep nominal API dimensions only as a fallback and diagnostic, and log
+both when they disagree.
+
+**Found:** 2026-09-12, Session 89 (0.4.65 owner failure; corrected and owner-passed in 0.4.66).

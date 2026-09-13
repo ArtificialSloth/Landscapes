@@ -2,13 +2,18 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.64
+## Start here: 0.4.67
 
-Read [Session 88](sessions/SESSION_88.md). Versions 0.4.63-0.4.64 put the shared config editor in a
-dedicated in-game **Horizons** Settings tab, polish its layout and labelled LOD map, make its Vanilla
-marker control the actual game render distance, add optional loading while paused, and keep Far
-Biome Colors off in Quality. The owner accepted the final window: "This looked good." Session 87
-holds the accepted 0.4.62 chiselled-block correction ([DONE](history/DONE.md)).
+Read [Session 89](sessions/SESSION_89.md) and
+[the world-generation/LOD-coverage plan](plans/PLAN_WORLD_GENERATION_AND_LOD_COVERAGE.md). P1 and P2
+are complete: the owner passed 0.4.66's corrected GPU validation, and a real 0.4.67 refresh proved
+the oldest-first server cache drain stays small with zero drops/errors. It did not fill the visible
+holes because the client already owns incomplete copies of those section keys.
+
+**Next: P3 / Fix C plus D4.** Build incremental SQLite-rowid offer discovery at every detail level
+and a revision-checked, client-wins merge that fills only uncaptured columns. Use the finished 18:23
+world without generating more vanilla terrain as the visual acceptance case. P4 may ride with P3.
+There are no partial P3 source edits. W1-W8 remain open; ask the owner before P5-P7.
 
 ## Distant structures and block-entity colours: what 0.4.62 leaves open
 

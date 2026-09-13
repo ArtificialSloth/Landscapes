@@ -8,9 +8,25 @@ first.
 
 ## [Unreleased]
 
-**Known open:** winter temporal convergence (a real accumulation and melt, `/vhrefresh`
-boundaries, campaign cost) has not yet had its acceptance run. The owner accepted 0.4.64 as the
-current baseline on 2026-09-12.
+**Known open:** P3's fill-only client merge and P4's sweep diagnostic; winter temporal convergence
+(a real accumulation and melt, `/vhrefresh` boundaries, campaign cost). W1-W8 remain undecided and
+must be asked before the P5-P7 generation feature. The last accepted baseline remains 0.4.64; 0.4.66
+passed its GPU owner check and 0.4.67 passed its cache-drain runtime check.
+
+## [0.4.67] - 2026-09-12
+
+**World coverage fixes P1 and P2 are complete in private builds 0.4.66-0.4.67.** GPU depth-copy
+validation now measures the concrete primary framebuffer, fixing render-scaled sessions where the
+API's nominal frame size differs from the real depth attachment. Server cache saving is oldest-first
+and performs bounded follow-up snapshots without an unnecessary 30-second delay; `/vhserver` and
+the periodic cache-work log expose dirty age, save rate, capture backlog, unload drops and errors.
+The owner's integrated 0.4.67 refresh run kept backlog small with zero drops/errors. The remaining
+visible holes are P3: existing incomplete client copies still block fuller server rows.
+
+Versions 0.4.65-0.4.66 were the GPU validation implementation and correction. Version 0.4.67 is the
+server cache-drain build. Release and Debug builds completed with zero warnings/errors; 24,475 fast
+assertions pass. Its verified 39-entry package was copy-installed with SHA-256
+`402A45B0E3753B0988A46DC1C6F4D793C648F58AD6B0AC507003C11B677C4FC8`.
 
 ## [0.4.64] - 2026-09-12
 

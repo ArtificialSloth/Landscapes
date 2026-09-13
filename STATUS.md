@@ -4,9 +4,9 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-12`
-**Mod version:** `0.4.64` — current test build, verified, copy-installed, checkpointed and human-tested; its polished config editor is available from in-game Settings and `.vhconfig`
+**Mod version:** `0.4.67` — current private test build, verified, copy-installed, checkpointed and runtime-tested for server cache draining
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; test-build checkpoints 0.4.56 `223bfbb`, 0.4.57 `1dc2907`, 0.4.58 `f255b08`, 0.4.59 `c4fbbdd`, 0.4.60 `092f518`, 0.4.61 `b1fd007`, 0.4.62 `e565558`, 0.4.63 `0ec6d93` and 0.4.64 `dd0394c`; nothing pushed
+**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.65 `39dc98d`, 0.4.66 `0ed190c`, 0.4.67 `28746a7`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
 **Source files:** `109` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
@@ -15,13 +15,20 @@
 
 ## Current result
 
-**The polished Vintage Horizons editor is part of the in-game Settings screen.** Version 0.4.64
-adds the dedicated **Horizons** header tab, retains `.vhconfig`, gives Vanilla and L0-L6 clear
-labelled regions, and lets the Vanilla marker adjust the game's real render-distance setting. It
-also adds default-on loading while paused and keeps Far Biome Colors off in Quality; the owner
-reviewed the final window and said, "This looked good." The accepted 0.4.62 chiselled-block colour
-fix, the 0.4.61 distant anti-aliasing and automatic thresholds, and the earlier tree, glacier,
-handoff and water results remain in place.
+**P1 and P2 of the world-generation/LOD-coverage plan are complete; P3 owns the visible holes.**
+Version 0.4.66 validates GPU depth-copy compatibility against the concrete primary framebuffer,
+fixing a render-scaled case where the API said 2560x1440 but the real framebuffer, depth texture
+and viewport were 1920x1080. The owner passed that check. Version 0.4.67 makes server dirty-cache
+persistence oldest-first, performs bounded follow-up snapshots without an extra 30-second delay,
+and reports dirty age, save rate, capture backlog, unload drops and capture errors. In the owner's
+integrated refresh run, backlog remained small and drops/errors remained zero.
+
+The same run did not visibly fill the far holes. That is the expected remaining P3 defect: once the
+client holds an incomplete section key, current offer/install logic does not safely fill it from a
+more complete server row. The correct next change is an incremental every-level rowid offer scan
+plus a revision-checked merge that fills only uncaptured columns; client-captured columns win. The
+existing finished world is the acceptance case and should not need more vanilla terrain generated.
+The accepted 0.4.64 Settings result and all earlier rendering results remain in place.
 
 ## Distant structures and chiselled blocks
 
@@ -275,29 +282,26 @@ routing, shader ASCII and active performance-plan routing pass.
 
 ## Next work
 
-Begin with [Session 88](dev/sessions/SESSION_88.md) and the top of [TODO](dev/TODO.md).
+Begin with [Session 89](dev/sessions/SESSION_89.md), the top of [TODO](dev/TODO.md), and
+[the world-generation/LOD-coverage plan](dev/plans/PLAN_WORLD_GENERATION_AND_LOD_COVERAGE.md).
 
-1. Optional: at distance, look at a clutter- or bookshelf-heavy ruin, and at a ruin cached before
-   0.4.62 that you have not revisited, which stays grey until it is captured again.
-2. Specifically witness LOD cache/mesh progress while the single-player pause menu remains open,
-   then switch **Load terrain while paused** off and confirm work stops without unpausing the world.
-3. Winter temporal verification: one controlled unloaded-region accumulation and melt through the
-   30-second signal, finite campaign, durable L0 replacement, live client offer and local mip
-   convergence; campaign cost in a large explored world; `/vhrefresh` at its boundaries.
-4. Session 84 follow-ups: keep `.vhsky`, retire `.vhsnowline` and `.vhgap release`, move or retire
-   the pre-physics `.vhgap` scan, and the stale-sphere and eviction-gap cleanups.
-5. If it matters: count the server half's chisel stand-ins, and measure the cost of copying chisel
-   contents where capture jobs are created.
+1. Implement P3 / Fix C plus D4: incremental SQLite-rowid discovery, changed offers at every level,
+   and a revision-checked palette/captured/snow merge that fills only columns absent from the
+   client's copy. Add the planned real-SQLite rowid, held-key, merge and request-lifecycle tests;
+   measure scanner CPU.
+2. Run the P3 offline server/client-row comparison, then ask the owner to revisit the finished 18:23
+   world without generating more terrain. The far holes should fill while client-captured columns
+   remain authoritative.
+3. P4 may ride with P3: a sweep during vanilla pregen should say `inconclusive`, not warn.
+4. Keep P0 available for a convenient restart. Before P5-P7, stop and ask the owner for W1-W8;
+   none of those proposal values has been accepted.
+5. Preserve older open verification debt in TODO, including winter convergence, pause loading and
+   the Session 84 diagnostic cleanup.
 
-[Session 88](dev/sessions/SESSION_88.md) holds the Settings integration and accepted polish,
-[Session 87](dev/sessions/SESSION_87.md) holds the chiselled-block work and the earlier baseline decision,
-[Session 86](dev/sessions/SESSION_86.md) the anti-aliasing work,
-[Session 85](dev/sessions/SESSION_85.md) the tree/ice work and checkpoint rule,
-[Session 84](dev/sessions/SESSION_84.md) the flash investigation and fix,
-[Session 83](dev/sessions/SESSION_83.md) the 0.4.40–0.4.49 winter work, and
-[Session 82](dev/sessions/SESSION_82.md) the accepted water baseline. Architecture owns the winter
-and update invariants and settled decisions 33–37, `dev/WIRE_HISTORY.md` owns compatibility, and
-G166–G186 in `dev/GOTCHAS.md` preserve the recent traps.
+[Session 89](dev/sessions/SESSION_89.md) is the authoritative continuation point. Sessions 88-82
+retain the Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
+Architecture owns the established invariants, `dev/WIRE_HISTORY.md` owns compatibility, and
+G166-G187 in `dev/GOTCHAS.md` preserve the recent traps.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md); GPU renderer work
