@@ -14,6 +14,7 @@ public static class WorldGenChecks
         StateRoundTrip(c);
         GeneratePageMath(c);
         Gates(c);
+        BoundaryAndRestartStatus(c);
         Leases(c);
         KeptColumnReleaseBinding(c);
         Authority(c);
@@ -161,6 +162,32 @@ public static class WorldGenChecks
             "an explicit pause is reported ahead of incidental pressure");
         c.Eq(EnumWorldGenGate.Faulted, Select(faulted: true, paused: true),
             "a safety fault cannot be hidden by pause");
+    }
+
+    static void BoundaryAndRestartStatus(Check c)
+    {
+        c.Eq(EnumWorldGenGate.None, LodWorldGenJob.BoundaryGate(
+                final: false, inFlight: 0, capturedAwaitingPersistence: 0),
+            "unrelated shared-pipeline work cannot hold a completed tile boundary");
+        c.Eq(EnumWorldGenGate.TilePyramid, LodWorldGenJob.BoundaryGate(
+                final: false, inFlight: 0, capturedAwaitingPersistence: 1),
+            "a tile waits for its own captured L0 row to become durable");
+        c.Eq(EnumWorldGenGate.InFlight, LodWorldGenJob.BoundaryGate(
+                final: true, inFlight: 1, capturedAwaitingPersistence: 0),
+            "the final boundary still waits for this job's kept column");
+        c.Eq(EnumWorldGenGate.FinalPersistence, LodWorldGenJob.BoundaryGate(
+                final: true, inFlight: 0, capturedAwaitingPersistence: 1),
+            "the final boundary waits for this job's last durable L0 row");
+
+        c.False(LodServerCaptureSystem.ShouldReportWorldGenJob(
+                jobExists: true, jobDone: true, pendingConfirmation: true),
+            "a stopped job's final summary cannot hide a newly prepared confirmation");
+        c.True(LodServerCaptureSystem.ShouldReportWorldGenJob(
+                jobExists: true, jobDone: false, pendingConfirmation: true),
+            "an active job remains authoritative if a stale confirmation also exists");
+        c.True(LodServerCaptureSystem.ShouldReportWorldGenJob(
+                jobExists: true, jobDone: true, pendingConfirmation: false),
+            "a finished job is still shown until the next area is prepared");
     }
 
     static void DurableSectionMapping(Check c)

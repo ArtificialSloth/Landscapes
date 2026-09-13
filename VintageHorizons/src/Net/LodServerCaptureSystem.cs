@@ -936,15 +936,17 @@ public class LodServerCaptureSystem : ModSystem
             }
         }
 
-        if (worldGen != null)
+        if (ShouldReportWorldGenJob(
+            worldGen != null, worldGen?.Done == true, status.PendingConfirmation))
         {
-            LodWorldGenProgress progress = worldGen.Snapshot();
-            status.State = worldGen.Done
-                ? worldGen.Failures > 0
+            LodWorldGenJob job = worldGen!;
+            LodWorldGenProgress progress = job.Snapshot();
+            status.State = job.Done
+                ? job.Failures > 0
                     ? EnumWorldGenRemoteState.Interrupted
                     : EnumWorldGenRemoteState.Complete
-                : worldGen.Faulted ? EnumWorldGenRemoteState.Faulted
-                : worldGen.Paused ? EnumWorldGenRemoteState.Paused
+                : job.Faulted ? EnumWorldGenRemoteState.Faulted
+                : job.Paused ? EnumWorldGenRemoteState.Paused
                 : EnumWorldGenRemoteState.Running;
             status.PendingConfirmation = false;
             status.DoneColumns = progress.DoneColumns;
@@ -959,11 +961,11 @@ public class LodServerCaptureSystem : ModSystem
             status.InFlight = progress.InFlight;
             status.Retries = progress.Retries;
             status.Failures = progress.Failures;
-            status.RadiusChunks = worldGen.State.RadiusChunks;
-            status.Shape = worldGen.State.Shape;
-            status.CentreCx = worldGen.State.CentreCx;
-            status.CentreCz = worldGen.State.CentreCz;
-            status.Preset = worldGen.State.Preset;
+            status.RadiusChunks = job.State.RadiusChunks;
+            status.Shape = job.State.Shape;
+            status.CentreCx = job.State.CentreCx;
+            status.CentreCz = job.State.CentreCz;
+            status.Preset = job.State.Preset;
         }
         else if (status.State != EnumWorldGenRemoteState.Prepared)
         {
@@ -991,6 +993,14 @@ public class LodServerCaptureSystem : ModSystem
         }
         return status;
     }
+
+    /// <summary>
+    /// An active job is authoritative. A finished job remains available for its final
+    /// summary, but cannot hide a newer Prepare response and its Confirm button.
+    /// </summary>
+    internal static bool ShouldReportWorldGenJob(
+        bool jobExists, bool jobDone, bool pendingConfirmation) =>
+        jobExists && (!jobDone || !pendingConfirmation);
 
     void OfferInterruptedWorldGen()
     {

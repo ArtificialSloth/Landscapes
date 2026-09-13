@@ -298,15 +298,13 @@ internal sealed class LodWorldGenJob
         int next = FindNextPending();
         if (next >= plan.Count)
         {
-            if (leases.Count > 0)
+            EnumWorldGenGate finalGate = BoundaryGate(
+                final: true, inFlight: leases.Count,
+                capturedAwaitingPersistence: capturedThisRun.Count);
+            if (finalGate != EnumWorldGenGate.None)
             {
-                Gate = EnumWorldGenGate.InFlight;
-                return;
-            }
-            if (pipeline.CaptureBacklogTotal > 0 || pipeline.DirtySections > 0)
-            {
-                pipeline.RequestPersistenceCheckpoint();
-                Gate = EnumWorldGenGate.FinalPersistence;
+                if (leases.Count == 0) pipeline.RequestPersistenceCheckpoint();
+                Gate = finalGate;
                 return;
             }
             FinishComplete();
@@ -317,12 +315,15 @@ internal sealed class LodWorldGenJob
         if (currentTile < 0) currentTile = nextTile;
         if (nextTile != currentTile)
         {
-            if (leases.Count > 0 || pipeline.CaptureBacklogTotal > 0
-                || pipeline.DirtySections > 0)
+            int tileUndurable = capturedThisRun.Count(index =>
+                plan.Columns[index].Tile == currentTile);
+            EnumWorldGenGate boundaryGate = BoundaryGate(
+                final: false, inFlight: leases.Count,
+                capturedAwaitingPersistence: tileUndurable);
+            if (boundaryGate != EnumWorldGenGate.None)
             {
-                if (leases.Count == 0 && pipeline.CaptureBacklogTotal == 0)
-                    pipeline.RequestPersistenceCheckpoint();
-                Gate = EnumWorldGenGate.TilePyramid;
+                if (leases.Count == 0) pipeline.RequestPersistenceCheckpoint();
+                Gate = boundaryGate;
                 return;
             }
             SaveState("tile boundary");
@@ -357,6 +358,23 @@ internal sealed class LodWorldGenJob
             if (!TryIssue(column.Cx, column.Cz)) return;
             issued++;
         }
+    }
+
+    /// <summary>
+    /// A tile boundary is owned by this job, not by every producer sharing the pipeline.
+    /// Sweep, snow refresh, frontier capture, and another player's loaded terrain can keep
+    /// the global capture/dirty counters non-zero indefinitely. The job waits only for its
+    /// kept columns and its own captured L0 rows to become durable; ordinary backlog gates
+    /// still brake the next tile while the rest of the pyramid catches up.
+    /// </summary>
+    internal static EnumWorldGenGate BoundaryGate(
+        bool final, int inFlight, int capturedAwaitingPersistence)
+    {
+        if (inFlight > 0)
+            return final ? EnumWorldGenGate.InFlight : EnumWorldGenGate.TilePyramid;
+        if (capturedAwaitingPersistence > 0)
+            return final ? EnumWorldGenGate.FinalPersistence : EnumWorldGenGate.TilePyramid;
+        return EnumWorldGenGate.None;
     }
 
     int FindNextPending()
