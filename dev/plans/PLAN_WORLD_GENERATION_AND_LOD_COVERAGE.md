@@ -1,7 +1,7 @@
 # Plan - World generation and complete distant terrain
 
-**Status:** In progress. P1-P3 are complete (0.4.66-0.4.69, Sessions 89-90); P4-P8 are open and
-W1-W8 undecided. Written at the owner's request on 2026-09-12 from report-only investigations against
+**Status:** In progress. P1-P3 are complete (0.4.66-0.4.69, Sessions 89-90); P4-P8 are open, and
+the owner decided W1-W8 on 2026-09-13 (section 1.2). Written at the owner's request on 2026-09-12 from report-only investigations against
 0.4.64 (code `dd0394c`, docs `b6c2950`). The owner decides the order of work (decision W6).
 **Created:** 2026-09-12
 **Scope:** Three defects seen on a new world during vanilla `/wgen pregen` (the first join drew only
@@ -68,6 +68,20 @@ starts it.
 | W6 | Order: the fixes (P1-P4) before the generation feature; P0 whenever a restart can be spared. Where all of this sits against the water work and the frontier plan is the owner's call. | Priorities. |
 | W7 | The page is a tab called "Generate" in the Horizons editor, after General and Anti-Aliasing (and the planned Silhouettes tab). | The tab strip has clipped labels before (Session 77). |
 | W8 | On quit, the server half may take up to 60 s to finish saving distant terrain, with a progress line in the log. Today it gets 15 s, and anything unsaved is dropped. | A slower exit against a lost cache. |
+
+**Owner decisions, 2026-09-13 (Session 90).** Put to the owner in plain words; they supersede the
+proposals above where they differ.
+
+| ID | Decision |
+|---|---|
+| W1 | Accepted. Generate World writes real terrain like `/wgen pregen`, only when a permitted player starts it after the confirmation; every automatic path still generates nothing. Record it as a settled decision in `ARCHITECTURE.md` at the P8 doc pass. |
+| W2 | Accepted. Extra worldgen threads only if P0 proves identical terrain with Watersheds and TerraPrety; labelled Experimental; set per world; applied on the next load. |
+| W3 | Accepted as proposed. |
+| W4 | Accepted. Balanced is the default preset. |
+| W5 | **Changed.** An option, **on by default**, keeps terrain generation running while the pause menu is open **without** resuming the game simulation (time and creatures stay paused), if the engine allows it. A suspended singleplayer server generates nothing (2.7), so P5 must first establish whether worldgen can run while the simulation stays paused; if it cannot, leave the option out and pause generation as vanilla does. |
+| W6 | Accepted. P4 next, then P5-P7; P0 whenever a restart is convenient. |
+| W7 | Accepted. A "Generate" tab after General and Anti-Aliasing (and the planned Silhouettes tab). |
+| W8 | **Changed.** The quit-time save stays 15 s by default but becomes a setting the player can raise; the log keeps reporting unresolved saves. |
 
 ### 1.3 Standing rules that apply throughout
 

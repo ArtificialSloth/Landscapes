@@ -13,7 +13,10 @@ savegame sweep to the capture queue; it is built, verified and installed, not ru
   line should keep unloaded-before-capture drops near zero; expect the sweep to take longer.
 - **P4 / D2.** The sweep's absence check should report "inconclusive" when vanilla pregen generated
   at the same time. It needs an engine signal the mod does not read yet.
-- **W1-W8 before P5-P7.** None is accepted. P5's job would also finish vanilla's unfinished pregen
+- **W1-W8 are decided** (2026-09-13, plan section 1.2): P4 next, then P5-P7. Two answers change the
+  proposals. W5: generation may continue behind the pause menu without resuming the simulation
+  (an option, on by default), if the engine allows it; P5 must check that first. W8: the quit-time
+  save stays 15 s but becomes a setting. P5's job would also finish vanilla's unfinished pregen
   lines (G191), because it loads existing columns the cache lacks.
 - **Dedicated servers** still cannot fill a section a client held before joining: the network
   carries no per-key revision, so only refreshed level-0 rows merge there.
@@ -65,8 +68,8 @@ G170. Remaining:
 
 - **`.vhgap` scans before the physics step** (Before/0.994), so its range verdicts can be a frame
   old. Move the scan after the late range check or retire it.
-- **Comparison switches for disproved hypotheses.** Retire `.vhsnowline` (every part) and
-  `.vhgap release`, or keep them deliberately. `.vhsky` is worth keeping as a diagnostic.
+- **Comparison switches for disproved hypotheses.** `.vhsnowline` was retired in 0.4.70. Retire
+  `.vhgap release` or keep it deliberately. `.vhsky` is worth keeping as a diagnostic.
 - **Stale recorded spheres and eviction gaps.** When vanilla re-tessellates a buried chunk beside a
   newly unloaded neighbour, the recorded draw sphere disagrees for 1–7 frames (invisible in
   practice); the sandbox also found two eviction gaps of 4 and 7 frames. Refreshing the recorded

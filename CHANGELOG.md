@@ -10,9 +10,22 @@ first.
 
 **Known open:** P4's sweep diagnostic; 0.4.69's sweep pacing is not yet runtime-tested; dedicated
 servers still cannot fill a section a client held before joining; winter temporal convergence (a real
-accumulation and melt, `/vhrefresh` boundaries, campaign cost). W1-W8 remain undecided and must be
-asked before the P5-P7 generation feature. The last accepted baseline remains 0.4.64; 0.4.66 passed
+accumulation and melt, `/vhrefresh` boundaries, campaign cost). The owner decided W1-W8 on
+2026-09-13: P4 comes next, then the P5-P7 generation feature. The last accepted baseline remains 0.4.64; 0.4.66 passed
 its GPU owner check, 0.4.67 its cache-drain runtime check, and 0.4.68 the owner's far-terrain look.
+
+## [0.4.70] - 2026-09-13
+
+**Retired the `.vhsnowline` comparison.** Its five switches each undid one part of the 0.4.40
+spatial snow line, to test whether that change caused the vanilla-to-LOD handoff flash; the flash
+had another cause, fixed in 0.4.53. The current snow line is now fixed in place: every vertex reads
+the climate field and the snow line always comes from it, so nothing a player sees changes. The two
+shader inputs the command drove went with it, and shaders compile only in game, so the edited
+terrain shader is first compiled when the owner next loads a world.
+
+Release and Debug builds completed with zero warnings/errors; 24,584 fast assertions pass. The
+verified 38-entry package was copy-installed with SHA-256
+`7D38C85FD533C4BC8FACACDE99AE6EC5277039E0A17C65173A81B37B3014B322`.
 
 ## [0.4.69] - 2026-09-12
 

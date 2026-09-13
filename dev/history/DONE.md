@@ -2,7 +2,7 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
-## 2026-09-12 - Client copies fill from the server cache; sweep paced to capture (0.4.68-0.4.69)
+## 2026-09-12 - Client copies fill from the server cache; sweep paced to capture (0.4.68-0.4.70)
 
 P3 of the world-generation/LOD-coverage plan is complete. Version 0.4.68 scans the server half's
 sibling cache incrementally by rowid at every level and merges its fuller rows into sections the
@@ -10,7 +10,8 @@ client already holds (the owner's rule: a rewritten level-0 row wins column by c
 sightings and parents fill only), recording each merge once the merged copy is durable. The owner
 saw the 18:23 world's far terrain fill in; the remaining thin lines are vanilla's unfinished pass-5
 columns (G191). Version 0.4.69 paces the savegame sweep to the capture queue after 4,043 dropped
-captures in one session. Checkpoints `52d3aa2` and `ae677b7`; 24,588 assertions pass.
+captures in one session. Version 0.4.70 retires the `.vhsnowline` comparison, fixing the current
+snow-line design in place. Checkpoints `52d3aa2`, `ae677b7` and `593fd66`; 24,584 assertions pass.
 
 ## 2026-09-12 - GPU validation and starvation-free server cache draining (0.4.66-0.4.67)
 

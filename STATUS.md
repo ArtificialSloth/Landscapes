@@ -3,12 +3,12 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-09-12`
-**Mod version:** `0.4.69` — current private test build, verified, copy-installed and checkpointed; its sweep pacing is not yet runtime-tested
+**Status date:** `2026-09-13`
+**Mod version:** `0.4.70` — current private test build, verified, copy-installed and checkpointed; 0.4.69's sweep pacing and 0.4.70's shader edit are not yet runtime-tested
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.66 `0ed190c`, 0.4.67 `28746a7`, 0.4.68 `52d3aa2`, 0.4.69 `ae677b7`; nothing pushed
+**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.66 `0ed190c`, 0.4.67 `28746a7`, 0.4.68 `52d3aa2`, 0.4.69 `ae677b7`, 0.4.70 `593fd66`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `109` C# files under `VintageHorizons/src`
+**Source files:** `108` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
@@ -22,7 +22,8 @@ it already holds. The sibling cache is scanned by rowid at every level; a first 
 parent fill only the columns the client lacks, and a level-0 row the server rewrote after the client
 saw it wins column by column (the owner's choice), never erasing columns only the client holds or
 replacing observed snow with a generated peek. Merges are recorded in the additive `SiblingMerge`
-table once durable. 0.4.69 paces the savegame sweep to the capture queue.
+table once durable. 0.4.69 paces the savegame sweep to the capture queue, and 0.4.70 retires the
+`.vhsnowline` comparison, fixing the current snow-line design in place.
 
 | Evidence | Result | Level |
 |---|---|---|
@@ -241,14 +242,12 @@ Session-only unless stated; all write their findings to the client log.
 - `.vhlaterange on|off` switches the 0.4.53 fix; on by default.
 - `.vhgap on|off` and `.vhgap release on|off` log, and optionally release, cells the mask gives to
   vanilla while vanilla is not drawing them. The scan still runs before the physics step.
-- `.vhsnowline` undoes parts of the 0.4.40 spatial snow line. It served a disproved hypothesis and
-  is a candidate for removal.
 - `.vhwater capture` stores a frame's colour and depth stages with the projection; Session 86 measured
   the shimmer from one.
 
 ## Performance and artifact evidence
 
-The final fast tier passed **24,588 assertions with zero failures**, and the 0.4.69 Release and
+The final fast tier passed **24,584 assertions with zero failures**, and the 0.4.70 Release and
 Debug builds completed with zero warnings and zero errors. The sibling-cache scanner's cost is in the
 current-result table; merging into held sections runs under the existing install budget and is not
 separately measured. Distant anti-aliasing's measured cost is in its table above; automatic
@@ -260,15 +259,15 @@ frames where the physics step changed the player's block; snow adds 1,024 uncomp
 bytes per resident section before compression; no paired large-world capture yet isolates winter
 campaign cost.
 
-The verified `dist/vintagehorizons_0.4.69.zip` has 38 entries and SHA-256
-`BD48A3BE96ED05B3A153C94BEA2F9E77EA2BA3CE775D31EE213010BE81B3850A`; `modinfo.json` and the DLL both
-report 0.4.69, the zip DLL matches the Release output, no PDB is present, and the installed
+The verified `dist/vintagehorizons_0.4.70.zip` has 38 entries and SHA-256
+`7D38C85FD533C4BC8FACACDE99AE6EC5277039E0A17C65173A81B37B3014B322`; `modinfo.json` and the DLL both
+report 0.4.70, the zip DLL matches the Release output, no PDB is present, and the installed
 Mods-folder copy has the same hash. Older test zips remain in that folder. Every incremented private
 test build receives an exact Git checkpoint after verification and installation; this does not
 authorize a push, tag, publication or public release. The assistant did not launch the game in
 Session 90; the owner ran 0.4.68.
 
-Documentation validation passed **2,319 checks** with no failures at the Session 90 doc pass.
+Documentation validation passed **2,318 checks** with no failures at the Session 90 doc pass.
 Current version, changelog coverage, source count, compatibility, links, session routing, shader
 ASCII and active performance-plan routing pass.
 
@@ -295,13 +294,15 @@ ASCII and active performance-plan routing pass.
 Begin with [Session 90](dev/sessions/SESSION_90.md), the top of [TODO](dev/TODO.md), and
 [the world-generation/LOD-coverage plan](dev/plans/PLAN_WORLD_GENERATION_AND_LOD_COVERAGE.md).
 
-1. Runtime-check 0.4.69: during the startup sweep the server's cache-work line should keep
+1. Runtime-check 0.4.70: distant terrain must still draw, with its snow, because the edited
+   terrain shader compiles only in game. Runtime-check 0.4.69: during the startup sweep the server's cache-work line should keep
    unloaded-before-capture drops near zero; the sweep takes longer.
 2. P4: a sweep during vanilla pregen should report `inconclusive`, not warn. It needs an engine
    signal the mod does not read yet.
-3. Keep P0 available for a convenient restart. Before P5-P7, stop and ask the owner for W1-W8;
-   none of those proposal values has been accepted. P5's job would also finish vanilla's unfinished
-   pregen lines (G191).
+3. The owner decided W1-W8 on 2026-09-13 (plan section 1.2): P4 next, then P5-P7; P0 when a
+   restart is convenient. W5 (generation behind the pause menu, simulation paused) and W8 (quit
+   save 15 s, configurable) differ from the proposals. P5's job would also finish vanilla's
+   unfinished pregen lines (G191).
 4. Known P3 limits: dedicated servers cannot fill a section a client held before joining, and snow
    refreshes do not reach far parents.
 5. Preserve older open verification debt in TODO, including winter convergence, pause loading and

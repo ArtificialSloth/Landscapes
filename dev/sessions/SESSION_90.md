@@ -1,8 +1,8 @@
-# Session 90 - P3 client copies complete, and the sweep paced to capture
+# Session 90 - P3 client copies complete, the sweep paced to capture, `.vhsnowline` retired
 
-**Date:** `2026-09-12`
-**Branch/commit:** `codex/water-depth-light`; 0.4.68 `52d3aa2`, 0.4.69 `ae677b7`, documentation commit recorded by Git history
-**Mod version:** `0.4.68-0.4.69`
+**Date:** `2026-09-12 to 2026-09-13`
+**Branch/commit:** `codex/water-depth-light`; 0.4.68 `52d3aa2`, 0.4.69 `ae677b7`, 0.4.70 `593fd66`; documentation commits recorded by Git history
+**Mod version:** `0.4.68-0.4.70`
 **Assist protocol / blob / schema:** `1 / 4 / 6` (additive client table `SiblingMerge`; no meaning changed)
 
 > Session records are Tier 3 history. Write narrative as needed, but preserve the four required tail sections so future harvesting remains mechanical.
@@ -97,6 +97,21 @@ or being captured (`LodSavegameSweep.LoadsAllowed`). 24,588 assertions; Release 
 38-entry zip SHA-256 `BD48A3BE96ED05B3A153C94BEA2F9E77EA2BA3CE775D31EE213010BE81B3850A`, installed,
 `ae677b7`.
 
+### 7. 0.4.70: the `.vhsnowline` comparison retired
+
+With usage left, the owner chose this TODO cleanup item. `.vhsnowline` had five session-only
+switches, each undoing one part of the 0.4.40 spatial snow line to test whether it caused the
+handoff flash; 0.4.53 found the real cause. Every part is now fixed at its existing default:
+per-cell thresholds, the texture's alpha byte carrying the threshold, early refresh on observed
+snow, and every vertex reading the climate field. The command, its diagnostics-panel rows, the
+`LodTerrainRenderer.SnowLineComparison.cs` partial, `LodClimateField.EncodeSnowLine`, and the
+shader inputs `snowLineUniformOnly` and `climateFetchTintOnly` are gone. The inputs and their
+uploads went together, because the engine throws on an uploaded name no program declares (G174);
+the tint and fade uniforms the removed condition read stay declared and used elsewhere.
+`SkyWitnessChecks.EveryVertexReadsTheClimateField` pins the result. 24,584 assertions, 0
+failures; Release and Debug clean; 38-entry zip SHA-256
+`7D38C85FD533C4BC8FACACDE99AE6EC5277039E0A17C65173A81B37B3014B322`, installed, `593fd66`.
+
 ---
 
 ## Delivered
@@ -105,6 +120,7 @@ or being captured (`LodSavegameSweep.LoadsAllowed`). 24,588 assertions; Release 
   merge into held sections under the owner's rule, `SiblingMerge` records, network refresh merge,
   `.vhinfo` and a once-a-minute log line for held-section progress, `siblingfield`, tests.
 - 0.4.69 (`ae677b7`): savegame sweep paced to the capture queue, with checks.
+- 0.4.70 (`593fd66`): the `.vhsnowline` comparison retired; the current snow-line design fixed in place.
 - Human-tested: the 18:23 world's far terrain draws nearly complete on 0.4.68.
 - Documentation pass for P3 and 0.4.69.
 
@@ -118,6 +134,11 @@ or being captured (`LodSavegameSweep.LoadsAllowed`). 24,588 assertions; Release 
 - Merge records are written only after the merged copy is durable.
 - The sweep waits for capture rather than keeping swept columns loaded; keeping columns loaded is
   the generation job's design (P5).
+- The owner chose to retire `.vhsnowline` (2026-09-13); every part keeps its current behaviour.
+- The owner decided W1-W8 on 2026-09-13 (plan section 1.2): P4 next, then P5-P7. W5 and W8 changed
+  from the proposals: generation may continue behind the pause menu without resuming the simulation
+  (an option, on by default, if the engine allows it), and the quit-time save stays 15 s but becomes
+  a setting.
 
 ## Traps
 
@@ -129,9 +150,12 @@ or being captured (`LodSavegameSweep.LoadsAllowed`). 24,588 assertions; Release 
 ## Flagged and unverified
 
 - 0.4.69's pacing is harness-tested only; its effect on drops and sweep duration is unmeasured.
+- 0.4.70's edited terrain shader has not yet been compiled in game (there is no GLSL validator
+  here); a compile failure would show as missing distant terrain on the next load.
 - The offline after-comparison (`siblingfield`) was not run after the owner's revisit.
 - Why vanilla left those lines at pass 5 is not established; that flying near them finishes them
   rests on the owner's report and falling counts, not on engine source.
 - Dedicated servers still cannot fill a section a client held before joining.
 - Snow refreshes still do not reach far parents; they never did.
-- P4 (sweep false alarm during pregen) was not attempted. W1-W8 remain open; ask before P5-P7.
+- P4 (sweep false alarm during pregen) was not attempted. W1-W8 are decided; W5's pause behaviour
+  needs an engine feasibility check before P5 relies on it.
