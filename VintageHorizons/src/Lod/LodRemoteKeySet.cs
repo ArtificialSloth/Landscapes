@@ -13,6 +13,11 @@ public enum LodLocalOfferOutcome
     Unavailable,
 }
 
+/// <summary>What one batch of sibling-cache rows turned into.</summary>
+/// <param name="Offered">Keys this client does not hold, now offered for adoption.</param>
+/// <param name="FillsQueued">Keys it does hold, now waiting to be merged.</param>
+public readonly record struct LodSiblingDelta(int Offered, int FillsQueued);
+
 /// <summary>
 /// Bookkeeping for sections a remote source offers: which keys only it has, which of those
 /// the view currently wants, and which have been asked for already.
@@ -21,9 +26,23 @@ public enum LodLocalOfferOutcome
 /// pure set logic over a LodWorld, but living inside a class whose constructor needs a game
 /// API and starts five threads made it unreachable, and the one bug that mattered most here
 /// took three wrong diagnoses read off counters before anyone looked at the branch itself.
+///
+/// Two kinds of offer. A key this client does not hold is remote-only: the view adopts the
+/// whole row the first time it wants it. A key it does hold may still be incomplete - copied
+/// while pregen had filled a sliver of it, or captured only partly by this client - so the
+/// source's row is merged into it instead, and that pending merge is a fill (see
+/// <see cref="LodSection.MergeFrom"/>). Before fills existed a held key was skipped for good,
+/// which is what left the distant walls of the 18:23 screenshot.
 /// </summary>
 public class LodRemoteKeySet
 {
+    /// <summary>
+    /// Eager fills that may be loading or pinned in RAM at once. An eager fill (a rewritten
+    /// level-0 row) is fetched whether or not the view shows the section, so its target must
+    /// be brought into RAM first and kept there until the merge lands. This bounds that RAM.
+    /// </summary>
+    public const int MaxEagerFillsActive = 16;
+
     readonly LodWorld world;
 
     public LodRemoteKeySet(LodWorld world) => this.world = world;
@@ -41,61 +60,134 @@ public class LodRemoteKeySet
     /// </summary>
     readonly HashSet<long> localKeys = new();
 
-    /// <summary>
-    /// Keys for which the server has announced a newer durable level-zero row. Unlike
-    /// RemoteOnly, these may also exist locally; they route to the server until the refreshed
-    /// copy is durably written to this client's cache.
-    /// </summary>
-    readonly HashSet<long> remoteUpdates = new();
-    readonly Dictionary<long, long> installedUpdateRevisions = new();
-
     readonly HashSet<long> remoteWanted = new();
+
+    readonly record struct FillRequest(long SourceRowid, LodMergeMode Mode, bool Eager);
+
+    /// <summary>Held keys whose source has a row this client's copy has not merged.</summary>
+    readonly Dictionary<long, FillRequest> fills = new();
+
+    /// <summary>Pending fills waiting for their residency check, round-robin (see PumpFills).</summary>
+    readonly Queue<long> fillChecks = new();
+    readonly HashSet<long> fillChecksQueued = new();
+
+    /// <summary>Fills whose target is in RAM, waiting for a source to accept the request.</summary>
+    readonly HashSet<long> fillWanted = new();
+
+    /// <summary>Fills a source accepted: the blob is being read, decoded or installed.</summary>
+    readonly HashSet<long> fillInFlight = new();
+
+    /// <summary>Eager fills whose target is pinned in RAM (at most MaxEagerFillsActive).</summary>
+    readonly HashSet<long> eagerActive = new();
+
+    /// <summary>
+    /// For each key, the sibling-cache rowid this client has already accounted for: loaded
+    /// from the durable merge records at open, then the row it first saw, adopted or merged
+    /// this session. A held key whose row id has moved on from this was rewritten by the
+    /// server after the client saw it.
+    /// </summary>
+    readonly Dictionary<long, long> siblingAccounted = new();
+
+    /// <summary>Merges whose record may be written once the merged copy is durable.</summary>
+    readonly Dictionary<long, (long Rowid, long Revision)> recordsAwaitingDurable = new();
+    readonly List<(long Key, long Rowid)> recordsReady = new();
+
+    public int PendingFills => fills.Count;
+    public int FillsWantedNow => fillWanted.Count;
+    public int FillsInFlight => fillInFlight.Count;
+    public int EagerFillsActive => eagerActive.Count;
+    public int MergeRecordsAwaitingSave => recordsAwaitingDurable.Count;
+
+    /// <summary>Fills finished without a read because the held copy had every column already.</summary>
+    public long FillsAlreadyComplete { get; private set; }
+
+    /// <summary>Fills whose source arrived after their target had left RAM; they wait again.</summary>
+    public long FillsDeferred { get; private set; }
+
+    /// <summary>Fills dropped because their source could not be read or decoded.</summary>
+    public long FillsAbandoned { get; private set; }
 
     /// <summary>Record that local disk holds a row for this key. Called during the cache key scan.</summary>
     public void AddLocalKey(long key) => localKeys.Add(key);
 
     /// <summary>
+    /// A durable merge record read at open: this client's stored copy of the key already
+    /// contains the sibling cache's row with this rowid.
+    /// </summary>
+    public void AddMergeRecord(long key, long sourceRowid) => siblingAccounted[key] = sourceRowid;
+
+    public bool IsHeldLocally(long key) => localKeys.Contains(key);
+
+    bool Holds(long key) => localKeys.Contains(key) || world.Sections.ContainsKey(key);
+
+    /// <summary>
     /// Route a reload request. True when only the network can supply this key, so the
     /// caller sends it there instead of to the local store - a key local disk has never
     /// held would come back empty and land in LoadFailed, which is permanent.
+    ///
+    /// A key with a pending fill loads from local disk as usual: the fill needs the local
+    /// copy in RAM to merge into, not a replacement for it.
     /// </summary>
     public bool WantFromRemote(long key)
     {
-        if (!RemoteOnly.Contains(key) && !remoteUpdates.Contains(key)) return false;
+        if (!RemoteOnly.Contains(key)) return false;
         remoteWanted.Add(key);
         return true;
     }
 
-    public bool IsUpdate(long key) => remoteUpdates.Contains(key);
+    /// <summary>
+    /// Register rows the sibling cache wrote since the last batch, at every detail level.
+    ///
+    /// A key this client does not hold is offered for adoption. A key it holds is merged. The
+    /// first time the client sees the key's row, only the columns its copy lacks are filled.
+    /// After that a rewritten level-0 row replaces the columns it carries, which is how
+    /// server-side snow refreshes reach ground the client already holds (the owner's choice,
+    /// 2026-09-12); it is fetched eagerly, as the whole-section refresh it replaces was. A
+    /// rewritten parent only fills, because the client rebuilds its parents from level 0.
+    /// </summary>
+    public LodSiblingDelta AddSiblingRows(IEnumerable<LodSiblingRow> rows)
+    {
+        int offered = 0, queued = 0;
+        foreach (LodSiblingRow row in rows)
+        {
+            bool seen = siblingAccounted.TryGetValue(row.Key, out long previous);
+            if (seen && previous == row.Rowid) continue;
+            siblingAccounted[row.Key] = row.Rowid;
+
+            if (!Holds(row.Key))
+            {
+                if (Offer(row.Key)) offered++;
+                continue;
+            }
+
+            bool rewritten = seen && LodWorld.KeyLevel(row.Key) == 0;
+            QueueFill(row.Key, row.Rowid,
+                rewritten ? LodMergeMode.NewerWins : LodMergeMode.FillMissing, eager: rewritten);
+            queued++;
+        }
+        return new LodSiblingDelta(offered, queued);
+    }
 
     /// <summary>
-    /// Register durable server changes. Existing local rows are deliberately eligible here:
-    /// this is an explicit freshness notification, not an ordinary offer competing with a
-    /// client capture. The pipeline carries a content revision through decode so a client
-    /// capture that happens afterward still wins the race.
+    /// Register durable level-zero changes a server announced over the network. A key this
+    /// client does not hold is offered like any other; one it holds is merged with the newer
+    /// copy winning, as for a rewritten sibling row. The network carries no rowid, so nothing
+    /// is recorded: the server announces a key again only when it changes again.
     /// </summary>
     public int AddRemoteUpdates(IEnumerable<long> keys)
     {
         int added = 0;
         foreach (long key in keys)
         {
-            bool heldLocally = localKeys.Contains(key) || world.Sections.ContainsKey(key);
-            if (!heldLocally)
+            if (!Holds(key))
             {
-                if (RemoteOnly.Add(key))
-                {
-                    world.LoadFailed.Remove(key);
-                    world.LoadsInFlight.Remove(key);
-                    world.InstallStoredKey(
-                        LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key),
-                        applyToParent: false);
-                }
+                Offer(key);
                 continue;
             }
 
-            if (!remoteUpdates.Add(key)) continue;
-            world.LoadFailed.Remove(key);
-            remoteWanted.Add(key);
+            QueueFill(key, sourceRowid: 0,
+                LodWorld.KeyLevel(key) == 0 ? LodMergeMode.NewerWins : LodMergeMode.FillMissing,
+                eager: true);
             added++;
         }
         return added;
@@ -110,31 +202,128 @@ public class LodRemoteKeySet
         int added = 0;
         foreach (long key in keys)
         {
-            // Against localKeys, NOT HasDataSet. HasDataSet also contains every ancestor
-            // that RegisterInTree synthesised while registering a finer key, so testing it
-            // skipped coarse keys the server really could serve - whichever of a node and
-            // its descendants happened to be processed first decided the other's fate.
-            // Those keys stayed out of RemoteOnly, routed to a local store with no such
-            // row, came back null, and were recorded in LoadFailed, which is permanent.
-            // Observed as nodes drawn at L5 with two children "load-failed" and the
-            // pipeline idle: terrain that could never resolve, at any distance.
-            if (localKeys.Contains(key)) continue;
-            if (!RemoteOnly.Add(key)) continue;
-
-            // A key poisoned by that bug, or by an earlier miss before the manifest
-            // arrived, has to be given back its chance now that a source exists.
-            world.LoadFailed.Remove(key);
-            world.LoadsInFlight.Remove(key);
-
-            // Into the quadtree skeleton too, or descent will not even consider the key
-            // and nothing would ever ask for it. Same call the local key scan uses, minus
-            // the mip flag: the server's pyramid is already built, so nothing is pending.
-            world.InstallStoredKey(LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key),
-                applyToParent: false);
-            added++;
+            if (Offer(key)) added++;
         }
         return added;
     }
+
+    bool Offer(long key)
+    {
+        // Against localKeys, NOT HasDataSet. HasDataSet also contains every ancestor
+        // that RegisterInTree synthesised while registering a finer key, so testing it
+        // skipped coarse keys the server really could serve - whichever of a node and
+        // its descendants happened to be processed first decided the other's fate.
+        // Those keys stayed out of RemoteOnly, routed to a local store with no such
+        // row, came back null, and were recorded in LoadFailed, which is permanent.
+        // Observed as nodes drawn at L5 with two children "load-failed" and the
+        // pipeline idle: terrain that could never resolve, at any distance.
+        if (localKeys.Contains(key)) return false;
+        if (!RemoteOnly.Add(key)) return false;
+
+        // A key poisoned by that bug, or by an earlier miss before the manifest
+        // arrived, has to be given back its chance now that a source exists.
+        world.LoadFailed.Remove(key);
+        world.LoadsInFlight.Remove(key);
+
+        // Into the quadtree skeleton too, or descent will not even consider the key
+        // and nothing would ever ask for it. Same call the local key scan uses, minus
+        // the mip flag: the server's pyramid is already built, so nothing is pending.
+        world.InstallStoredKey(LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key),
+            applyToParent: false);
+        return true;
+    }
+
+    /// <summary>
+    /// The client wrote its own content into a key the source offered but it never adopted,
+    /// for example a capture forced through while the adoption was pending. That partial copy
+    /// now stands in front of the source's, so ask for the source's other columns.
+    /// </summary>
+    public void NoteLocalContent(long key)
+    {
+        if (!RemoteOnly.Contains(key) || fills.ContainsKey(key) || !world.Sections.ContainsKey(key))
+            return;
+        QueueFill(key, sourceRowid: 0, LodMergeMode.FillMissing, eager: false);
+    }
+
+    void QueueFill(long key, long sourceRowid, LodMergeMode mode, bool eager)
+    {
+        if (fills.TryGetValue(key, out FillRequest pending))
+        {
+            // A pending rewrite stays a rewrite when a later row arrives behind it.
+            if (pending.Mode == LodMergeMode.NewerWins) mode = LodMergeMode.NewerWins;
+            eager |= pending.Eager;
+        }
+        fills[key] = new FillRequest(sourceRowid, mode, eager);
+        EnqueueFillCheck(key);
+    }
+
+    void EnqueueFillCheck(long key)
+    {
+        if (fillChecksQueued.Add(key)) fillChecks.Enqueue(key);
+    }
+
+    /// <summary>
+    /// Advance pending fills. A target already in RAM becomes wanted; an eager one not in RAM
+    /// is loaded and pinned first, within MaxEagerFillsActive; a lazy one waits for the view
+    /// to load it. At most <paramref name="maxExamined"/> keys per call, round-robin, so a
+    /// first session with thousands of pending fills never costs one tick a scan of all of
+    /// them. Every dequeued key is validated, because it can finish, restart or change mode
+    /// while it waits (G25).
+    /// </summary>
+    public void PumpFills(int maxExamined)
+    {
+        int budget = Math.Min(maxExamined, fillChecks.Count);
+        for (int n = 0; n < budget; n++)
+        {
+            long key = fillChecks.Dequeue();
+            fillChecksQueued.Remove(key);
+            if (!fills.TryGetValue(key, out FillRequest fill)
+                || fillWanted.Contains(key) || fillInFlight.Contains(key)) continue;
+
+            if (world.Sections.TryGetValue(key, out LodSection? section))
+            {
+                if (fill.Mode == LodMergeMode.FillMissing
+                    && section.CapturedColumns >= LodSection.GridSize * LodSection.GridSize)
+                {
+                    // Every column is already ours, so a fill can add nothing. Account the row
+                    // as merged without reading it.
+                    FillsAlreadyComplete++;
+                    NoteMerged(key, fill.SourceRowid);
+                    continue;
+                }
+                fillWanted.Add(key);
+                continue;
+            }
+
+            if (world.LoadFailed.Contains(key))
+            {
+                // Our own copy could not be read back (the store deletes an unreadable row),
+                // so there is nothing to merge into: adopt the source's copy whole instead.
+                DropFill(key);
+                localKeys.Remove(key);
+                Offer(key);
+                continue;
+            }
+
+            if (fill.Eager && (eagerActive.Contains(key) || eagerActive.Count < MaxEagerFillsActive))
+            {
+                if (eagerActive.Add(key)) world.EvictionPins.Add(key);
+                world.EnsureResident(key);
+            }
+            EnqueueFillCheck(key);
+        }
+    }
+
+    /// <summary>Fills whose target is in RAM and that no source has accepted yet.</summary>
+    public long[] FillWanted() =>
+        fillWanted.Count == 0 ? Array.Empty<long>() : fillWanted.ToArray();
+
+    /// <summary>True when a decoded copy of this key may be merged into the resident one.</summary>
+    public bool CanMergeInto(long key) => fills.ContainsKey(key) || RemoteOnly.Contains(key);
+
+    /// <summary>How the pending fill for this key merges; an unrequested merge only fills.</summary>
+    public LodMergeMode MergeModeFor(long key) =>
+        fills.TryGetValue(key, out FillRequest fill) ? fill.Mode : LodMergeMode.FillMissing;
 
     /// <summary>
     /// Keys the render path asked for that only a remote source has. Fetch order therefore
@@ -147,18 +336,23 @@ public class LodRemoteKeySet
     /// Drop the keys that were actually asked for. Only these, never the whole set: a key
     /// held back by the in-flight cap is already in LodWorld.LoadsInFlight, where the
     /// render scheduler skips it, and forgetting it here would strand it there for the rest
-    /// of the session.
+    /// of the session. A fill that was sent moves to in flight.
     /// </summary>
     public void MarkRequested(IEnumerable<long> sent)
     {
-        foreach (long key in sent) remoteWanted.Remove(key);
+        foreach (long key in sent)
+        {
+            remoteWanted.Remove(key);
+            if (fillWanted.Remove(key)) fillInFlight.Add(key);
+        }
     }
 
     /// <summary>
     /// Complete one visibility-driven read from the local sibling cache. A retryable miss
     /// keeps the key wanted but releases LoadsInFlight because no reader retained
     /// responsibility. Removing wanted while leaving that marker set is the stranded-key
-    /// failure this state transition prevents.
+    /// failure this state transition prevents. A fill never left the wanted set, so a miss
+    /// changes nothing for it; the reader's own cooldown paces the retry.
     /// </summary>
     public void CompleteLocalOffer(long key, LodLocalOfferOutcome outcome)
     {
@@ -168,6 +362,7 @@ public class LodRemoteKeySet
                 remoteWanted.Remove(key);
                 break;
             case LodLocalOfferOutcome.RetryableMiss:
+                if (fills.ContainsKey(key) && !RemoteOnly.Contains(key)) break;
                 world.LoadsInFlight.Remove(key);
                 remoteWanted.Add(key);
                 break;
@@ -183,7 +378,11 @@ public class LodRemoteKeySet
     /// A sibling-cache reader transferred responsibility to the structural decoder.
     /// Stop duplicate submissions while retaining LoadsInFlight until publication.
     /// </summary>
-    public void MarkLocalOfferAccepted(long key) => remoteWanted.Remove(key);
+    public void MarkLocalOfferAccepted(long key)
+    {
+        remoteWanted.Remove(key);
+        if (fillWanted.Remove(key)) fillInFlight.Add(key);
+    }
 
     /// <summary>
     /// A foreign section is now resident and queued for local persistence. Keep the
@@ -198,38 +397,77 @@ public class LodRemoteKeySet
     }
 
     /// <summary>
-    /// Remember which local persistence revision contains an installed refresh. An older
-    /// save already in flight must not retire the update route before this revision lands.
+    /// The source's row with this rowid is now part of the resident copy, merged or adopted
+    /// whole. The fill it answered is finished unless a later row arrived meanwhile. The
+    /// record that the stored copy contains this row is written only once that copy is
+    /// durable, so a crash before the save repeats the merge instead of skipping it (G16).
     /// </summary>
-    public void MarkUpdateInstalled(long key, long persistenceRevision)
+    public void NoteMerged(long key, long sourceRowid)
     {
-        if (remoteUpdates.Contains(key)) installedUpdateRevisions[key] = persistenceRevision;
+        fillWanted.Remove(key);
+        fillInFlight.Remove(key);
+        if (fills.TryGetValue(key, out FillRequest pending) && pending.SourceRowid > sourceRowid)
+        {
+            // A later row arrived while this one was being read; it still needs merging.
+            EnqueueFillCheck(key);
+        }
+        else
+        {
+            fills.Remove(key);
+            if (eagerActive.Remove(key)) world.EvictionPins.Remove(key);
+        }
+
+        if (sourceRowid == 0) return;
+        if (!siblingAccounted.ContainsKey(key)) siblingAccounted[key] = sourceRowid;
+        if (!world.SaveDirty.Contains(key))
+        {
+            // Nothing unsaved: the stored copy already holds everything the merge produced.
+            recordsAwaitingDurable.Remove(key);
+            recordsReady.Add((key, sourceRowid));
+            return;
+        }
+        recordsAwaitingDurable[key] = (sourceRowid, world.PersistenceRevision(key));
+    }
+
+    /// <summary>
+    /// A fill's source arrived after its target had left RAM, so there was nothing to merge
+    /// into. Keep the fill; it is asked for again once the view, or an eager load, brings the
+    /// section back.
+    /// </summary>
+    public void DeferFill(long key)
+    {
+        if (!fills.ContainsKey(key)) return;
+        fillWanted.Remove(key);
+        fillInFlight.Remove(key);
+        FillsDeferred++;
+        EnqueueFillCheck(key);
+    }
+
+    /// <summary>Merge records whose merged copy is now durable, for the storage worker to write.</summary>
+    public List<(long Key, long Rowid)>? TakeReadyMergeRecords()
+    {
+        if (recordsReady.Count == 0) return null;
+        var ready = new List<(long Key, long Rowid)>(recordsReady);
+        recordsReady.Clear();
+        return ready;
     }
 
     /// <summary>
     /// Storage acknowledged a local row. Future reloads may use disk and no longer need
     /// the remote fallback; this transition deliberately happens after, never at, enqueue.
+    /// A merge record waiting for this revision, or an earlier one, may now be written.
     /// </summary>
     public void MarkPersisted(long key, long persistenceRevision = long.MaxValue)
     {
         localKeys.Add(key);
         RemoteOnly.Remove(key);
-        if (installedUpdateRevisions.TryGetValue(key, out long installedRevision)
-            && persistenceRevision >= installedRevision)
+        remoteWanted.Remove(key);
+        if (recordsAwaitingDurable.TryGetValue(key, out (long Rowid, long Revision) awaiting)
+            && persistenceRevision >= awaiting.Revision)
         {
-            remoteUpdates.Remove(key);
-            installedUpdateRevisions.Remove(key);
+            recordsAwaitingDurable.Remove(key);
+            recordsReady.Add((key, awaiting.Rowid));
         }
-
-        // An unrelated older save may complete after a refresh was announced but before
-        // its replacement has even been installed. That acknowledgement makes the old
-        // row durable; it must not cancel the still-needed download. Once the replacement
-        // is installed, MarkInstalled deliberately removes wanted while its exact revision
-        // remains protected above until that newer save completes.
-        if (!remoteUpdates.Contains(key))
-            remoteWanted.Remove(key);
-        else if (!installedUpdateRevisions.ContainsKey(key))
-            remoteWanted.Add(key);
     }
 
     /// <summary>
@@ -239,7 +477,8 @@ public class LodRemoteKeySet
     /// </summary>
     public void MarkRetryable(long key)
     {
-        if (!RemoteOnly.Contains(key) && !remoteUpdates.Contains(key)) return;
+        if (fillInFlight.Remove(key)) EnqueueFillCheck(key);
+        if (!RemoteOnly.Contains(key)) return;
         world.LoadFailed.Remove(key);
         world.LoadsInFlight.Remove(key);
         remoteWanted.Add(key);
@@ -250,14 +489,16 @@ public class LodRemoteKeySet
     /// the render path's wait on it: LodWorld.LoadsInFlight is set by TryGetForRender and
     /// otherwise only cleared by InstallLoaded, so without this a declined key stays
     /// "in flight" for the session, the mesh scheduler skips it, and its parent is pinned
-    /// coarse forever.
+    /// coarse forever. A fill that cannot be supplied leaves the client's own copy exactly as
+    /// it was, including its ability to reload from local disk.
     /// </summary>
     public void MarkUnavailable(long key)
     {
-        RemoteOnly.Remove(key);
-        remoteUpdates.Remove(key);
-        installedUpdateRevisions.Remove(key);
+        bool wasFill = DropFill(key);
+        if (wasFill) FillsAbandoned++;
+        bool wasOffered = RemoteOnly.Remove(key);
         remoteWanted.Remove(key);
+        if (wasFill && !wasOffered) return;
 
         // Already resident (a local capture won the race): just stop waiting. Recording a
         // load failure would block reloading it after a future RAM eviction.
@@ -270,12 +511,32 @@ public class LodRemoteKeySet
         world.InstallLoaded(key, null);
     }
 
+    bool DropFill(long key)
+    {
+        bool had = fills.Remove(key);
+        fillWanted.Remove(key);
+        fillInFlight.Remove(key);
+        if (eagerActive.Remove(key)) world.EvictionPins.Remove(key);
+        return had;
+    }
+
     public void Clear()
     {
         localKeys.Clear();
         RemoteOnly.Clear();
-        remoteUpdates.Clear();
-        installedUpdateRevisions.Clear();
         remoteWanted.Clear();
+        fills.Clear();
+        fillChecks.Clear();
+        fillChecksQueued.Clear();
+        fillWanted.Clear();
+        fillInFlight.Clear();
+        foreach (long key in eagerActive) world.EvictionPins.Remove(key);
+        eagerActive.Clear();
+        siblingAccounted.Clear();
+        recordsAwaitingDurable.Clear();
+        recordsReady.Clear();
+        FillsAlreadyComplete = 0;
+        FillsDeferred = 0;
+        FillsAbandoned = 0;
     }
 }

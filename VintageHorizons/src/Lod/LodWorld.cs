@@ -425,23 +425,11 @@ public class LodWorld
     }
 
     /// <summary>
-    /// Replace a locally cached section with a newer durable server observation. The caller
-    /// has already revision-validated the asynchronous decode. Unlike an ordinary reload this
-    /// is a content change: its mesh, persistence row and mip ancestors all need refreshing.
+    /// Sections that must stay in RAM for work the eviction sweep cannot see: an eager fill
+    /// loads its target and needs it still resident when the server's copy arrives to be
+    /// merged. Owned by LodRemoteKeySet, which bounds it and releases every pin it takes.
     /// </summary>
-    public void InstallReplacement(long key, LodSection section)
-    {
-        bool wasResident = Sections.ContainsKey(key);
-        Sections[key] = section;
-        TrackResident(key);
-        LoadsInFlight.Remove(key);
-        LoadFailed.Remove(key);
-        RegisterAvailableData(key);
-        RegisterInTree(key);
-        NoteObservedSnowStateArrival(section);
-        MarkChanged(key);
-        if (!wasResident) SectionBecameResident?.Invoke(key);
-    }
+    public readonly HashSet<long> EvictionPins = new();
 
     /// <summary>
     /// Drop cold sections from RAM (their rows stay on disk; HasDataSet keeps the
@@ -481,9 +469,11 @@ public class LodWorld
                 residentEvictionOrder.Enqueue(key);
                 continue;
             }
-            // Unsaved or unpropagated data pins a section; a pending mesh rebuild does
-            // NOT - the scheduler demand-reloads from disk when its turn comes.
-            if (SaveDirty.Contains(key) || MipDirty.Contains(key) || mipParentPins.ContainsKey(key))
+            // Unsaved or unpropagated data pins a section, as does a fill waiting to merge
+            // into it; a pending mesh rebuild does NOT - the scheduler demand-reloads from
+            // disk when its turn comes.
+            if (SaveDirty.Contains(key) || MipDirty.Contains(key) || mipParentPins.ContainsKey(key)
+                || EvictionPins.Contains(key))
             {
                 LastSweepPinned++;
                 residentEvictionOrder.Enqueue(key);
@@ -840,5 +830,6 @@ public class LodWorld
         TopLevelKeys.Clear();
         LoadsInFlight.Clear();
         LoadFailed.Clear();
+        EvictionPins.Clear();
     }
 }

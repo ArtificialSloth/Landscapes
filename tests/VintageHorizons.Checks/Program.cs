@@ -16,6 +16,7 @@ public static class Program
         ("pure", "key math", KeyMathChecks.Run),
         ("pure", "section runs", SectionChecks.Run),
         ("pure", "section properties", SectionPropertyChecks.Run),
+        ("pure", "section merge", SectionMergeChecks.Run),
         ("pure", "mip downsample", MipChecks.Run),
         ("pure", "residency", ResidencyChecks.Run),
         ("pure", "change locality", ChangeLocalityChecks.Run),
@@ -127,6 +128,13 @@ public static class Program
         if (string.Equals(only, "waterdepthfield", StringComparison.OrdinalIgnoreCase))
         {
             return WaterDepthField.Run(args);
+        }
+
+        // And again: it compares a client cache with its server-side sibling, and times the
+        // offer scanner's queries, over real caches.
+        if (string.Equals(only, "siblingfield", StringComparison.OrdinalIgnoreCase))
+        {
+            return SiblingField.Run(args);
         }
 
         Console.WriteLine();

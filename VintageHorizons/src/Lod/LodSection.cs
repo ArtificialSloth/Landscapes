@@ -89,6 +89,30 @@ public struct LodPaletteEntry
     public const byte FlagSnowCovered = 64;
 }
 
+/// <summary>How a second copy of a section is merged into the one already held.</summary>
+public enum LodMergeMode
+{
+    /// <summary>Copy only the columns this copy has never captured; every column it holds wins.</summary>
+    FillMissing,
+
+    /// <summary>
+    /// The other copy is a later save of the same ground: its captured columns replace ours,
+    /// except that terrain with no snow observation never replaces a column that has one.
+    /// Columns only this copy holds are kept. The owner's rule for level 0 (2026-09-12);
+    /// parents only ever fill, because the client rebuilds them from level 0.
+    /// </summary>
+    NewerWins,
+}
+
+/// <summary>What <see cref="LodSection.MergeFrom"/> changed.</summary>
+/// <param name="TouchedEdges">Edges whose content or snow state moved, for neighbour meshes.</param>
+/// <param name="ColumnsFilled">Columns this copy had never captured and now has.</param>
+/// <param name="ColumnsReplaced">Held columns whose runs a newer copy replaced.</param>
+/// <param name="ColumnsKeptObserved">Held observed columns a newer but unobserved copy did not replace.</param>
+public readonly record struct LodMergeResult(
+    int TouchedEdges, bool ContentChanged, bool SnowStateChanged, bool SnowAppearanceChanged,
+    int ColumnsFilled, int ColumnsReplaced, int ColumnsKeptObserved);
+
 /// <summary>
 /// The M4 leaf data model: a section holds 64×64 vertical RLE columns over a local
 /// palette. At level L each column covers (ColumnStepBlocks &lt;&lt; L) blocks, so a
@@ -403,6 +427,90 @@ public class LodSection
         Runs = nextRuns;
         ColumnStart = nextStart;
         return touchedEdges;
+    }
+
+    /// <summary>
+    /// Merge another copy of this same section key into this one, column by column.
+    ///
+    /// The other copy comes from the server half's cache. A far section is typically copied
+    /// while vanilla pregen has filled only its western edge, and a near one may hold only
+    /// the columns this client captured itself; either way the server's row can have columns
+    /// this copy lacks. Replacing the whole section, as the level-0 refresh path used to, also
+    /// erased every column only this copy held. Merging keeps them.
+    ///
+    /// Palette ids are remapped into this palette as mip publication does it
+    /// (<see cref="LodMip.ApplyToParent(MipResult, LodSection, out bool)"/>), because the two
+    /// copies number their blocks independently. A copied column brings its snow provenance
+    /// and coverage with it; every other column keeps its own.
+    /// </summary>
+    public LodMergeResult MergeFrom(LodSection source, LodMergeMode mode)
+    {
+        int total = GridSize * GridSize;
+        var batch = new ulong[]?[total];
+        var paletteMap = new int[source.Palette.Count];
+        Array.Fill(paletteMap, -1);
+        int capturedBefore = CapturedColumns;
+        int snowEdges = EdgeNone;
+        bool snowStateChanged = false;
+        bool snowAppearanceChanged = false;
+        int keptObserved = 0;
+
+        for (int col = 0; col < total; col++)
+        {
+            if (!source.Captured[col]) continue;
+            if (Captured[col])
+            {
+                if (mode == LodMergeMode.FillMissing) continue;
+
+                // A generated peek carries terrain but no snow observation. Capture never lets
+                // one erase observed ground, and a newer save of the same key may not either.
+                if (IsSnowStateObserved(col) && !source.IsSnowStateObserved(col))
+                {
+                    keptObserved++;
+                    continue;
+                }
+            }
+
+            Span<ulong> runs = source.ColumnRuns(col);
+            var remapped = new ulong[runs.Length];
+            for (int i = 0; i < runs.Length; i++)
+            {
+                int sourceId = RunPaletteId(runs[i]);
+                int id = paletteMap[sourceId];
+                if (id < 0)
+                {
+                    LodPaletteEntry e = source.Palette[sourceId];
+                    id = FindOrAddPaletteEntry(e.BlockId, e.Color, e.Flags, e.TintSlot, e.TextureSlot);
+                    paletteMap[sourceId] = id;
+                }
+                remapped[i] = PackRun(id, RunYTop(runs[i]), RunYBottom(runs[i]));
+            }
+            batch[col] = remapped;
+
+            bool observed = source.IsSnowStateObserved(col);
+            bool covered = observed && source.IsSnowCovered(col);
+            bool wasCovered = IsSnowStateObserved(col) && IsSnowCovered(col);
+            bool observedChanged = SetSnowStateObserved(col, observed);
+            bool coveredChanged = SetSnowCovered(col, covered);
+            if (observedChanged || coveredChanged)
+            {
+                snowStateChanged = true;
+                snowEdges |= ColumnEdges(col);
+            }
+            snowAppearanceChanged |= wasCovered != covered;
+        }
+
+        // ReplaceColumns clears every entry whose runs were already identical, so what is left
+        // afterwards is exactly the set of columns whose content moved.
+        int contentEdges = ReplaceColumns(batch, out bool contentChanged);
+        int moved = 0;
+        foreach (ulong[]? written in batch)
+        {
+            if (written != null) moved++;
+        }
+        int filled = CapturedColumns - capturedBefore;
+        return new LodMergeResult(contentEdges | snowEdges, contentChanged, snowStateChanged,
+            snowAppearanceChanged, filled, moved - filled, keptObserved);
     }
 
     public static int ColumnIndex(int cx, int cz) => cz * GridSize + cx;

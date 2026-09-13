@@ -18,51 +18,313 @@ public static class RemoteKeyChecks
         WantedFollowsTheView(c);
         OnlyForgetWhatWasSent(c);
         LocalOfferOutcomes(c);
-        UpdatedLocalRowsRouteUntilDurable(c);
+        SiblingRowsAtEveryLevel(c);
+        FillModesFollowWhatTheClientHasSeen(c);
+        LazyFillsWaitForTheView(c);
+        EagerFillsLoadAndPinTheirTarget(c);
+        FillRequestLifecycle(c);
+        UnreadableOwnCopyIsAdoptedInstead(c);
+        MergeRecordsWaitForTheDurableSave(c);
+        NetworkRefreshMergesInsteadOfReplacing(c);
         Unavailable(c);
     }
 
-    static void UpdatedLocalRowsRouteUntilDurable(Check c)
+    /// <summary>
+    /// The sibling scan used to publish rewritten rows for level 0 only, and a held key was
+    /// skipped outright - so a far L3 copy taken while pregen had filled one edge of it never
+    /// changed again. That is the 18:23 screenshot's thin walls. Every level now reaches the
+    /// key set, and a held key becomes a fill instead of being ignored.
+    /// </summary>
+    static void SiblingRowsAtEveryLevel(Check c)
     {
         var world = new LodWorld();
         var remote = new LodRemoteKeySet(world);
-        long key = LodWorld.SectionKey(0, 12, 13);
+        long heldL0 = LodWorld.SectionKey(0, 40, 40);
+        long heldL3 = LodWorld.SectionKey(3, 5, 5);
+        long missingL2 = LodWorld.SectionKey(2, 9, 9);
+        remote.AddLocalKey(heldL0);
+        remote.AddLocalKey(heldL3);
+
+        LodSiblingDelta delta = remote.AddSiblingRows(new[]
+        {
+            new LodSiblingRow(heldL0, 10),
+            new LodSiblingRow(heldL3, 11),
+            new LodSiblingRow(missingL2, 12),
+        });
+
+        c.Eq(1, delta.Offered, "a key the client lacks is offered");
+        c.Eq(2, delta.FillsQueued, "held keys at level 0 and level 3 both become fills");
+        c.True(remote.RemoteOnly.Contains(missingL2), "the missing key is remote-only");
+        c.False(remote.RemoteOnly.Contains(heldL3), "a held key never becomes remote-only");
+        c.False(remote.WantFromRemote(heldL3),
+            "a held key with a fill still reloads from local disk: the fill needs that copy");
+        c.Eq(2, remote.PendingFills, "both fills are pending");
+
+        LodSiblingDelta repeat = remote.AddSiblingRows(new[] { new LodSiblingRow(heldL3, 11) });
+        c.Eq(0, repeat.Offered + repeat.FillsQueued, "the same row published again queues nothing");
+    }
+
+    /// <summary>
+    /// The owner's rule (2026-09-12): the first time the client sees a held key's row it only
+    /// fills what its copy lacks; a level-0 row the server rewrote after that wins column by
+    /// column, which is how server-side snow refreshes reach held ground. Parents only fill.
+    /// </summary>
+    static void FillModesFollowWhatTheClientHasSeen(Check c)
+    {
+        var world = new LodWorld();
+        var remote = new LodRemoteKeySet(world);
+        long l0 = LodWorld.SectionKey(0, 1, 1);
+        long l1 = LodWorld.SectionKey(1, 2, 2);
+        long recorded = LodWorld.SectionKey(0, 3, 3);
+        foreach (long key in new[] { l0, l1, recorded }) remote.AddLocalKey(key);
+        remote.AddMergeRecord(recorded, 50);
+
+        remote.AddSiblingRows(new[]
+        {
+            new LodSiblingRow(l0, 10), new LodSiblingRow(l1, 11), new LodSiblingRow(recorded, 50),
+        });
+        c.Eq(LodMergeMode.FillMissing, remote.MergeModeFor(l0),
+            "a level-0 row seen for the first time only fills");
+        c.Eq(LodMergeMode.FillMissing, remote.MergeModeFor(l1), "so does a parent's");
+        c.Eq(2, remote.PendingFills, "a row the cache records as already merged queues nothing");
+
+        remote.AddSiblingRows(new[]
+        {
+            new LodSiblingRow(l0, 20), new LodSiblingRow(l1, 21), new LodSiblingRow(recorded, 51),
+        });
+        c.Eq(LodMergeMode.NewerWins, remote.MergeModeFor(l0),
+            "a level-0 row rewritten after the client saw it wins");
+        c.Eq(LodMergeMode.FillMissing, remote.MergeModeFor(l1), "a rewritten parent still only fills");
+        c.Eq(LodMergeMode.NewerWins, remote.MergeModeFor(recorded),
+            "a level-0 row rewritten after a recorded merge wins too, across a restart");
+    }
+
+    /// <summary>
+    /// A first sighting only fills, so it waits for the view: the plan's "visible and nearest
+    /// first". Loading every held section in the first session after the upgrade just to
+    /// merge it would be a background storm for sections nobody is looking at.
+    /// </summary>
+    static void LazyFillsWaitForTheView(Check c)
+    {
+        var world = new LodWorld();
+        var remote = new LodRemoteKeySet(world);
+        long key = LodWorld.SectionKey(3, 4, 4);
+        remote.AddLocalKey(key);
+        remote.AddSiblingRows(new[] { new LodSiblingRow(key, 7) });
+
+        remote.PumpFills(16);
+        c.Eq(0, remote.FillWanted().Length,
+            "a fill does not read its source while its target is only on disk");
+        c.False(world.EvictionPins.Contains(key), "and pins nothing");
+
+        var partial = new LodSection();
+        partial.SetColumn(0, new[] { LodSection.PackRun(0, 5, 0) });
+        world.InstallLoaded(key, partial);
+        remote.PumpFills(16);
+        c.SeqEq(new[] { key }, remote.FillWanted(), "once the view has loaded it, the fill is wanted");
+
+        // A complete copy has nothing to gain from a fill, so it is accounted without a read.
+        long complete = LodWorld.SectionKey(3, 6, 6);
+        remote.AddLocalKey(complete);
+        world.InstallLoaded(complete, Fixtures.SolidSection());
+        remote.AddSiblingRows(new[] { new LodSiblingRow(complete, 8) });
+        remote.PumpFills(16);
+        c.False(remote.FillWanted().Contains(complete), "a complete held copy is never read for a fill");
+        c.Eq(1L, remote.FillsAlreadyComplete, "it is counted as already complete");
+        c.Eq(1, remote.PendingFills, "and its fill is finished");
+        c.SeqEq(new[] { (complete, 8L) }, remote.TakeReadyMergeRecords() ?? new(),
+            "with nothing unsaved, its merge record is ready at once");
+    }
+
+    /// <summary>
+    /// A rewritten level-0 row is fetched whether or not the view shows it, as the refresh it
+    /// replaces was, so the target must be loaded - and kept loaded, or eviction could drop it
+    /// between the load and the merge. The pins are bounded and every one is released.
+    /// </summary>
+    static void EagerFillsLoadAndPinTheirTarget(Check c)
+    {
+        var world = new LodWorld();
+        var loads = new List<long>();
+        world.RequestAsyncLoad = loads.Add;
+        var remote = new LodRemoteKeySet(world);
+        long key = LodWorld.SectionKey(0, 30, 30);
+        remote.AddLocalKey(key);
+        world.InstallStoredKey(0, 30, 30, applyToParent: false);
+        remote.AddSiblingRows(new[] { new LodSiblingRow(key, 1) });
+        remote.AddSiblingRows(new[] { new LodSiblingRow(key, 2) });
+        c.Eq(LodMergeMode.NewerWins, remote.MergeModeFor(key), "the rewritten row wins");
+
+        remote.PumpFills(16);
+        c.SeqEq(new[] { key }, loads, "an eager fill starts loading its target from local disk");
+        c.True(world.EvictionPins.Contains(key), "and pins it, so eviction cannot undo the load");
+        c.Eq(0, remote.FillWanted().Length, "it is not read until the target is in RAM");
+
+        world.InstallLoaded(key, Fixtures.SolidSection());
+        remote.PumpFills(16);
+        c.SeqEq(new[] { key }, remote.FillWanted(),
+            "a loaded target makes the fill wanted, complete or not: a newer save may replace columns");
+
+        remote.MarkLocalOfferAccepted(key);
+        remote.NoteMerged(key, 2);
+        c.False(world.EvictionPins.Contains(key), "the pin is released when the merge lands");
+        c.Eq(0, remote.PendingFills, "and the fill is finished");
+
+        var bounded = new LodWorld();
+        bounded.RequestAsyncLoad = _ => { };
+        var boundedRemote = new LodRemoteKeySet(bounded);
+        var rows = new List<LodSiblingRow>();
+        for (int i = 0; i < LodRemoteKeySet.MaxEagerFillsActive + 5; i++)
+        {
+            long k = LodWorld.SectionKey(0, 100 + i, 0);
+            boundedRemote.AddLocalKey(k);
+            bounded.InstallStoredKey(0, 100 + i, 0, applyToParent: false);
+            rows.Add(new LodSiblingRow(k, 1));
+        }
+        boundedRemote.AddSiblingRows(rows);
+        boundedRemote.AddSiblingRows(rows.Select(row => row with { Rowid = 2 }));
+        boundedRemote.PumpFills(1000);
+        c.Eq(LodRemoteKeySet.MaxEagerFillsActive, bounded.EvictionPins.Count,
+            "eager loads, and so the RAM they pin, are capped");
+        boundedRemote.Clear();
+        c.Eq(0, bounded.EvictionPins.Count, "leaving the world releases every pin");
+    }
+
+    /// <summary>
+    /// G6 for fills: every request ends merged, retried or abandoned, and no ending may touch
+    /// the client's own copy or its ability to reload from local disk.
+    /// </summary>
+    static void FillRequestLifecycle(Check c)
+    {
+        var world = new LodWorld();
+        var remote = new LodRemoteKeySet(world);
+        long key = LodWorld.SectionKey(2, 3, 3);
         remote.AddLocalKey(key);
         world.InstallLoaded(key, new LodSection());
+        remote.AddSiblingRows(new[] { new LodSiblingRow(key, 5) });
+        remote.PumpFills(16);
+        c.SeqEq(new[] { key }, remote.FillWanted(), "a resident fill is wanted");
+        c.True(remote.CanMergeInto(key), "a copy may be merged into while its fill is pending");
 
-        c.Eq(1, remote.AddRemoteUpdates(new[] { key }),
-            "a freshness notification can supersede an existing local row");
-        c.True(remote.IsUpdate(key), "the key remains marked as a replacement");
-        c.SeqEq(new[] { key }, remote.Wanted(),
-            "an announced replacement is requested without waiting for a mesh miss");
-        c.True(remote.WantFromRemote(key),
-            "an evicted stale row would route to the refreshed source, not local disk");
-        c.Eq(0, remote.AddRemoteUpdates(new[] { key }),
-            "repeated freshness notifications coalesce while one is pending");
+        remote.CompleteLocalOffer(key, LodLocalOfferOutcome.RetryableMiss);
+        c.SeqEq(new[] { key }, remote.FillWanted(), "a read miss leaves the fill wanted");
+        c.Eq(0, remote.Wanted().Length, "and never turns it into a remote-only request");
 
-        remote.MarkPersisted(key, persistenceRevision: 1);
-        c.SeqEq(new[] { key }, remote.Wanted(),
-            "an older save completion cannot cancel an announced replacement before download");
+        remote.MarkLocalOfferAccepted(key);
+        c.Eq(0, remote.FillWanted().Length, "decoder acceptance stops a duplicate read");
 
-        remote.MarkRequested(new[] { key });
-        world.LoadsInFlight.Add(key);
-        c.Eq(0, remote.Wanted().Length,
-            "an update request transfers responsibility while its reply is pending");
-        remote.MarkRetryable(key);
-        c.SeqEq(new[] { key }, remote.Wanted(),
-            "a retryable update reply restores the refreshed row to wanted");
-        c.False(world.LoadsInFlight.Contains(key),
-            "a retryable update reply releases the completed transport attempt");
-        remote.MarkRequested(new[] { key });
-        remote.MarkUpdateInstalled(key, persistenceRevision: 3);
-        remote.MarkPersisted(key, persistenceRevision: 2);
-        c.True(remote.IsUpdate(key),
-            "an older save completion cannot retire a replacement still being persisted");
-        remote.MarkPersisted(key, persistenceRevision: 3);
-        c.False(remote.IsUpdate(key),
-            "the update route retires when the replacement revision becomes durable");
-        c.False(remote.WantFromRemote(key),
-            "the refreshed durable row returns future reloads to local disk");
+        // The target left RAM before the decode finished: nothing to merge into yet.
+        world.Sections.Remove(key);
+        remote.DeferFill(key);
+        c.Eq(1, remote.PendingFills, "a deferred fill stays pending");
+        remote.PumpFills(16);
+        c.Eq(0, remote.FillWanted().Length, "and waits for the view to load its target again");
+        world.InstallLoaded(key, new LodSection());
+        remote.PumpFills(16);
+        c.SeqEq(new[] { key }, remote.FillWanted(), "then is wanted again");
+
+        // A newer row arrives while this one is being read: finishing the older one keeps it.
+        remote.MarkLocalOfferAccepted(key);
+        remote.AddSiblingRows(new[] { new LodSiblingRow(key, 9) });
+        remote.NoteMerged(key, 5);
+        c.Eq(1, remote.PendingFills, "merging an older row leaves the newer one pending");
+        remote.PumpFills(16);
+        c.SeqEq(new[] { key }, remote.FillWanted(), "and the newer row is read next");
+
+        // An unreadable source abandons the fill and nothing else.
+        remote.MarkUnavailable(key);
+        c.Eq(0, remote.PendingFills, "an unreadable source abandons the fill");
+        c.Eq(1L, remote.FillsAbandoned, "and says so");
+        c.False(world.LoadFailed.Contains(key), "the client's own copy can still reload from disk");
+        c.True(world.Sections.ContainsKey(key), "and is untouched");
+    }
+
+    /// <summary>
+    /// The store deletes a row it cannot read. A fill waiting for that copy to load would then
+    /// wait forever, so the key goes back to being an ordinary offer and is adopted whole.
+    /// </summary>
+    static void UnreadableOwnCopyIsAdoptedInstead(Check c)
+    {
+        var world = new LodWorld();
+        var remote = new LodRemoteKeySet(world);
+        long key = LodWorld.SectionKey(1, 6, 6);
+        remote.AddLocalKey(key);
+        world.InstallStoredKey(1, 6, 6, applyToParent: false);
+        remote.AddSiblingRows(new[] { new LodSiblingRow(key, 3) });
+        world.LoadFailed.Add(key);
+
+        remote.PumpFills(16);
+        c.Eq(0, remote.PendingFills, "a fill whose own copy failed to load is dropped");
+        c.True(remote.RemoteOnly.Contains(key), "the source's copy is offered for adoption instead");
+        c.False(world.LoadFailed.Contains(key), "and the key is no longer marked as failed");
+        c.True(remote.WantFromRemote(key), "so the next reload asks the source");
+    }
+
+    /// <summary>
+    /// A merge record says the stored copy already contains a source row, so it may only be
+    /// written once that copy is durable (G16). Written earlier, a crash between the merge and
+    /// the save would skip the merge for good on the next start.
+    /// </summary>
+    static void MergeRecordsWaitForTheDurableSave(Check c)
+    {
+        var world = new LodWorld();
+        var remote = new LodRemoteKeySet(world);
+        long key = LodWorld.SectionKey(0, 8, 8);
+        remote.AddLocalKey(key);
+        world.InstallLoaded(key, new LodSection());
+        world.MarkChanged(key);
+        remote.NoteMerged(key, 42);
+        c.True(remote.TakeReadyMergeRecords() == null, "a record waits while the merged copy is unsaved");
+        c.Eq(1, remote.MergeRecordsAwaitingSave, "and is counted as waiting");
+
+        remote.MarkPersisted(key, persistenceRevision: world.PersistenceRevision(key) - 1);
+        c.True(remote.TakeReadyMergeRecords() == null, "an older save cannot release it");
+        remote.MarkPersisted(key, world.PersistenceRevision(key));
+        c.SeqEq(new[] { (key, 42L) }, remote.TakeReadyMergeRecords() ?? new(),
+            "the save that contains the merge releases its record");
+        c.True(remote.TakeReadyMergeRecords() == null, "a record is handed over once");
+
+        long clean = LodWorld.SectionKey(0, 9, 9);
+        remote.AddLocalKey(clean);
+        world.InstallLoaded(clean, new LodSection());
+        remote.NoteMerged(clean, 7);
+        c.SeqEq(new[] { (clean, 7L) }, remote.TakeReadyMergeRecords() ?? new(),
+            "a merge into a copy with nothing unsaved is recorded at once");
+
+        remote.NoteMerged(LodWorld.SectionKey(0, 10, 10), 0);
+        c.True(remote.TakeReadyMergeRecords() == null, "a merge with no rowid writes no record");
+    }
+
+    /// <summary>
+    /// A dedicated server's refresh used to replace the client's whole level-0 copy and route
+    /// its reloads to the network until the replacement was durable. It is a newer-wins merge
+    /// now: reloads stay local, and columns only the client has survive it.
+    /// </summary>
+    static void NetworkRefreshMergesInsteadOfReplacing(Check c)
+    {
+        var world = new LodWorld();
+        var remote = new LodRemoteKeySet(world);
+        long held = LodWorld.SectionKey(0, 12, 13);
+        long missing = LodWorld.SectionKey(0, 14, 15);
+        remote.AddLocalKey(held);
+        world.InstallLoaded(held, new LodSection());
+
+        c.Eq(1, remote.AddRemoteUpdates(new[] { held, missing }), "a held key is merged");
+        c.Eq(LodMergeMode.NewerWins, remote.MergeModeFor(held),
+            "a level-0 refresh wins where both copies have a column");
+        c.True(remote.RemoteOnly.Contains(missing), "a key the client lacks is simply offered");
+        c.False(remote.WantFromRemote(held), "a held key keeps reloading from local disk");
+
+        remote.PumpFills(16);
+        c.SeqEq(new[] { held }, remote.FillWanted(), "its merge is wanted");
+        remote.MarkRequested(new[] { held });
+        c.Eq(0, remote.FillWanted().Length, "a sent request moves the fill to in flight");
+        remote.MarkRetryable(held);
+        remote.PumpFills(16);
+        c.SeqEq(new[] { held }, remote.FillWanted(), "a not-yet reply makes it wanted again");
+        remote.MarkRequested(new[] { held });
+        remote.NoteMerged(held, 0);
+        c.Eq(0, remote.PendingFills, "the merge finishes the fill");
+        c.True(remote.TakeReadyMergeRecords() == null, "and records nothing: the network has no rowid");
     }
 
     /// <summary>

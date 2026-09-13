@@ -405,15 +405,17 @@ function Get-ClientLocalOfferRecord {
     if (-not (Test-Path -LiteralPath $clientMainLog -PathType Leaf)) { return $null }
     $logText = Get-Content -LiteralPath $clientMainLog -Raw -ErrorAction Stop
     $pattern =
-        'local sibling offers: (?<discovered>\d+) discovered, ' +
-        '(?<misses>\d+) retryable misses, (?<accepted>\d+) accepted, ' +
+        'local sibling offers: (?<rows>\d+) rows scanned, (?<discovered>\d+) offered, ' +
+        '(?<fills>\d+) fills queued, (?<misses>\d+) retryable misses, (?<accepted>\d+) accepted, ' +
         '(?<installed>\d+) installed, (?<remote>\d+) remote-only, (?<wanted>\d+) wanted'
     $found = [regex]::Matches($logText, $pattern)
     if ($found.Count -eq 0) { return $null }
 
     $last = $found[$found.Count - 1]
     return [ordered]@{
+        rowsScanned = [int64]$last.Groups['rows'].Value
         discovered = [int64]$last.Groups['discovered'].Value
+        fillsQueued = [int64]$last.Groups['fills'].Value
         retryableMisses = [int64]$last.Groups['misses'].Value
         accepted = [int64]$last.Groups['accepted'].Value
         installed = [int64]$last.Groups['installed'].Value

@@ -23,6 +23,34 @@ public static class ServerAssistChecks
         ManifestKeepsOfferingWhatTheCacheGains(c);
         ManifestDoesNotRepeatWhatItJustSent(c);
         AnEmptyCacheIsNotASwitchedOffAssist(c);
+        AnUnusableArrivalCanBeAskedForAgain(c);
+    }
+
+    /// <summary>
+    /// The third ending for an accepted reply: it arrived but could not be used yet, because
+    /// it was a merge whose target had left RAM. The slot must be released like any reply,
+    /// and the offer must stay open, or the refreshed row could never be merged later.
+    /// </summary>
+    static void AnUnusableArrivalCanBeAskedForAgain(Check c)
+    {
+        var client = new LodAssistClient(null!, new CaptureLogger(), "0.2.1");
+        client.OnWelcome(new AssistWelcome { Protocol = LodAssist.Protocol, Enabled = true });
+        long key = LodWorld.SectionKey(0, 51, 7);
+        client.OnKeyManifest(new AssistKeyManifest { Keys = new[] { key }, Last = true, Refresh = true });
+        client.Pump((_, _) => true);
+
+        c.SeqEq(new[] { key }, client.SelectRequestBatch(new[] { key }),
+            "the refreshed key is requested");
+        client.OnSection(new AssistSection { Key = key, Blob = new byte[] { 4, 1 } });
+        client.PumpAsync((_, _) => true);
+        c.Eq(1, client.InFlight, "decoder acceptance keeps the slot");
+
+        client.CompleteInstall(key, installed: false, retryable: true);
+        c.Eq(0, client.InFlight, "a retryable ending releases the slot");
+        c.Eq(0, client.SectionsRefused, "a retryable ending is not a refusal");
+        c.True(client.RemoteKeys.Contains(key), "the offer stays open");
+        c.SeqEq(new[] { key }, client.SelectRequestBatch(new[] { key }),
+            "and the key can be asked for again straight away");
     }
 
     static void ArrivalDrainIsByteBoundedAndOldestFirst(Check c)

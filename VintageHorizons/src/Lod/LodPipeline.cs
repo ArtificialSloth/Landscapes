@@ -144,8 +144,12 @@ public enum LodForeignQueueOutcome
     Unavailable,
 }
 
+/// <param name="Retryable">
+/// Not installed, but not refused either: a merge whose target had left RAM. The source's
+/// offer stays open and the pipeline asks again.
+/// </param>
 public readonly record struct LodForeignInstallCompletion(
-    long Key, LodForeignSource Source, bool Installed);
+    long Key, LodForeignSource Source, bool Installed, bool Retryable = false);
 
 /// <summary>
 /// Everything between "a chunk column arrived" and "a section is on disk": capture
@@ -511,27 +515,35 @@ public class LodPipeline
             Remote.AddLocalKey(LodWorld.SectionKey(level, sx, sz));
             World.InstallStoredKey(level, sx, sz, applyToParent);
         });
+        // Server-cache rows this cache's copies already contain, so a restart does not merge
+        // them again. Always empty on the server half, which never merges.
+        int mergeRecords = store.LoadSiblingMerges(Remote.AddMergeRecord);
         Active = true;
         logger.Notification("LOD cache: {0} ({1} persisted mip obligations)",
             dbPath, World.MipDirty.Count);
+        if (mergeRecords > 0)
+            logger.Notification("LOD cache: {0} server-cache rows already merged into this cache",
+                mergeRecords);
     }
 
     /// <summary>
     /// Transfer one foreign compressed blob to the storage-owned decoder. The worker
     /// retains block codes and stored flags only; registry resolution and publication
-    /// happen later on this pipeline's owning thread.
+    /// happen later on this pipeline's owning thread. A copy already in RAM is merged into,
+    /// never replaced, and only when there is a reason to: a pending fill, or an offer the
+    /// client wrote its own content into first. Otherwise local data has won.
     /// </summary>
+    /// <param name="sourceRowid">The sibling-cache rowid the blob was read from; 0 off the network.</param>
     public LodForeignQueueOutcome QueueForeignBlob(
-        long key, byte[] blob, LodForeignSource source)
+        long key, byte[] blob, LodForeignSource source, long sourceRowid = 0)
     {
         if (store == null || storageThread == null || blob.Length == 0)
             return LodForeignQueueOutcome.Unavailable;
-        bool replaceExisting = Remote.IsUpdate(key);
-        if (World.Sections.ContainsKey(key) && !replaceExisting)
+        if (World.Sections.ContainsKey(key) && !Remote.CanMergeInto(key))
             return LodForeignQueueOutcome.Unavailable;
         long expectedContentRevision = World.ContentRevision(key);
         return storageThread.TryEnqueueForeign(
-            worldEpoch, key, source, blob, replaceExisting, expectedContentRevision)
+            worldEpoch, key, source, blob, sourceRowid, expectedContentRevision)
             ? LodForeignQueueOutcome.Queued
             : LodForeignQueueOutcome.Retryable;
     }
@@ -565,6 +577,38 @@ public class LodPipeline
     /// <inheritdoc cref="LodRemoteKeySet.AddRemoteUpdates"/>
     public int AddRemoteUpdates(IEnumerable<long> keys) => Remote.AddRemoteUpdates(keys);
 
+    /// <inheritdoc cref="LodRemoteKeySet.AddSiblingRows"/>
+    public LodSiblingDelta AddSiblingRows(IEnumerable<LodSiblingRow> rows) =>
+        Remote.AddSiblingRows(rows);
+
+    /// <inheritdoc cref="LodRemoteKeySet.FillWanted"/>
+    public long[] FillWanted() => Remote.FillWanted();
+
+    /// <summary>Held sections still waiting for a merge from a source that has more of them.</summary>
+    public int PendingFills => Remote.PendingFills;
+
+    /// <summary>Foreign copies merged into a resident copy, and what those merges moved.</summary>
+    public long ForeignMerges { get; private set; }
+    public long ColumnsFilled { get; private set; }
+    public long ColumnsReplaced { get; private set; }
+    public long ColumnsKeptObserved { get; private set; }
+
+    /// <summary>
+    /// Newer-wins merges applied as plain fills because the client captured the section after
+    /// the server's copy was read (G7): that capture is the newer of the two.
+    /// </summary>
+    public long MergesKeptNewerCapture { get; private set; }
+
+    /// <summary>One line for the log: how far merging into held sections has got.</summary>
+    public string DescribeFills() =>
+        $"{Remote.PendingFills} fills pending ({Remote.FillsWantedNow} ready to read, "
+        + $"{Remote.FillsInFlight} reading, {Remote.EagerFillsActive} loading for a level-0 rewrite), "
+        + $"{ForeignMerges} merged: {ColumnsFilled} columns filled, {ColumnsReplaced} replaced by a "
+        + $"newer save, {ColumnsKeptObserved} kept because only ours was observed, "
+        + $"{MergesKeptNewerCapture} kept a newer capture; {Remote.FillsAlreadyComplete} already "
+        + $"complete, {Remote.FillsDeferred} deferred, {Remote.FillsAbandoned} unreadable, "
+        + $"{Remote.MergeRecordsAwaitingSave} records waiting for their save";
+
     /// <inheritdoc cref="LodRemoteKeySet.Wanted"/>
     public long[] RemoteWanted() => Remote.Wanted();
 
@@ -581,12 +625,19 @@ public class LodPipeline
     /// <inheritdoc cref="LodRemoteKeySet.MarkRetryable"/>
     public void MarkRemoteRetryable(long key) => Remote.MarkRetryable(key);
 
+    /// <summary>
+    /// Pending fills examined per tick, a dictionary lookup each. The cap only stops a first
+    /// session with tens of thousands of held keys from examining all of them in one tick.
+    /// </summary>
+    const int FillChecksPerTick = 256;
+
     /// <summary>One step of the whole pipeline. Call once per game tick.</summary>
     public void Tick()
     {
         if (!Active) return;
 
         ApplySaveCompletions();
+        DrainMergeRecords();
 
         LodPhaseStart phaseStart = LodPhaseCost.Start(TrackPhaseAllocations);
         InstallForeignSections();
@@ -594,6 +645,9 @@ public class LodPipeline
 
         phaseStart = LodPhaseCost.Start(TrackPhaseAllocations);
         InstallLoadedSections();
+        // Right after loads land, so a fill whose target just arrived is wanted this tick;
+        // timed with the loads it follows.
+        Remote.PumpFills(FillChecksPerTick);
         LoadInstallCost.Add(phaseStart);
 
         phaseStart = LodPhaseCost.Start(TrackPhaseAllocations);
@@ -628,6 +682,10 @@ public class LodPipeline
     /// Finish decoded foreign sections on the owning thread. Palette lookup, live policy
     /// classification, atlas recolouring, skip filtering, and publication all remain
     /// here and share the same elapsed-time/byte policy as other section installs.
+    ///
+    /// A key with no copy in RAM or on local disk is adopted whole. A key with a copy in RAM
+    /// is merged into it (MergeForeign). A key whose only copy is on local disk cannot be
+    /// merged yet, so its fill waits for that copy to load.
     /// </summary>
     void InstallForeignSections()
     {
@@ -641,52 +699,97 @@ public class LodPipeline
             if (result.Epoch != worldEpoch) continue;
 
             LodSection? section = result.Section;
-            bool installed = section != null && (result.ReplaceExisting
-                ? World.ContentRevision(result.Key) == result.ExpectedContentRevision
-                : !World.Sections.ContainsKey(result.Key));
-            if (installed)
+            bool installed = false;
+            bool retryable = false;
+            if (section == null)
             {
-                store.ResolvePendingPalette(section!, api.World);
-                RecolorForeignSection?.Invoke(section!);
-                section!.RemoveRunsWithFlag(LodPaletteEntry.FlagSkip);
-
-                // No worker result may overwrite data that became authoritative after
-                // submission. This second check documents the commit rule beside the
-                // actual mutation, even though no callback above is expected to capture.
-                installed = result.ReplaceExisting
-                    ? World.ContentRevision(result.Key) == result.ExpectedContentRevision
-                    : !World.Sections.ContainsKey(result.Key);
-            }
-
-            if (installed)
-            {
-                if (result.ReplaceExisting)
-                    World.InstallReplacement(result.Key, section!);
-                else
-                    World.InstallLoaded(result.Key, section);
-                // Persist it: re-fetching a mean 45.9 KB a section every session is not an
-                // option, so a foreign section becomes local cache data after adoption.
-                if (!result.ReplaceExisting) World.MarkChanged(result.Key);
-                Remote.MarkInstalled(result.Key);
-                if (result.ReplaceExisting)
-                    Remote.MarkUpdateInstalled(
-                        result.Key, World.PersistenceRevision(result.Key));
-                ForeignSectionsInstalled++;
+                // Corruption is terminal for this offered copy. MarkUnavailable leaves a
+                // resident or locally stored copy alone, without poisoning its future reload.
+                Remote.MarkUnavailable(result.Key);
             }
             else
             {
-                // Corruption is terminal for this offered copy. If capture won the race,
-                // MarkUnavailable sees the resident section and clears only remote state,
-                // without poisoning its future local reload.
-                Remote.MarkUnavailable(result.Key);
+                store.ResolvePendingPalette(section, api.World);
+                RecolorForeignSection?.Invoke(section);
+                section.RemoveRunsWithFlag(LodPaletteEntry.FlagSkip);
+
+                // Residency is decided here, after the callbacks above and beside the
+                // mutation, so no worker result can overwrite data that became
+                // authoritative after submission.
+                if (World.Sections.TryGetValue(result.Key, out LodSection? held))
+                {
+                    MergeForeign(result, held, section);
+                    installed = true;
+                }
+                else if (Remote.IsHeldLocally(result.Key))
+                {
+                    Remote.DeferFill(result.Key);
+                    retryable = true;
+                }
+                else
+                {
+                    World.InstallLoaded(result.Key, section);
+                    // Persist it: re-fetching a mean 45.9 KB a section every session is not
+                    // an option, so a foreign section becomes local cache data after adoption.
+                    World.MarkChanged(result.Key);
+                    Remote.MarkInstalled(result.Key);
+                    Remote.NoteMerged(result.Key, result.SourceRowid);
+                    ForeignSectionsInstalled++;
+                    installed = true;
+                }
             }
 
             foreignInstallCompletions.Enqueue(new LodForeignInstallCompletion(
-                result.Key, result.Source, installed));
+                result.Key, result.Source, installed, retryable));
         }
 
         ForeignInstallItems += budget.Items;
         ForeignInstallBytes += budget.Bytes;
+    }
+
+    /// <summary>
+    /// Merge a decoded foreign copy into the resident one. The only asynchronous step was
+    /// decoding the source; the merge reads and writes the live section in this one step, so
+    /// no stale snapshot of the client's copy can be published (G7). A newer-wins merge also
+    /// needs the client's copy unchanged since the source was handed to the decoder: anything
+    /// captured after that is newer than the server's row, so it is filled around but never
+    /// overwritten.
+    /// </summary>
+    void MergeForeign(LodForeignDecodeResult result, LodSection held, LodSection source)
+    {
+        LodMergeMode mode = Remote.MergeModeFor(result.Key);
+        if (mode == LodMergeMode.NewerWins
+            && World.ContentRevision(result.Key) != result.ExpectedContentRevision)
+        {
+            mode = LodMergeMode.FillMissing;
+            MergesKeptNewerCapture++;
+        }
+
+        LodMergeResult merged = held.MergeFrom(source, mode);
+        if (merged.ContentChanged)
+        {
+            World.MarkChanged(result.Key, merged.TouchedEdges);
+            if (merged.SnowStateChanged) World.NoteSnowStateObservationChanged();
+        }
+        else if (merged.SnowStateChanged)
+        {
+            World.MarkSnowStateObservationChanged(result.Key, merged.SnowAppearanceChanged);
+        }
+
+        ForeignMerges++;
+        ColumnsFilled += merged.ColumnsFilled;
+        ColumnsReplaced += merged.ColumnsReplaced;
+        ColumnsKeptObserved += merged.ColumnsKeptObserved;
+        Remote.MarkInstalled(result.Key);
+        Remote.NoteMerged(result.Key, result.SourceRowid);
+    }
+
+    /// <summary>Hand merge records whose merged copy is now durable to the storage worker.</summary>
+    void DrainMergeRecords()
+    {
+        if (storageThread == null) return;
+        List<(long Key, long Rowid)>? ready = Remote.TakeReadyMergeRecords();
+        if (ready != null) storageThread.SaveSiblingMerges(ready);
     }
 
     void ApplyMipResults()
@@ -1037,6 +1140,10 @@ public class LodPipeline
         {
             World.MarkChanged(result.SectionKey, touchedEdges);
             if (snowStateChanged) World.NoteSnowStateObservationChanged();
+
+            // A capture forced into a key only a source offered leaves a partial copy in front
+            // of the source's complete one; this asks for the source's other columns.
+            Remote.NoteLocalContent(result.SectionKey);
         }
         else if (snowStateChanged)
         {
@@ -1314,6 +1421,10 @@ public class LodPipeline
             if (storageThread != null)
             {
                 FlushPersistence(StorageShutdownTimeoutMs);
+                // Records whose merged copy the flush made durable reach the worker before it
+                // stops, and its shutdown writes them. One released after this is lost, which
+                // only means that merge runs again next session.
+                DrainMergeRecords();
                 storageThread.Dispose();
                 ApplySaveCompletions();
                 if (World.SaveDirty.Count > 0 || storageThread.Backlog > 0)
@@ -1346,6 +1457,11 @@ public class LodPipeline
         CachedSectionsLoaded = 0;
         ColumnsCaptured = 0;
         CaptureDropsUnloaded = 0;
+        ForeignMerges = 0;
+        ColumnsFilled = 0;
+        ColumnsReplaced = 0;
+        ColumnsKeptObserved = 0;
+        MergesKeptNewerCapture = 0;
         DbPath = null;
     }
 

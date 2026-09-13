@@ -415,9 +415,11 @@ public sealed class LodAssistClient
 
     /// <summary>
     /// Release a reply retained by <see cref="PumpAsync"/> after owning-thread
-    /// publication or terminal rejection.
+    /// publication or terminal rejection. <paramref name="retryable"/> is the third ending:
+    /// the section arrived but could not be used yet (a merge whose target had left RAM), so
+    /// the slot is released and the offer stays open for the pipeline to ask again.
     /// </summary>
-    public void CompleteInstall(long key, bool installed)
+    public void CompleteInstall(long key, bool installed, bool retryable = false)
     {
         inFlight.Remove(key);
         retriesByKey.Remove(key);
@@ -427,6 +429,7 @@ public sealed class LodAssistClient
             SectionsReceived++;
             return;
         }
+        if (retryable) return;
 
         refused.Add(key);
         RemoteKeys.Remove(key);

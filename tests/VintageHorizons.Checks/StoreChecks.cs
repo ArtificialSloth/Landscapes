@@ -22,6 +22,8 @@ public static class StoreChecks
         AColourlessCacheIsRepaired(c);
         AStoredColourIsRefreshedFromTheLiveBlock(c);
         DisposingTheOfferReaderReleasesItsFileHandle(c);
+        AStoreRewriteGetsANewRowid(c);
+        SiblingMergeRecordsFollowTheirSections(c);
         LocalOfferMissHookRetriesTheSameBlob(c);
         AssistBlobReaderIsBoundedOrderedAndReadOnly(c);
         BackgroundForeignDecodeIsBoundedAndIsolated(c);
@@ -358,8 +360,9 @@ public static class StoreChecks
             string clientDb = Path.Combine(dir, "world.db");
             string serverDb = Path.Combine(dir, "world-server.db");
 
-            // A throwaway unpooled writer builds the fixture file, so the only connection
-            // that can linger afterwards is the one under test.
+            // A throwaway unpooled writer builds the fixture file with the store's real Section
+            // schema, so INSERT OR REPLACE behaves as the store's own writes do. The only
+            // connection that can linger afterwards is the one under test.
             var writer = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
             {
                 DataSource = serverDb,
@@ -370,9 +373,10 @@ public static class StoreChecks
                 w.Open();
                 using var cmd = w.CreateCommand();
                 cmd.CommandText =
-                    "CREATE TABLE Section (Detail INTEGER, SX INTEGER, SZ INTEGER, "
-                    + "Data BLOB, ApplyToParent INTEGER, ModifiedMs INTEGER);"
-                    + "INSERT INTO Section VALUES (0, 1, 2, x'00', 0, 0);";
+                    "CREATE TABLE Section (Detail INTEGER NOT NULL, SX INTEGER NOT NULL, "
+                    + "SZ INTEGER NOT NULL, Data BLOB NOT NULL, ApplyToParent INTEGER NOT NULL "
+                    + "DEFAULT 0, ModifiedMs INTEGER NOT NULL, PRIMARY KEY (Detail, SX, SZ));"
+                    + "INSERT OR REPLACE INTO Section VALUES (0, 1, 2, x'00', 0, 0);";
                 cmd.ExecuteNonQuery();
             }
 
@@ -382,51 +386,46 @@ public static class StoreChecks
             if (offers == null) return;
 
             long first = LodWorld.SectionKey(0, 1, 2);
-            long[] initial = WaitForOfferDelta(offers);
-            c.SeqEq(new[] { first }, initial,
+            LodSiblingRow[] initial = WaitForRows(offers);
+            c.SeqEq(new[] { first }, initial.Select(row => row.Key).ToArray(),
                 "the reader publishes its initial key scan from the worker");
+            long firstRowid = initial.Length > 0 ? initial[0].Rowid : -1;
             c.True(offers.RequestBlob(first),
                 "a sibling-cache blob read is accepted by the I/O worker");
             LodLocalOfferSource.BlobResult asyncBlob = WaitForBlobResult(offers);
             c.Eq(first, asyncBlob.Key, "the background blob result retains its section key");
             c.SeqEq(new byte[] { 0 }, asyncBlob.Blob ?? Array.Empty<byte>(),
                 "the background worker returns the stored blob without a game-thread query");
+            c.Eq(firstRowid, asyncBlob.Rowid,
+                "a blob read reports the rowid it was read from, for the merge record");
 
-            // A later scan publishes only the row that appeared since the first one,
-            // never the complete retained table again.
+            // A new parent and a rewrite of the level-0 row, in one transaction as the store
+            // writes a checkpoint. Both are published at their own levels, in write order,
+            // the rewrite under a rowid above everything seen, which is how it is recognised.
             using (var w = new Microsoft.Data.Sqlite.SqliteConnection(writer.ToString()))
             {
                 w.Open();
                 using var cmd = w.CreateCommand();
-                cmd.CommandText = "INSERT INTO Section VALUES (1, 3, 4, x'00', 0, 1);";
+                cmd.CommandText = "BEGIN;"
+                    + "INSERT OR REPLACE INTO Section VALUES (1, 3, 4, x'00', 0, 1);"
+                    + "INSERT OR REPLACE INTO Section VALUES (0, 1, 2, x'01', 0, 2);"
+                    + "COMMIT;";
                 cmd.ExecuteNonQuery();
             }
 
-            long second = LodWorld.SectionKey(1, 3, 4);
-            offers.RequestDiscovery();
-            c.SeqEq(new[] { second }, WaitForOfferDelta(offers),
-                "a later scan publishes only newly discovered keys");
+            LodSiblingRow[] changed = WaitForRows(offers);
+            c.SeqEq(new[] { LodWorld.SectionKey(1, 3, 4), first },
+                changed.Select(row => row.Key).ToArray(),
+                "a new parent and a rewritten level-0 row are both published, in write order");
+            c.True(changed.Length == 2 && changed[1].Rowid > firstRowid,
+                "the rewritten row carries a new, higher rowid");
 
             offers.RequestDiscovery();
             Thread.Sleep(100);
-            c.False(offers.TryTakeDiscoveredKeys(out _),
-                "an unchanged scan publishes no owning-thread work");
-
-            // Existing L0 rows are a different kind of delta: the key is already known,
-            // but its durable contents changed and the client must fetch a replacement.
-            using (var w = new Microsoft.Data.Sqlite.SqliteConnection(writer.ToString()))
-            {
-                w.Open();
-                using var cmd = w.CreateCommand();
-                cmd.CommandText =
-                    "UPDATE Section SET Data=x'01', ModifiedMs=2 WHERE Detail=0 AND SX=1 AND SZ=2;";
-                cmd.ExecuteNonQuery();
-            }
-            offers.RequestDiscovery();
-            c.SeqEq(new[] { first }, WaitForUpdateDelta(offers),
-                "a changed existing L0 row publishes one refresh delta");
-            c.False(offers.TryTakeDiscoveredKeys(out _),
-                "a content refresh is not misreported as a new key");
+            c.False(offers.TryTakeChangedRows(out _),
+                "an unchanged table publishes no owning-thread work");
+            c.True(offers.FullScans >= 1 && offers.IncrementalScans >= 1,
+                "the first scan read every key and the later one only the new rows");
             offers.Dispose();
 
             if (OperatingSystem.IsLinux())
@@ -556,27 +555,155 @@ public static class StoreChecks
         }
     }
 
-    static long[] WaitForOfferDelta(LodLocalOfferSource offers)
+    static LodSiblingRow[] WaitForRows(LodLocalOfferSource offers)
     {
         offers.RequestDiscovery();
         var timeout = System.Diagnostics.Stopwatch.StartNew();
         while (timeout.ElapsedMilliseconds < 5000)
         {
-            if (offers.TryTakeDiscoveredKeys(out long[] keys)) return keys;
+            if (offers.TryTakeChangedRows(out LodSiblingRow[] rows)) return rows;
             Thread.Sleep(10);
         }
-        return Array.Empty<long>();
+        return Array.Empty<LodSiblingRow>();
     }
 
-    static long[] WaitForUpdateDelta(LodLocalOfferSource offers)
+    /// <summary>
+    /// The premise of the incremental offer scan, proven against the real store on a real
+    /// file: rewriting a key numbers its row above every row that existed, and an untouched
+    /// row keeps its rowid. Also the reason the scan is not incremental alone: once the
+    /// highest row is deleted - as the store deletes an unreadable one - SQLite hands that
+    /// rowid out again, below what the scanner has already seen.
+    /// </summary>
+    static void AStoreRewriteGetsANewRowid(Check c)
     {
-        var timeout = System.Diagnostics.Stopwatch.StartNew();
-        while (timeout.ElapsedMilliseconds < 5000)
+        string dir = Path.Combine(Path.GetTempPath(), "vh-rowid-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        string path = Path.Combine(dir, "server.db");
+        long a = LodWorld.SectionKey(0, 1, 1);
+        long parent = LodWorld.SectionKey(3, 2, 2);
+        long b = LodWorld.SectionKey(0, 3, 3);
+        long late = LodWorld.SectionKey(0, 9, 9);
+        try
         {
-            if (offers.TryTakeUpdatedKeys(out long[] keys)) return keys;
-            Thread.Sleep(10);
+            WithStore(path, store =>
+            {
+                store.SaveBlob(0, 1, 1, new byte[] { 1 }, applyToParent: false);
+                store.SaveBlob(3, 2, 2, new byte[] { 2 }, applyToParent: false);
+                store.SaveBlob(0, 3, 3, new byte[] { 3 }, applyToParent: false);
+            });
+            Dictionary<long, long> before = ReadRowids(path);
+
+            WithStore(path, store => store.SaveBlob(3, 2, 2, new byte[] { 4 }, applyToParent: false));
+            Dictionary<long, long> after = ReadRowids(path);
+            c.True(after[parent] > before.Values.Max(),
+                "a rewritten row is numbered above every row that existed before it");
+            c.Eq(before[a], after[a], "an untouched row keeps its rowid");
+            c.Eq(before[b], after[b], "and so does every other untouched row");
+
+            ExecuteRaw(path, "DELETE FROM Section WHERE Detail=3 AND SX=2 AND SZ=2");
+            WithStore(path, store => store.SaveBlob(0, 9, 9, new byte[] { 5 }, applyToParent: false));
+            c.Eq(after[parent], ReadRowids(path)[late],
+                "after the highest row is deleted its rowid is reused, which only a full scan sees");
         }
-        return Array.Empty<long>();
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* temp dir */ }
+        }
+    }
+
+    /// <summary>
+    /// Merge records are the client's memory of which server-cache rows its copies already
+    /// contain. They must survive a restart, leave with the section row they describe when
+    /// the store deletes an unreadable one, and leave with every section on a format purge.
+    /// </summary>
+    static void SiblingMergeRecordsFollowTheirSections(Check c)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "vh-merge-records-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        string path = Path.Combine(dir, "cache.db");
+        long kept = LodWorld.SectionKey(0, 4, 4);
+        long unreadable = LodWorld.SectionKey(1, 5, 5);
+        byte[] good = LodStore.Serialize(Fixtures.Snapshot(Fixtures.SolidSection()));
+        try
+        {
+            WithStore(path, store =>
+            {
+                store.SaveBlob(0, 4, 4, good, applyToParent: false);
+                store.SaveBlob(1, 5, 5, new byte[] { 4, 0xFF, 0x00 }, applyToParent: false);
+                store.SaveSiblingMerges(new[] { (unreadable, 12L) });
+
+                // The path the pipeline uses: queued on the storage worker, written as it stops.
+                using var worker = new LodStorageThread(store);
+                worker.SaveSiblingMerges(new[] { (kept, 11L) });
+            });
+
+            var records = new Dictionary<long, long>();
+            WithStore(path, store =>
+            {
+                c.Eq(2, store.LoadSiblingMerges((key, rowid) => records[key] = rowid),
+                    "records written directly and through the storage worker both survive a reopen");
+                c.Eq(11L, records.GetValueOrDefault(kept), "each keeps the rowid it named");
+                c.True(store.LoadSection(1, 5, 5, null!, resolveBlockIds: false) == null,
+                    "the unreadable row reads as missing");
+                records.Clear();
+                store.LoadSiblingMerges((key, rowid) => records[key] = rowid);
+                c.False(records.ContainsKey(unreadable),
+                    "deleting an unreadable row deletes its merge record with it");
+                c.True(records.ContainsKey(kept), "and no other record");
+            });
+
+            ExecuteRaw(path, "UPDATE Meta SET Value='1' WHERE Key='FormatVersion'");
+            WithStore(path, store =>
+                c.Eq(0, store.LoadSiblingMerges((_, _) => { }),
+                    "a format purge discards the merge records with the sections they describe"));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* temp dir */ }
+        }
+    }
+
+    static void WithStore(string path, Action<LodStore> use)
+    {
+        using var store = new LodStore(new CaptureLogger());
+        if (!store.Open(path)) throw new InvalidOperationException("fixture cache did not open: " + path);
+        use(store);
+    }
+
+    /// <summary>An edit behind the store's back, unpooled so no handle outlives it (G13).</summary>
+    static void ExecuteRaw(string path, string sql)
+    {
+        var options = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Pooling = false,
+        };
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection(options.ToString());
+        connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.ExecuteNonQuery();
+    }
+
+    static Dictionary<long, long> ReadRowids(string path)
+    {
+        var options = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Pooling = false,
+        };
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection(options.ToString());
+        connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT rowid, Detail, SX, SZ FROM Section";
+        var rowids = new Dictionary<long, long>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            rowids[LodWorld.SectionKey(reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3))] =
+                reader.GetInt64(0);
+        }
+        return rowids;
     }
 
     static LodLocalOfferSource.BlobResult WaitForBlobResult(LodLocalOfferSource offers)
@@ -797,17 +924,17 @@ public static class StoreChecks
             "a future blob is isolated to one server decode job");
         c.True(worker.TryEnqueueForeign(
             8, 101, LodForeignSource.ServerAssist, good,
-            replaceExisting: true, expectedContentRevision: 42),
+            sourceRowid: 77, expectedContentRevision: 42),
             "valid work can queue behind a rejected blob");
         c.Eq(null, WaitForForeign(worker, c).Section,
             "a future blob returns one failed result rather than throwing");
-        LodForeignDecodeResult replacement = WaitForForeign(worker, c);
-        c.True(replacement.Section != null,
+        LodForeignDecodeResult merge = WaitForForeign(worker, c);
+        c.True(merge.Section != null,
             "the decoder remains alive after rejecting a future blob");
-        c.True(replacement.ReplaceExisting,
-            "the decoder preserves replacement authority for owning-thread publication");
-        c.Eq(42L, replacement.ExpectedContentRevision,
-            "the decoder preserves the revision that guards a replacement race");
+        c.Eq(77L, merge.SourceRowid,
+            "the decoder preserves the rowid a merge record will name");
+        c.Eq(42L, merge.ExpectedContentRevision,
+            "the decoder preserves the revision that guards a newer-wins merge");
     }
 
     static LodForeignDecodeResult WaitForForeign(LodStorageThread worker, Check c)

@@ -561,6 +561,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         phaseStart = LodPhaseCost.Start(allocationTelemetryEnabled);
         PumpLocalOffers();
+        LogFillProgress();
         localOfferTickCost.Add(phaseStart);
 
         phaseStart = LodPhaseCost.Start(allocationTelemetryEnabled);
@@ -592,7 +593,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         while (pipeline.TryTakeForeignInstallCompletion(out LodForeignInstallCompletion done))
         {
             if (done.Source == LodForeignSource.ServerAssist)
-                assist?.CompleteInstall(done.Key, done.Installed);
+                assist?.CompleteInstall(done.Key, done.Installed, done.Retryable);
             else if (done.Source == LodForeignSource.LocalOffer && done.Installed)
             {
                 localOfferSectionsInstalled++;
@@ -621,11 +622,10 @@ public partial class VintageHorizonsModSystem : ModSystem
             },
             refreshed =>
             {
-                // In integrated play the sibling database is the freshness authority: it
-                // carries ModifiedMs and retries until its newer row is accepted. Taking the
-                // same unversioned notification from both sources can reinstall one row after
-                // the first copy has already become durable and retired its update route,
-                // producing a needless second mesh replacement. Dedicated multiplayer has no
+                // In integrated play the sibling database is the freshness authority: its
+                // rowids say exactly which rows changed, and a merge it drives is recorded
+                // so a restart never repeats it. Taking the same unversioned notification
+                // from both sources would merge one row twice. Dedicated multiplayer has no
                 // sibling reader and continues to use the network manifest.
                 if (localOffers == null) pipeline.AddRemoteUpdates(refreshed);
             });
@@ -637,6 +637,10 @@ public partial class VintageHorizonsModSystem : ModSystem
         // until all four children land. Sorting here rather than in the pipeline keeps the
         // pipeline free of any notion of where the viewer is.
         long[] wanted = pipeline.RemoteWanted();
+
+        // Merges into held sections come from the sibling cache when there is one. Over the
+        // network they are the dedicated server's refreshed level-0 rows.
+        if (localOffers == null) wanted = [.. wanted, .. pipeline.FillWanted()];
         if (wanted.Length > 1)
         {
             var at = capi.World.Player.Entity.Pos;
@@ -706,27 +710,24 @@ public partial class VintageHorizonsModSystem : ModSystem
             if (localOffers == null) return;
         }
 
-        // A dedicated read-only connection enumerates the sibling cache on its worker.
-        // It publishes only new keys, in bounded immutable batches; this thread merely
-        // registers at most one such batch per tick in the live LodWorld.
-        if (localOffers.TryTakeDiscoveredKeys(out long[] offered))
+        // A dedicated read-only connection scans the sibling cache on its worker and
+        // publishes new or rewritten rows at every level, in bounded immutable batches;
+        // this thread applies at most one batch per tick to the live LodWorld. A key the
+        // client does not hold is offered; one it already holds is merged into.
+        if (localOffers.TryTakeChangedRows(out LodSiblingRow[] rows))
         {
-            pipeline.AddRemoteKeys(offered);
-            localOfferKeysDiscovered += offered.Length;
+            LodSiblingDelta delta = pipeline.AddSiblingRows(rows);
+            localOfferRowsScanned += rows.Length;
+            localOfferKeysDiscovered += delta.Offered;
+            localOfferFillsQueued += delta.FillsQueued;
             if (!loggedLocalOffers)
             {
                 loggedLocalOffers = true;
                 // Sweeps and /vhgen both fill the sibling cache; this line covers either.
                 Mod.Logger.Notification(
-                    "Server-side cache offers sections locally. The mod adopts them as "
-                    + "the view needs them.");
+                    "Server-side cache offers sections locally. The mod adopts the ones it "
+                    + "lacks as the view needs them, and fills in the ones it already holds.");
             }
-        }
-
-        if (localOffers.TryTakeUpdatedKeys(out long[] updated))
-        {
-            pipeline.AddRemoteUpdates(updated);
-            localOfferKeysUpdated += updated.Length;
         }
 
         var installBudget = new LodDrainBudget();
@@ -755,7 +756,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             }
 
             LodForeignQueueOutcome queued = pipeline.QueueForeignBlob(
-                result.Key, result.Blob, LodForeignSource.LocalOffer);
+                result.Key, result.Blob, LodForeignSource.LocalOffer, result.Rowid);
             if (queued == LodForeignQueueOutcome.Queued)
             {
                 localOfferSectionsAccepted++;
@@ -772,7 +773,9 @@ public partial class VintageHorizonsModSystem : ModSystem
         localOfferItemsProcessed += installBudget.Items;
         localOfferBytesProcessed += installBudget.Bytes;
 
-        long[] wanted = pipeline.RemoteWanted();
+        // Held sections waiting for a merge are read through the same reader and budget, in
+        // the same nearest-first order, as the sections the view is missing outright.
+        long[] wanted = [.. pipeline.RemoteWanted(), .. pipeline.FillWanted()];
         if (wanted.Length == 0) return;
 
         if (wanted.Length > 1)
@@ -811,7 +814,41 @@ public partial class VintageHorizonsModSystem : ModSystem
     const int LocalOffersPerTick = 4;
     int localOfferItemsProcessed;
     long localOfferBytesProcessed;
-    long localOfferKeysUpdated;
+    long localOfferRowsScanned;
+    long localOfferFillsQueued;
+
+    /// <summary>
+    /// While held sections wait to be merged, or merges are landing, a progress line reaches
+    /// the client log once a minute - the cadence the server half uses for its cache work.
+    /// Game chat cannot be copied and the stats report fires once (G72).
+    /// </summary>
+    const long FillProgressLogIntervalMs = 60_000;
+    long nextFillProgressLogMs;
+    long fillMergesAtLastLog;
+
+    void LogFillProgress()
+    {
+        long now = Environment.TickCount64;
+        bool active = pipeline.PendingFills > 0 || pipeline.ForeignMerges != fillMergesAtLastLog;
+        if (!active)
+        {
+            // A later burst gets a full minute before its first line.
+            nextFillProgressLogMs = now + FillProgressLogIntervalMs;
+            return;
+        }
+        if (now < nextFillProgressLogMs) return;
+
+        Mod.Logger.Notification("Distant sections held but incomplete: {0}; {1}",
+            pipeline.DescribeFills(), DescribeSiblingScanner());
+        nextFillProgressLogMs = now + FillProgressLogIntervalMs;
+        fillMergesAtLastLog = pipeline.ForeignMerges;
+    }
+
+    string DescribeSiblingScanner() => localOffers == null
+        ? "no server-side cache beside this one"
+        : $"server-cache scanner: {localOffers.FullScans} full and {localOffers.IncrementalScans} "
+          + $"incremental scans, {localOffers.RowsPublished} rows published, busy "
+          + $"{localOffers.ScanBusyShare * 100:0.000}% of one thread (an upper bound on its CPU)";
 
     /// <summary>
     /// Fill in palette colours for a section captured by a server, which had no texture
@@ -1903,11 +1940,17 @@ public partial class VintageHorizonsModSystem : ModSystem
         if (localOffers != null || localOfferKeysDiscovered > 0)
         {
             Mod.Logger.Notification(
-                "  local sibling offers: {0} discovered, {1} refreshed, {2} retryable misses, "
-                + "{3} accepted, {4} installed, {5} remote-only, {6} wanted",
-                localOfferKeysDiscovered, localOfferKeysUpdated, localOfferRetryableMisses,
-                localOfferSectionsAccepted, localOfferSectionsInstalled,
+                "  local sibling offers: {0} rows scanned, {1} offered, {2} fills queued, "
+                + "{3} retryable misses, {4} accepted, {5} installed, {6} remote-only, {7} wanted",
+                localOfferRowsScanned, localOfferKeysDiscovered, localOfferFillsQueued,
+                localOfferRetryableMisses, localOfferSectionsAccepted, localOfferSectionsInstalled,
                 pipeline.RemoteOnly.Count, pipeline.RemoteWanted().Length);
+        }
+
+        if (localOffers != null || pipeline.PendingFills > 0 || pipeline.ForeignMerges > 0)
+        {
+            Mod.Logger.Notification("  held sections: {0}; {1}",
+                pipeline.DescribeFills(), DescribeSiblingScanner());
         }
 
         // Repairing means the cache on disk was written without colours, which drew as
@@ -2323,7 +2366,9 @@ public partial class VintageHorizonsModSystem : ModSystem
         loggedLocalOffers = false;
         localOfferProbeTicks = 0;
         localOfferKeysDiscovered = 0;
-        localOfferKeysUpdated = 0;
+        localOfferRowsScanned = 0;
+        localOfferFillsQueued = 0;
+        fillMergesAtLastLog = 0;
         localOfferRetryableMisses = 0;
         localOfferSectionsAccepted = 0;
         localOfferSectionsInstalled = 0;
@@ -2499,6 +2544,9 @@ public partial class VintageHorizonsModSystem : ModSystem
                       $"({pipeline.RemoteOnly.Count} not held locally, {pipeline.ForeignSectionsInstalled} fetched, " +
                       $"{assist.InFlight} in flight, {assist.SectionsRefused} declined)" +
                       (assist.ManifestComplete ? "" : " (manifest still arriving)")
+                    : "") +
+                (localOffers != null || pipeline.PendingFills > 0 || pipeline.ForeignMerges > 0
+                    ? $", held sections: {pipeline.DescribeFills()}; {DescribeSiblingScanner()}"
                     : ""))));
 
         // Registered in both states on purpose: the player who most needs this one is the

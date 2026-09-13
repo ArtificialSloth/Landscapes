@@ -21,14 +21,19 @@ public enum LodForeignSource
 }
 
 /// <summary>A foreign blob decoded without touching the live block registry.</summary>
+/// <param name="SourceRowid">The sibling-cache rowid the blob was read from; 0 off the network.</param>
+/// <param name="ExpectedContentRevision">
+/// The resident copy's content revision when the blob was handed to the decoder. A newer-wins
+/// merge applies only while it is unchanged (G7).
+/// </param>
 public readonly record struct LodForeignDecodeResult(
     long Epoch, long Key, LodForeignSource Source, LodSection? Section,
-    bool ReplaceExisting, long ExpectedContentRevision,
+    long SourceRowid, long ExpectedContentRevision,
     long EstimatedBytes, long ReadyAtMilliseconds);
 
 readonly record struct LodForeignDecodeJob(
     long Epoch, long Key, LodForeignSource Source, byte[] Blob,
-    bool ReplaceExisting, long ExpectedContentRevision);
+    long SourceRowid, long ExpectedContentRevision);
 
 /// <summary>
 /// Serializes and writes LOD sections away from the render thread.
@@ -133,13 +138,31 @@ public class LodStorageThread : IDisposable
 
     public bool TryEnqueueForeign(
         long epoch, long key, LodForeignSource source, byte[] blob,
-        bool replaceExisting = false, long expectedContentRevision = 0)
+        long sourceRowid = 0, long expectedContentRevision = 0)
     {
         if (blob.Length == 0 || !TryReserveForeign(source)) return false;
         foreignRequests.Enqueue(new LodForeignDecodeJob(
-            epoch, key, source, blob, replaceExisting, expectedContentRevision));
+            epoch, key, source, blob, sourceRowid, expectedContentRevision));
         signal.Set();
         return true;
+    }
+
+    // Sibling merge records (LodRemoteKeySet). The owning thread releases one only after its
+    // merged section is durable; the rows are tiny, so they ride this worker like climate.
+    readonly ConcurrentQueue<(long Key, long Rowid)> siblingMergeSaves = new();
+
+    /// <summary>Queue merge records; the worker writes whatever is queued in one transaction.</summary>
+    public void SaveSiblingMerges(IEnumerable<(long Key, long Rowid)> records)
+    {
+        foreach ((long Key, long Rowid) record in records) siblingMergeSaves.Enqueue(record);
+        signal.Set();
+    }
+
+    void WriteSiblingMerges()
+    {
+        var batch = new List<(long Key, long Rowid)>();
+        while (siblingMergeSaves.TryDequeue(out (long Key, long Rowid) record)) batch.Add(record);
+        store.SaveSiblingMerges(batch);
     }
 
     public bool TryPeekForeignResult(out LodForeignDecodeResult result) =>
@@ -299,6 +322,12 @@ public class LodStorageThread : IDisposable
                     LodClimateMemory.PatchZOf(climateSave.Key), climateSave.Data);
             }
 
+            if (!siblingMergeSaves.IsEmpty)
+            {
+                didWork = true;
+                WriteSiblingMerges();
+            }
+
             if (ShouldCommit() && TryTakePendingSaveBatch(out List<LodSaveSnapshot> batch))
             {
                 didWork = true;
@@ -315,6 +344,7 @@ public class LodStorageThread : IDisposable
                 LodClimateMemory.PatchXOf(last.Key), LodClimateMemory.PatchZOf(last.Key),
                 last.Data);
         }
+        WriteSiblingMerges();
         if (TryTakePendingSaveBatch(out List<LodSaveSnapshot> finalBatch)) WriteBatch(finalBatch);
     }
 
@@ -392,7 +422,7 @@ public class LodStorageThread : IDisposable
         Interlocked.Add(ref foreignResultBytes, estimatedBytes);
         foreignResults.Enqueue(new LodForeignDecodeResult(
             job.Epoch, job.Key, job.Source, section,
-            job.ReplaceExisting, job.ExpectedContentRevision,
+            job.SourceRowid, job.ExpectedContentRevision,
             estimatedBytes, Environment.TickCount64));
     }
 

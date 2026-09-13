@@ -52,6 +52,13 @@ public class LodStore : SQLiteDBConnection
                     PRIMARY KEY (Detail, SX, SZ)
                 );
                 CREATE INDEX IF NOT EXISTS SectionKeys ON Section (Detail, SX, SZ, ApplyToParent);
+                CREATE TABLE IF NOT EXISTS SiblingMerge (
+                    Detail INTEGER NOT NULL,
+                    SX INTEGER NOT NULL,
+                    SZ INTEGER NOT NULL,
+                    SourceRowid INTEGER NOT NULL,
+                    PRIMARY KEY (Detail, SX, SZ)
+                );
                 CREATE TABLE IF NOT EXISTS Climate (
                     PX INTEGER NOT NULL,
                     PZ INTEGER NOT NULL,
@@ -98,12 +105,13 @@ public class LodStore : SQLiteDBConnection
                 + "sections from the old format. They rebuild from capture as you play.",
                 existing, SchemaVersion, discarded);
         }
-        // Sections only. Remembered climate is worldgen, not our format: it does not go stale
-        // when the way we store TERRAIN changes, and throwing it away would cost the player the
-        // exploration that filled it for no reason. It carries its own format byte and a blob
-        // that does not match is ignored rather than parsed.
+        // Sections only, with the merge records that describe them. Remembered climate is
+        // worldgen, not our format: it does not go stale when the way we store TERRAIN
+        // changes, and throwing it away would cost the player the exploration that filled it
+        // for no reason. It carries its own format byte and a blob that does not match is
+        // ignored rather than parsed.
         using var cmd = sqliteConn.CreateCommand();
-        cmd.CommandText = "DELETE FROM Section; INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('FormatVersion', '" + SchemaVersion + "');";
+        cmd.CommandText = "DELETE FROM Section; DELETE FROM SiblingMerge; INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('FormatVersion', '" + SchemaVersion + "');";
         cmd.ExecuteNonQuery();
     }
 
@@ -384,12 +392,76 @@ public class LodStore : SQLiteDBConnection
 
     void DeleteSection(int level, int sx, int sz)
     {
+        // Its merge record goes with it: the record describes a copy that no longer exists.
         using var cmd = sqliteConn.CreateCommand();
-        cmd.CommandText = "DELETE FROM Section WHERE Detail=@detail AND SX=@sx AND SZ=@sz";
+        cmd.CommandText = "DELETE FROM Section WHERE Detail=@detail AND SX=@sx AND SZ=@sz;"
+            + "DELETE FROM SiblingMerge WHERE Detail=@detail AND SX=@sx AND SZ=@sz";
         cmd.Parameters.AddWithValue("@detail", level);
         cmd.Parameters.AddWithValue("@sx", sx);
         cmd.Parameters.AddWithValue("@sz", sz);
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Every sibling merge record: for a key, the rowid of the server-side cache row whose
+    /// content this cache's stored copy already contains (see LodRemoteKeySet). Read once at
+    /// open, so a restart does not merge the same rows again. An additive table: an older
+    /// build never reads it, and the Section table's meaning is unchanged.
+    /// </summary>
+    public int LoadSiblingMerges(Action<long, long> onRecord)
+    {
+        int count = 0;
+        lock (transactionLock)
+        {
+            using var cmd = sqliteConn.CreateCommand();
+            cmd.CommandText = "SELECT Detail, SX, SZ, SourceRowid FROM SiblingMerge";
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                onRecord(LodWorld.SectionKey(reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2)),
+                    reader.GetInt64(3));
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Write merge records in one transaction, on the storage thread. A failure is logged and
+    /// dropped: the only cost is that those merges run again next session.
+    /// </summary>
+    public void SaveSiblingMerges(IReadOnlyList<(long Key, long Rowid)> records)
+    {
+        if (records.Count == 0) return;
+        try
+        {
+            lock (transactionLock)
+            {
+                using SqliteTransaction transaction = sqliteConn.BeginTransaction();
+                using var cmd = sqliteConn.CreateCommand();
+                cmd.Transaction = transaction;
+                cmd.CommandText = "INSERT OR REPLACE INTO SiblingMerge (Detail, SX, SZ, SourceRowid) "
+                    + "VALUES (@detail, @sx, @sz, @rowid)";
+                SqliteParameter detail = cmd.Parameters.Add("@detail", SqliteType.Integer);
+                SqliteParameter sx = cmd.Parameters.Add("@sx", SqliteType.Integer);
+                SqliteParameter sz = cmd.Parameters.Add("@sz", SqliteType.Integer);
+                SqliteParameter rowid = cmd.Parameters.Add("@rowid", SqliteType.Integer);
+                foreach ((long key, long sourceRowid) in records)
+                {
+                    detail.Value = LodWorld.KeyLevel(key);
+                    sx.Value = LodWorld.KeySx(key);
+                    sz.Value = LodWorld.KeySz(key);
+                    rowid.Value = sourceRowid;
+                    cmd.ExecuteNonQuery();
+                }
+                transaction.Commit();
+            }
+        }
+        catch (Exception e)
+        {
+            logger.Warning("[VintageHorizons] could not record {0} merged server-cache rows; "
+                + "they merge again next session: {1}", records.Count, e.Message);
+        }
     }
 
     /// <summary>
