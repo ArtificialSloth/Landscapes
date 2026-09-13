@@ -2590,8 +2590,22 @@ public static class StaticAssetChecks
         // is as wide as its label, and the strip sits above the window with room for both.
         c.True(dialog.Contains("AddHorizontalTabs(", StringComparison.Ordinal)
                 && dialog.Contains("Name = \"General\"", StringComparison.Ordinal)
-                && dialog.Contains("Name = \"Anti-Aliasing\"", StringComparison.Ordinal),
-            "the settings window has a General tab and an Anti-Aliasing tab");
+                && dialog.Contains("Name = \"Anti-Aliasing\"", StringComparison.Ordinal)
+                && dialog.Contains("Name = \"Generate\"", StringComparison.Ordinal),
+            "the settings window has General, Anti-Aliasing and Generate tabs");
+        c.True(dialog.Contains("OnWorldGenPrepare", StringComparison.Ordinal)
+                && dialog.Contains("OnWorldGenConfirm", StringComparison.Ordinal)
+                && dialog.Contains("OnWorldGenPause", StringComparison.Ordinal)
+                && dialog.Contains("OnWorldGenResume", StringComparison.Ordinal)
+                && dialog.Contains("OnWorldGenStop", StringComparison.Ordinal),
+            "the Generate page exposes prepare/confirm and complete job controls");
+        c.True(dialog.Contains("controlserver permission is required", StringComparison.Ordinal)
+                && dialog.Contains("This permanently adds terrain to the savegame", StringComparison.Ordinal),
+            "the Generate page states its permission boundary and permanent-save warning");
+        c.True(mod.Contains("assist?.PumpWorldGen();", StringComparison.Ordinal)
+                && dialog.Contains("WorldGenStatusChanged += OnWorldGenStatus", StringComparison.Ordinal)
+                && dialog.Contains("WorldGenStatusChanged -= OnWorldGenStatus", StringComparison.Ordinal),
+            "network-thread generation status reaches the live page and the session unsubscribes");
         c.True(dialog.Contains("composer.AddHoverText(row.Tip", StringComparison.Ordinal),
             "and each feature explains itself on hover");
         c.True(dialog.Contains("AddDropDown(PresetCodes, PresetNames", StringComparison.Ordinal),
@@ -2644,6 +2658,9 @@ public static class StaticAssetChecks
                 && VintageHorizonsConfigLayout.EmbeddedTabsY + 28
                     < VintageHorizonsConfigLayout.EmbeddedContentY + 42,
             "the editor tabs sit below vanilla's header and above their page title");
+        c.True(VintageHorizonsConfigLayout.TabsWidth
+                / VintageHorizonsConfigLayout.PlannedTabCount >= 150,
+            "the tab strip reserves at least 150 pixels each after the planned Silhouettes tab lands");
 
         c.True(dialog.Contains("\"load-while-paused\"", StringComparison.Ordinal)
                 && mod.Contains("public bool LoadWhilePaused = true;", StringComparison.Ordinal)

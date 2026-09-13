@@ -1,4 +1,5 @@
 using VintageHorizons.Net;
+using Vintagestory.API.Config;
 
 namespace VintageHorizons.Checks;
 
@@ -9,8 +10,9 @@ public static class WorldGenChecks
     {
         AreaAndClipping(c);
         TileOrder(c);
+        DurableSectionMapping(c);
         StateRoundTrip(c);
-        SkipRules(c);
+        GeneratePageMath(c);
         Gates(c);
         Leases(c);
         Authority(c);
@@ -98,6 +100,8 @@ public static class WorldGenChecks
 
     static void StateRoundTrip(Check c)
     {
+        c.Eq(3, LodWorldGenState.CurrentFormat,
+            "resume format rejects cursors written with the broken L0/chunk acknowledgement mapping");
         var plan = new LodWorldGenPlan(20, 20, 4, EnumWorldGenShape.Circle, 100, 100);
         var state = LodWorldGenState.Create(plan, 20, 20, 4, EnumWorldGenShape.Circle,
             100, 100, "tester", 1234, 5678);
@@ -158,16 +162,84 @@ public static class WorldGenChecks
             "a safety fault cannot be hidden by pause");
     }
 
-    static void SkipRules(Check c)
+    static void DurableSectionMapping(Check c)
     {
-        c.Eq(EnumWorldGenSkipReason.None, LodWorldGenSkip.Classify(false, false),
-            "an uncached unfinished column is issued");
-        c.Eq(EnumWorldGenSkipReason.DurableState, LodWorldGenSkip.Classify(false, true),
-            "the resumable durable bitmap skips completed work");
-        c.Eq(EnumWorldGenSkipReason.ServerCache, LodWorldGenSkip.Classify(true, false),
-            "an existing server L0 cache row skips generation");
-        c.Eq(EnumWorldGenSkipReason.ServerCache, LodWorldGenSkip.Classify(true, true),
-            "the live server cache is the strongest skip evidence");
+        c.Eq(GlobalConstants.ChunkSize, LodWorldGenSections.ChunkBlocks,
+            "the resumable chunk/L0 mapping matches the installed engine chunk size");
+        long first = LodWorldGenSections.KeyForChunk(0, 0);
+        c.Eq(first, LodWorldGenSections.KeyForChunk(1, 1),
+            "all four engine chunks in a 64-block L0 footprint map to one section");
+        c.True(first != LodWorldGenSections.KeyForChunk(2, 0),
+            "the next chunk pair maps to the next L0 section");
+        c.True(LodWorldGenSections.ContainsChunk(first, 1, 0),
+            "a persistence key recognizes a captured chunk in its 2x2 footprint");
+        c.False(LodWorldGenSections.ContainsChunk(first, 2, 0),
+            "a persistence key cannot credit a chunk in the neighbouring footprint");
+
+        var section = new LodSection();
+        int chunkColumns = LodSection.GridSize / LodWorldGenSections.ChunksPerLevelZeroSection;
+        for (int z = 0; z < chunkColumns; z++)
+        {
+            for (int x = chunkColumns; x < chunkColumns * 2; x++)
+            {
+                int col = LodSection.ColumnIndex(x, z);
+                section.SetColumn(col, ReadOnlySpan<ulong>.Empty);
+            }
+        }
+        c.False(LodWorldGenSections.HasAuthoritativeColumns(section, 1, 0),
+            "captured peek data is not proof that terrain exists in the savegame");
+        for (int z = 0; z < chunkColumns; z++)
+        {
+            for (int x = chunkColumns; x < chunkColumns * 2; x++)
+                section.SetSnowStateObserved(LodSection.ColumnIndex(x, z), observed: true);
+        }
+        c.True(LodWorldGenSections.HasAuthoritativeColumns(section, 1, 0),
+            "a complete loaded-terrain provenance footprint is authoritative");
+        c.False(LodWorldGenSections.HasAuthoritativeColumns(section, 0, 0),
+            "provenance in one quadrant cannot make a sibling chunk authoritative");
+    }
+
+    static void GeneratePageMath(Check c)
+    {
+        c.Eq(13L, LodWorldGenPageMath.ColumnCount(2, EnumWorldGenShape.Circle),
+            "the Generate page's circle estimate matches the plan lattice");
+        c.Eq(25L, LodWorldGenPageMath.ColumnCount(2, EnumWorldGenShape.Square),
+            "the Generate page's square estimate includes both radius edges");
+
+        LodWorldGenPreferences normalized = new LodWorldGenPreferences(
+            999, (EnumWorldGenShape)99, (EnumWorldGenCentreMode)99,
+            -5, -7, "future").Normalize(64);
+        c.Eq(64, normalized.RadiusChunks,
+            "remembered radius is clamped to the server-advertised maximum");
+        c.Eq(EnumWorldGenShape.Circle, normalized.Shape,
+            "an unknown remembered shape falls back to the circular default");
+        c.Eq(EnumWorldGenCentreMode.Here, normalized.CentreMode,
+            "an unknown remembered centre falls back to the player");
+        c.Eq((0, 0), (normalized.X, normalized.Z),
+            "remembered coordinates cannot become negative");
+        c.Eq("Balanced", normalized.Preset,
+            "an unmeasured remembered preset cannot reach the server");
+
+        var status = new AssistWorldGenStatus
+        {
+            DoneColumns = 25,
+            TotalColumns = 100,
+            ColumnsPerSecond = 9.5,
+            EtaSeconds = 8,
+            EngineQueue = 20,
+            QueueTarget = 120,
+            InFlight = 7,
+            MaxInFlight = 160,
+            Retries = 2,
+            Failures = 1,
+            Gate = "waiting for distant-terrain saves",
+        };
+        c.Eq(25, LodWorldGenPageMath.Percent(status),
+            "structured progress drives the page percentage without parsing prose");
+        string progress = LodWorldGenPageMath.Progress(status);
+        c.True(progress.Contains("Queue 20/120, 7/160 kept", StringComparison.Ordinal)
+            && progress.Contains("2 retries, 1 failures", StringComparison.Ordinal),
+            "the Generate page reports queue pressure and retry/failure counts");
     }
 
     static EnumWorldGenGate Select(bool paused = false, bool faulted = false,

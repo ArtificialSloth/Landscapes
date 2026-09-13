@@ -1,5 +1,6 @@
 using System.Globalization;
 using Vintagestory.API.Client;
+using VintageHorizons.Net;
 
 namespace VintageHorizons;
 
@@ -29,6 +30,8 @@ internal static class VintageHorizonsConfigLayout
     internal const double Margin = 32;
     internal const double SwitchX = 824;
     internal const double ButtonY = Height - 58;
+    internal const double TabsWidth = 640;
+    internal const int PlannedTabCount = 4;
 
     internal const double ScaleY = 96;
     internal const double ScaleHeight = 150;
@@ -46,7 +49,7 @@ internal static class VintageHorizonsConfigLayout
     internal const double ShowTaaY = 510;
 
     internal const double EmbeddedTabsY = 82;
-    // Vanilla's header ends at 75. The editor's own two tabs begin below that edge, with their
+    // Vanilla's header ends at 75. The editor's own tabs begin below that edge, with their
     // content following beneath, instead of sitting through the header's bottom rule.
     internal const double EmbeddedContentY = 78;
     internal const double EmbeddedHeight = Height + EmbeddedContentY;
@@ -56,11 +59,12 @@ internal static class VintageHorizonsConfigLayout
 /// Client-only settings editor shared by the in-game Settings page and .vhconfig window.
 ///
 /// <para>
-/// Two tabs. General is how far and how finely cached terrain is drawn, and which of the
+/// Three tabs. General is how far and how finely cached terrain is drawn, and which of the
 /// optional passes are drawn at all - the settings a machine that cannot afford them needs to
 /// be able to give up, each one measured rather than guessed. Anti-Aliasing holds distant
 /// anti-aliasing's tuning dials as sliders, added at the owner's request in 0.4.60 so it can be
-/// tuned by eye rather than by typed commands.
+/// tuned by eye rather than by typed commands. Generate controls the server-owned, explicitly
+/// confirmed savegame generator and remains read-only when the player lacks permission.
 /// </para>
 /// <para>
 /// Each feature is a title and a control, with what it does on hover. The descriptions were
@@ -105,6 +109,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     const int GeneralTab = 0;
     const int AntiAliasingTab = 1;
+    const int GenerateTab = 2;
 
     // The anti-aliasing rows: where each slider starts, how wide it is, and the row pitch.
     const double DialSliderX = VintageHorizonsConfigLayout.DialSliderX;
@@ -127,6 +132,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     readonly Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials> save;
     readonly TaaTuning taa;
     readonly VanillaDistanceTuning vanilla;
+    readonly WorldGenTuning worldGen;
     readonly bool embedded;
     readonly Action? requestEmbeddedRecompose;
     readonly Action? requestEmbeddedClose;
@@ -139,12 +145,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     LodVisualSettings pendingVisuals;
     LodTaaDials pendingTaa;
     bool pendingShowTaa;
+    LodWorldGenPreferences pendingWorldGen;
     LodThresholdScaleElement? scale;
     GuiComposer? activeComposer;
     bool sessionClosed;
     double contentTop;
 
-    /// <summary>Which tab is showing: <see cref="GeneralTab"/> or <see cref="AntiAliasingTab"/>.</summary>
+    /// <summary>Which editor tab is showing.</summary>
     int shownTab = GeneralTab;
 
     /// <summary>Set by Save, so closing afterwards keeps the anti-aliasing dials rather than putting them back.</summary>
@@ -159,9 +166,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     public VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
-        TaaTuning taa, Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials> save)
+        TaaTuning taa, WorldGenTuning worldGen,
+        Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials> save)
         : this(capi, thresholds, automaticThresholds, automatic, farCap, loadWhilePaused,
-            visuals, vanilla, taa, false, null, null, save)
+            visuals, vanilla, taa, worldGen, false, null, null, save)
     {
         ComposeDialog();
     }
@@ -173,24 +181,25 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     internal VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
-        TaaTuning taa,
+        TaaTuning taa, WorldGenTuning worldGen,
         Action requestRecompose, Action requestClose,
         Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials> save)
         : this(capi, thresholds, automaticThresholds, automatic, farCap, loadWhilePaused,
-            visuals, vanilla, taa, true, requestRecompose, requestClose, save)
+            visuals, vanilla, taa, worldGen, true, requestRecompose, requestClose, save)
     {
     }
 
     VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
-        TaaTuning taa, bool embedded,
+        TaaTuning taa, WorldGenTuning worldGen, bool embedded,
         Action? requestRecompose, Action? requestClose,
         Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials> save) : base(capi)
     {
         this.save = save;
         this.taa = taa;
         this.vanilla = vanilla;
+        this.worldGen = worldGen;
         vanillaViewDistance = Math.Clamp(vanilla.Initial,
             LodThresholdScaleLayout.MinVanillaDistance,
             LodThresholdScaleLayout.MaxVanillaDistance);
@@ -208,6 +217,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         pendingVisuals = visuals;
         pendingTaa = taa.Initial;
         pendingShowTaa = taa.ShowInitial;
+        pendingWorldGen = worldGen.Initial.Normalize(ServerWorldGenMaxRadius());
+        if (worldGen.Client != null)
+            worldGen.Client.WorldGenStatusChanged += OnWorldGenStatus;
     }
 
     /// <summary>
@@ -312,7 +324,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         ComposePage(composer, 0);
 
         // Added after the children, so the strip hangs off the window itself and sits above it.
-        AddTabs(composer.EndChildElements(), ElementBounds.Fixed(12, -28, 420, 28));
+        AddTabs(composer.EndChildElements(), ElementBounds.Fixed(
+            12, -28, VintageHorizonsConfigLayout.TabsWidth, 28));
 
         SingleComposer = composer.Compose();
         activeComposer = SingleComposer;
@@ -327,7 +340,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         activeComposer = composer;
         AddTabs(composer, ElementBounds.Fixed(Margin,
-            VintageHorizonsConfigLayout.EmbeddedTabsY, 420, 28));
+            VintageHorizonsConfigLayout.EmbeddedTabsY,
+            VintageHorizonsConfigLayout.TabsWidth, 28));
         ComposePage(composer, VintageHorizonsConfigLayout.EmbeddedContentY);
     }
 
@@ -340,6 +354,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         contentTop = top;
         scale = null;
         if (shownTab == AntiAliasingTab) ComposeAntiAliasing(composer);
+        else if (shownTab == GenerateTab) ComposeGenerate(composer);
         else ComposeGeneral(composer);
 
         composer.AddButton("Defaults", OnDefaults,
@@ -360,6 +375,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             {
                 new GuiTab { Name = "General", DataInt = GeneralTab },
                 new GuiTab { Name = "Anti-Aliasing", DataInt = AntiAliasingTab },
+                new GuiTab { Name = "Generate", DataInt = GenerateTab },
             },
             bounds, OnTabClicked,
             CairoFont.WhiteSmallText(), CairoFont.WhiteSmallText().WithColor(GuiStyle.ActiveButtonTextColor),
@@ -372,6 +388,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         activeComposer.GetHorizontalTabs("tabs").activeElement = shownTab;
 
         if (shownTab == AntiAliasingTab) SetAntiAliasingValues();
+        else if (shownTab == GenerateTab) SetGenerateValues();
         else SetGeneralValues();
     }
 
@@ -535,9 +552,263 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         activeComposer.GetSwitch("taa-show").On = pendingShowTaa;
     }
 
+    static readonly string[] WorldGenCentreCodes = { "here", "spawn", "coordinates" };
+    static readonly string[] WorldGenCentreNames = { "My position", "World spawn", "Coordinates (blocks)" };
+    static readonly string[] WorldGenShapeCodes = { "circle", "square" };
+    static readonly string[] WorldGenShapeNames = { "Circle", "Square" };
+
+    void ComposeGenerate(GuiComposer composer)
+    {
+        composer.AddStaticText("Generate real terrain", CairoFont.WhiteMediumText(),
+            ElementBounds.Fixed(Margin, Y(42), 500, 30));
+        composer.AddDynamicText(WorldGenAvailability(), CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(Margin, Y(74), Width - 2 * Margin, 42), "wg-availability");
+
+        composer.AddStaticText("Centre", CairoFont.WhiteSmallishText(),
+            ElementBounds.Fixed(Margin, Y(124), 100, 28));
+        composer.AddDropDown(WorldGenCentreCodes, WorldGenCentreNames,
+            (int)pendingWorldGen.CentreMode, OnWorldGenCentreChanged,
+            ElementBounds.Fixed(135, Y(118), 220, 32), "wg-centre");
+        composer.AddStaticText("X", CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(382, Y(124), 22, 26));
+        composer.AddNumberInput(ElementBounds.Fixed(406, Y(118), 155, 32),
+            OnWorldGenXChanged, CairoFont.WhiteSmallText(), "wg-x");
+        composer.AddStaticText("Z", CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(588, Y(124), 22, 26));
+        composer.AddNumberInput(ElementBounds.Fixed(612, Y(118), 155, 32),
+            OnWorldGenZChanged, CairoFont.WhiteSmallText(), "wg-z");
+
+        composer.AddStaticText("Radius", CairoFont.WhiteSmallishText(),
+            ElementBounds.Fixed(Margin, Y(174), 100, 28));
+        composer.AddSlider(OnWorldGenRadiusChanged,
+            ElementBounds.Fixed(135, Y(168), 545, 30), "wg-radius");
+        composer.AddDynamicText(WorldGenRadiusLabel(),
+            CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Right),
+            ElementBounds.Fixed(695, Y(174), 170, 24),
+            "wg-radius-label");
+
+        composer.AddStaticText("Shape", CairoFont.WhiteSmallishText(),
+            ElementBounds.Fixed(Margin, Y(220), 100, 28));
+        composer.AddDropDown(WorldGenShapeCodes, WorldGenShapeNames,
+            pendingWorldGen.Shape == EnumWorldGenShape.Circle ? 0 : 1,
+            OnWorldGenShapeChanged, ElementBounds.Fixed(135, Y(214), 220, 32), "wg-shape");
+        composer.AddStaticText("Preset", CairoFont.WhiteSmallishText(),
+            ElementBounds.Fixed(410, Y(220), 90, 28));
+        composer.AddStaticText("Balanced (engine default)", CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(505, Y(222), 260, 24));
+
+        composer.AddDynamicText(LodWorldGenPageMath.Estimate(pendingWorldGen),
+            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(266), Width - 2 * Margin, 28),
+            "wg-estimate");
+        composer.AddStaticText(
+            "This permanently adds terrain to the savegame. Prepare shows the exact area, time "
+            + "and disk estimate; Confirm is a separate click. Back up important worlds first.",
+            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(304), Width - 2 * Margin, 52));
+
+        composer.AddStaticText("Progress", CairoFont.WhiteSmallishText(),
+            ElementBounds.Fixed(Margin, Y(374), 100, 28));
+        composer.AddSlider(_ => false,
+            ElementBounds.Fixed(135, Y(368), 545, 30), "wg-progress");
+        composer.AddDynamicText(WorldGenPercentLabel(),
+            CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Right),
+            ElementBounds.Fixed(695, Y(374), 170, 24),
+            "wg-progress-label");
+        composer.AddDynamicText(LodWorldGenPageMath.Progress(worldGen.Client?.WorldGenStatus),
+            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(414), Width - 2 * Margin, 76),
+            "wg-progress-text");
+        composer.AddDynamicText(WorldGenLastMessage(), CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(Margin, Y(494), Width - 2 * Margin, 66), "wg-message");
+
+        composer.AddButton("Prepare", OnWorldGenPrepare,
+            ElementBounds.Fixed(Margin, Y(574), 170, 38), EnumButtonStyle.Normal, "wg-prepare");
+        composer.AddButton("Confirm", OnWorldGenConfirm,
+            ElementBounds.Fixed(Margin + 180, Y(574), 170, 38), EnumButtonStyle.Normal, "wg-confirm");
+        composer.AddButton("Pause", OnWorldGenPause,
+            ElementBounds.Fixed(Margin + 360, Y(574), 135, 38), EnumButtonStyle.Normal, "wg-pause");
+        composer.AddButton("Resume", OnWorldGenResume,
+            ElementBounds.Fixed(Margin + 505, Y(574), 135, 38), EnumButtonStyle.Normal, "wg-resume");
+        composer.AddButton("Stop", OnWorldGenStop,
+            ElementBounds.Fixed(Margin + 650, Y(574), 135, 38), EnumButtonStyle.Normal, "wg-stop");
+
+        worldGen.Client?.SetWorldGenPageOpen(true);
+    }
+
+    void SetGenerateValues()
+    {
+        if (activeComposer?.Composed != true) return;
+        int maxRadius = ServerWorldGenMaxRadius();
+        pendingWorldGen = pendingWorldGen.Normalize(maxRadius);
+        GuiElementSlider radius = activeComposer.GetSlider("wg-radius");
+        radius.SetValues(pendingWorldGen.RadiusChunks, 1, maxRadius, 1, " chunks");
+        radius.ShowTextWhenResting = false;
+        GuiElementSlider progress = activeComposer.GetSlider("wg-progress");
+        progress.SetValues(LodWorldGenPageMath.Percent(worldGen.Client?.WorldGenStatus), 0, 100, 1, "%");
+        progress.ShowTextWhenResting = false;
+        progress.Enabled = false;
+
+        GuiElementNumberInput x = activeComposer.GetNumberInput("wg-x");
+        GuiElementNumberInput z = activeComposer.GetNumberInput("wg-z");
+        x.IntMode = z.IntMode = true;
+        x.SetValue(pendingWorldGen.X);
+        z.SetValue(pendingWorldGen.Z);
+        RefreshWorldGenControls();
+    }
+
+    int ServerWorldGenMaxRadius() => Math.Max(1,
+        worldGen.Client?.WorldGenStatus?.MaxRadiusChunks
+        ?? worldGen.Client?.ServerSettings?.WorldGenMaxRadiusChunks
+        ?? 256);
+
+    int ServerWorldGenDefaultRadius() => Math.Clamp(
+        worldGen.Client?.WorldGenStatus?.DefaultRadiusChunks
+        ?? worldGen.Client?.ServerSettings?.WorldGenDefaultRadiusChunks
+        ?? LodWorldGenPreferences.Default.RadiusChunks,
+        1, ServerWorldGenMaxRadius());
+
+    string WorldGenAvailability()
+    {
+        LodAssistClient? client = worldGen.Client;
+        if (client == null || !client.WorldGenerationAvailable)
+            return "Unavailable: load a world on a server running a current Vintage Horizons build.";
+        if (client.WorldGenStatus?.Available == false)
+            return "Temporarily unavailable: " + client.WorldGenStatus.Message;
+        return client.CanControlWorldGeneration
+            ? "Available. The server owns generation and enforces its radius and resource limits."
+            : "Read-only: you can watch progress, but controlserver permission is required to change it.";
+    }
+
+    string WorldGenRadiusLabel() => $"{pendingWorldGen.RadiusChunks:N0} chunks / "
+        + $"{pendingWorldGen.RadiusChunks * 32:N0} blocks";
+
+    string WorldGenPercentLabel() =>
+        LodWorldGenPageMath.Percent(worldGen.Client?.WorldGenStatus) + "%";
+
+    string WorldGenLastMessage() => worldGen.Client?.WorldGenStatus?.Message
+        ?? "Open this tab after joining a world to request server status.";
+
+    void OnWorldGenStatus(AssistWorldGenStatus status)
+    {
+        if (sessionClosed || activeComposer?.Composed != true || shownTab != GenerateTab) return;
+        activeComposer.GetDynamicText("wg-availability")
+            .SetNewText(WorldGenAvailability(), false, true, false);
+        activeComposer.GetDynamicText("wg-progress-text")
+            .SetNewText(LodWorldGenPageMath.Progress(status), false, true, false);
+        activeComposer.GetDynamicText("wg-message")
+            .SetNewText(status.Message, false, true, false);
+        activeComposer.GetDynamicText("wg-progress-label")
+            .SetNewText(WorldGenPercentLabel(), false, true, false);
+        activeComposer.GetSlider("wg-progress").SetValue(LodWorldGenPageMath.Percent(status));
+        RefreshWorldGenControls();
+    }
+
+    void RefreshWorldGenControls()
+    {
+        if (activeComposer?.Composed != true || shownTab != GenerateTab) return;
+        LodAssistClient? client = worldGen.Client;
+        AssistWorldGenStatus? status = client?.WorldGenStatus;
+        bool available = client?.WorldGenerationAvailable == true && status?.Available != false;
+        bool canControl = available && client!.CanControlWorldGeneration;
+        EnumWorldGenRemoteState state = status?.State ?? EnumWorldGenRemoteState.Idle;
+        bool areaLocked = state is EnumWorldGenRemoteState.Prepared
+            or EnumWorldGenRemoteState.Running or EnumWorldGenRemoteState.Paused
+            or EnumWorldGenRemoteState.Interrupted or EnumWorldGenRemoteState.Faulted;
+        bool coordinates = pendingWorldGen.CentreMode == EnumWorldGenCentreMode.Coordinates;
+
+        activeComposer.GetDropDown("wg-centre").Enabled = canControl && !areaLocked;
+        activeComposer.GetDropDown("wg-shape").Enabled = canControl && !areaLocked;
+        activeComposer.GetSlider("wg-radius").Enabled = canControl && !areaLocked;
+        activeComposer.GetNumberInput("wg-x").Enabled = canControl && !areaLocked && coordinates;
+        activeComposer.GetNumberInput("wg-z").Enabled = canControl && !areaLocked && coordinates;
+        activeComposer.GetButton("wg-prepare").Enabled = canControl && !areaLocked
+            && status?.PendingConfirmation != true;
+        activeComposer.GetButton("wg-confirm").Enabled = canControl
+            && status?.PendingConfirmation == true;
+        activeComposer.GetButton("wg-pause").Enabled = canControl
+            && state == EnumWorldGenRemoteState.Running;
+        activeComposer.GetButton("wg-resume").Enabled = canControl
+            && state is EnumWorldGenRemoteState.Paused or EnumWorldGenRemoteState.Interrupted;
+        activeComposer.GetButton("wg-stop").Enabled = canControl
+            && areaLocked;
+    }
+
+    void OnWorldGenCentreChanged(string code, bool selected)
+    {
+        if (!selected) return;
+        EnumWorldGenCentreMode centre = code switch
+        {
+            "spawn" => EnumWorldGenCentreMode.Spawn,
+            "coordinates" => EnumWorldGenCentreMode.Coordinates,
+            _ => EnumWorldGenCentreMode.Here,
+        };
+        pendingWorldGen = pendingWorldGen with { CentreMode = centre };
+        RefreshWorldGenControls();
+    }
+
+    void OnWorldGenShapeChanged(string code, bool selected)
+    {
+        if (!selected) return;
+        pendingWorldGen = pendingWorldGen with
+        {
+            Shape = code == "square" ? EnumWorldGenShape.Square : EnumWorldGenShape.Circle,
+        };
+        RefreshWorldGenEstimate();
+    }
+
+    bool OnWorldGenRadiusChanged(int radius)
+    {
+        pendingWorldGen = pendingWorldGen with
+        {
+            RadiusChunks = Math.Clamp(radius, 1, ServerWorldGenMaxRadius()),
+        };
+        if (activeComposer?.Composed == true && shownTab == GenerateTab)
+        {
+            activeComposer.GetDynamicText("wg-radius-label")
+                .SetNewText(WorldGenRadiusLabel(), false, true, false);
+            RefreshWorldGenEstimate();
+        }
+        return true;
+    }
+
+    void OnWorldGenXChanged(string value)
+    {
+        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int x))
+            pendingWorldGen = pendingWorldGen with { X = Math.Max(0, x) };
+    }
+
+    void OnWorldGenZChanged(string value)
+    {
+        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int z))
+            pendingWorldGen = pendingWorldGen with { Z = Math.Max(0, z) };
+    }
+
+    void RefreshWorldGenEstimate()
+    {
+        if (activeComposer?.Composed != true || shownTab != GenerateTab) return;
+        activeComposer.GetDynamicText("wg-estimate")
+            .SetNewText(LodWorldGenPageMath.Estimate(pendingWorldGen), false, true, false);
+    }
+
+    bool OnWorldGenPrepare()
+    {
+        int x = pendingWorldGen.CentreMode == EnumWorldGenCentreMode.Coordinates
+            ? pendingWorldGen.X : -1;
+        int z = pendingWorldGen.CentreMode == EnumWorldGenCentreMode.Coordinates
+            ? pendingWorldGen.Z : -1;
+        worldGen.Client?.RequestWorldGen(EnumWorldGenControlAction.Prepare,
+            pendingWorldGen.RadiusChunks, pendingWorldGen.Shape,
+            pendingWorldGen.CentreMode, x, z, pendingWorldGen.Preset);
+        return true;
+    }
+
+    bool OnWorldGenConfirm() { worldGen.Client?.RequestWorldGen(EnumWorldGenControlAction.Confirm); return true; }
+    bool OnWorldGenPause() { worldGen.Client?.RequestWorldGen(EnumWorldGenControlAction.Pause); return true; }
+    bool OnWorldGenResume() { worldGen.Client?.RequestWorldGen(EnumWorldGenControlAction.Resume); return true; }
+    bool OnWorldGenStop() { worldGen.Client?.RequestWorldGen(EnumWorldGenControlAction.Stop); return true; }
+
     void OnTabClicked(int tab)
     {
         if (tab == shownTab) return;
+        worldGen.Client?.SetWorldGenPageOpen(tab == GenerateTab);
         shownTab = tab;
         // Once this click has finished with the composer it came from, not in the middle of it:
         // the re-compose disposes that composer.
@@ -738,6 +1009,26 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             return true;
         }
 
+        if (shownTab == GenerateTab)
+        {
+            pendingWorldGen = (LodWorldGenPreferences.Default with
+            {
+                RadiusChunks = ServerWorldGenDefaultRadius(),
+            }).Normalize(ServerWorldGenMaxRadius());
+            if (activeComposer?.Composed != true) return true;
+            activeComposer.GetDropDown("wg-centre").SetSelectedIndex((int)pendingWorldGen.CentreMode);
+            activeComposer.GetDropDown("wg-shape").SetSelectedIndex(
+                pendingWorldGen.Shape == EnumWorldGenShape.Circle ? 0 : 1);
+            activeComposer.GetNumberInput("wg-x").SetValue(pendingWorldGen.X);
+            activeComposer.GetNumberInput("wg-z").SetValue(pendingWorldGen.Z);
+            activeComposer.GetSlider("wg-radius").SetValue(pendingWorldGen.RadiusChunks);
+            activeComposer.GetDynamicText("wg-radius-label")
+                .SetNewText(WorldGenRadiusLabel(), false, true, false);
+            RefreshWorldGenEstimate();
+            RefreshWorldGenControls();
+            return true;
+        }
+
         Array.Copy(LodWorld.DefaultLevelThresholds, pendingThresholds,
             pendingThresholds.Length);
         pendingAutomatic = true;
@@ -760,12 +1051,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         if (sessionClosed) return true;
         saved = true;
+        worldGen.Save(pendingWorldGen.Normalize(ServerWorldGenMaxRadius()));
         save(pendingThresholds, pendingAutomatic, pendingFarCap, pendingLoadWhilePaused,
             pendingVisuals, pendingTaa);
         if (embedded)
         {
-            sessionClosed = true;
-            activeComposer = null;
+            CloseSession();
             requestEmbeddedClose?.Invoke();
         }
         else
@@ -812,6 +1103,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         if (sessionClosed) return;
         sessionClosed = true;
+        worldGen.Client?.SetWorldGenPageOpen(false);
+        if (worldGen.Client != null)
+            worldGen.Client.WorldGenStatusChanged -= OnWorldGenStatus;
         activeComposer = null;
         if (!saved) taa.Preview(taa.Initial, taa.ShowInitial);
     }

@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
+using VintageHorizons.Net;
 
 namespace VintageHorizons;
 
@@ -392,6 +393,23 @@ public class LodPipeline
         long key = ((long)cz << 32) | (uint)cx;
         if (queuedColumns.TryAdd(key, 0)) pendingColumns.Enqueue(key);
     }
+
+    /// <summary>
+    /// Whether this exact chunk's authoritative capture is already in the durable L0 row.
+    /// Called immediately after a real loaded-column capture applies. A generated peek has
+    /// no snow-observed provenance, and a changed authoritative capture remains SaveDirty,
+    /// so neither can finish a resumable real-world generation obligation early.
+    /// </summary>
+    internal bool IsAuthoritativeChunkDurable(int cx, int cz)
+    {
+        long key = LodWorldGenSections.KeyForChunk(cx, cz);
+        if (!Remote.IsHeldLocally(key) || World.SaveDirty.Contains(key)
+            || !World.Sections.TryGetValue(key, out LodSection? section)) return false;
+        return LodWorldGenSections.HasAuthoritativeColumns(section, cx, cz);
+    }
+
+    internal bool IsChunkAwaitingPersistence(int cx, int cz) =>
+        World.SaveDirty.Contains(LodWorldGenSections.KeyForChunk(cx, cz));
 
     /// <summary>
     /// Capture a chunk column the caller already holds, rather than one the world can
@@ -1368,6 +1386,13 @@ public class LodPipeline
 
     internal static long NextPersistenceCheckpointStart(long now, bool readyFollowUp) =>
         readyFollowUp ? now : now + PersistenceCheckpointIntervalMs;
+
+    /// <summary>
+    /// Let a bounded real-world generation tile request durability without waiting for the
+    /// ordinary 30-second cache cadence. Snapshot creation and storage remain under the same
+    /// per-tick budgets and transaction path.
+    /// </summary>
+    internal void RequestPersistenceCheckpoint() => nextPersistenceCheckpointMs = 0;
 
     bool ReadyForPersistenceSnapshot(long key, long now)
     {

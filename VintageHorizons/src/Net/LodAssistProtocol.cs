@@ -58,6 +58,18 @@ public static class LodAssist
     /// per-player cap only decides how it is shared.
     /// </summary>
     public const int MaxSectionsPerSecondTotal = 32;
+
+    /// <summary>
+    /// Append-only capabilities advertised by <see cref="AssistWelcome.Features"/>. An older
+    /// server sends zero; an older client ignores the field. Capability and terrain serving are
+    /// separate so an admin may disable map sharing while still allowing explicit generation.
+    /// </summary>
+    public const int FeatureWorldGeneration = 1 << 0;
+
+    // Reserved now so independently developed follow-up plans cannot accidentally reuse a
+    // shipped meaning. A server advertises these only after the corresponding feature lands.
+    public const int FeatureFrontierGeneration = 1 << 1;
+    public const int FeatureSilhouetteTiles = 1 << 2;
 }
 
 /// <summary>Client -> server, once per join, only when the channel is Connected.</summary>
@@ -97,6 +109,12 @@ public class AssistWelcome
     /// about the field.
     /// </summary>
     [ProtoMember(6)] public AssistServerSettings? ServerSettings;
+
+    /// <summary>Bit field of append-only optional server features.</summary>
+    [ProtoMember(7)] public int Features;
+
+    /// <summary>Permission snapshot for this player; status remains readable without it.</summary>
+    [ProtoMember(8)] public bool CanControlWorldGeneration;
 }
 
 /// <summary>
@@ -123,6 +141,13 @@ public class AssistServerSettings
     [ProtoMember(14)] public int PregenRadiusChunks;
     [ProtoMember(15)] public int PregenColumnsPerSecond;
     [ProtoMember(16)] public int RefreshColumnsPerSecond;
+    [ProtoMember(17)] public bool EnableWorldGeneration;
+    [ProtoMember(18)] public int WorldGenMaxRadiusChunks;
+    [ProtoMember(19)] public int WorldGenDefaultRadiusChunks;
+    [ProtoMember(20)] public int WorldGenQueueTarget;
+    [ProtoMember(21)] public int WorldGenMaxInFlight;
+    [ProtoMember(22)] public int WorldGenDirtySectionLimit;
+    [ProtoMember(23)] public int WorldGenOldestDirtySeconds;
 
     public static AssistServerSettings From(LodServerConfig config) => new()
     {
@@ -142,7 +167,99 @@ public class AssistServerSettings
         PregenRadiusChunks = config.PregenRadiusChunks,
         PregenColumnsPerSecond = config.PregenColumnsPerSecond,
         RefreshColumnsPerSecond = config.RefreshColumnsPerSecond,
+        EnableWorldGeneration = config.EnableWorldGeneration,
+        WorldGenMaxRadiusChunks = config.WorldGenMaxRadiusChunks,
+        WorldGenDefaultRadiusChunks = config.WorldGenDefaultRadiusChunks,
+        WorldGenQueueTarget = config.WorldGenQueueTarget,
+        WorldGenMaxInFlight = config.WorldGenMaxInFlight,
+        WorldGenDirtySectionLimit = config.WorldGenDirtySectionLimit,
+        WorldGenOldestDirtySeconds = config.WorldGenOldestDirtySeconds,
     };
+}
+
+/// <summary>Player action sent by the Generate page.</summary>
+public enum EnumWorldGenControlAction
+{
+    Status,
+    Prepare,
+    Confirm,
+    Pause,
+    Resume,
+    Stop,
+}
+
+/// <summary>How the Generate page resolves the centre of a new job.</summary>
+public enum EnumWorldGenCentreMode
+{
+    Here,
+    Spawn,
+    Coordinates,
+}
+
+/// <summary>Stable states rendered by the client without parsing a human status sentence.</summary>
+public enum EnumWorldGenRemoteState
+{
+    Unavailable,
+    Idle,
+    Prepared,
+    Running,
+    Paused,
+    Interrupted,
+    Faulted,
+    Complete,
+}
+
+/// <summary>
+/// Client -> server control request. RequestId correlates the result with the click that caused
+/// it. Every request receives an <see cref="AssistWorldGenStatus"/>, including refusals.
+/// </summary>
+[ProtoContract]
+public class AssistWorldGenRequest
+{
+    [ProtoMember(1)] public long RequestId;
+    [ProtoMember(2)] public EnumWorldGenControlAction Action;
+    [ProtoMember(3)] public int RadiusChunks;
+    [ProtoMember(4)] public EnumWorldGenShape Shape;
+    [ProtoMember(5)] public EnumWorldGenCentreMode CentreMode;
+    [ProtoMember(6)] public int X;
+    [ProtoMember(7)] public int Z;
+    [ProtoMember(8)] public string Preset = "Balanced";
+}
+
+/// <summary>
+/// Server -> client result plus the current structured status. Human text explains the latest
+/// action; numeric fields drive the progress bar and estimates without parsing that text.
+/// </summary>
+[ProtoContract]
+public class AssistWorldGenStatus
+{
+    [ProtoMember(1)] public long RequestId;
+    [ProtoMember(2)] public bool Success;
+    [ProtoMember(3)] public string Message = "";
+    [ProtoMember(4)] public bool Available;
+    [ProtoMember(5)] public bool CanControl;
+    [ProtoMember(6)] public EnumWorldGenRemoteState State;
+    [ProtoMember(7)] public bool PendingConfirmation;
+    [ProtoMember(8)] public int DoneColumns;
+    [ProtoMember(9)] public int TotalColumns;
+    [ProtoMember(10)] public double ColumnsPerSecond;
+    [ProtoMember(11)] public long EtaSeconds = -1;
+    [ProtoMember(12)] public long SavegameBytes;
+    [ProtoMember(13)] public long CacheBytes;
+    [ProtoMember(14)] public string Gate = "";
+    [ProtoMember(15)] public int EngineQueue;
+    [ProtoMember(16)] public int QueueTarget;
+    [ProtoMember(17)] public int InFlight;
+    [ProtoMember(18)] public int Retries;
+    [ProtoMember(19)] public int Failures;
+    [ProtoMember(20)] public int RadiusChunks;
+    [ProtoMember(21)] public EnumWorldGenShape Shape;
+    [ProtoMember(22)] public int CentreCx;
+    [ProtoMember(23)] public int CentreCz;
+    [ProtoMember(24)] public int MaxRadiusChunks;
+    [ProtoMember(25)] public int DefaultRadiusChunks;
+    [ProtoMember(26)] public string Preset = "Balanced";
+    [ProtoMember(27)] public int MaxInFlight;
 }
 
 /// <summary>

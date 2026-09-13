@@ -26,6 +26,8 @@ public sealed class LodAssistClient
     readonly ILogger logger;
     readonly string modVersion;
     IClientNetworkChannel? channel;
+    int serverProtocol;
+    int serverFeatures;
 
     /// <summary>Negotiated protocol, 0 until a usable welcome arrives.</summary>
     public int NegotiatedProtocol { get; private set; }
@@ -41,6 +43,20 @@ public sealed class LodAssistClient
     /// not have VintageHorizons or predates the diagnostic snapshot field.
     /// </summary>
     public AssistServerSettings? ServerSettings { get; private set; }
+
+    /// <summary>True only when this server explicitly advertised the append-only feature.</summary>
+    public bool WorldGenerationAvailable => serverProtocol > 0
+        && (serverFeatures & LodAssist.FeatureWorldGeneration) != 0;
+
+    public bool CanControlWorldGeneration { get; private set; }
+    public AssistWorldGenStatus? WorldGenStatus { get; private set; }
+    public event Action<AssistWorldGenStatus>? WorldGenStatusChanged;
+
+    readonly ConcurrentQueue<AssistWorldGenStatus> worldGenStatuses = new();
+    bool worldGenPageOpen;
+    long nextWorldGenPollMs;
+    long nextWorldGenRequestId;
+    long lastWorldGenStatusRequestId;
 
     public LodAssistClient(ICoreClientAPI capi, ILogger logger, string modVersion)
     {
@@ -61,9 +77,12 @@ public sealed class LodAssistClient
             .RegisterMessageType<AssistKeyManifest>()
             .RegisterMessageType<AssistSectionRequest>()
             .RegisterMessageType<AssistSection>()
+            .RegisterMessageType<AssistWorldGenRequest>()
+            .RegisterMessageType<AssistWorldGenStatus>()
             .SetMessageHandler<AssistWelcome>(OnWelcome)
             .SetMessageHandler<AssistKeyManifest>(OnKeyManifest)
-            .SetMessageHandler<AssistSection>(OnSection);
+            .SetMessageHandler<AssistSection>(OnSection)
+            .SetMessageHandler<AssistWorldGenStatus>(OnWorldGenStatus);
     }
 
     /// <summary>
@@ -105,9 +124,16 @@ public sealed class LodAssistClient
     {
         // Deserialized, so every reference field is whatever the wire produced.
         ServerSettings = msg.ServerSettings;
+        serverFeatures = msg.Features;
+        CanControlWorldGeneration = msg.CanControlWorldGeneration;
         string reason = msg.Status ?? "";
         string version = msg.ModVersion ?? "unknown";
         ManifestExpected = msg.ManifestKeyCount;
+
+        // Feature negotiation is valid even when terrain serving is disabled: an admin may
+        // deliberately permit explicit savegame generation while sharing no cached map.
+        serverProtocol = Math.Min(LodAssist.Protocol, msg.Protocol);
+        if (serverProtocol < 1) serverProtocol = 0;
 
         if (!msg.Enabled)
         {
@@ -120,7 +146,7 @@ public sealed class LodAssistClient
         }
 
         // Take the lower of the two so neither side has to know what the other added.
-        int negotiated = Math.Min(LodAssist.Protocol, msg.Protocol);
+        int negotiated = serverProtocol;
         if (negotiated < 1)
         {
             NegotiatedProtocol = 0;
@@ -132,6 +158,99 @@ public sealed class LodAssistClient
         NegotiatedProtocol = negotiated;
         Status = $"connected to server {version} (protocol {negotiated})";
         logger.Notification("VintageHorizons: server assist {0}", Status);
+    }
+
+    internal void OnWorldGenStatus(AssistWorldGenStatus status) =>
+        worldGenStatuses.Enqueue(status);
+
+    /// <summary>
+    /// Publish packet-thread status on the owning client thread, then poll at one hertz only
+    /// while the page is visible or a known job is still live.
+    /// </summary>
+    public void PumpWorldGen()
+    {
+        AssistWorldGenStatus? latest = null;
+        long newestRequestId = lastWorldGenStatusRequestId;
+        while (worldGenStatuses.TryDequeue(out AssistWorldGenStatus? next))
+        {
+            if (next.RequestId <= lastWorldGenStatusRequestId
+                || next.RequestId < newestRequestId) continue;
+            newestRequestId = next.RequestId;
+            latest = next;
+        }
+        if (latest != null)
+        {
+            lastWorldGenStatusRequestId = newestRequestId;
+            WorldGenStatus = latest;
+            CanControlWorldGeneration = latest.CanControl;
+            WorldGenStatusChanged?.Invoke(latest);
+        }
+
+        if (!ShouldPollWorldGen(worldGenPageOpen, WorldGenStatus?.State)) return;
+
+        long now = NowMs();
+        if (now < nextWorldGenPollMs) return;
+        nextWorldGenPollMs = now + 1000;
+        RequestWorldGen(EnumWorldGenControlAction.Status);
+    }
+
+    internal static bool ShouldPollWorldGen(bool pageOpen, EnumWorldGenRemoteState? state) =>
+        pageOpen || state is EnumWorldGenRemoteState.Running
+            or EnumWorldGenRemoteState.Paused or EnumWorldGenRemoteState.Faulted;
+
+    public void SetWorldGenPageOpen(bool open)
+    {
+        worldGenPageOpen = open;
+        if (open) nextWorldGenPollMs = 0;
+    }
+
+    public long RequestWorldGen(EnumWorldGenControlAction action,
+        int radiusChunks = 0, EnumWorldGenShape shape = EnumWorldGenShape.Circle,
+        EnumWorldGenCentreMode centreMode = EnumWorldGenCentreMode.Here,
+        int x = -1, int z = -1, string preset = "Balanced")
+    {
+        long requestId = Interlocked.Increment(ref nextWorldGenRequestId);
+        if (!WorldGenerationAvailable || channel == null || !channel.Connected)
+        {
+            OnWorldGenStatus(new AssistWorldGenStatus
+            {
+                RequestId = requestId,
+                Success = false,
+                Message = "[VintageHorizons] Generate World is unavailable on this server.",
+                State = EnumWorldGenRemoteState.Unavailable,
+                CanControl = CanControlWorldGeneration,
+            });
+            return requestId;
+        }
+
+        try
+        {
+            channel.SendPacket(new AssistWorldGenRequest
+            {
+                RequestId = requestId,
+                Action = action,
+                RadiusChunks = radiusChunks,
+                Shape = shape,
+                CentreMode = centreMode,
+                X = x,
+                Z = z,
+                Preset = preset,
+            });
+        }
+        catch (Exception e)
+        {
+            logger.Warning("VintageHorizons: Generate World request failed: {0}", e);
+            OnWorldGenStatus(new AssistWorldGenStatus
+            {
+                RequestId = requestId,
+                Success = false,
+                Message = "[VintageHorizons] The Generate World request could not be sent.",
+                State = WorldGenStatus?.State ?? EnumWorldGenRemoteState.Unavailable,
+                Available = WorldGenerationAvailable,
+                CanControl = CanControlWorldGeneration,
+            });
+        }
+        return requestId;
     }
 
     /// <summary>
@@ -445,8 +564,17 @@ public sealed class LodAssistClient
     public void Reset()
     {
         NegotiatedProtocol = 0;
+        serverProtocol = 0;
+        serverFeatures = 0;
         Status = "not connected yet";
         ServerSettings = null;
+        CanControlWorldGeneration = false;
+        WorldGenStatus = null;
+        worldGenPageOpen = false;
+        nextWorldGenPollMs = 0;
+        // IDs remain monotone across worlds. A late packet from the connection being torn
+        // down must not become the first status of the next savegame.
+        lastWorldGenStatusRequestId = nextWorldGenRequestId;
         RemoteKeys.Clear();
         ManifestComplete = false;
         ManifestExpected = 0;
@@ -459,6 +587,7 @@ public sealed class LodAssistClient
         PeakInFlight = 0;
         ResetPumpStats();
         while (manifestChunks.TryDequeue(out _)) { }
+        while (worldGenStatuses.TryDequeue(out _)) { }
         while (Arrived.TryDequeue(out var stale))
             Interlocked.Add(ref arrivedBytes, -stale.Blob.LongLength);
     }

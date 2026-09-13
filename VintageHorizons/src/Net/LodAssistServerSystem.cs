@@ -54,8 +54,11 @@ public class LodAssistServerSystem : ModSystem
             .RegisterMessageType<AssistKeyManifest>()
             .RegisterMessageType<AssistSectionRequest>()
             .RegisterMessageType<AssistSection>()
+            .RegisterMessageType<AssistWorldGenRequest>()
+            .RegisterMessageType<AssistWorldGenStatus>()
             .SetMessageHandler<AssistHello>(OnHello)
-            .SetMessageHandler<AssistSectionRequest>(OnSectionRequest);
+            .SetMessageHandler<AssistSectionRequest>(OnSectionRequest)
+            .SetMessageHandler<AssistWorldGenRequest>(OnWorldGenRequest);
 
         // Accumulate the configured per-second rates across normal ticks. Each allowance
         // is capped at one tick's share, so a slow tick cannot cause a catch-up burst.
@@ -144,6 +147,9 @@ public class LodAssistServerSystem : ModSystem
             Status = status,
             ManifestKeyCount = keys.Length,
             ServerSettings = AssistServerSettings.From(config),
+            Features = capture != null && config.EnableCapture && config.WorldGenerationEnabled
+                ? LodAssist.FeatureWorldGeneration : 0,
+            CanControlWorldGeneration = player.HasPrivilege(Privilege.controlserver),
         }, player);
 
         if (keys.Length > 0) SendManifest(player, keys);
@@ -151,6 +157,74 @@ public class LodAssistServerSystem : ModSystem
         // Recorded even when the cache was empty just now: that is the case that most
         // needs the follow-up offers.
         ledger.Greet(player.PlayerUID, keys);
+    }
+
+    void OnWorldGenRequest(IServerPlayer fromPlayer, AssistWorldGenRequest request)
+    {
+        // Network callbacks are not the server owner thread. The generator, its confirmation
+        // ledger and every engine query below are owner-thread state.
+        sapi.Event.EnqueueMainThreadTask(() => HandleWorldGenRequest(fromPlayer, request),
+            "vintagehorizons-worldgen-request");
+    }
+
+    void HandleWorldGenRequest(IServerPlayer player, AssistWorldGenRequest request)
+    {
+        LodServerCaptureSystem? capture = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>();
+        bool canControl = player.HasPrivilege(Privilege.controlserver);
+        bool success = true;
+        string message = "";
+
+        string? refusal = WorldGenRequestRefusal(
+            ledger.HasGreeted(player.PlayerUID), capture != null, canControl, request.Action);
+        if (refusal != null)
+        {
+            success = false;
+            message = refusal;
+        }
+        else
+        {
+            LodServerCaptureSystem owner = capture!;
+            (success, message) = request.Action switch
+            {
+                EnumWorldGenControlAction.Status => (true, ""),
+                EnumWorldGenControlAction.Prepare => owner.WorldGenPrepare(
+                    player.PlayerUID, player.PlayerName,
+                    player.Entity?.Pos.X, player.Entity?.Pos.Z,
+                    request.RadiusChunks, request.Shape, request.CentreMode,
+                    request.X, request.Z, request.Preset ?? "Balanced"),
+                EnumWorldGenControlAction.Confirm => owner.WorldGenConfirm(player.PlayerUID),
+                EnumWorldGenControlAction.Pause => owner.WorldGenPause(),
+                EnumWorldGenControlAction.Resume => owner.WorldGenResume(),
+                EnumWorldGenControlAction.Stop => owner.WorldGenStop(player.PlayerUID),
+                _ => (false, "[VintageHorizons] The Generate page sent an unknown action."),
+            };
+        }
+
+        AssistWorldGenStatus status = capture?.WorldGenPageStatus(
+            player.PlayerUID, canControl, request.RequestId, success, message)
+            ?? new AssistWorldGenStatus
+            {
+                RequestId = request.RequestId,
+                Success = false,
+                Message = message,
+                State = EnumWorldGenRemoteState.Unavailable,
+                CanControl = canControl,
+            };
+        channel.SendPacket(status, player);
+    }
+
+    internal static string? WorldGenRequestRefusal(bool greeted, bool captureAvailable,
+        bool canControl, EnumWorldGenControlAction action)
+    {
+        if (!greeted)
+            return "[VintageHorizons] The Generate page has not completed its server handshake.";
+        if (!captureAvailable)
+            return "[VintageHorizons] Savegame world generation is unavailable on this server.";
+        if (!Enum.IsDefined(action))
+            return "[VintageHorizons] The Generate page sent an unknown action.";
+        if (action != EnumWorldGenControlAction.Status && !canControl)
+            return "[VintageHorizons] You may view progress, but controlserver permission is required to change it.";
+        return null;
     }
 
     readonly ManifestLedger ledger = new();

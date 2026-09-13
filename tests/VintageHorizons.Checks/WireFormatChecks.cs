@@ -47,7 +47,8 @@ public static class WireFormatChecks
         {
             "1:Protocol:Int32", "2:ModVersion:String", "3:Enabled:Boolean",
             "4:Status:String", "5:ManifestKeyCount:Int32",
-            "6:ServerSettings:AssistServerSettings",
+            "6:ServerSettings:AssistServerSettings", "7:Features:Int32",
+            "8:CanControlWorldGeneration:Boolean",
         }, Layout(typeof(AssistWelcome)), "AssistWelcome field numbers");
 
         c.SeqEq(new[]
@@ -55,8 +56,12 @@ public static class WireFormatChecks
             "10:GenerateMaxRadiusChunks:Int32", "11:GenerateDefaultRadiusChunks:Int32",
             "12:GenerateColumnsPerSecond:Int32", "13:GenerateMaxInFlight:Int32",
             "14:PregenRadiusChunks:Int32", "15:PregenColumnsPerSecond:Int32",
-            "16:RefreshColumnsPerSecond:Int32",
-            "1:EnableCapture:Boolean", "2:EnableServing:Boolean",
+            "16:RefreshColumnsPerSecond:Int32", "17:EnableWorldGeneration:Boolean",
+            "18:WorldGenMaxRadiusChunks:Int32", "19:WorldGenDefaultRadiusChunks:Int32",
+            "1:EnableCapture:Boolean",
+            "20:WorldGenQueueTarget:Int32", "21:WorldGenMaxInFlight:Int32",
+            "22:WorldGenDirtySectionLimit:Int32", "23:WorldGenOldestDirtySeconds:Int32",
+            "2:EnableServing:Boolean",
             "3:ServeRadiusBlocks:Int32", "4:MaxSectionsPerSecondPerPlayer:Int32",
             "5:MaxSectionsPerSecondTotal:Int32", "6:SweepSavegame:Boolean",
             "7:SweepRadiusChunks:Int32", "8:SweepColumnsPerSecond:Int32",
@@ -72,6 +77,29 @@ public static class WireFormatChecks
         c.SeqEq(new[] { "1:Keys:Int64[]" },
             Layout(typeof(AssistSectionRequest)), "AssistSectionRequest field numbers");
 
+        c.SeqEq(new[]
+        {
+            "1:RequestId:Int64", "2:Action:EnumWorldGenControlAction",
+            "3:RadiusChunks:Int32", "4:Shape:EnumWorldGenShape",
+            "5:CentreMode:EnumWorldGenCentreMode", "6:X:Int32", "7:Z:Int32",
+            "8:Preset:String",
+        }, Layout(typeof(AssistWorldGenRequest)), "AssistWorldGenRequest field numbers");
+
+        c.SeqEq(new[]
+        {
+            "10:ColumnsPerSecond:Double", "11:EtaSeconds:Int64",
+            "12:SavegameBytes:Int64", "13:CacheBytes:Int64", "14:Gate:String",
+            "15:EngineQueue:Int32", "16:QueueTarget:Int32", "17:InFlight:Int32",
+            "18:Retries:Int32", "19:Failures:Int32", "1:RequestId:Int64",
+            "20:RadiusChunks:Int32", "21:Shape:EnumWorldGenShape", "22:CentreCx:Int32",
+            "23:CentreCz:Int32", "24:MaxRadiusChunks:Int32",
+            "25:DefaultRadiusChunks:Int32", "26:Preset:String", "27:MaxInFlight:Int32",
+            "2:Success:Boolean",
+            "3:Message:String", "4:Available:Boolean", "5:CanControl:Boolean",
+            "6:State:EnumWorldGenRemoteState", "7:PendingConfirmation:Boolean",
+            "8:DoneColumns:Int32", "9:TotalColumns:Int32",
+        }, Layout(typeof(AssistWorldGenStatus)), "AssistWorldGenStatus field numbers");
+
         // Retryable was ADDED at 3, not slotted into an existing number. That is the one
         // shape of change this contract allows without a protocol bump: an older peer
         // ignores a field it does not know, and 1 and 2 still mean what they meant.
@@ -81,6 +109,12 @@ public static class WireFormatChecks
         // The negotiated protocol number itself. A client takes Math.Min of its own and
         // the server's, so bumping this is a deliberate compatibility decision.
         c.Eq(1, LodAssist.Protocol, "the protocol version is 1");
+        c.Eq(1, LodAssist.FeatureWorldGeneration,
+            "feature bit zero remains the Generate page");
+        c.Eq(2, LodAssist.FeatureFrontierGeneration,
+            "feature bit one is reserved for frontier generation");
+        c.Eq(4, LodAssist.FeatureSilhouetteTiles,
+            "feature bit two is reserved for silhouette tiles");
     }
 
     /// <summary>
@@ -98,6 +132,8 @@ public static class WireFormatChecks
         {
             Protocol = 1, ModVersion = "0.2.0", Enabled = true,
             Status = "serving from 5 cached sections", ManifestKeyCount = 5,
+            Features = LodAssist.FeatureWorldGeneration,
+            CanControlWorldGeneration = true,
             ServerSettings = new AssistServerSettings
             {
                 EnableCapture = true,
@@ -116,6 +152,13 @@ public static class WireFormatChecks
                 PregenRadiusChunks = 0,
                 PregenColumnsPerSecond = 8,
                 RefreshColumnsPerSecond = 1,
+                EnableWorldGeneration = true,
+                WorldGenMaxRadiusChunks = 256,
+                WorldGenDefaultRadiusChunks = 32,
+                WorldGenQueueTarget = 120,
+                WorldGenMaxInFlight = 160,
+                WorldGenDirtySectionLimit = 512,
+                WorldGenOldestDirtySeconds = 120,
             },
         });
         c.Eq(true, welcome.Enabled, "welcome enabled flag survives");
@@ -127,6 +170,73 @@ public static class WireFormatChecks
             "welcome generation settings survive");
         c.Eq(1, welcome.ServerSettings?.RefreshColumnsPerSecond ?? -1,
             "welcome rolling-refresh settings survive");
+        c.Eq(LodAssist.FeatureWorldGeneration, welcome.Features,
+            "welcome world-generation feature survives");
+        c.True(welcome.CanControlWorldGeneration,
+            "welcome world-generation permission survives");
+        c.Eq(256, welcome.ServerSettings?.WorldGenMaxRadiusChunks ?? -1,
+            "welcome real-world generation settings survive");
+
+        var worldGenRequest = Roundtrip(new AssistWorldGenRequest
+        {
+            RequestId = 17,
+            Action = EnumWorldGenControlAction.Prepare,
+            RadiusChunks = 48,
+            Shape = EnumWorldGenShape.Circle,
+            CentreMode = EnumWorldGenCentreMode.Coordinates,
+            X = 1234,
+            Z = 5678,
+            Preset = "Balanced",
+        });
+        c.Eq(17L, worldGenRequest.RequestId, "world-generation request id survives");
+        c.Eq(EnumWorldGenControlAction.Prepare, worldGenRequest.Action,
+            "world-generation request action survives");
+        c.Eq(EnumWorldGenCentreMode.Coordinates, worldGenRequest.CentreMode,
+            "world-generation centre mode survives");
+        c.Eq(1234, worldGenRequest.X, "world-generation x coordinate survives");
+
+        var worldGenStatus = Roundtrip(new AssistWorldGenStatus
+        {
+            RequestId = 17,
+            Success = true,
+            Message = "prepared",
+            Available = true,
+            CanControl = true,
+            State = EnumWorldGenRemoteState.Prepared,
+            PendingConfirmation = true,
+            DoneColumns = 12,
+            TotalColumns = 120,
+            ColumnsPerSecond = 9.5,
+            EtaSeconds = 14,
+            SavegameBytes = 1000,
+            CacheBytes = 2000,
+            Gate = "engine queue",
+            EngineQueue = 80,
+            QueueTarget = 120,
+            InFlight = 16,
+            Retries = 2,
+            Failures = 1,
+            RadiusChunks = 48,
+            Shape = EnumWorldGenShape.Circle,
+            CentreCx = 30,
+            CentreCz = 40,
+            MaxRadiusChunks = 256,
+            DefaultRadiusChunks = 32,
+            Preset = "Balanced",
+            MaxInFlight = 160,
+        });
+        c.Eq(EnumWorldGenRemoteState.Prepared, worldGenStatus.State,
+            "world-generation structured state survives");
+        c.True(worldGenStatus.PendingConfirmation,
+            "world-generation confirmation state survives");
+        c.Near(9.5, worldGenStatus.ColumnsPerSecond, 1e-9,
+            "world-generation measured rate survives");
+        c.Eq(2000L, worldGenStatus.CacheBytes,
+            "world-generation cache growth survives");
+        c.Eq(256, worldGenStatus.MaxRadiusChunks,
+            "world-generation server radius limit survives");
+        c.Eq(160, worldGenStatus.MaxInFlight,
+            "world-generation kept-column limit survives");
 
         var keys = new[] { 0L, 1L, -1L, long.MaxValue, long.MinValue };
         var manifest = Roundtrip(new AssistKeyManifest

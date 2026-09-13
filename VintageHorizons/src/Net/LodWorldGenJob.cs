@@ -135,6 +135,11 @@ internal sealed class LodWorldGenStateStore
 /// until the LOD capture result lands. The host drives <see cref="Tick"/> from the same
 /// owning-thread tick as the pipeline and forwards capture/persistence notifications.
 /// </summary>
+internal readonly record struct LodWorldGenProgress(
+    int DoneColumns, int TotalColumns, int Percent, double ColumnsPerSecond,
+    long EtaSeconds, long SavegameBytes, long CacheBytes, string Gate,
+    int EngineQueue, int QueueTarget, int InFlight, int Retries, int Failures);
+
 internal sealed class LodWorldGenJob
 {
     public const int EstimatedSavegameBytesPerColumn = 50 * 1024;
@@ -199,17 +204,10 @@ internal sealed class LodWorldGenJob
         this.config = config;
         savegamePath = sapi.WorldManager.CurrentWorldFilepath;
 
-        // Cache rows outrank an older state file. This also makes a new run over a partly
-        // generated area skip all work it has already completed.
-        for (int i = 0; i < plan.Count; i++)
-        {
-            LodWorldGenColumn column = plan.Columns[i];
-            bool cacheHasL0 = pipeline.World.HasDataSet.Contains(
-                LodWorld.SectionKey(0, column.Cx, column.Cz));
-            if (LodWorldGenSkip.Classify(cacheHasL0, state.IsDone(i))
-                == EnumWorldGenSkipReason.ServerCache)
-                state.MarkDone(i);
-        }
+        // Only this job's own durable cursor may omit an unfinished plan column. A server
+        // cache row can come from /vhgen or a frontier peek and therefore does not prove the
+        // real savegame contains that terrain. Every other column takes the engine's real
+        // load/generate path; an unchanged authoritative row completes after capture below.
         doneCount = state.DoneCount();
         persistedCheckpointPercent = Percent;
         nextLogPercent = Math.Min(100, (Percent / 5 + 1) * 5);
@@ -265,6 +263,7 @@ internal sealed class LodWorldGenJob
             }
             if (pipeline.CaptureBacklogTotal > 0 || pipeline.DirtySections > 0)
             {
+                pipeline.RequestPersistenceCheckpoint();
                 Gate = EnumWorldGenGate.FinalPersistence;
                 return;
             }
@@ -279,6 +278,8 @@ internal sealed class LodWorldGenJob
             if (leases.Count > 0 || pipeline.CaptureBacklogTotal > 0
                 || pipeline.DirtySections > 0)
             {
+                if (leases.Count == 0 && pipeline.CaptureBacklogTotal == 0)
+                    pipeline.RequestPersistenceCheckpoint();
                 Gate = EnumWorldGenGate.TilePyramid;
                 return;
             }
@@ -385,6 +386,13 @@ internal sealed class LodWorldGenJob
         if (releaser.TryRelease(cx, cz, out string reason))
         {
             leases.Remove(cx, cz);
+            // If applying this authoritative capture changed nothing, the existing local row
+            // is already the newest durable answer and no save completion will be emitted.
+            if (pipeline.IsAuthoritativeChunkDurable(cx, cz))
+                MarkDurable(lease.Index, Environment.TickCount64);
+            else if (!pipeline.IsChunkAwaitingPersistence(cx, cz))
+                SetFault($"captured column {cx},{cz} produced no complete authoritative "
+                    + "distant-terrain row and no persistence obligation");
         }
         else
         {
@@ -396,15 +404,26 @@ internal sealed class LodWorldGenJob
     public void ObservePersisted(long key)
     {
         if (LodWorld.KeyLevel(key) != 0) return;
-        int cx = LodWorld.KeySx(key);
-        int cz = LodWorld.KeySz(key);
-        if (!plan.TryGetIndex(cx, cz, out int index)) return;
-        if (!state.MarkDone(index)) return;
+        long now = Environment.TickCount64;
+        // One level-zero row covers 2x2 engine chunks. Credit only chunks this run captured
+        // before this newest-row durability acknowledgement; the callback deliberately does
+        // not guess one chunk from the section coordinate.
+        int[] durable = capturedThisRun
+            .Where(index =>
+            {
+                LodWorldGenColumn column = plan.Columns[index];
+                return LodWorldGenSections.ContainsChunk(key, column.Cx, column.Cz);
+            })
+            .ToArray();
+        foreach (int index in durable) MarkDurable(index, now);
+    }
 
+    void MarkDurable(int index, long now)
+    {
+        if (!state.MarkDone(index)) return;
         capturedThisRun.Remove(index);
         failedThisRun.Remove(index);
         doneCount++;
-        long now = Environment.TickCount64;
         completedAtMs.Enqueue(now);
         TrimRateWindow(now);
 
@@ -571,26 +590,38 @@ internal sealed class LodWorldGenJob
     {
         get
         {
-            long now = Environment.TickCount64;
-            TrimRateWindow(now);
-            double rateSeconds = Math.Clamp((now - rateWindowStartedMs) / 1000.0, 1.0, 60.0);
-            double rate = completedAtMs.Count / rateSeconds;
-            int remaining = Math.Max(0, plan.Count - doneCount);
-            string eta = rate > 0.01
-                ? FormatDuration((long)Math.Ceiling(remaining / rate))
+            LodWorldGenProgress progress = Snapshot();
+            string eta = progress.EtaSeconds >= 0
+                ? FormatDuration(progress.EtaSeconds)
                 : "measuring";
-            long saveGrowth = Math.Max(0, SafeLength(savegamePath) - state.SavegameBytesAtStart);
-            long cacheGrowth = Math.Max(0, SafeLength(pipeline.DbPath) - state.CacheBytesAtStart);
-            string gate = Faulted ? faultReason : LodWorldGenGates.Describe(Gate);
             return string.Format(System.Globalization.CultureInfo.InvariantCulture,
                 "[VintageHorizons] World generation: {0}/{1} columns ({2}%), {3:0.0}/s over "
                 + "the last minute, ETA {4}; disk +{5:0.0} MiB savegame, +{6:0.0} MiB cache; "
                 + "{7}; engine queue {8}/{9}, {10} kept, {11} retries, {12} failures.",
-                doneCount, plan.Count, Percent, rate, eta,
-                saveGrowth / (1024.0 * 1024.0), cacheGrowth / (1024.0 * 1024.0),
-                gate, sapi.WorldManager.CurrentGeneratingChunkCount,
-                config.WorldGenQueueTarget, leases.Count, retries, failures);
+                progress.DoneColumns, progress.TotalColumns, progress.Percent,
+                progress.ColumnsPerSecond, eta,
+                progress.SavegameBytes / (1024.0 * 1024.0),
+                progress.CacheBytes / (1024.0 * 1024.0), progress.Gate,
+                progress.EngineQueue, progress.QueueTarget, progress.InFlight,
+                progress.Retries, progress.Failures);
         }
+    }
+
+    /// <summary>Owning-thread status snapshot for the command and network page.</summary>
+    public LodWorldGenProgress Snapshot()
+    {
+        long now = Environment.TickCount64;
+        TrimRateWindow(now);
+        double rateSeconds = Math.Clamp((now - rateWindowStartedMs) / 1000.0, 1.0, 60.0);
+        double rate = completedAtMs.Count / rateSeconds;
+        int remaining = Math.Max(0, plan.Count - doneCount);
+        long etaSeconds = rate > 0.01 ? (long)Math.Ceiling(remaining / rate) : -1;
+        long saveGrowth = Math.Max(0, SafeLength(savegamePath) - state.SavegameBytesAtStart);
+        long cacheGrowth = Math.Max(0, SafeLength(pipeline.DbPath) - state.CacheBytesAtStart);
+        string gate = Faulted ? faultReason : LodWorldGenGates.Describe(Gate);
+        return new LodWorldGenProgress(doneCount, plan.Count, Percent, rate, etaSeconds,
+            saveGrowth, cacheGrowth, gate, sapi.WorldManager.CurrentGeneratingChunkCount,
+            config.WorldGenQueueTarget, leases.Count, retries, failures);
     }
 
     static string FormatDuration(long seconds)

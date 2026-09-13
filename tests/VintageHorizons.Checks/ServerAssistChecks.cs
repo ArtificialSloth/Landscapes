@@ -14,6 +14,7 @@ public static class ServerAssistChecks
         SpiralIsAnExactCover(c);
         ServeRadiusIsNearestEdge(c);
         ProtocolNegotiation(c);
+        WorldGenerationCapability(c);
         ManifestAndArrivals(c);
         ArrivalDrainIsByteBoundedAndOldestFirst(c);
         InFlightCapReleasesOnAnyReply(c);
@@ -401,6 +402,98 @@ public static class ServerAssistChecks
         client.Reset();
         client.OnWelcome(new AssistWelcome { Protocol = LodAssist.Protocol, Enabled = true });
         c.False(client.Status.Contains("unknown"), "an empty version does not reach the unknown fallback");
+    }
+
+    static void WorldGenerationCapability(Check c)
+    {
+        c.True(LodAssistServerSystem.WorldGenRequestRefusal(
+                greeted: true, captureAvailable: true, canControl: false,
+                EnumWorldGenControlAction.Status) == null,
+            "world-generation status remains readable without control permission");
+        c.True(LodAssistServerSystem.WorldGenRequestRefusal(
+                greeted: true, captureAvailable: true, canControl: false,
+                EnumWorldGenControlAction.Prepare)?.Contains("controlserver") == true,
+            "a mutating world-generation request is refused without control permission");
+        c.True(LodAssistServerSystem.WorldGenRequestRefusal(
+                greeted: false, captureAvailable: true, canControl: true,
+                EnumWorldGenControlAction.Status)?.Contains("handshake") == true,
+            "a request before the assist handshake is explicitly refused");
+        c.True(LodAssistServerSystem.WorldGenRequestRefusal(
+                greeted: true, captureAvailable: false, canControl: true,
+                EnumWorldGenControlAction.Status)?.Contains("unavailable") == true,
+            "a request without the capture owner is explicitly refused");
+        c.True(LodAssistServerSystem.WorldGenRequestRefusal(
+                greeted: true, captureAvailable: true, canControl: true,
+                (EnumWorldGenControlAction)99)?.Contains("unknown") == true,
+            "an unknown world-generation action is explicitly refused");
+
+        c.False(LodAssistClient.ShouldPollWorldGen(false, EnumWorldGenRemoteState.Idle),
+            "an idle closed Generate page sends no status traffic");
+        c.True(LodAssistClient.ShouldPollWorldGen(true, EnumWorldGenRemoteState.Idle),
+            "an open Generate page polls for status");
+        c.True(LodAssistClient.ShouldPollWorldGen(false, EnumWorldGenRemoteState.Running),
+            "a running job keeps status live after the page closes");
+        c.False(LodAssistClient.ShouldPollWorldGen(false, EnumWorldGenRemoteState.Complete),
+            "a completed closed job stops polling");
+
+        var client = new LodAssistClient(null!, new CaptureLogger(), "0.4.74");
+        client.OnWelcome(new AssistWelcome
+        {
+            Protocol = LodAssist.Protocol,
+            Enabled = false,
+            Features = LodAssist.FeatureWorldGeneration,
+            CanControlWorldGeneration = true,
+            Status = "terrain sharing disabled",
+        });
+        c.False(client.Available,
+            "terrain sharing may stay disabled while the Generate capability is present");
+        c.True(client.WorldGenerationAvailable,
+            "Generate capability negotiation is independent of terrain sharing");
+        c.True(client.CanControlWorldGeneration,
+            "the welcome publishes the player's initial control permission");
+
+        int events = 0;
+        client.WorldGenStatusChanged += _ => events++;
+        client.OnWorldGenStatus(new AssistWorldGenStatus
+        {
+            RequestId = 4,
+            Available = true,
+            CanControl = false,
+            State = EnumWorldGenRemoteState.Idle,
+            Message = "read only",
+        });
+        c.True(client.WorldGenStatus == null && events == 0,
+            "a packet-thread Generate reply is queued rather than published directly");
+        client.PumpWorldGen();
+        c.Eq(4L, client.WorldGenStatus?.RequestId ?? -1,
+            "the owner-thread pump publishes the structured Generate reply");
+        c.False(client.CanControlWorldGeneration,
+            "a current status reply refreshes changed server permission");
+        c.Eq(1, events, "the Generate page is notified once for the published reply");
+
+        client.OnWorldGenStatus(new AssistWorldGenStatus
+        {
+            RequestId = 6,
+            Available = true,
+            State = EnumWorldGenRemoteState.Idle,
+            Message = "newest",
+        });
+        client.OnWorldGenStatus(new AssistWorldGenStatus
+        {
+            RequestId = 5,
+            Available = true,
+            State = EnumWorldGenRemoteState.Idle,
+            Message = "stale",
+        });
+        client.PumpWorldGen();
+        c.Eq("newest", client.WorldGenStatus?.Message,
+            "an out-of-order older reply cannot overwrite newer Generate state");
+
+        client.Reset();
+        c.False(client.WorldGenerationAvailable,
+            "leaving the world drops the prior server's Generate capability");
+        c.True(client.WorldGenStatus == null,
+            "leaving the world drops the prior job status");
     }
 
     /// <summary>

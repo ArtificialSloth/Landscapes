@@ -15,20 +15,34 @@ public readonly record struct LodWorldGenTile(int X, int Z, int FirstColumn, int
 /// <summary>One column in a deterministic world-generation plan.</summary>
 public readonly record struct LodWorldGenColumn(int Cx, int Cz, int Tile);
 
-public enum EnumWorldGenSkipReason
+/// <summary>Chunk/L0-section mapping shared by capture persistence and the resumable plan.</summary>
+public static class LodWorldGenSections
 {
-    None,
-    DurableState,
-    ServerCache,
-}
+    public const int ChunkBlocks = 32;
+    public const int ChunksPerLevelZeroSection = LodSection.SectionBlocks / ChunkBlocks;
 
-/// <summary>The only two reasons a planned real column is omitted before issuing.</summary>
-public static class LodWorldGenSkip
-{
-    public static EnumWorldGenSkipReason Classify(bool serverCacheHasL0, bool stateDone) =>
-        serverCacheHasL0 ? EnumWorldGenSkipReason.ServerCache
-        : stateDone     ? EnumWorldGenSkipReason.DurableState
-        :                 EnumWorldGenSkipReason.None;
+    public static long KeyForChunk(int cx, int cz) => LodWorld.SectionKey(0,
+        cx / ChunksPerLevelZeroSection, cz / ChunksPerLevelZeroSection);
+
+    public static bool ContainsChunk(long levelZeroKey, int cx, int cz) =>
+        LodWorld.KeyLevel(levelZeroKey) == 0 && KeyForChunk(cx, cz) == levelZeroKey;
+
+    /// <summary>Whether all block columns in one chunk came from loaded/savegame terrain.</summary>
+    public static bool HasAuthoritativeColumns(LodSection section, int cx, int cz)
+    {
+        int chunkColumns = LodSection.GridSize / ChunksPerLevelZeroSection;
+        int startX = cx % ChunksPerLevelZeroSection * chunkColumns;
+        int startZ = cz % ChunksPerLevelZeroSection * chunkColumns;
+        for (int z = startZ; z < startZ + chunkColumns; z++)
+        {
+            for (int x = startX; x < startX + chunkColumns; x++)
+            {
+                int col = LodSection.ColumnIndex(x, z);
+                if (!section.Captured[col] || !section.IsSnowStateObserved(col)) return false;
+            }
+        }
+        return true;
+    }
 }
 
 /// <summary>
@@ -170,9 +184,10 @@ public sealed class LodWorldGenPlan
 public sealed class LodWorldGenState
 {
     // Format 2 changed plan order from globally aligned square rings/rows to a circular
-    // outward tile spiral. Refusing an earlier cursor is safer than assigning its bits to
-    // different columns.
-    public const int CurrentFormat = 2;
+    // outward tile spiral. Format 3 repairs the durable acknowledgement mapping: one L0
+    // section covers 2x2 chunks, while format 2 accidentally treated its section coordinate
+    // as a chunk coordinate and could credit the wrong DoneBits. Those cursors are unsafe.
+    public const int CurrentFormat = 3;
 
     public int Format { get; set; } = CurrentFormat;
     public int CentreCx { get; set; }
@@ -316,9 +331,12 @@ public enum EnumWorldGenAuthority
     StartupPregen,
     TransientGeneration,
     WorldGeneration,
-    Frontier,
 }
 
+/// <summary>
+/// Exclusive authority belongs only to explicit/bounded jobs. A future automatic frontier
+/// planner observes this state and yields; it must never acquire and block player work.
+/// </summary>
 public sealed class LodWorldGenAuthority
 {
     public EnumWorldGenAuthority Current { get; private set; }

@@ -154,6 +154,13 @@ public class VintageHorizonsConfig
     /// </summary>
     public bool LoadWhilePaused = true;
 
+    /// <summary>Remembered Generate-page choices; the server remains authority for limits.</summary>
+    public int WorldGenRadiusChunks = 32;
+    public string WorldGenShape = "circle";
+    public string WorldGenCentre = "here";
+    public int WorldGenCentreX;
+    public int WorldGenCentreZ;
+
     /// <summary>The on-screen column width, in pixels, automatic thresholds hand each level over at.</summary>
     public float LodTargetPixels = LodAutoThresholds.DefaultTargetPixels;
 
@@ -601,6 +608,9 @@ public partial class VintageHorizonsModSystem : ModSystem
             }
         }
 
+        // Generate-page status is a separate advertised capability: it remains usable when
+        // terrain serving is disabled, so publish/poll it before the terrain-assist gate.
+        assist?.PumpWorldGen();
         if (assist == null || !assist.Available) return;
 
         int before = pipeline.RemoteOnly.Count;
@@ -2459,15 +2469,38 @@ public partial class VintageHorizonsModSystem : ModSystem
         bool loadWhilePaused = deferringTo == null
             ? renderer.ContinueLoadingWhilePaused
             : config.LoadWhilePaused;
+        var worldGen = new WorldGenTuning(
+            ConfiguredWorldGenPreferences(), assist, SaveWorldGenPreferences);
 
         return requestRecompose != null && requestClose != null
             ? new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
-                loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning,
+                loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, worldGen,
                 requestRecompose, requestClose, ApplyGuiConfig)
             : new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
-                loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, ApplyGuiConfig);
+                loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, worldGen,
+                ApplyGuiConfig);
+    }
+
+    LodWorldGenPreferences ConfiguredWorldGenPreferences()
+    {
+        EnumWorldGenShape shape = Enum.TryParse(config.WorldGenShape, true,
+            out EnumWorldGenShape parsedShape) ? parsedShape : LodWorldGenPlan.DefaultShape;
+        EnumWorldGenCentreMode centre = Enum.TryParse(config.WorldGenCentre, true,
+            out EnumWorldGenCentreMode parsedCentre) ? parsedCentre : EnumWorldGenCentreMode.Here;
+        int maxRadius = assist?.ServerSettings?.WorldGenMaxRadiusChunks ?? 256;
+        return new LodWorldGenPreferences(config.WorldGenRadiusChunks, shape, centre,
+            config.WorldGenCentreX, config.WorldGenCentreZ, "Balanced").Normalize(maxRadius);
+    }
+
+    void SaveWorldGenPreferences(LodWorldGenPreferences value)
+    {
+        config.WorldGenRadiusChunks = value.RadiusChunks;
+        config.WorldGenShape = value.Shape.ToString().ToLowerInvariant();
+        config.WorldGenCentre = value.CentreMode.ToString().ToLowerInvariant();
+        config.WorldGenCentreX = value.X;
+        config.WorldGenCentreZ = value.Z;
     }
 
     /// <summary>
