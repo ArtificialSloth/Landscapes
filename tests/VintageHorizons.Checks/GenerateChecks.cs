@@ -19,8 +19,25 @@ public static class GenerateChecks
         RefreshNeverGenerates(c);
         GeneratorConstants(c);
         AbsentSampling(c);
+        SweepAbsenceVerdicts(c);
         SnowRefreshCampaigns(c);
         SnowActivityBands(c);
+    }
+
+    static void SweepAbsenceVerdicts(Check c)
+    {
+        c.Eq(EnumSweepAbsenceResult.Verified,
+            LodSavegameSweep.ClassifyAbsenceResult(regrown: 0, otherGenerationQueuePeak: 0),
+            "a clean absence sample verifies an idle sweep");
+        c.Eq(EnumSweepAbsenceResult.Verified,
+            LodSavegameSweep.ClassifyAbsenceResult(regrown: 0, otherGenerationQueuePeak: 201),
+            "other generation does not erase a clean absence result");
+        c.Eq(EnumSweepAbsenceResult.Unsafe,
+            LodSavegameSweep.ClassifyAbsenceResult(regrown: 1, otherGenerationQueuePeak: 0),
+            "new terrain with no competing engine work retains the unsafe-sweep warning");
+        c.Eq(EnumSweepAbsenceResult.Inconclusive,
+            LodSavegameSweep.ClassifyAbsenceResult(regrown: 6, otherGenerationQueuePeak: 201),
+            "new terrain during independently observed pregen is inconclusive, not a sweep warning");
     }
 
     static void RefreshNeverGenerates(Check c)

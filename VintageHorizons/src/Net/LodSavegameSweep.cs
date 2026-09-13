@@ -76,11 +76,13 @@ public class LodSavegameSweep
     int loadIndex;
     int reported;
     int nextCanaryRegion;
+    int otherGenerationQueuePeak;
     long nextSnowPollMs;
     long listenerId;
     bool listenerRegistered;
     bool active;
     bool verifying;
+    bool issuedSweepLoad;
 
     int spawnCx;
     int spawnCz;
@@ -154,6 +156,7 @@ public class LodSavegameSweep
         active = true;
         spawnCx = (int)sapi.World.DefaultSpawnPosition.X / GlobalConstants.ChunkSize;
         spawnCz = (int)sapi.World.DefaultSpawnPosition.Z / GlobalConstants.ChunkSize;
+        ObserveOtherGenerationQueue();
 
         logger.Notification(
             "Sweeping the savegame for terrain that already exists, out to {0} blocks around "
@@ -173,6 +176,7 @@ public class LodSavegameSweep
     void Step()
     {
         if (!active || verifying) return;
+        ObserveOtherGenerationQueue();
         LodPhaseStart phaseStart = LodPhaseCost.Start(TrackPhaseAllocations);
         if (Done)
         {
@@ -271,6 +275,7 @@ public class LodSavegameSweep
             snowRefresh.Add(cx, cz, chunksPerRegion);
             // Not KeepLoaded: each column needs to pass through capture once, not stay
             // resident. A radius worth sweeping is far more terrain than fits in memory.
+            issuedSweepLoad = true;
             sapi.WorldManager.LoadChunkColumnPriority(cx, cz);
             Loaded++;
             loaded++;
@@ -301,7 +306,9 @@ public class LodSavegameSweep
         PrimeSnowActivity();
         nextSnowPollMs = sapi.World.ElapsedMilliseconds + SnowPollIntervalMs;
 
-        if (verified.Regrown > 0)
+        EnumSweepAbsenceResult absenceResult = ClassifyAbsenceResult(
+            verified.Regrown, otherGenerationQueuePeak);
+        if (absenceResult == EnumSweepAbsenceResult.Unsafe)
         {
             logger.Warning(
                 "Savegame sweep: {0} of {1} sampled positions that did not exist before the "
@@ -311,11 +318,20 @@ public class LodSavegameSweep
                 + "report this.", verified.Regrown, verified.Checked);
         }
 
+        string absenceDescription = absenceResult == EnumSweepAbsenceResult.Inconclusive
+            ? $"Absence check inconclusive: {verified.Regrown} of {verified.Checked} sampled "
+                + "positions that were absent now exist, but the engine's generation/load queue "
+                + $"was already active before the sweep issued any loads (peak {otherGenerationQueuePeak})"
+            : verified.Describe();
+        string generationDescription = absenceResult == EnumSweepAbsenceResult.Inconclusive
+            ? "the sweep requested only terrain that already existed"
+            : "nothing generated";
+
         logger.Notification(
             "Savegame sweep finished: {0} columns loaded from terrain that already existed, "
-            + "{1} skipped on the frontier, nothing generated. {2}. Capture continues in the "
-            + "background; the cache is complete once no columns remain queued. {3}",
-            Loaded, SkippedEdge, verified.Describe(),
+            + "{1} skipped on the frontier, {2}. {3}. Capture continues in the background; "
+            + "the cache is complete once no columns remain queued. {4}",
+            Loaded, SkippedEdge, generationDescription, absenceDescription,
             AutomaticSnowRefresh
                 ? $"Automatic snow refresh is watching {snowRefresh.Count} existing columns "
                     + $"in {snowRefresh.RegionCount} map regions; weather changes create finite "
@@ -323,6 +339,29 @@ public class LodSavegameSweep
                 : "Automatic snow refresh is disabled.");
 
         if (!AutomaticSnowRefresh) Stop();
+    }
+
+    /// <summary>
+    /// The engine's public count contains both loads and generation requests. It is therefore
+    /// independent evidence only until this sweep submits its first load. During the probe pass
+    /// the sweep submits database-existence tests, not chunk-column requests, so a non-zero value
+    /// then proves some other activity had the engine queue in use. That makes later growth
+    /// impossible to attribute to the sweep and turns a warning into an inconclusive result.
+    /// </summary>
+    void ObserveOtherGenerationQueue()
+    {
+        if (issuedSweepLoad) return;
+        otherGenerationQueuePeak = Math.Max(
+            otherGenerationQueuePeak, sapi.WorldManager.CurrentGeneratingChunkCount);
+    }
+
+    internal static EnumSweepAbsenceResult ClassifyAbsenceResult(
+        int regrown, int otherGenerationQueuePeak)
+    {
+        if (regrown <= 0) return EnumSweepAbsenceResult.Verified;
+        return otherGenerationQueuePeak > 0
+            ? EnumSweepAbsenceResult.Inconclusive
+            : EnumSweepAbsenceResult.Unsafe;
     }
 
     /// <summary>
