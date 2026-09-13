@@ -1972,9 +1972,7 @@ public partial class LodTerrainRenderer : IRenderer
                 temperature = (byte)Math.Clamp((int)MathF.Round(t), 0, 255);
                 rainfall = (byte)Math.Clamp((int)MathF.Round(r), 0, 255);
                 ClimateMemory.Learn(cellX, cellZ, temperature, rainfall);
-                snowLine = SnowLinePerCell
-                    ? CalculateSnowLine(bx, bz, temperature, rainfall, seasonalRefreshTotalDays)
-                    : pendingSnowLineY;
+                snowLine = CalculateSnowLine(bx, bz, temperature, rainfall, seasonalRefreshTotalDays);
                 snowStateIsObserved = world.HasObservedSnowStateAt(bx, bz);
                 return true;
             }
@@ -1983,9 +1981,7 @@ public partial class LodTerrainRenderer : IRenderer
             // session beats spreading a neighbour's climate across it.
             if (ClimateMemory.TryGet(cellX, cellZ, out temperature, out rainfall))
             {
-                snowLine = SnowLinePerCell
-                    ? CalculateSnowLine(bx, bz, temperature, rainfall, seasonalRefreshTotalDays)
-                    : pendingSnowLineY;
+                snowLine = CalculateSnowLine(bx, bz, temperature, rainfall, seasonalRefreshTotalDays);
                 snowStateIsObserved = world.HasObservedSnowStateAt(bx, bz);
                 return true;
             }
@@ -2440,7 +2436,7 @@ public partial class LodTerrainRenderer : IRenderer
                 tints.HasUnreadySlots,
                 now - lastSeasonRefreshMs,
                 SeasonalRefreshIntervalMs);
-            bool snowObservationRefreshDue = SnowLineEarlyRefresh && seasonalStateInitialized
+            bool snowObservationRefreshDue = seasonalStateInitialized
                 && publishedSnowObservationRevision != world.SnowStateObservationRevision
                 && now - world.LastSnowStateObservationChangeMs
                     >= SnowObservationRefreshDebounceMs;
@@ -6098,8 +6094,6 @@ public partial class LodTerrainRenderer : IRenderer
             prog.Uniform("climateRainSeaLevel", Climate.Sealevel);
         }
         prog.Uniform("snowLineY", snowLineY);
-        prog.Uniform("snowLineUniformOnly", SnowLineFromField ? 0 : 1);
-        prog.Uniform("climateFetchTintOnly", SnowLineFetchAll ? 0 : 1);
         prog.Uniform("seasonTemperature", capi.Render.ShaderUniforms.SeasonTemperature);
     }
 

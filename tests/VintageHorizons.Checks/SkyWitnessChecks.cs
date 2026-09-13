@@ -5,7 +5,7 @@ namespace VintageHorizons.Checks;
 /// <summary>
 /// `.vhsky`: the word layout the shader and the renderer share, the rule that separates a flash
 /// from sky that is always there, the ray a report is walked along, and the mask reading it
-/// prints. Also the `.vhsnowline fetch` comparison reaching the vertex shader.
+/// prints. Also that every vertex reads the climate field, now the retired snow-line comparison is gone.
 /// </summary>
 public static class SkyWitnessChecks
 {
@@ -17,7 +17,7 @@ public static class SkyWitnessChecks
         TheBusiestTilesComeFirst(c);
         RaysLeaveTheCameraWhereItLooks(c);
         GroundOwnershipReadsTheMaskAsTheShaderDoes(c);
-        TheFetchComparisonReachesTheShader(c);
+        EveryVertexReadsTheClimateField(c);
     }
 
     static string Asset(params string[] parts) => File.ReadAllText(Path.Combine(
@@ -173,20 +173,28 @@ public static class SkyWitnessChecks
             "a water-only column lists no ground layers");
     }
 
-    static void TheFetchComparisonReachesTheShader(Check c)
+    /// <summary>
+    /// Every vertex reads the climate field, which carries the snow line. The `.vhsnowline`
+    /// comparison that could gate that lookup or fall back to one player-local threshold was
+    /// retired in 0.4.70; its uniforms must leave the shader and the renderer's upload together,
+    /// because the engine throws on an uploaded name no program declared (G174).
+    /// </summary>
+    static void EveryVertexReadsTheClimateField(Check c)
     {
         string inputs = Asset("shaderincludes", "lodvertexinputs.vsh");
         string surface = Asset("shaderincludes", "lodvertexsurface.vsh");
         string renderer = File.ReadAllText(Path.Combine(
             GameAssemblies.RepoRoot, "VintageHorizons", "src", "Render", "LodTerrainRenderer.cs"));
 
-        c.True(inputs.Contains("uniform int climateFetchTintOnly;"),
-            "the vertex inputs declare the fetch comparison");
-        c.True(surface.Contains("if (climateFieldEnabled == 1 && climateWanted)"),
-            "the climate field lookup is gated by it");
-        c.True(surface.Contains("climateFetchTintOnly == 0"),
-            "and every vertex reads the field while it is off, the current design");
-        c.True(renderer.Contains("prog.Uniform(\"climateFetchTintOnly\", SnowLineFetchAll ? 0 : 1);"),
-            "the renderer sets it with the other frame uniforms");
+        c.True(surface.Contains("if (climateFieldEnabled == 1)"),
+            "the climate field lookup is gated only by the field being enabled");
+        c.True(surface.Contains("snowLineAtVertex = climateSnowMinY"),
+            "and the snow line always comes from it");
+        foreach (string retired in new[] { "climateFetchTintOnly", "snowLineUniformOnly" })
+        {
+            c.False(inputs.Contains(retired) || surface.Contains(retired),
+                $"the shader no longer declares or reads {retired}");
+            c.False(renderer.Contains($"\"{retired}\""), $"the renderer no longer uploads {retired}");
+        }
     }
 }

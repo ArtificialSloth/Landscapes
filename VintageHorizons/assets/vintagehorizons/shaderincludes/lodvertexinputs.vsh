@@ -286,11 +286,6 @@ uniform int climateRainSeaLevel;
 uniform float climateSnowMinY;
 uniform float climateSnowStepY;
 uniform float snowLineY;
-// 1 while `.vhsnowline shader off` compares against 0.4.39's single player-local threshold.
-uniform int snowLineUniformOnly;
-// 1 while `.vhsnowline fetch off` restores 0.4.39's placement: only a vertex tinted from the
-// climate field reads it.
-uniform int climateFetchTintOnly;
 uniform float seasonTemperature;
 
 // The ENGINE'S own value noise, included rather than transcribed. colormap.vsh builds both the

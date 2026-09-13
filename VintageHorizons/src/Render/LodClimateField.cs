@@ -117,12 +117,6 @@ internal sealed class LodClimateField
     public float SnowStepY => snowStepY;
 
     /// <summary>
-    /// Whether the alpha byte carries the per-cell snow line (the 0.4.40 design) or a constant
-    /// 255, as 0.4.39's texels did. A session-only comparison for `.vhsnowline alpha`; it
-    /// takes effect at the next publish.
-    /// </summary>
-    public bool EncodeSnowLine { get; set; } = true;
-    /// <summary>
     /// Usable only once at least one cell carries a real climate. With none, the spread has
     /// nothing to spread and the field must not be drawn from at all - the caller keeps its
     /// previous behaviour instead. Publishing a field of zeroes would be a confident claim
@@ -370,7 +364,7 @@ internal sealed class LodClimateField
                     continue;
                 }
                 int far = Math.Min(255, (int)spread[i]);
-                int snow = !EncodeSnowLine || IsSnowStateObserved(i)
+                int snow = IsSnowStateObserved(i)
                     ? 255
                     : Math.Clamp((int)MathF.Round(
                         (snowLine[i] - snowMinY) / snowStepY), 0, 255);

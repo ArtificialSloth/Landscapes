@@ -20,7 +20,7 @@ public static class ClimateFieldChecks
         TheNearerClimateWins(c);
         SnowLineFollowsItsCell(c);
         SnowObservationDoesNotSpread(c);
-        TheSnowLineCanLeaveTheAlphaByteAlone(c);
+        TheAlphaByteCarriesTheSnowLine(c);
         NothingKnownPublishesNothing(c);
         ARebuiltWindowCannotLeakTheOldOne(c);
         ThePublishedFieldSurvivesTheNextRefresh(c);
@@ -28,11 +28,10 @@ public static class ClimateFieldChecks
     }
 
     /// <summary>
-    /// `.vhsnowline alpha off` has to restore 0.4.39's texels exactly: the alpha byte stops
-    /// carrying the threshold and every published cell reads 255, the "no estimated snow" value,
-    /// while temperature and rainfall keep travelling in their own channels.
+    /// The alpha byte carries each cell's snow line, while temperature and rainfall keep their
+    /// own channels. (The `.vhsnowline alpha` comparison that could blank it was retired in 0.4.70.)
     /// </summary>
-    static void TheSnowLineCanLeaveTheAlphaByteAlone(Check c)
+    static void TheAlphaByteCarriesTheSnowLine(Check c)
     {
         LodClimateField.SeasonalSampler low = (int x, int z, out byte t, out byte r,
             out float snowLine, out bool observed) =>
@@ -45,15 +44,8 @@ public static class ClimateFieldChecks
         field.BeginRefresh(0, 0, 0f, 255f);
         for (int row = 0; row < field.RefreshRowCount; row++) field.RefreshRow(row, low);
         field.CompleteRefresh();
-        c.Eq(10, (field.Texels[0] >> 24) & 0xFF, "by default the alpha byte carries the cell's snow line");
-
-        field.EncodeSnowLine = false;
-        field.BeginRefresh(0, 0, 0f, 255f);
-        for (int row = 0; row < field.RefreshRowCount; row++) field.RefreshRow(row, low);
-        field.CompleteRefresh();
-        c.True(field.Texels.All(texel => ((texel >> 24) & 0xFF) == 255),
-            "switched off, every texel's alpha is the constant 255 that 0.4.39 published");
-        c.Eq(120, (field.Texels[0] >> 16) & 0xFF, "and temperature still travels in red");
+        c.Eq(10, (field.Texels[0] >> 24) & 0xFF, "the alpha byte carries the cell's snow line");
+        c.Eq(120, (field.Texels[0] >> 16) & 0xFF, "temperature travels in red");
         c.Eq(80, (field.Texels[0] >> 8) & 0xFF, "and rainfall in green");
     }
 

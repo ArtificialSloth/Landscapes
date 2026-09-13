@@ -29,14 +29,8 @@
     // remain raw temperature and rainfall, and blue remains the spread diagnostic.
     vec4 climateSample = vec4(0.0);
     bool haveClimateSample = false;
-    // `.vhsnowline fetch off` puts the lookup back where 0.4.39 had it: a vertex reads the
-    // field only when it will be tinted from it, and every other vertex keeps the uniform snow
-    // line and skips all four fetches. A comparison for the handoff flash, not a mode.
-    bool climateWanted = climateFetchTintOnly == 0
-        || (climateTintEnabled == 1
-            && (climateFadeBlocks <= 0.0 || columnBlocks <= climateFadeBlocks)
-            && int(tintPages[slot].r * 255.0 + 0.5) < 255);
-    if (climateFieldEnabled == 1 && climateWanted)
+    // Every vertex reads the field, not only one tinted from it: the snow line needs it too.
+    if (climateFieldEnabled == 1)
     {
         // Cell coordinates from the world position. The stored value for a cell is its
         // CENTRE, so the half-cell shift is what makes the interpolation land on the samples
@@ -60,11 +54,8 @@
         climateSample = mix(mix(c00, c10, clamp(fx - float(cx), 0.0, 1.0)),
                             mix(c01, c11, clamp(fx - float(cx), 0.0, 1.0)),
                             clamp(fz - float(cz), 0.0, 1.0));
-        if (snowLineUniformOnly == 0)
-        {
-            snowLineAtVertex = climateSnowMinY
-                + climateSample.a * 255.0 * climateSnowStepY;
-        }
+        snowLineAtVertex = climateSnowMinY
+            + climateSample.a * 255.0 * climateSnowStepY;
         haveClimateSample = true;
     }
 

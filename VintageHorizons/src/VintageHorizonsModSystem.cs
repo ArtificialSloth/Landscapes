@@ -2971,50 +2971,6 @@ public partial class VintageHorizonsModSystem : ModSystem
                 return TextCommandResult.Success(renderer.DescribeHandoffGaps());
             });
 
-        // Session-only. Each switch undoes one part of the 0.4.40 spatial snow line - the build in
-        // which the vanilla-to-cache handoff flash first appeared - so the part responsible can be
-        // found in one session. Every change also goes to the client log (G72).
-        capi.ChatCommands.Create("vhsnowline")
-            .WithDescription("Compare the parts of the spatial snow line. '.vhsnowline cells on|off' "
-                + "(per-cell thresholds), '.vhsnowline shader on|off' (terrain reads the texture), "
-                + "'.vhsnowline alpha on|off' (the texture carries the threshold), "
-                + "'.vhsnowline early on|off' (refresh when observed snow arrives). "
-                + "'.vhsnowline fetch on|off' (every vertex reads the field, or only tinted ones "
-                + "as in 0.4.39). "
-                + "'legacy' turns all five off, 'spatial' turns them back on.")
-            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
-                      capi.ChatCommands.Parsers.OptionalWord("value"))
-            .HandleWith(args =>
-            {
-                if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
-
-                string part = args.Parsers[0].IsMissing ? "" : (string)args[0];
-                string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
-                bool? on = value.Equals("on", StringComparison.OrdinalIgnoreCase) ? true
-                    : value.Equals("off", StringComparison.OrdinalIgnoreCase) ? false
-                    : null;
-
-                if (part.Equals("legacy", StringComparison.OrdinalIgnoreCase))
-                    return TextCommandResult.Success(renderer.SetSnowLineMode("all", false));
-                if (part.Equals("spatial", StringComparison.OrdinalIgnoreCase))
-                    return TextCommandResult.Success(renderer.SetSnowLineMode("all", true));
-                if (on.HasValue)
-                {
-                    if (part.Equals("cells", StringComparison.OrdinalIgnoreCase))
-                        return TextCommandResult.Success(renderer.SetSnowLineMode("cells", on.Value));
-                    if (part.Equals("shader", StringComparison.OrdinalIgnoreCase))
-                        return TextCommandResult.Success(renderer.SetSnowLineMode("shader", on.Value));
-                    if (part.Equals("alpha", StringComparison.OrdinalIgnoreCase))
-                        return TextCommandResult.Success(renderer.SetSnowLineMode("alpha", on.Value));
-                    if (part.Equals("early", StringComparison.OrdinalIgnoreCase))
-                        return TextCommandResult.Success(renderer.SetSnowLineMode("early", on.Value));
-                    if (part.Equals("fetch", StringComparison.OrdinalIgnoreCase))
-                        return TextCommandResult.Success(renderer.SetSnowLineMode("fetch", on.Value));
-                }
-                return TextCommandResult.Success("[VintageHorizons] " + renderer.DescribeSnowLineModes());
-            });
-
         // Session-only. The first measurement of what the graphics card actually drew at the
         // handoff: every earlier diagnostic compared CPU beliefs with each other. Every switch
         // and every finding goes to the client log (G72).

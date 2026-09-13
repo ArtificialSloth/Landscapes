@@ -126,11 +126,6 @@ public partial class VintageHorizonsModSystem
         Entry(lines, ".vhmask", renderer.ChunkMaskEnabled);
         Entry(lines, ".vhgap", renderer.HandoffGapLog);
         Entry(lines, ".vhgap release", renderer.HandoffGapRelease);
-        Entry(lines, ".vhsnowline cells", renderer.SnowLinePerCell);
-        Entry(lines, ".vhsnowline shader", renderer.SnowLineFromField);
-        Entry(lines, ".vhsnowline alpha", renderer.SnowLineInTexture);
-        Entry(lines, ".vhsnowline early", renderer.SnowLineEarlyRefresh);
-        Entry(lines, ".vhsnowline fetch", renderer.SnowLineFetchAll);
         Entry(lines, ".vhsky", renderer.SkyWitness);
         Entry(lines, ".vhsky verify", renderer.SkyMaskVerify);
         Entry(lines, ".vhlaterange", renderer.LateRangeCheck);
