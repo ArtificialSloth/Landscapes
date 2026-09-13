@@ -122,6 +122,34 @@ public class LodServerConfig
     public int GenerateMaxInFlight = 64;
 
     /// <summary>
+    /// Allow controlserver users to permanently generate a bounded part of the real
+    /// savegame with /vhworldgen. The command remains registered when this is false so it
+    /// can explain which setting disabled it.
+    /// </summary>
+    public bool EnableWorldGeneration = true;
+
+    /// <summary>Largest radius /vhworldgen accepts. 256 is 263,169 square columns.</summary>
+    public int WorldGenMaxRadiusChunks = 256;
+
+    /// <summary>Radius used when /vhworldgen start omits one.</summary>
+    public int WorldGenDefaultRadiusChunks = 32;
+
+    /// <summary>
+    /// Balanced preset: keep the engine generation queue around this many columns. The
+    /// engine's hard queue is 2,000 including neighbours; this setting never reaches it.
+    /// </summary>
+    public int WorldGenQueueTarget = 120;
+
+    /// <summary>Hard bound on columns kept resident while capture catches up.</summary>
+    public int WorldGenMaxInFlight = 160;
+
+    /// <summary>Stop issuing while this many distant-terrain sections await saving.</summary>
+    public int WorldGenDirtySectionLimit = 512;
+
+    /// <summary>Stop issuing when the oldest distant-terrain save has waited this long.</summary>
+    public int WorldGenOldestDirtySeconds = 120;
+
+    /// <summary>
     /// Pre-build the cache around spawn at startup, in chunks of radius. 0 (default)
     /// means never, and the cache then fills only as players travel or an admin runs
     /// /vhgen.
@@ -167,6 +195,17 @@ public class LodServerConfig
             ? 0 : Math.Clamp(GenerateDefaultRadiusChunks, 1, GenerateMaxRadiusChunks);
         GenerateColumnsPerSecond = Math.Clamp(GenerateColumnsPerSecond, 1, 64);
         GenerateMaxInFlight = Math.Clamp(GenerateMaxInFlight, 1, 256);
+        WorldGenMaxRadiusChunks = Math.Clamp(WorldGenMaxRadiusChunks, 0, 256);
+        WorldGenDefaultRadiusChunks = WorldGenMaxRadiusChunks == 0
+            ? 0 : Math.Clamp(WorldGenDefaultRadiusChunks, 1, WorldGenMaxRadiusChunks);
+        // The advertised Maximum preset is 900, leaving more than half the engine's
+        // 2,000-entry queue free for neighbour expansion. Kept columns have a separate
+        // 1,200 ceiling; they are already out of the generation queue while capture drains.
+        WorldGenMaxInFlight = Math.Clamp(WorldGenMaxInFlight, 1, 1200);
+        WorldGenQueueTarget = Math.Clamp(WorldGenQueueTarget, 1, 900);
+        WorldGenQueueTarget = Math.Min(WorldGenQueueTarget, WorldGenMaxInFlight);
+        WorldGenDirtySectionLimit = Math.Clamp(WorldGenDirtySectionLimit, 16, 4096);
+        WorldGenOldestDirtySeconds = Math.Clamp(WorldGenOldestDirtySeconds, 10, 600);
         // Ceilings derived from measurement, not taste: a served section costs ~0.9ms of
         // main-thread SQLite blob read (415 sections, 348ms, on a warm cache). So 128/s is
         // ~115ms per second, around 11% of a core, which is the most an admin should be
@@ -185,11 +224,16 @@ public class LodServerConfig
     /// <summary>True when /vhgen is configured to accept a start.</summary>
     public bool GenerateEnabled => EnableGenerateCommand && GenerateMaxRadiusChunks > 0;
 
+    /// <summary>True when /vhworldgen is configured to accept a new job.</summary>
+    public bool WorldGenerationEnabled => EnableWorldGeneration && WorldGenMaxRadiusChunks > 0;
+
     public string Describe() =>
         $"capture {(EnableCapture ? "on" : "off")}, serving {(EnableServing ? "on" : "off")}, "
         + $"radius {(ServeRadiusBlocks > 0 ? ServeRadiusBlocks + " blocks" : "unlimited")}, "
         + $"{MaxSectionsPerSecondPerPlayer}/s per player, {MaxSectionsPerSecondTotal}/s total, "
         + $"sweep {(SweepEnabled ? SweepRadiusChunks + " chunks" : "off")}, "
         + $"refresh {(RefreshEnabled ? RefreshColumnsPerSecond + "/s" : "off")}, "
-        + $"generate {(GenerateEnabled ? "on request up to " + GenerateMaxRadiusChunks + " chunks" : "off")}";
+        + $"generate {(GenerateEnabled ? "on request up to " + GenerateMaxRadiusChunks + " chunks" : "off")}, "
+        + $"world generation {(WorldGenerationEnabled ? "on request up to " + WorldGenMaxRadiusChunks
+            + " chunks, queue " + WorldGenQueueTarget : "off")}";
 }

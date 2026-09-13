@@ -93,6 +93,7 @@ public class LodAssistServerSystem : ModSystem
                 if (capture?.PregenStatus is string pg) lines.Add("[VintageHorizons] " + pg + ".");
                 if (capture?.GenerateStatus is string gn) lines.Add("[VintageHorizons] " + gn + ".");
                 if (capture?.RefreshStatus is string rf) lines.Add("[VintageHorizons] " + rf + ".");
+                if (capture?.WorldGenStatus is string wg) lines.Add(wg);
                 lines.Add("[VintageHorizons] Settings live in "
                     + "ModConfig/vintagehorizons-server.json (restart to apply).");
 

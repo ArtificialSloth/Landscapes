@@ -71,6 +71,19 @@ public static class ConfigChecks
         c.False(new LodServerConfig { GenerateMaxRadiusChunks = 0 }.GenerateEnabled,
             "a zero ceiling disables generation as surely as the flag does");
 
+        c.True(config.EnableWorldGeneration, "the confirmed savegame generator is available by default");
+        c.True(config.WorldGenerationEnabled, "the default world-generation settings are usable");
+        c.Eq(256, config.WorldGenMaxRadiusChunks, "real generation has a bounded radius ceiling");
+        c.Eq(32, config.WorldGenDefaultRadiusChunks, "real generation defaults to radius 32");
+        c.Eq(120, config.WorldGenQueueTarget, "the Balanced queue target is 120");
+        c.Eq(160, config.WorldGenMaxInFlight, "Balanced keeps at most 160 columns resident");
+        c.Eq(512, config.WorldGenDirtySectionLimit, "generation yields at 512 dirty sections");
+        c.Eq(120, config.WorldGenOldestDirtySeconds, "generation yields to a two-minute-old save");
+        c.False(new LodServerConfig { EnableWorldGeneration = false }.WorldGenerationEnabled,
+            "the world-generation flag disables starts");
+        c.False(new LodServerConfig { WorldGenMaxRadiusChunks = 0 }.WorldGenerationEnabled,
+            "a zero real-generation ceiling also disables starts");
+
         var untouched = new LodServerConfig();
         untouched.Sanitize();
         c.Eq(8192, untouched.ServeRadiusBlocks, "sanitizing the defaults changes nothing");
@@ -136,6 +149,36 @@ public static class ConfigChecks
         c.Eq(1, Sanitized(cfg => cfg.GenerateMaxInFlight = 0).GenerateMaxInFlight,
             "a zero in-flight cap becomes one");
 
+        c.Eq(256, Sanitized(cfg => cfg.WorldGenMaxRadiusChunks = 99999).WorldGenMaxRadiusChunks,
+            "real-generation radius is capped at 256 chunks");
+        c.Eq(0, Sanitized(cfg => cfg.WorldGenMaxRadiusChunks = -1).WorldGenMaxRadiusChunks,
+            "a negative real-generation ceiling means off");
+        c.Eq(8, Sanitized(cfg => cfg.WorldGenMaxRadiusChunks = 8).WorldGenDefaultRadiusChunks,
+            "the real-generation default clamps to its ceiling");
+        c.Eq(1200, Sanitized(cfg => cfg.WorldGenMaxInFlight = 99999).WorldGenMaxInFlight,
+            "kept real columns remain below the engine's 2000-entry queue");
+        c.Eq(900, Sanitized(cfg =>
+            {
+                cfg.WorldGenQueueTarget = 99999;
+                cfg.WorldGenMaxInFlight = 1200;
+            }).WorldGenQueueTarget,
+            "the engine queue target preserves neighbour-expansion headroom");
+        var crossedWorldGen = Sanitized(cfg =>
+        {
+            cfg.WorldGenQueueTarget = 900;
+            cfg.WorldGenMaxInFlight = 24;
+        });
+        c.Eq(24, crossedWorldGen.WorldGenQueueTarget,
+            "the queue target cannot exceed the kept-column bound");
+        c.Eq(16, Sanitized(cfg => cfg.WorldGenDirtySectionLimit = 0).WorldGenDirtySectionLimit,
+            "the save-count gate cannot be disabled into a zero stall");
+        c.Eq(4096, Sanitized(cfg => cfg.WorldGenDirtySectionLimit = 99999).WorldGenDirtySectionLimit,
+            "the save-count gate is bounded");
+        c.Eq(10, Sanitized(cfg => cfg.WorldGenOldestDirtySeconds = 0).WorldGenOldestDirtySeconds,
+            "the oldest-save gate retains a safety minimum");
+        c.Eq(600, Sanitized(cfg => cfg.WorldGenOldestDirtySeconds = 99999).WorldGenOldestDirtySeconds,
+            "the oldest-save gate is bounded at ten minutes");
+
         // The cross-field clamp. A lowered ceiling must never leave a default the
         // command itself then refuses as out of range.
         c.Eq(8, Sanitized(cfg => cfg.GenerateMaxRadiusChunks = 8).GenerateDefaultRadiusChunks,
@@ -195,6 +238,11 @@ public static class ConfigChecks
             "the description reports the generate ceiling");
         c.True(new LodServerConfig { EnableGenerateCommand = false }.Describe().Contains("generate off"),
             "disabled generation is described as off");
+        c.True(text.Contains("world generation on request up to 256 chunks, queue 120"),
+            "the description reports real generation and its queue target");
+        c.True(new LodServerConfig { EnableWorldGeneration = false }.Describe()
+                .Contains("world generation off"),
+            "disabled real generation is described as off");
     }
 
     static LodServerConfig Sanitized(Action<LodServerConfig> setup)

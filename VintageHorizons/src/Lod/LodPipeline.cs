@@ -1159,6 +1159,12 @@ public class LodPipeline
             SnowStateCaptured?.Invoke(result.Cx, result.Cz,
                 snowObservedColumns, snowCoveredColumns);
         }
+
+        // Owning-thread completion for jobs that keep real engine columns resident
+        // until capture has actually consumed them. This is intentionally after every
+        // result, including an idempotent one: unchanged content is still a completed
+        // capture obligation and its force-loaded lease must be released.
+        ColumnCaptured?.Invoke(result.Cx, result.Cz);
     }
 
     /// <summary>
@@ -1233,6 +1239,9 @@ public class LodPipeline
     /// blob reader can actually serve it.
     /// </summary>
     public Action<long>? SectionPersisted;
+
+    /// <summary>Owning-thread notification that a queued column capture was applied.</summary>
+    public Action<int, int>? ColumnCaptured;
 
     /// <summary>
     /// Owning-thread summary of an authoritative loaded-column snow observation. Used by

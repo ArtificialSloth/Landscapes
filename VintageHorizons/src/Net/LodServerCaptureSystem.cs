@@ -30,6 +30,9 @@ public class LodServerCaptureSystem : ModSystem
     LodSavegameSweep? sweep;
     LodPlayerPregen? generate;
     LodPlayerPregen? refresh;
+    LodWorldGenJob? worldGen;
+    readonly LodWorldGenAuthority worldGenAuthority = new();
+    readonly Dictionary<string, PendingWorldGen> pendingWorldGens = new();
     long tickListenerId;
     long statsListenerId;
     bool statsRegistered;
@@ -37,6 +40,14 @@ public class LodServerCaptureSystem : ModSystem
     LodPhaseCost pipelineTickCost;
     readonly HashSet<long> persistedLevelZeroChanges = new();
     long nextActiveWorkStatusLogMs;
+    long lastPipelineTickMs;
+    long overloadedUntilMs;
+    bool columnLoadedSubscribed;
+
+    sealed record PendingWorldGen(
+        string CallerKey, string StartedBy, long ExpiresAtMs,
+        int CentreCx, int CentreCz, int RadiusChunks, EnumWorldGenShape Shape,
+        LodWorldGenPlan Plan);
 
     /// <summary>
     /// Whether chunk loads drive capture on this server. Dedicated: yes, every load.
@@ -96,6 +107,9 @@ public class LodServerCaptureSystem : ModSystem
     /// <summary>Progress line for /vhserver, or null when /vhrefresh never ran.</summary>
     public string? RefreshStatus => refresh?.Status;
 
+    /// <summary>Progress line for /vhserver, or null when no real generation job ran.</summary>
+    public string? WorldGenStatus => worldGen?.Status;
+
     /// <summary>Main thread only - the capture pipeline mutates this set every tick.</summary>
     public long[] SnapshotKeys() =>
         pipeline == null ? Array.Empty<long>() : pipeline.World.HasDataSet.ToArray();
@@ -150,6 +164,7 @@ public class LodServerCaptureSystem : ModSystem
         // beats "no such command", which reads as a broken mod.
         RegisterGenerateCommand();
         RegisterRefreshCommand();
+        RegisterWorldGenCommand();
 
         if (!Config.EnableCapture)
         {
@@ -182,6 +197,8 @@ public class LodServerCaptureSystem : ModSystem
     {
         worldReady = true;
 
+        OfferInterruptedWorldGen();
+
         if (!captureDrivenByLoads)
         {
             Mod.Logger.Notification(
@@ -194,7 +211,7 @@ public class LodServerCaptureSystem : ModSystem
 
         OpenPipeline();
 
-        sapi.Event.ChunkColumnLoaded += OnChunkColumnLoaded;
+        EnsureColumnLoadedSubscription();
         sapi.Event.ChunkDirty += OnChunkDirty;
         sapi.Event.DidBreakBlock += (_, _, blockSel) => QueueAt(blockSel?.Position);
         sapi.Event.DidPlaceBlock += (_, _, blockSel, _) => QueueAt(blockSel?.Position);
@@ -236,14 +253,22 @@ public class LodServerCaptureSystem : ModSystem
             // time and disk for terrain nobody had visited.
             var spawn = sapi.World.DefaultSpawnPosition;
             int cs = GlobalConstants.ChunkSize;
-            pregen = new LodPlayerPregen(sapi, Mod.Logger, pipeline!,
-                (int)spawn.X / cs, (int)spawn.Z / cs,
-                Config.PregenRadiusChunks, Config, "startup pre-generation",
-                Config.PregenColumnsPerSecond)
+            if (!worldGenAuthority.TryAcquire(EnumWorldGenAuthority.StartupPregen,
+                "startup LOD pre-generation", out string refusal))
             {
-                TrackPhaseAllocations = allocationTelemetryEnabled,
-            };
-            pregen.Start();
+                Mod.Logger.Warning("Startup LOD pre-generation did not start: {0}.", refusal);
+            }
+            else
+            {
+                pregen = new LodPlayerPregen(sapi, Mod.Logger, pipeline!,
+                    (int)spawn.X / cs, (int)spawn.Z / cs,
+                    Config.PregenRadiusChunks, Config, "startup pre-generation",
+                    Config.PregenColumnsPerSecond)
+                {
+                    TrackPhaseAllocations = allocationTelemetryEnabled,
+                };
+                pregen.Start();
+            }
         }
     }
 
@@ -268,7 +293,9 @@ public class LodServerCaptureSystem : ModSystem
         pipeline.SectionPersisted = key =>
         {
             if (LodWorld.KeyLevel(key) == 0) persistedLevelZeroChanges.Add(key);
+            worldGen?.ObservePersisted(key);
         };
+        pipeline.ColumnCaptured = (cx, cz) => worldGen?.ObserveCaptured(cx, cz);
         pipeline.SnowStateCaptured = (cx, cz, observed, covered) =>
             sweep?.ObserveSnowState(cx, cz, observed, covered);
         pipeline.Open("ModData/vintagehorizons", "-server");
@@ -422,6 +449,19 @@ public class LodServerCaptureSystem : ModSystem
                 $"[VintageHorizons] A run started by {generate.StartedBy} is already going: "
                 + generate.Status + ". Use /vhgen stop first.");
         }
+        if (refresh is { Done: false })
+        {
+            return TextCommandResult.Error(
+                "[VintageHorizons] /vhrefresh is already active. Let it finish or stop it "
+                + "before starting /vhgen.");
+        }
+        RefreshWorldGenAuthority();
+        if (!worldGenAuthority.TryAcquire(EnumWorldGenAuthority.TransientGeneration,
+            "/vhgen transient generation", out string authorityRefusal))
+        {
+            return TextCommandResult.Error(
+                "[VintageHorizons] Cannot start /vhgen: " + authorityRefusal + ".");
+        }
 
         int radius = (int)args.Parsers[0].GetValue();
         int argX = (int)args.Parsers[1].GetValue();
@@ -431,6 +471,7 @@ public class LodServerCaptureSystem : ModSystem
         var centre = LodPlayerPregen.ResolveCentre(argX, argZ, pos != null);
         if (centre == LodPlayerPregen.EnumCentre.Incomplete)
         {
+            worldGenAuthority.Release(EnumWorldGenAuthority.TransientGeneration);
             return TextCommandResult.Error(
                 "[VintageHorizons] Give both coordinates or neither: /vhgen start "
                 + $"{radius} <x> <z>. With neither, the run centres on you.");
@@ -445,12 +486,21 @@ public class LodServerCaptureSystem : ModSystem
         int centreCz = (int)bz / cs;
         string startedBy = args.Caller.Player?.PlayerName ?? "the console";
 
-        generate = new LodPlayerPregen(sapi, Mod.Logger, OpenPipeline(),
-            centreCx, centreCz, radius, Config, startedBy)
+        try
         {
-            TrackPhaseAllocations = allocationTelemetryEnabled,
-        };
-        generate.Start();
+            generate = new LodPlayerPregen(sapi, Mod.Logger, OpenPipeline(),
+                centreCx, centreCz, radius, Config, startedBy)
+            {
+                TrackPhaseAllocations = allocationTelemetryEnabled,
+            };
+            generate.Start();
+        }
+        catch (Exception e)
+        {
+            worldGenAuthority.Release(EnumWorldGenAuthority.TransientGeneration);
+            return TextCommandResult.Error(
+                "[VintageHorizons] Generation could not start: " + e.Message);
+        }
 
         int columns = LodPlayerPregen.ColumnsFor(radius);
         int seconds = LodPlayerPregen.EstimateSeconds(columns, Config.GenerateColumnsPerSecond);
@@ -476,10 +526,424 @@ public class LodServerCaptureSystem : ModSystem
             + "reports what was done and verifies the savegame gained nothing.");
     }
 
+    // ---- /vhworldgen: permanently generate a bounded part of the real savegame ----
+
+    void RegisterWorldGenCommand()
+    {
+        var parsers = sapi.ChatCommands.Parsers;
+        sapi.ChatCommands.Create("vhworldgen")
+            .WithDescription(
+                "Generate and save real terrain in a bounded square or circle, while "
+                + "building the server distant-terrain cache. Requires confirmation.")
+            .RequiresPrivilege(Privilege.controlserver)
+            .HandleWith(OnWorldGenStatus)
+            .BeginSubCommand("start")
+                .WithDescription(
+                    "Prepare a job: [radius] [square|circle] [here|spawn|coords] [x] [z]")
+                .WithArgs(
+                    parsers.OptionalIntRange("radius", 1,
+                        Math.Max(1, Config.WorldGenMaxRadiusChunks),
+                        Math.Max(1, Config.WorldGenDefaultRadiusChunks)),
+                    parsers.OptionalWord("square|circle"),
+                    parsers.OptionalWord("here|spawn|coords"),
+                    parsers.OptionalInt("x", -1),
+                    parsers.OptionalInt("z", -1))
+                .HandleWith(OnWorldGenStart)
+            .EndSubCommand()
+            .BeginSubCommand("confirm")
+                .WithDescription("Confirm your pending start after reading its permanent-world warning")
+                .HandleWith(OnWorldGenConfirm)
+            .EndSubCommand()
+            .BeginSubCommand("pause")
+                .WithDescription("Pause new generation requests; in-flight work may finish")
+                .HandleWith(OnWorldGenPause)
+            .EndSubCommand()
+            .BeginSubCommand("resume")
+                .WithDescription("Resume the paused or interrupted job")
+                .HandleWith(OnWorldGenResume)
+            .EndSubCommand()
+            .BeginSubCommand("stop")
+                .WithDescription("Stop the job, release kept columns, and discard resume state")
+                .HandleWith(OnWorldGenStop)
+            .EndSubCommand()
+            .BeginSubCommand("status")
+                .WithDescription("Show progress, rate, disk growth, queue depth, and active gate")
+                .HandleWith(OnWorldGenStatus)
+            .EndSubCommand();
+    }
+
+    TextCommandResult OnWorldGenStart(TextCommandCallingArgs args)
+    {
+        if (!Config.EnableCapture)
+            return TextCommandResult.Error("[VintageHorizons] Server LOD capture is switched off.");
+        if (!Config.WorldGenerationEnabled)
+            return TextCommandResult.Error(
+                "[VintageHorizons] Savegame world generation is switched off "
+                + $"(EnableWorldGeneration or WorldGenMaxRadiusChunks in ModConfig/{ConfigFile}).");
+        if (!worldReady)
+            return TextCommandResult.Error("[VintageHorizons] The world is still starting.");
+        if (worldGen is { Done: false })
+            return TextCommandResult.Error("[VintageHorizons] A world-generation job is already active. "
+                + worldGen.Status);
+        if (refresh is { Done: false })
+            return TextCommandResult.Error("[VintageHorizons] /vhrefresh is active. Stop it or let it finish first.");
+
+        RefreshWorldGenAuthority();
+        if (worldGenAuthority.Current != EnumWorldGenAuthority.None)
+            return TextCommandResult.Error("[VintageHorizons] Cannot prepare the job: "
+                + worldGenAuthority.Label + " already has world-generation authority.");
+
+        var stateStore = new LodWorldGenStateStore(LodWorldGenJob.StatePath(sapi));
+        if (stateStore.Exists)
+            return TextCommandResult.Error(
+                "[VintageHorizons] An interrupted job is saved. Use /vhworldgen resume to "
+                + "continue it, or /vhworldgen stop to discard that resume state.");
+
+        int radius = (int)args.Parsers[0].GetValue();
+        string shapeText = Convert.ToString(args.Parsers[1].GetValue())?.Trim() ?? "";
+        EnumWorldGenShape shape;
+        if (shapeText.Length == 0 || shapeText.Equals("square", StringComparison.OrdinalIgnoreCase))
+            shape = EnumWorldGenShape.Square;
+        else if (shapeText.Equals("circle", StringComparison.OrdinalIgnoreCase))
+            shape = EnumWorldGenShape.Circle;
+        else
+            return TextCommandResult.Error(
+                "[VintageHorizons] Shape must be square or circle.");
+
+        string centreMode = Convert.ToString(args.Parsers[2].GetValue())?.Trim() ?? "";
+        int argX = (int)args.Parsers[3].GetValue();
+        int argZ = (int)args.Parsers[4].GetValue();
+        double bx, bz;
+        if (centreMode.Length == 0 || centreMode.Equals("here", StringComparison.OrdinalIgnoreCase))
+        {
+            if (argX >= 0 || argZ >= 0)
+                return TextCommandResult.Error(
+                    "[VintageHorizons] Typed coordinates require the coords word before x z.");
+            bx = args.Caller.Pos?.X ?? sapi.World.DefaultSpawnPosition.X;
+            bz = args.Caller.Pos?.Z ?? sapi.World.DefaultSpawnPosition.Z;
+        }
+        else if (centreMode.Equals("spawn", StringComparison.OrdinalIgnoreCase))
+        {
+            if (argX >= 0 || argZ >= 0)
+                return TextCommandResult.Error("[VintageHorizons] Spawn takes no x z coordinates.");
+            bx = sapi.World.DefaultSpawnPosition.X;
+            bz = sapi.World.DefaultSpawnPosition.Z;
+        }
+        else if (centreMode.Equals("coords", StringComparison.OrdinalIgnoreCase))
+        {
+            if (argX < 0 || argZ < 0)
+                return TextCommandResult.Error(
+                    "[VintageHorizons] Usage for a typed centre: /vhworldgen start "
+                    + $"{radius} {shape.ToString().ToLowerInvariant()} coords x z.");
+            bx = argX;
+            bz = argZ;
+        }
+        else
+        {
+            return TextCommandResult.Error(
+                "[VintageHorizons] Centre must be here, spawn, or coords followed by x z.");
+        }
+
+        int cs = GlobalConstants.ChunkSize;
+        int centreCx = (int)bx / cs;
+        int centreCz = (int)bz / cs;
+        int mapChunksX = sapi.WorldManager.MapSizeX / cs;
+        int mapChunksZ = sapi.WorldManager.MapSizeZ / cs;
+        if (centreCx < 0 || centreCz < 0 || centreCx >= mapChunksX || centreCz >= mapChunksZ)
+            return TextCommandResult.Error("[VintageHorizons] The requested centre is outside this world.");
+
+        var plan = new LodWorldGenPlan(centreCx, centreCz, radius, shape, mapChunksX, mapChunksZ);
+        if (plan.Count == 0)
+            return TextCommandResult.Error("[VintageHorizons] The requested area contains no world columns.");
+
+        string callerKey = WorldGenCallerKey(args);
+        string startedBy = args.Caller.Player?.PlayerName ?? "the console";
+        pendingWorldGens[callerKey] = new PendingWorldGen(
+            callerKey, startedBy, Environment.TickCount64 + 120_000,
+            centreCx, centreCz, radius, shape, plan);
+
+        long estimatedBytes = (long)plan.Count * LodWorldGenJob.EstimatedTotalBytesPerColumn;
+        long estimatedSeconds = (long)Math.Ceiling(plan.Count / LodWorldGenJob.BaselineColumnsPerSecond);
+        return TextCommandResult.Success(
+            $"[VintageHorizons] Ready to generate {plan.Count:N0} real columns in a "
+            + $"{shape.ToString().ToLowerInvariant()} of radius {radius} chunks ({radius * cs:N0} blocks) "
+            + $"around {centreCx * cs:N0},{centreCz * cs:N0}. Baseline estimate: "
+            + $"{FormatWorldGenDuration(estimatedSeconds)} and up to {FormatWorldGenBytes(estimatedBytes)} "
+            + "of savegame plus distant-terrain data. This permanently adds terrain to your "
+            + "world; make a backup first if the world matters. Run /vhworldgen confirm within "
+            + "two minutes to begin.");
+    }
+
+    TextCommandResult OnWorldGenConfirm(TextCommandCallingArgs args)
+    {
+        string callerKey = WorldGenCallerKey(args);
+        if (!pendingWorldGens.Remove(callerKey, out PendingWorldGen? pending)
+            || Environment.TickCount64 > pending.ExpiresAtMs)
+        {
+            return TextCommandResult.Error(
+                "[VintageHorizons] No unexpired start is waiting for your confirmation. "
+                + "Run /vhworldgen start again.");
+        }
+
+        int mapChunksX = sapi.WorldManager.MapSizeX / GlobalConstants.ChunkSize;
+        int mapChunksZ = sapi.WorldManager.MapSizeZ / GlobalConstants.ChunkSize;
+        var state = LodWorldGenState.Create(pending.Plan,
+            pending.CentreCx, pending.CentreCz, pending.RadiusChunks, pending.Shape,
+            mapChunksX, mapChunksZ, pending.StartedBy,
+            LodWorldGenJob.FileLength(sapi.WorldManager.CurrentWorldFilepath), cacheBytesAtStart: 0);
+
+        if (!TryStartWorldGen(pending.Plan, state, resumed: false, out string refusal))
+            return TextCommandResult.Error("[VintageHorizons] World generation did not start: " + refusal);
+
+        return TextCommandResult.Success(worldGen!.Status);
+    }
+
+    TextCommandResult OnWorldGenPause(TextCommandCallingArgs args)
+    {
+        if (worldGen is not { Done: false })
+            return TextCommandResult.Success("[VintageHorizons] No world-generation job is active.");
+        worldGen.Pause();
+        return TextCommandResult.Success(worldGen.Status);
+    }
+
+    TextCommandResult OnWorldGenResume(TextCommandCallingArgs args)
+    {
+        if (!Config.EnableCapture || !Config.WorldGenerationEnabled)
+            return TextCommandResult.Error("[VintageHorizons] Savegame world generation is disabled.");
+        if (!worldReady)
+            return TextCommandResult.Error("[VintageHorizons] The world is still starting.");
+        if (worldGen is { Done: false })
+        {
+            worldGen.Resume();
+            return TextCommandResult.Success(worldGen.Status);
+        }
+        if (refresh is { Done: false })
+            return TextCommandResult.Error("[VintageHorizons] /vhrefresh is active. Stop it or let it finish first.");
+
+        var stateStore = new LodWorldGenStateStore(LodWorldGenJob.StatePath(sapi));
+        if (!stateStore.TryLoad(out LodWorldGenState? state, out string reason))
+            return TextCommandResult.Error("[VintageHorizons] Could not read the saved job: " + reason);
+        if (state == null)
+            return TextCommandResult.Success("[VintageHorizons] There is no interrupted job to resume.");
+        int currentMapChunksX = sapi.WorldManager.MapSizeX / GlobalConstants.ChunkSize;
+        int currentMapChunksZ = sapi.WorldManager.MapSizeZ / GlobalConstants.ChunkSize;
+        if (!Enum.IsDefined(state.Shape) || state.RadiusChunks < 0
+            || state.RadiusChunks > 256 || state.MapChunksX != currentMapChunksX
+            || state.MapChunksZ != currentMapChunksZ || state.CentreCx < 0
+            || state.CentreCz < 0 || state.CentreCx >= currentMapChunksX
+            || state.CentreCz >= currentMapChunksZ)
+            return TextCommandResult.Error("[VintageHorizons] The saved job has invalid area settings.");
+
+        var plan = new LodWorldGenPlan(state.CentreCx, state.CentreCz, state.RadiusChunks,
+            state.Shape, state.MapChunksX, state.MapChunksZ);
+        if (!state.Matches(plan, currentMapChunksX, currentMapChunksZ))
+        {
+            return TextCommandResult.Error(
+                "[VintageHorizons] The saved job does not match this world's current bounds or plan format.");
+        }
+
+        if (!TryStartWorldGen(plan, state, resumed: true, out string refusal))
+            return TextCommandResult.Error("[VintageHorizons] Saved world generation did not resume: " + refusal);
+        return TextCommandResult.Success(worldGen!.Status);
+    }
+
+    TextCommandResult OnWorldGenStop(TextCommandCallingArgs args)
+    {
+        pendingWorldGens.Remove(WorldGenCallerKey(args));
+        if (worldGen is { Done: false })
+        {
+            worldGen.Stop();
+            return TextCommandResult.Success(worldGen.Status);
+        }
+
+        var store = new LodWorldGenStateStore(LodWorldGenJob.StatePath(sapi));
+        if (!store.Exists)
+            return TextCommandResult.Success("[VintageHorizons] No world-generation job or resume state exists.");
+        if (!store.TryDelete(out string reason))
+            return TextCommandResult.Error("[VintageHorizons] Could not discard the resume state: " + reason);
+        return TextCommandResult.Success(
+            "[VintageHorizons] The interrupted job's resume state was discarded. Terrain it "
+            + "already generated remains permanently in the world.");
+    }
+
+    TextCommandResult OnWorldGenStatus(TextCommandCallingArgs args)
+    {
+        string line = WorldGenStatusLine();
+        Mod.Logger.Notification("{0}", line);
+        return TextCommandResult.Success(line);
+    }
+
+    bool TryStartWorldGen(LodWorldGenPlan plan, LodWorldGenState state, bool resumed,
+        out string refusal)
+    {
+        refusal = "";
+        RefreshWorldGenAuthority();
+        if (worldGen is { Done: false })
+        {
+            refusal = "another /vhworldgen job is active";
+            return false;
+        }
+        if (worldGenAuthority.Current != EnumWorldGenAuthority.None)
+        {
+            refusal = worldGenAuthority.Label + " already has world-generation authority";
+            return false;
+        }
+
+        LodPipeline opened;
+        try { opened = OpenPipeline(); }
+        catch (Exception e)
+        {
+            refusal = "the server distant-terrain cache could not open: " + e.Message;
+            return false;
+        }
+        if (!opened.Persisting || string.IsNullOrEmpty(opened.DbPath))
+        {
+            refusal = "the server distant-terrain cache is not persistent; no terrain was generated";
+            return false;
+        }
+        if (!LodKeptColumnReleaser.TryCreate(sapi.WorldManager,
+            out LodKeptColumnReleaser? releaser, out refusal) || releaser == null) return false;
+
+        int remaining = Math.Max(0, plan.Count - state.DoneCount());
+        if (!WorldGenDiskFits(sapi.WorldManager.CurrentWorldFilepath,
+            opened.DbPath, remaining, out refusal)) return false;
+
+        if (!worldGenAuthority.TryAcquire(EnumWorldGenAuthority.WorldGeneration,
+            "/vhworldgen savegame generation", out refusal)) return false;
+
+        // A new state's cache baseline cannot be known until OpenPipeline has selected
+        // the exact world-keyed database.
+        if (!resumed) state.CacheBytesAtStart = LodWorldGenJob.FileLength(opened.DbPath);
+        try
+        {
+            EnsureColumnLoadedSubscription();
+            worldGen = new LodWorldGenJob(sapi, Mod.Logger, opened, plan, state,
+                LodWorldGenJob.StatePath(sapi), releaser, Config);
+            worldGen.Start(resumed);
+            if (sapi.WorldManager.CurrentGeneratingChunkCount >= Config.WorldGenQueueTarget)
+            {
+                Mod.Logger.Warning("/vhworldgen started while the engine already had {0} "
+                    + "columns queued; it will wait at the named engine-queue gate.",
+                    sapi.WorldManager.CurrentGeneratingChunkCount);
+            }
+            return true;
+        }
+        catch (Exception e)
+        {
+            worldGen?.Shutdown();
+            worldGen = null;
+            RemoveJobOnlyColumnLoadedSubscription();
+            worldGenAuthority.Release(EnumWorldGenAuthority.WorldGeneration);
+            refusal = e.Message;
+            return false;
+        }
+    }
+
+    string WorldGenStatusLine()
+    {
+        if (worldGen != null) return worldGen.Status;
+        if (!worldReady)
+            return "[VintageHorizons] The world is still starting.";
+
+        var store = new LodWorldGenStateStore(LodWorldGenJob.StatePath(sapi));
+        if (!store.TryLoad(out LodWorldGenState? state, out string reason))
+            return "[VintageHorizons] An interrupted job state exists but cannot be read: " + reason;
+        if (state != null)
+            return $"[VintageHorizons] Interrupted world-generation job available: "
+                + $"{state.DoneCount()}/{state.TotalColumns} durable columns around chunk "
+                + $"{state.CentreCx},{state.CentreCz}, radius {state.RadiusChunks} "
+                + $"{state.Shape.ToString().ToLowerInvariant()}. Use /vhworldgen resume or stop.";
+        return "[VintageHorizons] No savegame world-generation job has run. Use "
+            + $"/vhworldgen start [radius] [square|circle] [here|spawn|coords] [x] [z]; "
+            + $"default radius {Config.WorldGenDefaultRadiusChunks}, max {Config.WorldGenMaxRadiusChunks}.";
+    }
+
+    void OfferInterruptedWorldGen()
+    {
+        var store = new LodWorldGenStateStore(LodWorldGenJob.StatePath(sapi));
+        if (!store.Exists) return;
+        Mod.Logger.Notification("{0}", WorldGenStatusLine());
+    }
+
+    static string WorldGenCallerKey(TextCommandCallingArgs args) =>
+        args.Caller.Player?.PlayerUID ?? "console";
+
+    static bool WorldGenDiskFits(string savegamePath, string cachePath, int remaining,
+        out string reason)
+    {
+        long saveNeed = (long)remaining * LodWorldGenJob.EstimatedSavegameBytesPerColumn;
+        long cacheNeed = (long)remaining * LodWorldGenJob.EstimatedCacheBytesPerColumn;
+        try
+        {
+            string saveRoot = Path.GetPathRoot(Path.GetFullPath(savegamePath))!;
+            string cacheRoot = Path.GetPathRoot(Path.GetFullPath(cachePath))!;
+            if (string.Equals(saveRoot, cacheRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                long free = new DriveInfo(saveRoot).AvailableFreeSpace;
+                long need = saveNeed + cacheNeed;
+                if (free < need)
+                {
+                    reason = $"the estimate needs {FormatWorldGenBytes(need)}, but {saveRoot} "
+                        + $"has {FormatWorldGenBytes(free)} free";
+                    return false;
+                }
+            }
+            else
+            {
+                long saveFree = new DriveInfo(saveRoot).AvailableFreeSpace;
+                long cacheFree = new DriveInfo(cacheRoot).AvailableFreeSpace;
+                if (saveFree < saveNeed || cacheFree < cacheNeed)
+                {
+                    reason = "the savegame/cache drive does not have the estimated free space "
+                        + $"({FormatWorldGenBytes(saveNeed)} savegame, "
+                        + $"{FormatWorldGenBytes(cacheNeed)} cache)";
+                    return false;
+                }
+            }
+            reason = "";
+            return true;
+        }
+        catch (Exception e)
+        {
+            reason = "free disk space could not be checked: " + e.Message;
+            return false;
+        }
+    }
+
+    static string FormatWorldGenBytes(long bytes) => string.Format(
+        System.Globalization.CultureInfo.InvariantCulture,
+        bytes >= 1024L * 1024 * 1024 ? "{0:0.0} GiB" : "{0:0} MiB",
+        bytes >= 1024L * 1024 * 1024
+            ? bytes / (1024.0 * 1024 * 1024)
+            : bytes / (1024.0 * 1024));
+
+    static string FormatWorldGenDuration(long seconds)
+    {
+        if (seconds < 120) return seconds + " seconds";
+        if (seconds < 7200) return (seconds + 30) / 60 + " minutes";
+        return string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "{0:0.0} hours", seconds / 3600.0);
+    }
+
     void OnChunkColumnLoaded(Vec2i chunkCoord, IWorldChunk[] chunks)
     {
         sweep?.ObserveLoadedColumn(chunkCoord.X, chunkCoord.Y);
-        pipeline!.QueueColumn(chunkCoord.X, chunkCoord.Y); // Vec2i.Y is the Z chunk coord
+        worldGen?.ObserveLoaded(chunkCoord.X, chunkCoord.Y);
+        pipeline?.QueueColumn(chunkCoord.X, chunkCoord.Y); // Vec2i.Y is the Z chunk coord
+    }
+
+    void EnsureColumnLoadedSubscription()
+    {
+        if (columnLoadedSubscribed) return;
+        sapi.Event.ChunkColumnLoaded += OnChunkColumnLoaded;
+        columnLoadedSubscribed = true;
+    }
+
+    void RemoveJobOnlyColumnLoadedSubscription()
+    {
+        if (!columnLoadedSubscribed || captureDrivenByLoads) return;
+        sapi.Event.ChunkColumnLoaded -= OnChunkColumnLoaded;
+        columnLoadedSubscribed = false;
     }
 
     /// <summary>
@@ -508,6 +972,7 @@ public class LodServerCaptureSystem : ModSystem
     /// </summary>
     void OnGameWorldSave()
     {
+        worldGen?.Checkpoint();
         if (pipeline?.Active == true) TickPipeline();
     }
 
@@ -586,6 +1051,12 @@ public class LodServerCaptureSystem : ModSystem
                 "[VintageHorizons] /vhgen is already running. Let it finish or stop it before "
                 + "starting a refresh, so both area walkers do not compete.");
         }
+        if (worldGen is { Done: false })
+        {
+            return TextCommandResult.Error(
+                "[VintageHorizons] /vhworldgen is already active. Let it finish or stop it "
+                + "before starting a refresh, so both area walkers do not compete.");
+        }
 
         var pos = args.Caller.Pos;
         double bx = pos?.X ?? sapi.World.DefaultSpawnPosition.X;
@@ -629,11 +1100,18 @@ public class LodServerCaptureSystem : ModSystem
 
     void TickPipeline()
     {
+        long now = Environment.TickCount64;
+        if (lastPipelineTickMs != 0 && now - lastPipelineTickMs > 250)
+            overloadedUntilMs = now + 1000;
+        lastPipelineTickMs = now;
+
         LodPhaseStart phaseStart = LodPhaseCost.Start(allocationTelemetryEnabled);
         pipeline!.Tick();
         pipelineTickCost.Add(phaseStart);
 
-        long now = Environment.TickCount64;
+        worldGen?.Tick(now < overloadedUntilMs);
+        RefreshWorldGenAuthority();
+
         if (HasActiveCacheWork())
         {
             if (now < nextActiveWorkStatusLogMs) return;
@@ -651,7 +1129,21 @@ public class LodServerCaptureSystem : ModSystem
         sweep is { Done: false }
         || pregen is { Done: false }
         || generate is { Done: false }
-        || refresh is { Done: false };
+        || refresh is { Done: false }
+        || worldGen is { Done: false };
+
+    void RefreshWorldGenAuthority()
+    {
+        if (pregen is { Done: true })
+            worldGenAuthority.Release(EnumWorldGenAuthority.StartupPregen);
+        if (generate is { Done: true })
+            worldGenAuthority.Release(EnumWorldGenAuthority.TransientGeneration);
+        if (worldGen is { Done: true })
+        {
+            worldGenAuthority.Release(EnumWorldGenAuthority.WorldGeneration);
+            RemoveJobOnlyColumnLoadedSubscription();
+        }
+    }
 
     void LogStats()
     {
@@ -767,10 +1259,11 @@ public class LodServerCaptureSystem : ModSystem
         generate?.Cancel();
         refresh?.Cancel();
         sweep?.Stop();
+        worldGen?.Shutdown();
 
         if (sapi != null)
         {
-            sapi.Event.ChunkColumnLoaded -= OnChunkColumnLoaded;
+            if (columnLoadedSubscribed) sapi.Event.ChunkColumnLoaded -= OnChunkColumnLoaded;
             sapi.Event.ChunkDirty -= OnChunkDirty;
             sapi.Event.GameWorldSave -= OnGameWorldSave;
             sapi.Event.UnregisterGameTickListener(tickListenerId);
@@ -780,5 +1273,6 @@ public class LodServerCaptureSystem : ModSystem
         pipeline?.Dispose();
         pipeline = null;
         persistedLevelZeroChanges.Clear();
+        pendingWorldGens.Clear();
     }
 }

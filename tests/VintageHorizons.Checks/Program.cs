@@ -76,6 +76,7 @@ public static class Program
         ("pure", "season colour column", SeasonColorChecks.Run),
         ("pure", "remote keys", RemoteKeyChecks.Run),
         ("pure", "chunk generation", GenerateChecks.Run),
+        ("pure", "savegame world generation", WorldGenChecks.Run),
         ("fixture", "server assist", ServerAssistChecks.Run),
         ("pure", "wire format", WireFormatChecks.Run),
         ("pure", "distant anti-aliasing", DistantAntiAliasingChecks.Run),
