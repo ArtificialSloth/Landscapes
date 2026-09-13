@@ -539,12 +539,12 @@ public class LodServerCaptureSystem : ModSystem
             .HandleWith(OnWorldGenStatus)
             .BeginSubCommand("start")
                 .WithDescription(
-                    "Prepare a job: [radius] [square|circle] [here|spawn|coords] [x] [z]")
+                    "Prepare a job: [radius] [circle|square] [here|spawn|coords] [x] [z]")
                 .WithArgs(
                     parsers.OptionalIntRange("radius", 1,
                         Math.Max(1, Config.WorldGenMaxRadiusChunks),
                         Math.Max(1, Config.WorldGenDefaultRadiusChunks)),
-                    parsers.OptionalWord("square|circle"),
+                    parsers.OptionalWord("circle|square"),
                     parsers.OptionalWord("here|spawn|coords"),
                     parsers.OptionalInt("x", -1),
                     parsers.OptionalInt("z", -1))
@@ -602,13 +602,15 @@ public class LodServerCaptureSystem : ModSystem
         int radius = (int)args.Parsers[0].GetValue();
         string shapeText = Convert.ToString(args.Parsers[1].GetValue())?.Trim() ?? "";
         EnumWorldGenShape shape;
-        if (shapeText.Length == 0 || shapeText.Equals("square", StringComparison.OrdinalIgnoreCase))
-            shape = EnumWorldGenShape.Square;
+        if (shapeText.Length == 0)
+            shape = LodWorldGenPlan.DefaultShape;
         else if (shapeText.Equals("circle", StringComparison.OrdinalIgnoreCase))
             shape = EnumWorldGenShape.Circle;
+        else if (shapeText.Equals("square", StringComparison.OrdinalIgnoreCase))
+            shape = EnumWorldGenShape.Square;
         else
             return TextCommandResult.Error(
-                "[VintageHorizons] Shape must be square or circle.");
+                "[VintageHorizons] Shape must be circle or square.");
 
         string centreMode = Convert.ToString(args.Parsers[2].GetValue())?.Trim() ?? "";
         int argX = (int)args.Parsers[3].GetValue();
@@ -854,8 +856,9 @@ public class LodServerCaptureSystem : ModSystem
                 + $"{state.CentreCx},{state.CentreCz}, radius {state.RadiusChunks} "
                 + $"{state.Shape.ToString().ToLowerInvariant()}. Use /vhworldgen resume or stop.";
         return "[VintageHorizons] No savegame world-generation job has run. Use "
-            + $"/vhworldgen start [radius] [square|circle] [here|spawn|coords] [x] [z]; "
-            + $"default radius {Config.WorldGenDefaultRadiusChunks}, max {Config.WorldGenMaxRadiusChunks}.";
+            + $"/vhworldgen start [radius] [circle|square] [here|spawn|coords] [x] [z]; "
+            + $"default circle, radius {Config.WorldGenDefaultRadiusChunks}, "
+            + $"max radius {Config.WorldGenMaxRadiusChunks}.";
     }
 
     void OfferInterruptedWorldGen()

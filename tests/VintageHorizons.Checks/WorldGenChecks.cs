@@ -18,6 +18,9 @@ public static class WorldGenChecks
 
     static void AreaAndClipping(Check c)
     {
+        c.Eq(EnumWorldGenShape.Circle, LodWorldGenPlan.DefaultShape,
+            "savegame world generation defaults to a circular footprint");
+
         var square = new LodWorldGenPlan(20, 20, 2, EnumWorldGenShape.Square, 100, 100);
         c.Eq(25, square.Count, "a square radius two contains its full inclusive 5x5 area");
         c.Eq(25, square.Columns.Select(x => (x.Cx, x.Cz)).Distinct().Count(),
@@ -50,32 +53,46 @@ public static class WorldGenChecks
 
         int centreTileX = 31 / LodWorldGenPlan.TileChunks;
         int centreTileZ = 31 / LodWorldGenPlan.TileChunks;
-        int previousRing = -1;
-        bool nearestFirst = true;
-        bool rows = true;
+        c.True(plan.Tiles[0].X == centreTileX && plan.Tiles[0].Z == centreTileZ,
+            "the player-containing tile is always generated first");
+
+        int previousBand = int.MinValue;
+        double previousAngle = double.NegativeInfinity;
+        bool outwardBands = true;
+        bool clockwiseWithinBands = true;
+        bool columnsNearestFirst = true;
         bool boundaries = true;
         for (int tileIndex = 0; tileIndex < plan.Tiles.Count; tileIndex++)
         {
             LodWorldGenTile tile = plan.Tiles[tileIndex];
-            int ring = Math.Max(Math.Abs(tile.X - centreTileX), Math.Abs(tile.Z - centreTileZ));
-            nearestFirst &= ring >= previousRing;
-            previousRing = ring;
+            int band = LodWorldGenPlan.TileRadialBand(31, 31, tile.X, tile.Z);
+            double angle = LodWorldGenPlan.Angle(
+                tile.X * LodWorldGenPlan.TileChunks
+                    + (LodWorldGenPlan.TileChunks - 1) / 2.0 - 31,
+                tile.Z * LodWorldGenPlan.TileChunks
+                    + (LodWorldGenPlan.TileChunks - 1) / 2.0 - 31);
+            outwardBands &= band >= previousBand;
+            if (band != previousBand) previousAngle = double.NegativeInfinity;
+            clockwiseWithinBands &= angle >= previousAngle;
+            previousBand = band;
+            previousAngle = angle;
 
-            int priorZ = int.MinValue;
-            int priorX = int.MinValue;
+            long previousDistanceSq = -1;
             for (int i = tile.FirstColumn; i < tile.FirstColumn + tile.ColumnCount; i++)
             {
                 LodWorldGenColumn column = plan.Columns[i];
                 boundaries &= column.Tile == tileIndex
                     && column.Cx / LodWorldGenPlan.TileChunks == tile.X
                     && column.Cz / LodWorldGenPlan.TileChunks == tile.Z;
-                rows &= column.Cz > priorZ || (column.Cz == priorZ && column.Cx > priorX);
-                priorZ = column.Cz;
-                priorX = column.Cx;
+                long dx = column.Cx - 31L, dz = column.Cz - 31L;
+                long distanceSq = dx * dx + dz * dz;
+                columnsNearestFirst &= distanceSq >= previousDistanceSq;
+                previousDistanceSq = distanceSq;
             }
         }
-        c.True(nearestFirst, "tile rings never move farther then back nearer");
-        c.True(rows, "columns use stable Z-major rows inside every tile");
+        c.True(outwardBands, "tile bands never move outward then back inward");
+        c.True(clockwiseWithinBands, "each radial tile band sweeps clockwise from east");
+        c.True(columnsNearestFirst, "columns within every tile start nearest the player");
         c.True(boundaries, "every tile range contains only that globally aligned tile");
     }
 
@@ -95,6 +112,9 @@ public static class WorldGenChecks
         c.True(loaded.IsDone(0) && loaded.IsDone(plan.Count - 1),
             "resume preserves both ends of the done bitmap");
         c.False(loaded.Matches(plan, 101, 100), "changed world bounds refuse an ambiguous resume");
+        loaded.Format = LodWorldGenState.CurrentFormat - 1;
+        c.False(loaded.Matches(plan, 100, 100),
+            "a cursor from the earlier traversal order is refused instead of misassigned");
         c.True(LodWorldGenState.Deserialize("{not json") == null,
             "malformed state is refused instead of becoming a new job");
 

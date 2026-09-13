@@ -33,13 +33,16 @@ public static class LodWorldGenSkip
 
 /// <summary>
 /// Deterministic, clipped area enumeration for the real-world generation job. Tiles are
-/// globally aligned, visit a square spiral around the centre tile, and use Z-major rows
-/// internally. Keeping this free of game types makes the ordering and restart identity
-/// directly checkable.
+/// globally aligned and visit circular radial bands around the player, clockwise inside
+/// each band. A tile's own columns also run nearest-first. The result keeps the large
+/// persistence boundary while making generated map coverage grow like ordinary exploration
+/// instead of as a square raster. Keeping this free of game types makes the ordering and
+/// restart identity directly checkable.
 /// </summary>
 public sealed class LodWorldGenPlan
 {
     public const int TileChunks = 16;
+    public static readonly EnumWorldGenShape DefaultShape = EnumWorldGenShape.Circle;
 
     readonly List<LodWorldGenColumn> columns = new();
     readonly List<LodWorldGenTile> tiles = new();
@@ -62,36 +65,18 @@ public sealed class LodWorldGenPlan
         int maxCz = Math.Min(mapChunksZ - 1, centreCz + radiusChunks);
         if (minCx > maxCx || minCz > maxCz) return;
 
-        int minTileX = minCx / TileChunks;
-        int maxTileX = maxCx / TileChunks;
-        int minTileZ = minCz / TileChunks;
-        int maxTileZ = maxCz / TileChunks;
-        int centreTileX = Math.Clamp(centreCx, 0, mapChunksX - 1) / TileChunks;
-        int centreTileZ = Math.Clamp(centreCz, 0, mapChunksZ - 1) / TileChunks;
-        int tilesInBounds = (maxTileX - minTileX + 1) * (maxTileZ - minTileZ + 1);
-        int acceptedTiles = 0;
+        int minTileX = minCx / TileChunks, maxTileX = maxCx / TileChunks;
+        int minTileZ = minCz / TileChunks, maxTileZ = maxCz / TileChunks;
+        var candidates = new List<TileCandidate>();
 
-        // The largest possible ring is bounded by the clipped tile rectangle. Iterating
-        // the full enclosing spiral gives a deterministic nearest-first filtered order.
-        int maxRing = Math.Max(
-            Math.Max(Math.Abs(minTileX - centreTileX), Math.Abs(maxTileX - centreTileX)),
-            Math.Max(Math.Abs(minTileZ - centreTileZ), Math.Abs(maxTileZ - centreTileZ)));
-        int spiralPositions = (2 * maxRing + 1) * (2 * maxRing + 1);
-        for (int i = 0; i < spiralPositions && acceptedTiles < tilesInBounds; i++)
+        for (int tileZ = minTileZ; tileZ <= maxTileZ; tileZ++)
+        for (int tileX = minTileX; tileX <= maxTileX; tileX++)
         {
-            (int dx, int dz) = LodColumnMap.SpiralAt(i);
-            int tileX = centreTileX + dx;
-            int tileZ = centreTileZ + dz;
-            if (tileX < minTileX || tileX > maxTileX
-                || tileZ < minTileZ || tileZ > maxTileZ) continue;
-            acceptedTiles++;
-
-            int first = columns.Count;
             int tileMinX = Math.Max(minCx, tileX * TileChunks);
             int tileMaxX = Math.Min(maxCx, tileX * TileChunks + TileChunks - 1);
             int tileMinZ = Math.Max(minCz, tileZ * TileChunks);
             int tileMaxZ = Math.Min(maxCz, tileZ * TileChunks + TileChunks - 1);
-            int tileOrdinal = tiles.Count;
+            var tileColumns = new List<(int Cx, int Cz, long DistanceSq, double Angle)>();
 
             for (int cz = tileMinZ; cz <= tileMaxZ; cz++)
             for (int cx = tileMinX; cx <= tileMaxX; cx++)
@@ -100,23 +85,77 @@ public sealed class LodWorldGenPlan
                 long rz = (long)cz - centreCz;
                 if (shape == EnumWorldGenShape.Circle
                     && rx * rx + rz * rz > (long)radiusChunks * radiusChunks) continue;
-
-                int index = columns.Count;
-                columns.Add(new LodWorldGenColumn(cx, cz, tileOrdinal));
-                indexByColumn.Add(LodColumnMap.Key(cx, cz), index);
+                tileColumns.Add((cx, cz, rx * rx + rz * rz, Angle(rx, rz)));
             }
 
-            int count = columns.Count - first;
-            if (count > 0)
+            if (tileColumns.Count == 0) continue; // circular corner outside the footprint
+            tileColumns.Sort(static (a, b) =>
             {
-                tiles.Add(new LodWorldGenTile(tileX, tileZ, first, count));
-            }
-            else
-            {
-                // A circular corner can leave an otherwise in-bounds tile empty. No
-                // columns reference its provisional ordinal, so omit it entirely.
-            }
+                int byDistance = a.DistanceSq.CompareTo(b.DistanceSq);
+                if (byDistance != 0) return byDistance;
+                int byAngle = a.Angle.CompareTo(b.Angle);
+                if (byAngle != 0) return byAngle;
+                int byZ = a.Cz.CompareTo(b.Cz);
+                return byZ != 0 ? byZ : a.Cx.CompareTo(b.Cx);
+            });
+
+            candidates.Add(new TileCandidate(tileX, tileZ,
+                TileRadialBand(centreCx, centreCz, tileX, tileZ),
+                Angle(tileX * TileChunks + (TileChunks - 1) / 2.0 - centreCx,
+                    tileZ * TileChunks + (TileChunks - 1) / 2.0 - centreCz),
+                tileColumns));
         }
+
+        candidates.Sort(static (a, b) =>
+        {
+            int byBand = a.Band.CompareTo(b.Band);
+            if (byBand != 0) return byBand;
+            int byAngle = a.Angle.CompareTo(b.Angle);
+            if (byAngle != 0) return byAngle;
+            int byZ = a.Z.CompareTo(b.Z);
+            return byZ != 0 ? byZ : a.X.CompareTo(b.X);
+        });
+
+        foreach (TileCandidate candidate in candidates)
+        {
+            int first = columns.Count;
+            int tileOrdinal = tiles.Count;
+            foreach (var column in candidate.Columns)
+            {
+                int index = columns.Count;
+                columns.Add(new LodWorldGenColumn(column.Cx, column.Cz, tileOrdinal));
+                indexByColumn.Add(LodColumnMap.Key(column.Cx, column.Cz), index);
+            }
+            tiles.Add(new LodWorldGenTile(candidate.X, candidate.Z,
+                first, columns.Count - first));
+        }
+    }
+
+    sealed record TileCandidate(int X, int Z, int Band, double Angle,
+        List<(int Cx, int Cz, long DistanceSq, double Angle)> Columns);
+
+    /// <summary>
+    /// Tile-width radial band measured from the nearest point of the tile to the player.
+    /// Band -1 is the unique player-containing tile. Band 0 is its adjacent reveal area,
+    /// then each full 16-chunk step moves the clockwise sweep outward once.
+    /// </summary>
+    internal static int TileRadialBand(int centreCx, int centreCz, int tileX, int tileZ)
+    {
+        int tileMinX = tileX * TileChunks, tileMaxX = tileMinX + TileChunks - 1;
+        int tileMinZ = tileZ * TileChunks, tileMaxZ = tileMinZ + TileChunks - 1;
+        long dx = centreCx < tileMinX ? (long)tileMinX - centreCx
+            : centreCx > tileMaxX ? (long)centreCx - tileMaxX : 0;
+        long dz = centreCz < tileMinZ ? (long)tileMinZ - centreCz
+            : centreCz > tileMaxZ ? (long)centreCz - tileMaxZ : 0;
+        if (dx == 0 && dz == 0) return -1;
+        return (int)(Math.Sqrt(dx * dx + dz * dz) / TileChunks);
+    }
+
+    /// <summary>Clockwise map angle starting east, normalized so sorting is stable.</summary>
+    internal static double Angle(double dx, double dz)
+    {
+        double angle = Math.Atan2(dz, dx);
+        return angle < 0 ? angle + Math.PI * 2 : angle;
     }
 
     public bool TryGetIndex(int cx, int cz, out int index) =>
@@ -130,13 +169,16 @@ public sealed class LodWorldGenPlan
 /// </summary>
 public sealed class LodWorldGenState
 {
-    public const int CurrentFormat = 1;
+    // Format 2 changed plan order from globally aligned square rings/rows to a circular
+    // outward tile spiral. Refusing an earlier cursor is safer than assigning its bits to
+    // different columns.
+    public const int CurrentFormat = 2;
 
     public int Format { get; set; } = CurrentFormat;
     public int CentreCx { get; set; }
     public int CentreCz { get; set; }
     public int RadiusChunks { get; set; }
-    public EnumWorldGenShape Shape { get; set; }
+    public EnumWorldGenShape Shape { get; set; } = LodWorldGenPlan.DefaultShape;
     public int MapChunksX { get; set; }
     public int MapChunksZ { get; set; }
     public string Preset { get; set; } = "Balanced";
