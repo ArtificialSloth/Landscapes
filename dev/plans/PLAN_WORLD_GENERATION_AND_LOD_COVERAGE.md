@@ -1,8 +1,8 @@
 # Plan - World generation and complete distant terrain
 
-**Status:** Proposed, not started. Written at the owner's request on 2026-09-12 from report-only
-investigations against 0.4.64 (code `dd0394c`, docs `b6c2950`). No source was changed. The owner
-decides the order of work (decision W6).
+**Status:** In progress. P1-P3 are complete (0.4.66-0.4.69, Sessions 89-90); P4-P8 are open and
+W1-W8 undecided. Written at the owner's request on 2026-09-12 from report-only investigations against
+0.4.64 (code `dd0394c`, docs `b6c2950`). The owner decides the order of work (decision W6).
 **Created:** 2026-09-12
 **Scope:** Three defects seen on a new world during vanilla `/wgen pregen` (the first join drew only
 water; strips and single-chunk holes in distant terrain), their fixes, and a player-started
@@ -271,6 +271,11 @@ These figures calibrate the page's estimates until the running job measures its 
   - far sections copied half-filled become whole;
   - near sections the client partly captured gain the server's other columns;
   - the client's own mip propagation then updates their parents.
+
+  **As built in 0.4.68 (owner decision, 2026-09-12, Session 90):** only first sightings and parents
+  are fill-only. A level-0 row the server rewrote after the client saw it wins column by column, so
+  server-side snow refreshes still reach held ground; it never erases a column only the client holds
+  and never replaces observed snow with an unobserved peek.
 - **Remember what was merged.** A small additive client table records, per key, the server rowid
   last merged, so a restart does not redo the work. It is an additive table, noted in
   `WIRE_HISTORY`, and the blob format is unchanged. In the first session after upgrading, shared

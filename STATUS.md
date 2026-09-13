@@ -4,9 +4,9 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-12`
-**Mod version:** `0.4.67` — current private test build, verified, copy-installed, checkpointed and runtime-tested for server cache draining
+**Mod version:** `0.4.69` — current private test build, verified, copy-installed and checkpointed; its sweep pacing is not yet runtime-tested
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.65 `39dc98d`, 0.4.66 `0ed190c`, 0.4.67 `28746a7`; nothing pushed
+**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.66 `0ed190c`, 0.4.67 `28746a7`, 0.4.68 `52d3aa2`, 0.4.69 `ae677b7`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
 **Source files:** `109` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
@@ -15,19 +15,23 @@
 
 ## Current result
 
-**P1 and P2 of the world-generation/LOD-coverage plan are complete; P3 owns the visible holes.**
-Version 0.4.66 validates GPU depth-copy compatibility against the concrete primary framebuffer,
-fixing a render-scaled case where the API said 2560x1440 but the real framebuffer, depth texture
-and viewport were 1920x1080. The owner passed that check. Version 0.4.67 makes server dirty-cache
-persistence oldest-first, performs bounded follow-up snapshots without an extra 30-second delay,
-and reports dirty age, save rate, capture backlog, unload drops and capture errors. In the owner's
-integrated refresh run, backlog remained small and drops/errors remained zero.
+**P1-P3 of the world-generation/LOD-coverage plan are complete, and distant terrain fills in.**
+0.4.66 fixed GPU depth-copy validation under render scaling and 0.4.67 made server cache saving
+oldest-first (Session 89). 0.4.68 makes the client take the server half's fuller rows for sections
+it already holds. The sibling cache is scanned by rowid at every level; a first sighting and every
+parent fill only the columns the client lacks, and a level-0 row the server rewrote after the client
+saw it wins column by column (the owner's choice), never erasing columns only the client holds or
+replacing observed snow with a generated peek. Merges are recorded in the additive `SiblingMerge`
+table once durable. 0.4.69 paces the savegame sweep to the capture queue.
 
-The same run did not visibly fill the far holes. That is the expected remaining P3 defect: once the
-client holds an incomplete section key, current offer/install logic does not safely fill it from a
-more complete server row. The correct next change is an incremental every-level rowid offer scan
-plus a revision-checked merge that fills only uncaptured columns; client-captured columns win. The
-existing finished world is the acceptance case and should not need more vanilla terrain generated.
+| Evidence | Result | Level |
+|---|---|---|
+| Caches before the fix | 645 of 2,912 client rows behind the server, 1,471,451 columns lacking (L4 95/100, L5 34/36, L6 9/9) | Measured offline (`siblingfield`) |
+| 0.4.68 in play | "The vast majority of terrain is filled in now"; by 23:31, 2,207 sections merged, 1,468,006 columns filled, 10,231 replaced by newer saves | Human-tested; log-measured |
+| Remaining thin lines | 2,461 chunk columns at vanilla pass 5 of 6 in one-chunk lines, 80 finished but never captured, none absent (23:35) | Measured offline, read-only against live files |
+| Scanner (D4) | Old full read 828 ms CPU; key read 15.6 ms; incremental about 0.1 ms; 0.056% of one thread over 130 s offline, 0.04-0.11% in play | Measured offline; log-measured |
+| Sweep drops | 4,043 unloaded-before-capture drops in the first 0.4.68 session; paced in 0.4.69 | Log-measured; harness-tested only |
+
 The accepted 0.4.64 Settings result and all earlier rendering results remain in place.
 
 ## Distant structures and chiselled blocks
@@ -192,7 +196,7 @@ holds the evidence and settled decision 33 owns the rule. The owner's earlier bu
 | Loaded updates | Vanilla `ChunkDirty` queues exact recapture | Source/check evidence; movement-driven updates mostly matched vanilla |
 | Dormant updates | Every 30 seconds, vanilla regional snow snapshots may start a finite accumulation/melt campaign; one dormant region is woken as a canary per poll | Built and bounded; a complete real-time accumulation and melt were not clearly observed |
 | Manual update | `/vhrefresh [radius]`, default 32 chunks/max 128, recaptures only proven-existing safe columns; `status` and `stop` are available | Source/check evidence; human command matrix remains open |
-| Live delivery | Durable changed L0 rows are offered to connected clients; integrated play notices sibling `ModifiedMs`; clients rebuild parents | Source/check evidence; dedicated multiplayer temporal run remains open |
+| Live delivery | Durable changed L0 rows reach clients: integrated play through the sibling cache's rowids, dedicated play through refresh manifests. A held section merges them column by column, the newer copy winning, never erasing client-only columns (0.4.68); clients rebuild parents | Source/check evidence; integrated merge human-tested in 0.4.68; dedicated multiplayer temporal run remains open |
 
 Snow accumulation and melt are rare transitions, so the scheduler does no column work between
 relevant weather changes. During a finite campaign, `RefreshColumnsPerSecond` defaults to 1, clamps
@@ -209,15 +213,18 @@ from live blocks. No cache purge or schema-meaning change is required.
 
 Protocol 1 added optional `AssistServerSettings` field 16 for the refresh rate and
 `AssistKeyManifest` field 4 to distinguish newer durable contents from a newly discovered key. Older
-protobuf peers ignore them. New clients accept an existing-row replacement only while its submitted
-content revision is current, so a later local capture wins. Only L0 is transferred; parents rebuild
+protobuf peers ignore them. Since 0.4.68 a refreshed row is merged into the client's copy column by
+column instead of replacing it, and wins only while the client's content revision is unchanged since
+the row was handed to the decoder; otherwise it only fills. Only L0 is transferred; parents rebuild
 locally. The compatibility numbers remain `1 / 4 / 6`; `dev/WIRE_HISTORY.md` records the
 append-compatible extensions.
 
 Since 0.4.62 a chiselled position stores its stand-in's block code, for example planks where the
 world holds a chisel. Every reader already resolves an ordinary block code, so neither the blob
-format nor the schema meaning moved; `dev/WIRE_HISTORY.md` carries the note. Sessions 84-88 changed
+format nor the schema meaning moved; `dev/WIRE_HISTORY.md` carries the note. Sessions 84-89 changed
 nothing on the wire or in the blob format; Sessions 86 and 88 added client configuration keys only.
+Session 90 added the client table `SiblingMerge`, recording which server-cache rows a stored copy
+already contains; it is additive and the numbers stay `1 / 4 / 6`.
 
 ## Diagnostics
 
@@ -241,9 +248,11 @@ Session-only unless stated; all write their findings to the client log.
 
 ## Performance and artifact evidence
 
-The final fast tier passed **23,227 assertions with zero failures**, and the 0.4.64 Release build
-completed with zero warnings and zero errors. Distant anti-aliasing's measured cost is in its table
-above; automatic thresholds cost nothing per frame unless their inputs change. The pause-time path
+The final fast tier passed **24,588 assertions with zero failures**, and the 0.4.69 Release and
+Debug builds completed with zero warnings and zero errors. The sibling-cache scanner's cost is in the
+current-result table; merging into held sections runs under the existing install budget and is not
+separately measured. Distant anti-aliasing's measured cost is in its table above; automatic
+thresholds cost nothing per frame unless their inputs change. The pause-time path
 runs the already-bounded owner-thread work at 50 ms cadence but has no paired frame-time capture.
 Chisel stand-ins add a copy of each chiselled block's contents where a capture job is created and
 arithmetic on the capture worker; neither is measured. The late range check of 0.4.53 sweeps only on
@@ -251,18 +260,17 @@ frames where the physics step changed the player's block; snow adds 1,024 uncomp
 bytes per resident section before compression; no paired large-world capture yet isolates winter
 campaign cost.
 
-The verified `dist/vintagehorizons_0.4.64.zip` is 541,112 bytes with 38 entries and SHA-256
-`91B2CDA032A5AE5C1E99DCA1F2B32A1D1078E697CF434AACA5932BF881856FB6`; `modinfo.json` and the DLL both
-report 0.4.64, the zip DLL matches the Release output, no PDB is present, and the installed
+The verified `dist/vintagehorizons_0.4.69.zip` has 38 entries and SHA-256
+`BD48A3BE96ED05B3A153C94BEA2F9E77EA2BA3CE775D31EE213010BE81B3850A`; `modinfo.json` and the DLL both
+report 0.4.69, the zip DLL matches the Release output, no PDB is present, and the installed
 Mods-folder copy has the same hash. Older test zips remain in that folder. Every incremented private
 test build receives an exact Git checkpoint after verification and installation; this does not
 authorize a push, tag, publication or public release. The assistant did not launch the game in
-Session 88.
+Session 90; the owner ran 0.4.68.
 
-Documentation validation passed **2,311 of 2,316 checks**. The five failures are the pre-existing
-personal Windows paths in ignored `.testdata/water-extraction` and `.testdata/water-oit`
-diagnostic logs. Current version, changelog coverage, source count, compatibility, links, session
-routing, shader ASCII and active performance-plan routing pass.
+Documentation validation passed **2,319 checks** with no failures at the Session 90 doc pass.
+Current version, changelog coverage, source count, compatibility, links, session routing, shader
+ASCII and active performance-plan routing pass.
 
 ## Established product state retained
 
@@ -279,29 +287,30 @@ routing, shader ASCII and active performance-plan routing pass.
   vanilla-owned and pause loading reuses bounded owner-thread work (settled decision 37).
 - The handoff fix changes when ownership's range half is decided, not what ownership means. Water
   development still may not redefine shared terrain ownership.
+- A held section is merged, never replaced: first sightings and parents fill only, and a level-0 row
+  the server rewrote after the client saw it wins column by column (owner, 2026-09-12; G188).
 
 ## Next work
 
-Begin with [Session 89](dev/sessions/SESSION_89.md), the top of [TODO](dev/TODO.md), and
+Begin with [Session 90](dev/sessions/SESSION_90.md), the top of [TODO](dev/TODO.md), and
 [the world-generation/LOD-coverage plan](dev/plans/PLAN_WORLD_GENERATION_AND_LOD_COVERAGE.md).
 
-1. Implement P3 / Fix C plus D4: incremental SQLite-rowid discovery, changed offers at every level,
-   and a revision-checked palette/captured/snow merge that fills only columns absent from the
-   client's copy. Add the planned real-SQLite rowid, held-key, merge and request-lifecycle tests;
-   measure scanner CPU.
-2. Run the P3 offline server/client-row comparison, then ask the owner to revisit the finished 18:23
-   world without generating more terrain. The far holes should fill while client-captured columns
-   remain authoritative.
-3. P4 may ride with P3: a sweep during vanilla pregen should say `inconclusive`, not warn.
-4. Keep P0 available for a convenient restart. Before P5-P7, stop and ask the owner for W1-W8;
-   none of those proposal values has been accepted.
+1. Runtime-check 0.4.69: during the startup sweep the server's cache-work line should keep
+   unloaded-before-capture drops near zero; the sweep takes longer.
+2. P4: a sweep during vanilla pregen should report `inconclusive`, not warn. It needs an engine
+   signal the mod does not read yet.
+3. Keep P0 available for a convenient restart. Before P5-P7, stop and ask the owner for W1-W8;
+   none of those proposal values has been accepted. P5's job would also finish vanilla's unfinished
+   pregen lines (G191).
+4. Known P3 limits: dedicated servers cannot fill a section a client held before joining, and snow
+   refreshes do not reach far parents.
 5. Preserve older open verification debt in TODO, including winter convergence, pause loading and
    the Session 84 diagnostic cleanup.
 
-[Session 89](dev/sessions/SESSION_89.md) is the authoritative continuation point. Sessions 88-82
-retain the Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
-Architecture owns the established invariants, `dev/WIRE_HISTORY.md` owns compatibility, and
-G166-G187 in `dev/GOTCHAS.md` preserve the recent traps.
+[Session 90](dev/sessions/SESSION_90.md) is the authoritative continuation point. Sessions 89-82
+retain the world-coverage, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and
+water history. Architecture owns the established invariants, `dev/WIRE_HISTORY.md` owns
+compatibility, and G166-G191 in `dev/GOTCHAS.md` preserve the recent traps.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md); GPU renderer work

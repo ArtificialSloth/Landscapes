@@ -91,6 +91,8 @@ format and schema meaning remain 4/6.
 
 The database table layout may remain SQL-compatible while `SchemaVersion` changes because the stored values acquired new semantics. A schema-meaning bump intentionally invalidates existing cache rows.
 
+Session 90 (0.4.68) adds the table `SiblingMerge (Detail, SX, SZ, SourceRowid)`: for a key the client holds, the rowid of the server-side sibling-cache row its stored copy already contains. It is additive. The Section table, the blob format and the schema meaning are unchanged (4/6); older builds never read the table, a format purge clears it with the sections, and deleting an unreadable section deletes its record. The server half's cache contains the table empty, because both halves use `LodStore`.
+
 ## Rules for compatibility changes
 
 When changing protocol, blob format, or schema meaning:

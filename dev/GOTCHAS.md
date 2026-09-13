@@ -3645,50 +3645,6 @@ second publisher.
 **Found:** 2026-09-12, Session 88 (source-traced and harness-tested; direct runtime progress witness
 remains open).
 
-### G184 - A boundary marker takes the colour of the region it introduces
-
-**Trigger:** keeping separate, similarly indexed palettes for LOD region fills and L1-L6 boundary
-markers.
-
-**Trap:** a boundary is named for the region to its right, while a zero-based marker array is named
-for the boundary after the region to its left. Indexing both arrays the same way shifts every
-marker frame by one colour even though both arrays look internally consistent.
-
-**Safer action:** keep one L0-L6 palette. Shade region `level` from entry `level`, and shade boundary
-`i` from entry `i + 1`. The 0.4.64 scale does this.
-
-**Found:** 2026-09-12, Session 88 (owner screenshot; fixed and human-accepted).
-
-### G185 - A mirrored vanilla setting must remain vanilla-owned
-
-**Trigger:** exposing a game setting, such as render distance, in a mod's own editor.
-
-**Trap:** copying it into mod configuration creates two values that can disagree, and a superficially
-similar slider can still diverge in range, increments, commit timing, preset side effects or Cancel
-behavior. The first distance map showed vanilla's value as context but did not provide the second
-real control the owner expected.
-
-**Safer action:** source-trace the game's control and write the actual setting with the same
-semantics. The 0.4.64 marker uses 32-1,536 in 32-block steps, commits on mouse-up, marks Graphics
-Custom, refreshes automatic thresholds, and is not rolled back by the mod's Cancel action.
-
-**Found:** 2026-09-12, Session 88 (decompiled Vintage Story 1.22.7; human-accepted UI).
-
-### G186 - Game ticks stop behind pause while render stages continue
-
-**Trigger:** expecting owner-thread cache, install or mesh drains registered only on the ordinary
-game tick to continue behind the single-player pause menu.
-
-**Trap:** workers may finish, but their bounded publication path stops draining, so distant terrain
-appears to stop loading even though the game keeps rendering the paused scene. Unpausing or
-synthesizing a simulation tick would change unrelated game behavior.
-
-**Safer action:** when the saved option is on, use a continuing render stage to invoke the same
-bounded owner-thread work at its ordinary 50 ms cadence. Do not advance simulation or introduce a
-second publisher.
-
-**Found:** 2026-09-12, Session 88 (source-traced and harness-tested; runtime progress witness open).
-
 ### G187 - Nominal frame dimensions can disagree with the framebuffer being copied
 
 **Trigger:** validating a GPU depth-copy path against the client API's reported frame width and
@@ -3703,3 +3659,65 @@ attached to that framebuffer. Keep nominal API dimensions only as a fallback and
 both when they disagree.
 
 **Found:** 2026-09-12, Session 89 (0.4.65 owner failure; corrected and owner-passed in 0.4.66).
+
+### G188 - A held key was never offered again, and the only refresh replaced whole sections
+
+**Trigger:** registering keys from a second cache (the server half's sibling cache, or a server's
+manifest) against a client cache that already holds some of them.
+
+**Trap:** skipping every key the client holds leaves a copy taken while pregen had filled only its
+edge incomplete for good; the far view draws thin walls with sky between them. The level-0 refresh
+that did exist replaced the whole section, erasing columns only the client held.
+
+**Safer action:** merge column by column (`LodSection.MergeFrom`). Fill only missing columns on a
+first sighting and at every parent level; let a level-0 row the server rewrote after the client saw
+it replace the columns it carries, never erasing client-only columns or observed snow. Keep reloads
+of held keys on local disk.
+
+**Found:** 2026-09-12, Sessions 89-90 (645 of 2,912 client rows behind the server, measured offline;
+fixed and human-tested in 0.4.68).
+
+### G189 - An incremental rowid scan needs a full-scan backstop, and ModifiedMs sits behind the blob
+
+**Trigger:** watching a SQLite table that another process writes, to find changed rows.
+
+**Trap:** reading a column stored after a large blob (here `ModifiedMs` after `Data`) walks every
+row's overflow pages: 828 ms of CPU per scan of a 1.8 GB cache. `rowid > @last` is almost free, and
+`INSERT OR REPLACE` numbers a rewritten row above every existing one, but SQLite reuses the top rowid
+after that row is deleted, so the incremental query alone can miss rows.
+
+**Safer action:** read only `rowid` and key columns (answered from the primary-key index), scan
+incrementally, and run a full key scan periodically and whenever `max(rowid)` falls below the highest
+seen. `StoreChecks.AStoreRewriteGetsANewRowid` tests the premise against the real store.
+
+**Found:** 2026-09-12, Session 90 (measured offline on the owner's cache; harness-tested).
+
+### G190 - A producer that loads columns without keeping them must pace to the capture queue
+
+**Trigger:** loading chunk columns for capture, as the savegame sweep does, without keeping them
+loaded.
+
+**Trap:** the engine unloads such a column within seconds. Loading at a fixed rate while capture fell
+behind let the queue reach 792 and dropped 4,043 columns uncaptured in one session, and a column that
+is never captured is a permanent gap in both caches.
+
+**Safer action:** hold loads while the pipeline's total capture backlog (pending columns plus the
+worker) is at its limit (`LodSavegameSweep.LoadsAllowed`, 32), or keep columns loaded until captured,
+as the planned generation job does.
+
+**Found:** 2026-09-12, Session 90 (log-measured; paced in 0.4.69, harness-tested only).
+
+### G191 - Vanilla pregen can leave unfinished one-chunk lines that no cache holds
+
+**Trigger:** thin, straight, one-chunk-wide gaps remaining in the distant view of a pregenerated area
+after every merge has finished.
+
+**Trap:** they look like a delivery bug. In the owner's 301 x 301 chunk pregen square, 2,461 chunk
+columns sat at vanilla's pass 5 of 6 in north-south lines and were never captured; only 80 missing
+columns were finished ones the server half had failed to capture.
+
+**Safer action:** classify a gap offline before chasing it: the savegame mapchunk `currentpass`
+(protobuf field 4, 6 is done, key `x | z << 27`) against both caches. Unfinished columns fill in once
+vanilla finishes them, for example when a player flies near them.
+
+**Found:** 2026-09-12, Session 90 (measured read-only against the live files; the owner's flight).

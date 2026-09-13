@@ -8,10 +8,33 @@ first.
 
 ## [Unreleased]
 
-**Known open:** P3's fill-only client merge and P4's sweep diagnostic; winter temporal convergence
-(a real accumulation and melt, `/vhrefresh` boundaries, campaign cost). W1-W8 remain undecided and
-must be asked before the P5-P7 generation feature. The last accepted baseline remains 0.4.64; 0.4.66
-passed its GPU owner check and 0.4.67 passed its cache-drain runtime check.
+**Known open:** P4's sweep diagnostic; 0.4.69's sweep pacing is not yet runtime-tested; dedicated
+servers still cannot fill a section a client held before joining; winter temporal convergence (a real
+accumulation and melt, `/vhrefresh` boundaries, campaign cost). W1-W8 remain undecided and must be
+asked before the P5-P7 generation feature. The last accepted baseline remains 0.4.64; 0.4.66 passed
+its GPU owner check, 0.4.67 its cache-drain runtime check, and 0.4.68 the owner's far-terrain look.
+
+## [0.4.69] - 2026-09-12
+
+**Distant terrain your game already holds now fills in from the server half's cache (0.4.68).**
+A far section copied while vanilla pregen had filled only part of it used to stay that way, because
+the game never took a newer copy of a section it already had. It now merges the server's copy into
+its own. In the owner's world the far view went from thin walls to nearly complete ground within
+minutes, with no terrain generated. When the server saves a level-0 section again later, its columns
+replace the matching columns of your copy, so server-side snow refreshes still arrive; columns only
+your game has are never erased. Watching the server's cache now costs a small fraction of a percent
+of one CPU thread instead of about 40%.
+
+**The server-side savegame sweep no longer outruns capture (0.4.69).** It waits while 32 columns are
+queued for capture. Before, a backed-up queue let the game unload swept columns before they were
+captured: 4,043 in one session.
+
+Thin one-chunk-wide lines that stay empty in a pregenerated area are columns vanilla never finished
+(pass 5 of 6). Flying near them makes vanilla finish them, and they then appear.
+
+Versions 0.4.68 and 0.4.69 are private test builds. Release and Debug builds completed with zero
+warnings/errors; 24,588 fast assertions pass. The verified 38-entry 0.4.69 package was copy-installed
+with SHA-256 `BD48A3BE96ED05B3A153C94BEA2F9E77EA2BA3CE775D31EE213010BE81B3850A`.
 
 ## [0.4.67] - 2026-09-12
 

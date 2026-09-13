@@ -2,18 +2,24 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.67
+## Start here: 0.4.69
 
-Read [Session 89](sessions/SESSION_89.md) and
-[the world-generation/LOD-coverage plan](plans/PLAN_WORLD_GENERATION_AND_LOD_COVERAGE.md). P1 and P2
-are complete: the owner passed 0.4.66's corrected GPU validation, and a real 0.4.67 refresh proved
-the oldest-first server cache drain stays small with zero drops/errors. It did not fill the visible
-holes because the client already owns incomplete copies of those section keys.
+Read [Session 90](sessions/SESSION_90.md) and
+[the world-generation/LOD-coverage plan](plans/PLAN_WORLD_GENERATION_AND_LOD_COVERAGE.md). P1-P3
+are complete: the owner saw the 18:23 world's far terrain fill in on 0.4.68. 0.4.69 paces the
+savegame sweep to the capture queue; it is built, verified and installed, not runtime-tested.
 
-**Next: P3 / Fix C plus D4.** Build incremental SQLite-rowid offer discovery at every detail level
-and a revision-checked, client-wins merge that fills only uncaptured columns. Use the finished 18:23
-world without generating more vanilla terrain as the visual acceptance case. P4 may ride with P3.
-There are no partial P3 source edits. W1-W8 remain open; ask the owner before P5-P7.
+- **0.4.69 runtime check.** With the startup sweep running, the server's once-a-minute cache-work
+  line should keep unloaded-before-capture drops near zero; expect the sweep to take longer.
+- **P4 / D2.** The sweep's absence check should report "inconclusive" when vanilla pregen generated
+  at the same time. It needs an engine signal the mod does not read yet.
+- **W1-W8 before P5-P7.** None is accepted. P5's job would also finish vanilla's unfinished pregen
+  lines (G191), because it loads existing columns the cache lacks.
+- **Dedicated servers** still cannot fill a section a client held before joining: the network
+  carries no per-key revision, so only refreshed level-0 rows merge there.
+- **Snow refreshes do not reach far parents** (they never did); a separate item if wanted.
+- **P3 after-comparison.** `siblingfield` was not re-run after the owner's revisit; the 80 finished
+  but uncaptured columns of the 18:23 world are still missing from its server cache.
 
 ## Distant structures and block-entity colours: what 0.4.62 leaves open
 
