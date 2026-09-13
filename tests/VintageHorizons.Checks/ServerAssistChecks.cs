@@ -489,11 +489,62 @@ public static class ServerAssistChecks
         c.Eq("newest", client.WorldGenStatus?.Message,
             "an out-of-order older reply cannot overwrite newer Generate state");
 
+        client.OnWorldGenStatus(new AssistWorldGenStatus
+        {
+            RequestId = 8,
+            Action = EnumWorldGenControlAction.Confirm,
+            Success = false,
+            Available = true,
+            State = EnumWorldGenRemoteState.Idle,
+            Message = "safe release seam missing",
+        });
+        client.OnWorldGenStatus(new AssistWorldGenStatus
+        {
+            RequestId = 9,
+            Action = EnumWorldGenControlAction.Status,
+            Success = true,
+            Available = true,
+            State = EnumWorldGenRemoteState.Idle,
+            Message = "no job has run",
+        });
+        client.PumpWorldGen();
+        c.Eq("no job has run", client.WorldGenStatus?.Message,
+            "the newer passive poll owns current structured state");
+        c.Eq("safe release seam missing", client.LastWorldGenControlError,
+            "but it cannot erase the preceding control refusal");
+
+        client.OnWorldGenStatus(new AssistWorldGenStatus
+        {
+            RequestId = 10,
+            Action = EnumWorldGenControlAction.Prepare,
+            Success = true,
+            Available = true,
+            State = EnumWorldGenRemoteState.Prepared,
+            Message = "prepared",
+        });
+        client.PumpWorldGen();
+        c.Eq("", client.LastWorldGenControlError,
+            "a later successful control action clears the retained refusal");
+
+        var disconnected = new LodAssistClient(null!, new CaptureLogger(), "0.4.75");
+        disconnected.OnWelcome(new AssistWelcome
+        {
+            Protocol = LodAssist.Protocol,
+            Features = LodAssist.FeatureWorldGeneration,
+            CanControlWorldGeneration = true,
+        });
+        disconnected.RequestWorldGen(EnumWorldGenControlAction.Confirm);
+        disconnected.PumpWorldGen();
+        c.True(disconnected.LastWorldGenControlError.Contains("unavailable", StringComparison.Ordinal),
+            "a locally unsendable control request is retained like a server refusal");
+
         client.Reset();
         c.False(client.WorldGenerationAvailable,
             "leaving the world drops the prior server's Generate capability");
         c.True(client.WorldGenStatus == null,
             "leaving the world drops the prior job status");
+        c.Eq("", client.LastWorldGenControlError,
+            "leaving the world drops the prior control refusal");
     }
 
     /// <summary>

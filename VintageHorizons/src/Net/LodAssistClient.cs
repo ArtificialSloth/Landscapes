@@ -50,6 +50,7 @@ public sealed class LodAssistClient
 
     public bool CanControlWorldGeneration { get; private set; }
     public AssistWorldGenStatus? WorldGenStatus { get; private set; }
+    public string LastWorldGenControlError { get; private set; } = "";
     public event Action<AssistWorldGenStatus>? WorldGenStatusChanged;
 
     readonly ConcurrentQueue<AssistWorldGenStatus> worldGenStatuses = new();
@@ -57,6 +58,8 @@ public sealed class LodAssistClient
     long nextWorldGenPollMs;
     long nextWorldGenRequestId;
     long lastWorldGenStatusRequestId;
+    long lastWorldGenControlResponseId;
+    long worldGenResetFloor;
 
     public LodAssistClient(ICoreClientAPI capi, ILogger logger, string modVersion)
     {
@@ -171,8 +174,17 @@ public sealed class LodAssistClient
     {
         AssistWorldGenStatus? latest = null;
         long newestRequestId = lastWorldGenStatusRequestId;
+        bool controlMessageChanged = false;
         while (worldGenStatuses.TryDequeue(out AssistWorldGenStatus? next))
         {
+            if (next.RequestId <= worldGenResetFloor) continue;
+            if (next.Action != EnumWorldGenControlAction.Status
+                && next.RequestId > lastWorldGenControlResponseId)
+            {
+                lastWorldGenControlResponseId = next.RequestId;
+                LastWorldGenControlError = next.Success ? "" : next.Message;
+                controlMessageChanged = true;
+            }
             if (next.RequestId <= lastWorldGenStatusRequestId
                 || next.RequestId < newestRequestId) continue;
             newestRequestId = next.RequestId;
@@ -184,6 +196,12 @@ public sealed class LodAssistClient
             WorldGenStatus = latest;
             CanControlWorldGeneration = latest.CanControl;
             WorldGenStatusChanged?.Invoke(latest);
+        }
+        else if (controlMessageChanged && WorldGenStatus != null)
+        {
+            // A newer passive poll may already own the structured state. A late control
+            // refusal still has to repaint its durable error instead of disappearing.
+            WorldGenStatusChanged?.Invoke(WorldGenStatus);
         }
 
         if (!ShouldPollWorldGen(worldGenPageOpen, WorldGenStatus?.State)) return;
@@ -210,6 +228,8 @@ public sealed class LodAssistClient
         int x = -1, int z = -1, string preset = "Balanced")
     {
         long requestId = Interlocked.Increment(ref nextWorldGenRequestId);
+        if (action != EnumWorldGenControlAction.Status)
+            LastWorldGenControlError = "";
         if (!WorldGenerationAvailable || channel == null || !channel.Connected)
         {
             OnWorldGenStatus(new AssistWorldGenStatus
@@ -219,6 +239,7 @@ public sealed class LodAssistClient
                 Message = "[VintageHorizons] Generate World is unavailable on this server.",
                 State = EnumWorldGenRemoteState.Unavailable,
                 CanControl = CanControlWorldGeneration,
+                Action = action,
             });
             return requestId;
         }
@@ -248,6 +269,7 @@ public sealed class LodAssistClient
                 State = WorldGenStatus?.State ?? EnumWorldGenRemoteState.Unavailable,
                 Available = WorldGenerationAvailable,
                 CanControl = CanControlWorldGeneration,
+                Action = action,
             });
         }
         return requestId;
@@ -570,11 +592,15 @@ public sealed class LodAssistClient
         ServerSettings = null;
         CanControlWorldGeneration = false;
         WorldGenStatus = null;
+        LastWorldGenControlError = "";
         worldGenPageOpen = false;
         nextWorldGenPollMs = 0;
         // IDs remain monotone across worlds. A late packet from the connection being torn
         // down must not become the first status of the next savegame.
-        lastWorldGenStatusRequestId = nextWorldGenRequestId;
+        worldGenResetFloor = Math.Max(nextWorldGenRequestId, lastWorldGenStatusRequestId);
+        nextWorldGenRequestId = worldGenResetFloor;
+        lastWorldGenStatusRequestId = worldGenResetFloor;
+        lastWorldGenControlResponseId = worldGenResetFloor;
         RemoteKeys.Clear();
         ManifestComplete = false;
         ManifestExpected = 0;

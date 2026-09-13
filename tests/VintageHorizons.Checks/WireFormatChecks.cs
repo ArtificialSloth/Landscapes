@@ -94,6 +94,7 @@ public static class WireFormatChecks
             "20:RadiusChunks:Int32", "21:Shape:EnumWorldGenShape", "22:CentreCx:Int32",
             "23:CentreCz:Int32", "24:MaxRadiusChunks:Int32",
             "25:DefaultRadiusChunks:Int32", "26:Preset:String", "27:MaxInFlight:Int32",
+            "28:Action:EnumWorldGenControlAction",
             "2:Success:Boolean",
             "3:Message:String", "4:Available:Boolean", "5:CanControl:Boolean",
             "6:State:EnumWorldGenRemoteState", "7:PendingConfirmation:Boolean",
@@ -224,6 +225,7 @@ public static class WireFormatChecks
             DefaultRadiusChunks = 32,
             Preset = "Balanced",
             MaxInFlight = 160,
+            Action = EnumWorldGenControlAction.Confirm,
         });
         c.Eq(EnumWorldGenRemoteState.Prepared, worldGenStatus.State,
             "world-generation structured state survives");
@@ -237,6 +239,8 @@ public static class WireFormatChecks
             "world-generation server radius limit survives");
         c.Eq(160, worldGenStatus.MaxInFlight,
             "world-generation kept-column limit survives");
+        c.Eq(EnumWorldGenControlAction.Confirm, worldGenStatus.Action,
+            "world-generation response action survives");
 
         var keys = new[] { 0L, 1L, -1L, long.MaxValue, long.MinValue };
         var manifest = Roundtrip(new AssistKeyManifest

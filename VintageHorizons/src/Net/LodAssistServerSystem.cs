@@ -210,6 +210,13 @@ public class LodAssistServerSystem : ModSystem
                 State = EnumWorldGenRemoteState.Unavailable,
                 CanControl = canControl,
             };
+        status.Action = request.Action;
+        if (!success)
+        {
+            Mod.Logger.Warning(
+                "Generate World {0} request from {1} did not succeed: {2}",
+                request.Action, player.PlayerName, message);
+        }
         channel.SendPacket(status, player);
     }
 

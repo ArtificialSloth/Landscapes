@@ -2429,6 +2429,19 @@ public partial class VintageHorizonsModSystem : ModSystem
     VintageHorizonsConfigDialog CreateStandaloneConfigDialog() =>
         BuildConfigDialog(null, null);
 
+    bool OpenStandaloneConfigDialog()
+    {
+        if (configDialog?.IsOpened() == true)
+        {
+            configDialog.Focus();
+            return true;
+        }
+
+        configDialog?.Dispose();
+        configDialog = CreateStandaloneConfigDialog();
+        return configDialog.TryOpen();
+    }
+
     VintageHorizonsConfigDialog CreateEmbeddedConfigDialog(
         Action requestRecompose, Action requestClose) =>
         BuildConfigDialog(requestRecompose, requestClose);
@@ -2469,8 +2482,22 @@ public partial class VintageHorizonsModSystem : ModSystem
         bool loadWhilePaused = deferringTo == null
             ? renderer.ContinueLoadingWhilePaused
             : config.LoadWhilePaused;
+        Action<LodWorldGenPreferences>? openLiveWorldGen = requestClose == null
+            ? null
+            : value =>
+            {
+                SaveWorldGenPreferences(value);
+                requestClose();
+                capi.Event.EnqueueMainThreadTask(() =>
+                {
+                    if (!OpenStandaloneConfigDialog())
+                        capi.ShowChatMessage(
+                            "[VintageHorizons] The live configuration window could not open; use .vhconfig.");
+                }, "vintagehorizons-open-live-worldgen");
+            };
         var worldGen = new WorldGenTuning(
-            ConfiguredWorldGenPreferences(), assist, SaveWorldGenPreferences);
+            ConfiguredWorldGenPreferences(), assist, SaveWorldGenPreferences,
+            openLiveWorldGen);
 
         return requestRecompose != null && requestClose != null
             ? new VintageHorizonsConfigDialog(
@@ -2616,17 +2643,11 @@ public partial class VintageHorizonsModSystem : ModSystem
             .WithDescription("Open the Vintage Horizons settings window: detail and draw distance, which optional visual features are drawn, and an Anti-Aliasing tab of tuning sliders")
             .HandleWith(_ =>
             {
-                if (configDialog?.IsOpened() == true)
-                {
-                    configDialog.Focus();
-                    return TextCommandResult.Success("[VintageHorizons] configuration window focused.");
-                }
-
-                configDialog?.Dispose();
-                configDialog = CreateStandaloneConfigDialog();
-
-                return configDialog.TryOpen()
-                    ? TextCommandResult.Success("[VintageHorizons] configuration window opened.")
+                bool alreadyOpen = configDialog?.IsOpened() == true;
+                return OpenStandaloneConfigDialog()
+                    ? TextCommandResult.Success(alreadyOpen
+                        ? "[VintageHorizons] configuration window focused."
+                        : "[VintageHorizons] configuration window opened.")
                     : TextCommandResult.Success("[VintageHorizons] configuration window could not open right now.");
             });
 

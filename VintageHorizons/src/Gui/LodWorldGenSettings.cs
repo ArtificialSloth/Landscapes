@@ -26,7 +26,8 @@ internal readonly record struct LodWorldGenPreferences(
 internal sealed record WorldGenTuning(
     LodWorldGenPreferences Initial,
     LodAssistClient? Client,
-    Action<LodWorldGenPreferences> Save);
+    Action<LodWorldGenPreferences> Save,
+    Action<LodWorldGenPreferences>? OpenLive = null);
 
 /// <summary>Pure estimate/format helpers shared by the page and its checks.</summary>
 internal static class LodWorldGenPageMath

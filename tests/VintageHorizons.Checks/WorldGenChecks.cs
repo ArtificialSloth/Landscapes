@@ -15,6 +15,7 @@ public static class WorldGenChecks
         GeneratePageMath(c);
         Gates(c);
         Leases(c);
+        KeptColumnReleaseBinding(c);
         Authority(c);
     }
 
@@ -240,6 +241,16 @@ public static class WorldGenChecks
         c.True(progress.Contains("Queue 20/120, 7/160 kept", StringComparison.Ordinal)
             && progress.Contains("2 retries, 1 failures", StringComparison.Ordinal),
             "the Generate page reports queue pressure and retry/failure counts");
+
+        c.True(VintageHorizonsConfigDialog.NeedsLiveWorldGenWindow(
+                embedded: true, singlePlayer: true, gamePaused: true),
+            "paused singleplayer Settings uses the live-window handoff");
+        c.False(VintageHorizonsConfigDialog.NeedsLiveWorldGenWindow(
+                embedded: false, singlePlayer: true, gamePaused: true),
+            "the standalone window remains live while singleplayer is paused elsewhere");
+        c.False(VintageHorizonsConfigDialog.NeedsLiveWorldGenWindow(
+                embedded: true, singlePlayer: false, gamePaused: false),
+            "multiplayer Settings keeps direct server controls");
     }
 
     static EnumWorldGenGate Select(bool paused = false, bool faulted = false,
@@ -270,6 +281,50 @@ public static class WorldGenChecks
         c.Eq(1, second, "shutdown retries the one failed stop release");
         c.Eq(0, leases.Count, "no kept column survives a successful shutdown retry");
         c.Eq(2, released.Count, "each successful coordinate was released exactly once");
+    }
+
+    static void KeptColumnReleaseBinding(Check c)
+    {
+        var direct = new ReleaseOwner();
+        c.True(LodKeptColumnReleaser.TryBindRelease(
+                direct, out Action<long>? directRelease, out _),
+            "a world manager that exposes the safe release method binds directly");
+        directRelease!(17);
+        c.SeqEq(new[] { 17L }, direct.Released,
+            "the direct release delegate reaches its exact map-column index");
+
+        var wrappedOwner = new ReleaseOwner();
+        var wrapper = new DerivedReleaseWrapper(wrappedOwner);
+        c.True(LodKeptColumnReleaser.TryBindRelease(
+                wrapper, out Action<long>? wrappedRelease, out _),
+            "the 1.22 WorldAPI shape binds ServerMain through an inherited server field");
+        wrappedRelease!(23);
+        c.SeqEq(new[] { 23L }, wrappedOwner.Released,
+            "the wrapper delegate releases through its underlying server owner");
+
+        c.False(LodKeptColumnReleaser.TryBindRelease(
+                new object(), out _, out string refusal),
+            "an unknown engine wrapper fails closed instead of unloading unsaved terrain");
+        c.True(refusal.Contains("no compatible", StringComparison.Ordinal),
+            "the compatibility refusal explains the missing safe release seam");
+    }
+
+    sealed class ReleaseOwner
+    {
+        internal readonly List<long> Released = new();
+        public void RemoveChunkColumnFromForceLoadedList(long index) => Released.Add(index);
+    }
+
+    class ReleaseWrapper
+    {
+        // Field name and inheritance mirror WorldAPI -> ServerAPIComponentBase in 1.22.
+        readonly ReleaseOwner server;
+        protected ReleaseWrapper(ReleaseOwner server) => this.server = server;
+    }
+
+    sealed class DerivedReleaseWrapper : ReleaseWrapper
+    {
+        internal DerivedReleaseWrapper(ReleaseOwner server) : base(server) { }
     }
 
     static void Authority(Check c)

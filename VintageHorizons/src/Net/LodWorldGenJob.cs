@@ -26,21 +26,45 @@ internal sealed class LodKeptColumnReleaser
         out LodKeptColumnReleaser? releaser, out string reason)
     {
         releaser = null;
+        if (!TryBindRelease(worldManager, out Action<long>? remove, out reason)
+            || remove == null) return false;
+        releaser = new LodKeptColumnReleaser(worldManager, remove);
+        return true;
+    }
+
+    /// <summary>
+    /// The public API returns the engine's private WorldAPI wrapper. The compatible release
+    /// method is on ServerMain behind that wrapper in 1.22, while some engine builds expose it
+    /// directly. Bind either exact shape; never fall back to UnloadChunkColumn, which disposes
+    /// the terrain before the normal save/unload path can persist it.
+    /// </summary>
+    internal static bool TryBindRelease(object worldManager,
+        out Action<long>? remove, out string reason)
+    {
+        remove = null;
         reason = "";
         try
         {
-            MethodInfo? method = worldManager.GetType().GetMethod(
-                "RemoveChunkColumnFromForceLoadedList",
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-                binder: null, types: new[] { typeof(long) }, modifiers: null);
+            object target = worldManager;
+            MethodInfo? method = ReleaseMethod(target.GetType());
+            if (method == null)
+            {
+                FieldInfo? serverField = InstanceField(worldManager.GetType(), "server");
+                object? server = serverField?.GetValue(worldManager);
+                if (server != null)
+                {
+                    target = server;
+                    method = ReleaseMethod(server.GetType());
+                }
+            }
             if (method == null || method.ReturnType != typeof(void))
             {
-                reason = "this engine build has no compatible kept-column release method";
+                reason = "this engine build's world-manager wrapper has no compatible "
+                    + "kept-column release method";
                 return false;
             }
 
-            var action = (Action<long>)method.CreateDelegate(typeof(Action<long>), worldManager);
-            releaser = new LodKeptColumnReleaser(worldManager, action);
+            remove = (Action<long>)method.CreateDelegate(typeof(Action<long>), target);
             return true;
         }
         catch (Exception e)
@@ -48,6 +72,24 @@ internal sealed class LodKeptColumnReleaser
             reason = "the kept-column release method could not be bound: " + e.Message;
             return false;
         }
+    }
+
+    static MethodInfo? ReleaseMethod(Type type) => type.GetMethod(
+        "RemoveChunkColumnFromForceLoadedList",
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+        binder: null, types: new[] { typeof(long) }, modifiers: null);
+
+    static FieldInfo? InstanceField(Type? type, string name)
+    {
+        while (type != null)
+        {
+            FieldInfo? field = type.GetField(name,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
+                | BindingFlags.DeclaredOnly);
+            if (field != null) return field;
+            type = type.BaseType;
+        }
+        return null;
     }
 
     public bool TryRelease(int cx, int cz, out string reason)

@@ -619,7 +619,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddDynamicText(WorldGenLastMessage(), CairoFont.WhiteSmallText(),
             ElementBounds.Fixed(Margin, Y(494), Width - 2 * Margin, 66), "wg-message");
 
-        composer.AddButton("Prepare", OnWorldGenPrepare,
+        composer.AddButton(NeedsLiveWorldGenWindow() ? "Open live controls" : "Prepare",
+            OnWorldGenPrepare,
             ElementBounds.Fixed(Margin, Y(574), 170, 38), EnumButtonStyle.Normal, "wg-prepare");
         composer.AddButton("Confirm", OnWorldGenConfirm,
             ElementBounds.Fixed(Margin + 180, Y(574), 170, 38), EnumButtonStyle.Normal, "wg-confirm");
@@ -630,7 +631,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddButton("Stop", OnWorldGenStop,
             ElementBounds.Fixed(Margin + 650, Y(574), 135, 38), EnumButtonStyle.Normal, "wg-stop");
 
-        worldGen.Client?.SetWorldGenPageOpen(true);
+        worldGen.Client?.SetWorldGenPageOpen(!NeedsLiveWorldGenWindow());
     }
 
     void SetGenerateValues()
@@ -670,6 +671,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         LodAssistClient? client = worldGen.Client;
         if (client == null || !client.WorldGenerationAvailable)
             return "Unavailable: load a world on a server running a current Vintage Horizons build.";
+        if (NeedsLiveWorldGenWindow())
+            return "Singleplayer is paused in Settings. Open live controls to start or manage generation.";
         if (client.WorldGenStatus?.Available == false)
             return "Temporarily unavailable: " + client.WorldGenStatus.Message;
         return client.CanControlWorldGeneration
@@ -683,8 +686,16 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     string WorldGenPercentLabel() =>
         LodWorldGenPageMath.Percent(worldGen.Client?.WorldGenStatus) + "%";
 
-    string WorldGenLastMessage() => worldGen.Client?.WorldGenStatus?.Message
-        ?? "Open this tab after joining a world to request server status.";
+    string WorldGenLastMessage()
+    {
+        LodAssistClient? client = worldGen.Client;
+        if (!string.IsNullOrWhiteSpace(client?.LastWorldGenControlError))
+            return client.LastWorldGenControlError;
+        if (NeedsLiveWorldGenWindow())
+            return "Opening the live window leaves Settings so the integrated server can run; the mod does not force-unpause it.";
+        return client?.WorldGenStatus?.Message
+            ?? "Open this tab after joining a world to request server status.";
+    }
 
     void OnWorldGenStatus(AssistWorldGenStatus status)
     {
@@ -694,7 +705,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         activeComposer.GetDynamicText("wg-progress-text")
             .SetNewText(LodWorldGenPageMath.Progress(status), false, true, false);
         activeComposer.GetDynamicText("wg-message")
-            .SetNewText(status.Message, false, true, false);
+            .SetNewText(WorldGenLastMessage(), false, true, false);
         activeComposer.GetDynamicText("wg-progress-label")
             .SetNewText(WorldGenPercentLabel(), false, true, false);
         activeComposer.GetSlider("wg-progress").SetValue(LodWorldGenPageMath.Percent(status));
@@ -709,6 +720,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         bool available = client?.WorldGenerationAvailable == true && status?.Available != false;
         bool canControl = available && client!.CanControlWorldGeneration;
         EnumWorldGenRemoteState state = status?.State ?? EnumWorldGenRemoteState.Idle;
+        bool openLive = NeedsLiveWorldGenWindow();
         bool areaLocked = state is EnumWorldGenRemoteState.Prepared
             or EnumWorldGenRemoteState.Running or EnumWorldGenRemoteState.Paused
             or EnumWorldGenRemoteState.Interrupted or EnumWorldGenRemoteState.Faulted;
@@ -719,17 +731,24 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         activeComposer.GetSlider("wg-radius").Enabled = canControl && !areaLocked;
         activeComposer.GetNumberInput("wg-x").Enabled = canControl && !areaLocked && coordinates;
         activeComposer.GetNumberInput("wg-z").Enabled = canControl && !areaLocked && coordinates;
-        activeComposer.GetButton("wg-prepare").Enabled = canControl && !areaLocked
-            && status?.PendingConfirmation != true;
-        activeComposer.GetButton("wg-confirm").Enabled = canControl
+        activeComposer.GetButton("wg-prepare").Enabled = canControl && (openLive
+            || (!areaLocked && status?.PendingConfirmation != true));
+        activeComposer.GetButton("wg-confirm").Enabled = !openLive && canControl
             && status?.PendingConfirmation == true;
-        activeComposer.GetButton("wg-pause").Enabled = canControl
+        activeComposer.GetButton("wg-pause").Enabled = !openLive && canControl
             && state == EnumWorldGenRemoteState.Running;
-        activeComposer.GetButton("wg-resume").Enabled = canControl
+        activeComposer.GetButton("wg-resume").Enabled = !openLive && canControl
             && state is EnumWorldGenRemoteState.Paused or EnumWorldGenRemoteState.Interrupted;
-        activeComposer.GetButton("wg-stop").Enabled = canControl
+        activeComposer.GetButton("wg-stop").Enabled = !openLive && canControl
             && areaLocked;
     }
+
+    internal static bool NeedsLiveWorldGenWindow(
+        bool embedded, bool singlePlayer, bool gamePaused) =>
+        embedded && singlePlayer && gamePaused;
+
+    bool NeedsLiveWorldGenWindow() => NeedsLiveWorldGenWindow(
+        embedded, capi.IsSinglePlayer, capi.IsGamePaused);
 
     void OnWorldGenCentreChanged(string code, bool selected)
     {
@@ -790,6 +809,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     bool OnWorldGenPrepare()
     {
+        if (NeedsLiveWorldGenWindow() && worldGen.OpenLive != null)
+        {
+            worldGen.Client?.SetWorldGenPageOpen(false);
+            worldGen.OpenLive(pendingWorldGen.Normalize(ServerWorldGenMaxRadius()));
+            return true;
+        }
+
         int x = pendingWorldGen.CentreMode == EnumWorldGenCentreMode.Coordinates
             ? pendingWorldGen.X : -1;
         int z = pendingWorldGen.CentreMode == EnumWorldGenCentreMode.Coordinates
@@ -808,7 +834,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     void OnTabClicked(int tab)
     {
         if (tab == shownTab) return;
-        worldGen.Client?.SetWorldGenPageOpen(tab == GenerateTab);
+        worldGen.Client?.SetWorldGenPageOpen(
+            tab == GenerateTab && !NeedsLiveWorldGenWindow());
         shownTab = tab;
         // Once this click has finished with the composer it came from, not in the middle of it:
         // the re-compose disposes that composer.

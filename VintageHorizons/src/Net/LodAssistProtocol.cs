@@ -260,6 +260,7 @@ public class AssistWorldGenStatus
     [ProtoMember(25)] public int DefaultRadiusChunks;
     [ProtoMember(26)] public string Preset = "Balanced";
     [ProtoMember(27)] public int MaxInFlight;
+    [ProtoMember(28)] public EnumWorldGenControlAction Action;
 }
 
 /// <summary>
