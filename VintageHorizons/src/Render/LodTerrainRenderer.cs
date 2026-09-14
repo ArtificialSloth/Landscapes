@@ -2171,6 +2171,7 @@ public partial class LodTerrainRenderer : IRenderer
         LoadWaterOitShader();
         LoadSkyWitnessShader();
         LoadTaaShaders();
+        LoadSilhouetteShader();
         if (!ShaderLoadIsProvisional
             && gpuFailureInjection.Take(LodGpuFailureStage.FastShaders))
         {
@@ -2262,7 +2263,9 @@ public partial class LodTerrainRenderer : IRenderer
 
     public void ApplyZFar()
     {
-        float needed = LodFarDistance.RequiredProjection(EffectiveFarDistance);
+        // Silhouettes widen the projection only while they draw something (plan 4.10).
+        float needed = Math.Max(LodFarDistance.RequiredProjection(EffectiveFarDistance),
+            SilhouetteProjectionDistance);
         LodFarPlaneUpdate update = farPlaneState.Update(needed, Environment.TickCount64);
         var clientMain = (ClientMain)capi.World;
 
@@ -5545,6 +5548,7 @@ public partial class LodTerrainRenderer : IRenderer
         try
         {
             RenderFrame(deltaTime, stage);
+            DrawSilhouettes();
         }
         finally
         {
@@ -8745,6 +8749,7 @@ public partial class LodTerrainRenderer : IRenderer
         DisposeBlockTableTexture();
         DisposeSkyWitnessResources();
         DisposeTaaResources();
+        ReleaseSilhouetteMeshes();
         world.SectionBecameResident -= OnSectionBecameResident;
         capi.Event.ChunkDirty -= OnReadinessChunkDirty;
         capi.Event.ReloadShader -= LoadShader;

@@ -79,6 +79,8 @@ public static class Program
         ("pure", "savegame world generation", WorldGenChecks.Run),
         ("fixture", "server assist", ServerAssistChecks.Run),
         ("pure", "wire format", WireFormatChecks.Run),
+        ("pure", "horizon silhouettes", SilhouetteChecks.Run),
+        ("fixture", "silhouette wiring", SilhouetteChecks.RunWiring),
         ("pure", "distant anti-aliasing", DistantAntiAliasingChecks.Run),
         ("static", "assets and constants", StaticAssetChecks.Run),
     };

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Vintagestory.API.Common;
 using Vintagestory.API.Server;
+using VintageHorizons.Silhouette;
 
 namespace VintageHorizons.Net;
 
@@ -26,6 +27,12 @@ public class LodAssistServerSystem : ModSystem
         SendWithCollectionCost, SendWithoutCollectionCost, OfferCost;
     LodAssistBlobReader? blobReader;
     string? blobReaderPath;
+
+    /// <summary>
+    /// Horizon silhouettes, first look: singleplayer and LAN-hosted worlds only in this build,
+    /// and the feature bit is advertised only where this exists (plan P1).
+    /// </summary>
+    LodSilhouetteBuilder? silhouettes;
 
     // Per-call attribution is populated only while the owning-thread serve callback is
     // active. Send cost is nested inside publication/admission; the other three costs
@@ -56,9 +63,21 @@ public class LodAssistServerSystem : ModSystem
             .RegisterMessageType<AssistSection>()
             .RegisterMessageType<AssistWorldGenRequest>()
             .RegisterMessageType<AssistWorldGenStatus>()
+            .RegisterMessageType<AssistSilhouetteRequest>()
+            .RegisterMessageType<AssistSilhouetteManifest>()
+            .RegisterMessageType<AssistSilhouetteTileRequest>()
+            .RegisterMessageType<AssistSilhouetteTile>()
             .SetMessageHandler<AssistHello>(OnHello)
             .SetMessageHandler<AssistSectionRequest>(OnSectionRequest)
-            .SetMessageHandler<AssistWorldGenRequest>(OnWorldGenRequest);
+            .SetMessageHandler<AssistWorldGenRequest>(OnWorldGenRequest)
+            .SetMessageHandler<AssistSilhouetteRequest>(OnSilhouetteRequest);
+
+        if (!api.Server.IsDedicated)
+        {
+            silhouettes = new LodSilhouetteBuilder(api, Mod.Logger,
+                () => api.ModLoader.GetModSystem<LodServerCaptureSystem>()?.GenerationAuthorityBusy == true,
+                (player, tile) => channel.SendPacket(tile, player));
+        }
 
         // Accumulate the configured per-second rates across normal ticks. Each allowance
         // is capped at one tick's share, so a slow tick cannot cause a catch-up burst.
@@ -147,8 +166,9 @@ public class LodAssistServerSystem : ModSystem
             Status = status,
             ManifestKeyCount = keys.Length,
             ServerSettings = AssistServerSettings.From(config),
-            Features = capture != null && config.EnableCapture && config.WorldGenerationEnabled
-                ? LodAssist.FeatureWorldGeneration : 0,
+            Features = (capture != null && config.EnableCapture && config.WorldGenerationEnabled
+                    ? LodAssist.FeatureWorldGeneration : 0)
+                | (silhouettes != null ? LodAssist.FeatureSilhouetteTiles : 0),
             CanControlWorldGeneration = player.HasPrivilege(Privilege.controlserver),
         }, player);
 
@@ -165,6 +185,16 @@ public class LodAssistServerSystem : ModSystem
         // ledger and every engine query below are owner-thread state.
         sapi.Event.EnqueueMainThreadTask(() => HandleWorldGenRequest(fromPlayer, request),
             "vintagehorizons-worldgen-request");
+    }
+
+    void OnSilhouetteRequest(IServerPlayer fromPlayer, AssistSilhouetteRequest request)
+    {
+        // Off the owner thread, like every network callback; the builder is owner-thread state.
+        sapi.Event.EnqueueMainThreadTask(() =>
+        {
+            if (silhouettes == null || !ledger.HasGreeted(fromPlayer.PlayerUID)) return;
+            silhouettes.Request(fromPlayer, request);
+        }, "vintagehorizons-silhouette-request");
     }
 
     void HandleWorldGenRequest(IServerPlayer player, AssistWorldGenRequest request)
@@ -309,6 +339,7 @@ public class LodAssistServerSystem : ModSystem
     void OnPlayerDisconnect(IServerPlayer player)
     {
         ledger.Forget(player.PlayerUID);
+        silhouettes?.Forget(player.PlayerUID);
         pendingByPlayer.Remove(player.PlayerUID);
         serveAllowanceByPlayer.Remove(player.PlayerUID);
         sessionByPlayer.Remove(player.PlayerUID);
@@ -876,6 +907,7 @@ public class LodAssistServerSystem : ModSystem
     public override void Dispose()
     {
         if (sapi != null) sapi.Event.PlayerDisconnect -= OnPlayerDisconnect;
+        silhouettes?.Dispose();
         blobReader?.Dispose();
         blobReader = null;
         blobReaderPath = null;

@@ -1276,6 +1276,19 @@ public class LodServerCaptureSystem : ModSystem
         || refresh is { Done: false }
         || worldGen is { Done: false };
 
+    /// <summary>
+    /// True while an explicit or bounded job holds the world-generation authority. Automatic
+    /// producers read this and yield; they never acquire it (settled decision 39).
+    /// </summary>
+    public bool GenerationAuthorityBusy
+    {
+        get
+        {
+            RefreshWorldGenAuthority();
+            return worldGenAuthority.Current != EnumWorldGenAuthority.None;
+        }
+    }
+
     void RefreshWorldGenAuthority()
     {
         if (pregen is { Done: true })

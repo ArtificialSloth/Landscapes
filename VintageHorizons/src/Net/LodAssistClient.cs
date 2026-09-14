@@ -48,6 +48,12 @@ public sealed class LodAssistClient
     public bool WorldGenerationAvailable => serverProtocol > 0
         && (serverFeatures & LodAssist.FeatureWorldGeneration) != 0;
 
+    /// <summary>True only when this server advertised silhouette tiles (plan 4.6).</summary>
+    public bool SilhouettesAvailable => LodAssist.SilhouettesAvailable(serverProtocol, serverFeatures);
+
+    /// <summary>Called on the network thread for every silhouette tile the server pushes.</summary>
+    public Action<AssistSilhouetteTile>? SilhouetteTileArrived { get; set; }
+
     public bool CanControlWorldGeneration { get; private set; }
     public AssistWorldGenStatus? WorldGenStatus { get; private set; }
     public string LastWorldGenControlError { get; private set; } = "";
@@ -82,10 +88,15 @@ public sealed class LodAssistClient
             .RegisterMessageType<AssistSection>()
             .RegisterMessageType<AssistWorldGenRequest>()
             .RegisterMessageType<AssistWorldGenStatus>()
+            .RegisterMessageType<AssistSilhouetteRequest>()
+            .RegisterMessageType<AssistSilhouetteManifest>()
+            .RegisterMessageType<AssistSilhouetteTileRequest>()
+            .RegisterMessageType<AssistSilhouetteTile>()
             .SetMessageHandler<AssistWelcome>(OnWelcome)
             .SetMessageHandler<AssistKeyManifest>(OnKeyManifest)
             .SetMessageHandler<AssistSection>(OnSection)
-            .SetMessageHandler<AssistWorldGenStatus>(OnWorldGenStatus);
+            .SetMessageHandler<AssistWorldGenStatus>(OnWorldGenStatus)
+            .SetMessageHandler<AssistSilhouetteTile>(OnSilhouetteTile);
     }
 
     /// <summary>
@@ -165,6 +176,31 @@ public sealed class LodAssistClient
 
     internal void OnWorldGenStatus(AssistWorldGenStatus status) =>
         worldGenStatuses.Enqueue(status);
+
+    internal void OnSilhouetteTile(AssistSilhouetteTile tile) => SilhouetteTileArrived?.Invoke(tile);
+
+    /// <summary>
+    /// Main thread. Nothing is sent unless the server advertised the feature, so a server without
+    /// it is never sent a message id it did not register.
+    /// </summary>
+    public void SendSilhouetteRequest(bool enabled, int reachBlocks)
+    {
+        if (channel == null || !channel.Connected || !SilhouettesAvailable) return;
+        try
+        {
+            channel.SendPacket(new AssistSilhouetteRequest
+            {
+                Enabled = enabled,
+                ReachBlocks = reachBlocks,
+                ModVersion = modVersion,
+            });
+        }
+        catch (Exception e)
+        {
+            logger.Warning("VintageHorizons: the silhouette request failed, continuing without it: {0}",
+                e.Message);
+        }
+    }
 
     /// <summary>
     /// Publish packet-thread status on the owning client thread, then poll at one hertz only

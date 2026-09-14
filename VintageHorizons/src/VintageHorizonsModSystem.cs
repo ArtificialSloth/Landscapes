@@ -359,6 +359,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         };
         renderer.ContinueLoadingWhilePaused = config.LoadWhilePaused;
         renderer.PausedLoadingPump = PumpPausedLoading;
+        CreateSilhouettes();
 
         // Install only after the competing-LOD return above. The adapter changes no
         // atmosphere, client setting, culling or streaming state: it moves only vanilla
@@ -611,6 +612,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         // Generate-page status is a separate advertised capability: it remains usable when
         // terrain serving is disabled, so publish/poll it before the terrain-assist gate.
         assist?.PumpWorldGen();
+        // A separately advertised feature too: silhouettes need no terrain serving.
+        PumpSilhouettes();
         if (assist == null || !assist.Available) return;
 
         int before = pipeline.RemoteOnly.Count;
@@ -2368,6 +2371,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         settingsIntegration?.CancelActivePage();
         configDialog?.TryClose();
         assist?.Reset();
+        ResetSilhouettes();
         // Belongs to the world being left: the next one is a different savegame with a
         // different sibling cache, and holding this open would keep a file handle on a
         // database the server side may want to delete or replace.
@@ -2682,6 +2686,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         // The remaining commands drive the renderer, which does not exist when we are
         // deferring to another LOD mod.
         if (deferringTo != null) return;
+
+        RegisterSilhouetteCommand();
 
         // Named apart from ".vhwhy" on purpose. This one answers "why is that coarse",
         // the other answers "why is that missing", and registering both under one name

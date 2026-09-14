@@ -70,6 +70,14 @@ public static class LodAssist
     // shipped meaning. A server advertises these only after the corresponding feature lands.
     public const int FeatureFrontierGeneration = 1 << 1;
     public const int FeatureSilhouetteTiles = 1 << 2;
+
+    /// <summary>
+    /// Silhouette messages flow only when both sides agree: a usable protocol and the server's
+    /// feature bit. A client that sends without the bit would be talking to a server that never
+    /// registered the handler.
+    /// </summary>
+    public static bool SilhouettesAvailable(int serverProtocol, int features) =>
+        serverProtocol > 0 && (features & FeatureSilhouetteTiles) != 0;
 }
 
 /// <summary>Client -> server, once per join, only when the channel is Connected.</summary>
@@ -343,4 +351,57 @@ public class AssistSection
     /// not a new one.
     /// </summary>
     [ProtoMember(3)] public bool Retryable;
+}
+
+// Horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER 4.6). The four types are appended
+// after AssistWorldGenStatus, in this order, on both sides; the engine numbers message types by
+// registration order and checks nothing at handshake.
+
+/// <summary>
+/// Client -> server: this player wants silhouettes out to this reach, or no longer wants them.
+/// Sent only when the welcome advertised <see cref="LodAssist.FeatureSilhouetteTiles"/>, after
+/// the welcome and on change. An off request is the last silhouette message a client sends until
+/// the player switches silhouettes back on.
+/// </summary>
+[ProtoContract]
+public class AssistSilhouetteRequest
+{
+    [ProtoMember(1)] public bool Enabled;
+    [ProtoMember(2)] public int ReachBlocks;
+    [ProtoMember(3)] public string ModVersion = "";
+}
+
+/// <summary>
+/// Server -> client: silhouette tile keys with their revisions, chunked with sequence/last like
+/// <see cref="AssistKeyManifest"/>. Registered now so the message order is final; the first-look
+/// build pushes tiles instead and sends none of these.
+/// </summary>
+[ProtoContract]
+public class AssistSilhouetteManifest
+{
+    [ProtoMember(1)] public int Sequence;
+    [ProtoMember(2)] public bool Last;
+    [ProtoMember(3)] public long[] Keys = Array.Empty<long>();
+    [ProtoMember(4)] public int[] Revisions = Array.Empty<int>();
+}
+
+/// <summary>Client -> server: send these silhouette tiles. Every key is answered.</summary>
+[ProtoContract]
+public class AssistSilhouetteTileRequest
+{
+    [ProtoMember(1)] public long[] Keys = Array.Empty<long>();
+}
+
+/// <summary>
+/// Server -> client: one silhouette tile in LodSilhouetteTile's format. An empty payload is a
+/// refusal; <see cref="Retryable"/> marks "not yet".
+/// </summary>
+[ProtoContract]
+public class AssistSilhouetteTile
+{
+    [ProtoMember(1)] public int TileX;
+    [ProtoMember(2)] public int TileZ;
+    [ProtoMember(3)] public int Revision;
+    [ProtoMember(4)] public byte[] Payload = Array.Empty<byte>();
+    [ProtoMember(5)] public bool Retryable;
 }
