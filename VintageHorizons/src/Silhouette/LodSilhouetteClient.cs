@@ -5,12 +5,13 @@ using VintageHorizons.Net;
 namespace VintageHorizons.Silhouette;
 
 /// <summary>
-/// Client half of the silhouette first look (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P1).
+/// Client half of horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P1-P2).
 ///
-/// It takes the tiles the server pushes, keeps the lattice nodes they carry, decides which tiles
-/// need a new mesh, and builds meshes on worker threads. The renderer uploads and draws the
-/// results. Everything here runs on the client main thread except the network intake queue and
-/// the mesh jobs, which touch only their own copies.
+/// It takes the tiles the server pushes, decides which tiles need a new mesh, and builds meshes
+/// on worker threads from each tile's neighbourhood (<see cref="LodSilhouetteFill"/>). The
+/// renderer uploads and draws the results. Everything here runs on the client main thread except
+/// the network intake queue and the mesh jobs. A held tile is never changed: a newer revision
+/// replaces it whole, which is what lets a mesh job read its neighbourhood without a copy.
 ///
 /// Session-only and off by default until the Silhouettes tab exists (P4).
 /// </summary>
@@ -27,7 +28,6 @@ internal sealed class LodSilhouetteClient
     readonly ConcurrentQueue<MeshResult> finished = new();
     readonly Dictionary<long, LodSilhouetteTile> tiles = new();
     readonly List<long> tileOrder = new();
-    readonly Dictionary<long, double> nodes = new();
     readonly Dictionary<long, ulong> coverage = new();
     readonly Dictionary<long, int> meshVersion = new();
     readonly HashSet<long> dirty = new();
@@ -37,6 +37,7 @@ internal sealed class LodSilhouetteClient
     bool enabled;
     int seaLevel;
     double lastX, lastZ;
+    long knownCells;
 
     public readonly record struct MeshResult(long Key, int TileX, int TileZ, int Version, int Epoch,
         LodSilhouetteMeshArrays? Mesh);
@@ -56,7 +57,10 @@ internal sealed class LodSilhouetteClient
 
     public bool RequestSent => requestSent;
     public int TileCount => tiles.Count;
-    public int NodeCount => nodes.Count;
+
+    /// <summary>Cells with a height, across every tile held.</summary>
+    public long KnownCells => knownCells;
+
     public int PendingMeshes => dirty.Count + Volatile.Read(ref jobsInFlight);
     public int TilesReceived, TilesRejected, MeshesBuilt, EmptyMeshes, MeshFailures;
 
@@ -86,11 +90,11 @@ internal sealed class LodSilhouetteClient
         Epoch++;
         tiles.Clear();
         tileOrder.Clear();
-        nodes.Clear();
         coverage.Clear();
         meshVersion.Clear();
         dirty.Clear();
         coverageCursor = 0;
+        knownCells = 0;
         while (arrivals.TryDequeue(out _)) { }
         while (finished.TryDequeue(out _)) { }
     }
@@ -132,28 +136,12 @@ internal sealed class LodSilhouetteClient
 
         TilesReceived++;
         if (held == null) tileOrder.Add(key);
+        knownCells += tile.KnownCells - (held?.KnownCells ?? 0);
         tiles[key] = tile;
-        dirty.Add(key);
 
-        // Every lattice chunk of the tile is a node. A changed node re-meshes each tile it reaches.
-        for (int localZ = LodSilhouetteField.LatticeOffsetChunks; localZ < LodSilhouetteTile.ChunksPerEdge;
-             localZ += LodSilhouetteField.LatticeChunks)
-        {
-            for (int localX = LodSilhouetteField.LatticeOffsetChunks; localX < LodSilhouetteTile.ChunksPerEdge;
-                 localX += LodSilhouetteField.LatticeChunks)
-            {
-                int i = LodSilhouetteField.NodeOfLatticeChunk(tile.TileX * LodSilhouetteTile.ChunksPerEdge + localX);
-                int j = LodSilhouetteField.NodeOfLatticeChunk(tile.TileZ * LodSilhouetteTile.ChunksPerEdge + localZ);
-                long nodeKey = LodSilhouetteField.NodeKey(i, j);
-                bool known = tile.TryChunkMean(localX, localZ, out double mean);
-                bool had = nodes.TryGetValue(nodeKey, out double old);
-                if (known == had && (!known || old == mean)) continue;
-                if (known) nodes[nodeKey] = mean;
-                else nodes.Remove(nodeKey);
-                foreach ((int tx, int tz) in LodSilhouetteField.TilesTouchedByNode(i, j))
-                    dirty.Add(LodSilhouetteTile.KeyOf(tx, tz));
-            }
-        }
+        // A tile's heights reach into its neighbours' fills, so they re-mesh with it.
+        foreach ((int tx, int tz) in LodSilhouetteField.TilesReading(tile.TileX, tile.TileZ))
+            dirty.Add(LodSilhouetteTile.KeyOf(tx, tz));
     }
 
     /// <summary>
@@ -193,6 +181,7 @@ internal sealed class LodSilhouetteClient
 
     void Schedule(LodWorld world)
     {
+        int radius = LodSilhouetteFill.NeighbourhoodTiles / 2;
         while (Volatile.Read(ref jobsInFlight) < MaxJobsInFlight && dirty.Count > 0)
         {
             long key = NearestDirty();
@@ -204,13 +193,13 @@ internal sealed class LodSilhouetteClient
             int version = meshVersion.TryGetValue(key, out int v) ? v + 1 : 1;
             meshVersion[key] = version;
 
-            int firstX = LodSilhouetteField.FirstNodeOfTile(tile.TileX);
-            int firstZ = LodSilhouetteField.FirstNodeOfTile(tile.TileZ);
-            var snapshot = new double[LodSilhouetteField.TileNodeSpan, LodSilhouetteField.TileNodeSpan];
-            for (int b = 0; b < LodSilhouetteField.TileNodeSpan; b++)
-                for (int a = 0; a < LodSilhouetteField.TileNodeSpan; a++)
-                    snapshot[b, a] = nodes.TryGetValue(LodSilhouetteField.NodeKey(firstX + a, firstZ + b),
-                        out double h) ? h : double.NaN;
+            // References, not copies: held tiles never change (see the class summary).
+            var neighbourhood = new LodSilhouetteTile?[LodSilhouetteFill.NeighbourhoodTiles,
+                LodSilhouetteFill.NeighbourhoodTiles];
+            for (int dz = -radius; dz <= radius; dz++)
+                for (int dx = -radius; dx <= radius; dx++)
+                    neighbourhood[dz + radius, dx + radius] = tiles.GetValueOrDefault(
+                        LodSilhouetteTile.KeyOf(tile.TileX + dx, tile.TileZ + dz));
 
             int tileX = tile.TileX, tileZ = tile.TileZ, epoch = Epoch, sea = seaLevel;
             Interlocked.Increment(ref jobsInFlight);
@@ -219,7 +208,7 @@ internal sealed class LodSilhouetteClient
                 LodSilhouetteMeshArrays? mesh = null;
                 try
                 {
-                    mesh = LodSilhouetteField.BuildMesh(tileX, tileZ, snapshot, mask, sea);
+                    mesh = LodSilhouetteField.BuildMesh(neighbourhood, mask, sea);
                 }
                 catch (Exception e)
                 {

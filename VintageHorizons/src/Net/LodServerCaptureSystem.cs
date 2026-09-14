@@ -298,6 +298,13 @@ public class LodServerCaptureSystem : ModSystem
         pipeline.ColumnCaptured = (cx, cz) => worldGen?.ObserveCaptured(cx, cz);
         pipeline.SnowStateCaptured = (cx, cz, observed, covered) =>
             sweep?.ObserveSnowState(cx, cz, observed, covered);
+        // Previewed columns' heights feed horizon silhouettes. Attached only while the server
+        // offers them, so a server that does not pays nothing (plan 4.4).
+        if (Config.SilhouettesEnabled(sapi.Server.IsDedicated))
+        {
+            LodAssistServerSystem? assist = sapi.ModLoader.GetModSystem<LodAssistServerSystem>();
+            if (assist != null) pipeline.PreviewHeightsCaptured = assist.OfferSilhouetteHeights;
+        }
         pipeline.Open("ModData/vintagehorizons", "-server");
         nextActiveWorkStatusLogMs = Environment.TickCount64 + ActiveWorkStatusLogIntervalMs;
 

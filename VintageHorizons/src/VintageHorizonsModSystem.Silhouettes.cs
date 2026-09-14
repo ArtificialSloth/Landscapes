@@ -81,7 +81,7 @@ public partial class VintageHorizonsModSystem
                 : "offers them";
         return $"horizon silhouettes {(s.Enabled ? "on" : "off")} (first look, this session only). "
             + $"The server {server}. {s.TileCount} tiles held ({s.TilesReceived} received, "
-            + $"{s.TilesRejected} refused), {s.NodeCount} sample points, "
+            + $"{s.TilesRejected} refused), {s.KnownCells:N0} cells with heights, "
             + $"{renderer.SilhouetteMeshCount} meshes ({s.PendingMeshes} waiting, {s.EmptyMeshes} "
             + $"with nothing to draw), {renderer.SilhouetteDrawsLastFrame} drawn last frame. "
             + $"Shader: {renderer.SilhouetteShaderState}.";

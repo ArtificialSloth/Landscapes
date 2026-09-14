@@ -444,8 +444,21 @@ public class LodPipeline
             RainMap = (ushort[])rainMap.Clone(),
             Chisels = CollectChisels(refs, cx, cz),
         });
+        if (PreviewHeightsCaptured is { } heightsCaptured
+            && refs[0]?.MapChunk?.WorldGenTerrainHeightMap is { Length: >= ChunkSize * ChunkSize } heights)
+        {
+            heightsCaptured(cx, cz, (ushort[])heights.Clone());
+        }
         return true;
     }
+
+    /// <summary>
+    /// Server-only and optional: a previewed column's worldgen terrain heights, copied as its
+    /// capture job is created, for horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER
+    /// 4.4). Called on whatever thread called <see cref="CaptureColumn"/>. Loaded columns do not
+    /// come through here: the silhouette side reads those from the chunk-loaded event itself.
+    /// </summary>
+    public Action<int, int, ushort[]>? PreviewHeightsCaptured;
 
     /// <summary>
     /// Combined capture jobs and completed/deferred results retained by the pipeline.

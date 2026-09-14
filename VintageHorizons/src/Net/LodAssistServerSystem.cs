@@ -29,8 +29,9 @@ public class LodAssistServerSystem : ModSystem
     string? blobReaderPath;
 
     /// <summary>
-    /// Horizon silhouettes, first look: singleplayer and LAN-hosted worlds only in this build,
-    /// and the feature bit is advertised only where this exists (plan P1).
+    /// Horizon silhouettes: created when the world runs, where the server config allows them
+    /// (singleplayer and LAN-hosted worlds in this build). The feature bit is advertised only
+    /// where this exists.
     /// </summary>
     LodSilhouetteBuilder? silhouettes;
 
@@ -72,12 +73,9 @@ public class LodAssistServerSystem : ModSystem
             .SetMessageHandler<AssistWorldGenRequest>(OnWorldGenRequest)
             .SetMessageHandler<AssistSilhouetteRequest>(OnSilhouetteRequest);
 
-        if (!api.Server.IsDedicated)
-        {
-            silhouettes = new LodSilhouetteBuilder(api, Mod.Logger,
-                () => api.ModLoader.GetModSystem<LodServerCaptureSystem>()?.GenerationAuthorityBusy == true,
-                (player, tile) => channel.SendPacket(tile, player));
-        }
+        // Decided when the world runs rather than here: the server config is loaded by the
+        // capture system, and nothing orders its start before this one's.
+        api.Event.ServerRunPhase(EnumServerRunPhase.RunGame, StartSilhouettes);
 
         // Accumulate the configured per-second rates across normal ticks. Each allowance
         // is capped at one tick's share, so a slow tick cannot cause a catch-up burst.
@@ -907,9 +905,55 @@ public class LodAssistServerSystem : ModSystem
     public override void Dispose()
     {
         if (sapi != null) sapi.Event.PlayerDisconnect -= OnPlayerDisconnect;
+        if (sapi != null && silhouettes != null) sapi.Event.ChunkColumnLoaded -= OnColumnLoadedForSilhouettes;
         silhouettes?.Dispose();
         blobReader?.Dispose();
         blobReader = null;
         blobReaderPath = null;
+    }
+
+    /// <summary>
+    /// Horizon silhouettes, when the world starts running and only if the server config allows
+    /// them (plan 4.9). The builder then also keeps the worldgen heights of every column the
+    /// server loads. That costs a copy of one height map, because the column is in memory
+    /// anyway (plan 4.4).
+    /// </summary>
+    void StartSilhouettes()
+    {
+        LodServerConfig config = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>()?.Config
+            ?? new LodServerConfig();
+        if (!config.SilhouettesEnabled(sapi.Server.IsDedicated))
+        {
+            if (!sapi.Server.IsDedicated)
+            {
+                Mod.Logger.Notification("Horizon silhouettes are switched off in "
+                    + "ModConfig/vintagehorizons-server.json: this world offers none and keeps no heights for them.");
+            }
+            return;
+        }
+        silhouettes = new LodSilhouetteBuilder(sapi, Mod.Logger,
+            () => sapi.ModLoader.GetModSystem<LodServerCaptureSystem>()?.GenerationAuthorityBusy == true,
+            (player, tile) => channel.SendPacket(tile, player));
+        sapi.Event.ChunkColumnLoaded += OnColumnLoadedForSilhouettes;
+    }
+
+    /// <summary>Main thread: the engine raises this from a main-thread task.</summary>
+    void OnColumnLoadedForSilhouettes(Vintagestory.API.MathTools.Vec2i chunkCoord, IWorldChunk[] chunks)
+    {
+        IMapChunk? map = chunks.Length > 0 ? chunks[0]?.MapChunk : null;
+        ushort[]? heights = map?.WorldGenTerrainHeightMap;
+        if (map == null || heights == null || heights.Length < LodSilhouetteTile.HeightMapLength) return;
+        // An old-save column without worldgen heights carries a copy of its rain map (plan 2.1),
+        // which reads water surfaces and treetops rather than the ground.
+        bool rain = map.RainHeightMap is { } rainMap && heights.AsSpan().SequenceEqual(rainMap);
+        silhouettes?.OfferCapturedHeights(chunkCoord.X, chunkCoord.Y, heights, rain); // Vec2i.Y is the Z chunk coord
+    }
+
+    /// <summary>Any thread: a previewed column's heights, handed over by the capture pipeline.</summary>
+    public void OfferSilhouetteHeights(int cx, int cz, ushort[] heights)
+    {
+        if (silhouettes == null) return;
+        sapi.Event.EnqueueMainThreadTask(() => silhouettes?.OfferCapturedHeights(cx, cz, heights, false),
+            "vintagehorizons-silhouette-heights");
     }
 }

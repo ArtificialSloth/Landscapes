@@ -23,7 +23,7 @@ public static class SilhouetteChecks
         TileSourceOrder(c);
         TileRoundTrip(c);
         TileRejectsBadPayloads(c);
-        FieldInterpolation(c);
+        FillFromKnownCells(c);
         MeshMatchesAcrossTileBorders(c);
         MeshSeaAndCoverage(c);
         FeatureGate(c);
@@ -35,6 +35,7 @@ public static class SilhouetteChecks
         MessageOrderMatches(c);
         PreviewsNeverReachCapture(c);
         GeneratorSilenceStopsTheBuilder(c);
+        CapturedHeightsReachTiles(c);
         UploadedUniformsAreDeclared(c);
         SamplerLayout(c);
         OffStateIsTheOldBehaviour(c);
@@ -240,49 +241,108 @@ public static class SilhouetteChecks
             "a hand-built one-cell tile is accepted, so the refusals above are not refusing everything");
     }
 
-    static void FieldInterpolation(Check c)
+    /// <summary>A tile's 3x3 neighbourhood as the fill and the mesher read it, indexed [z, x].</summary>
+    static LodSilhouetteTile?[,] Neighbourhood(Func<int, int, LodSilhouetteTile?> tileAt, int centreX, int centreZ)
     {
-        double x = LodSilhouetteField.NodeBlockX(10), z = LodSilhouetteField.NodeBlockX(20);
-        double Only(int i, int j) => i == 10 && j == 20 ? 100 : double.NaN;
-        c.Near(100, LodSilhouetteField.HeightAt(x, z, Only), 1e-9, "at a known node the height is the node's");
-        c.Near(100, LodSilhouetteField.HeightAt(x + 100, z + 50, Only), 1e-9,
-            "unknown nodes drop out: one known node fills its surroundings");
-        c.True(double.IsNaN(LodSilhouetteField.HeightAt(x, z, (_, _) => double.NaN)), "no known node, no height");
+        var hood = new LodSilhouetteTile?[LodSilhouetteFill.NeighbourhoodTiles, LodSilhouetteFill.NeighbourhoodTiles];
+        for (int dz = -1; dz <= 1; dz++)
+            for (int dx = -1; dx <= 1; dx++)
+                hood[dz + 1, dx + 1] = tileAt(centreX + dx, centreZ + dz);
+        return hood;
+    }
 
-        double Pair(int i, int j) => j != 20 ? double.NaN : i == 10 ? 100 : i == 11 ? 200 : double.NaN;
-        c.Near(150, LodSilhouetteField.HeightAt(x + LodSilhouetteField.LatticeBlocks / 2.0, z, Pair), 1e-9,
-            "halfway between two known nodes is their mean");
+    static LodSilhouetteTile FullTile(int tileX, int tileZ, int height)
+    {
+        var tile = new LodSilhouetteTile(tileX, tileZ);
+        ushort[] map = HeightMap((_, _) => height);
+        for (int cz = 0; cz < LodSilhouetteTile.ChunksPerEdge; cz++)
+            for (int cx = 0; cx < LodSilhouetteTile.ChunksPerEdge; cx++)
+                tile.SetChunk(tileX * 16 + cx, tileZ * 16 + cz, map, EnumSilhouetteOrigin.Captured);
+        return tile;
+    }
+
+    /// <summary>
+    /// A deterministic scatter over the 4x4 tiles around the fixture tile: about one chunk in
+    /// eight known, and one tile missing entirely.
+    /// </summary>
+    static Dictionary<(int, int), LodSilhouetteTile> SparseWorld()
+    {
+        var world = new Dictionary<(int, int), LodSilhouetteTile>();
+        for (int tz = TileZ - 1; tz <= TileZ + 2; tz++)
+        {
+            for (int tx = TileX - 1; tx <= TileX + 2; tx++)
+            {
+                if ((tx * 7 + tz * 3) % 5 == 1) continue;
+                var tile = new LodSilhouetteTile(tx, tz);
+                for (int cz = 0; cz < LodSilhouetteTile.ChunksPerEdge; cz++)
+                {
+                    for (int cx = 0; cx < LodSilhouetteTile.ChunksPerEdge; cx++)
+                    {
+                        int hash = tx * 73856093 ^ tz * 19349663 ^ cx * 83492791 ^ cz * 2654435;
+                        if ((hash & 7) != 0) continue;
+                        int ground = 100 + (hash >> 3 & 63);
+                        tile.SetChunk(tx * 16 + cx, tz * 16 + cz, HeightMap((x, z) => ground + (x ^ z) % 5),
+                            EnumSilhouetteOrigin.Preview);
+                    }
+                }
+                world[(tx, tz)] = tile;
+            }
+        }
+        return world;
+    }
+
+    static void FillFromKnownCells(Check c)
+    {
+        int stride = LodSilhouetteTile.CellsPerEdge + 1;
+        c.Eq(LodSilhouetteTile.CellsPerEdge, 1 << (LodSilhouetteFill.Levels - 1),
+            "the fill's top level holds one cell per tile");
+
+        var one = new LodSilhouetteTile(TileX, TileZ);
+        one.SetChunk(TileX * 16 + 4, TileZ * 16 + 4, HeightMap((x, z) => 100 + x + z), EnumSilhouetteOrigin.Preview);
+        LodSilhouetteTile?[,] alone = Neighbourhood((x, z) => x == TileX && z == TileZ ? one : null, TileX, TileZ);
+        float[] filled = LodSilhouetteFill.FillCentre(alone);
+        bool kept = true;
+        for (int j = 0; j < 8; j++)
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                one.TryGetHeight(32 + i, 32 + j, out ushort h);
+                kept &= filled[(32 + j) * stride + 32 + i] == h;
+            }
+        }
+        c.True(kept, "known cells keep their own heights exactly");
+        c.True(filled.All(h => !float.IsNaN(h)), "one known chunk fills its whole tile and the closing edges");
+        c.True(filled.All(h => h >= 100 && h <= 100 + 28 + 28), "filled heights stay within the known ones");
+        c.SeqEq(filled, LodSilhouetteFill.FillCentre(alone), "the same data fills the same way twice");
+        c.True(LodSilhouetteFill.FillCentre(new LodSilhouetteTile?[3, 3]).All(float.IsNaN),
+            "with nothing known, nothing is filled");
+
+        var west = new LodSilhouetteTile(TileX - 1, TileZ);
+        west.SetChunk((TileX - 1) * 16 + 15, TileZ * 16 + 8, HeightMap((_, _) => 150), EnumSilhouetteOrigin.Captured);
+        float[] beside = LodSilhouetteFill.FillCentre(
+            Neighbourhood((x, z) => x == TileX - 1 && z == TileZ ? west : null, TileX, TileZ));
+        c.Near(150, beside[64 * stride], 1e-3, "an empty tile takes a known neighbour's heights at their border");
+        c.True(float.IsNaN(beside[64 * stride + LodSilhouetteTile.CellsPerEdge]),
+            "and they stop before the tile beyond, rather than spreading without limit");
 
         c.True(LodSilhouetteField.IsLatticeChunk(LodSilhouetteField.LatticeChunkOfNode(625),
                 LodSilhouetteField.LatticeChunkOfNode(2000))
             && !LodSilhouetteField.IsLatticeChunk(16000, 16004), "lattice chunks sit at 4 mod 8");
         c.Eq(7, LodSilhouetteField.NodeOfLatticeChunk(LodSilhouetteField.LatticeChunkOfNode(7)),
             "a node and its lattice chunk convert both ways");
-        var touched = LodSilhouetteField.TilesTouchedByNode(10, 20).ToList();
-        c.True(touched.Count is >= 1 and <= 9 && touched.Contains(LodSilhouetteTile.TileOfBlock((int)x, (int)z)),
-            "a node touches its own tile and at most its eight neighbours");
-    }
-
-    static double[,] Snapshot(int tileX, int tileZ, Func<int, int, double> node)
-    {
-        int firstX = LodSilhouetteField.FirstNodeOfTile(tileX), firstZ = LodSilhouetteField.FirstNodeOfTile(tileZ);
-        var snapshot = new double[LodSilhouetteField.TileNodeSpan, LodSilhouetteField.TileNodeSpan];
-        for (int b = 0; b < LodSilhouetteField.TileNodeSpan; b++)
-            for (int a = 0; a < LodSilhouetteField.TileNodeSpan; a++)
-                snapshot[b, a] = node(firstX + a, firstZ + b);
-        return snapshot;
+        c.Eq(9, LodSilhouetteField.TilesReading(TileX, TileZ).Distinct().Count(),
+            "a tile's heights reach its own mesh and its eight neighbours'");
     }
 
     static void MeshMatchesAcrossTileBorders(Check c)
     {
         const int sea = 110;
-        double Node(int i, int j) => (i * 37 + j * 91) % 7 == 0 ? double.NaN : 120 + (i * 131 + j * 71) % 97;
-        LodSilhouetteMeshArrays? left = LodSilhouetteField.BuildMesh(TileX, TileZ, Snapshot(TileX, TileZ, Node), 0, sea);
-        LodSilhouetteMeshArrays? right = LodSilhouetteField.BuildMesh(TileX + 1, TileZ,
-            Snapshot(TileX + 1, TileZ, Node), 0, sea);
-        LodSilhouetteMeshArrays? below = LodSilhouetteField.BuildMesh(TileX, TileZ + 1,
-            Snapshot(TileX, TileZ + 1, Node), 0, sea);
-        c.True(left != null && right != null && below != null, "tiles with known nodes around them mesh");
+        Dictionary<(int, int), LodSilhouetteTile> world = SparseWorld();
+        LodSilhouetteTile? At(int x, int z) => world.GetValueOrDefault((x, z));
+        LodSilhouetteMeshArrays? left = LodSilhouetteField.BuildMesh(Neighbourhood(At, TileX, TileZ), 0, sea);
+        LodSilhouetteMeshArrays? right = LodSilhouetteField.BuildMesh(Neighbourhood(At, TileX + 1, TileZ), 0, sea);
+        LodSilhouetteMeshArrays? below = LodSilhouetteField.BuildMesh(Neighbourhood(At, TileX, TileZ + 1), 0, sea);
+        c.True(left != null && right != null && below != null, "tiles with known cells around them mesh");
         if (left == null || right == null || below == null) return;
 
         int verts = LodSilhouetteField.DefaultQuadsPerEdge + 1;
@@ -295,36 +355,59 @@ public static class SilhouetteChecks
         c.True(eastWest, "neighbouring tiles agree on every vertex of their shared east-west border");
         c.True(northSouth, "neighbouring tiles agree on every vertex of their shared north-south border");
 
+        float[] filled = LodSilhouetteFill.FillCentre(Neighbourhood(At, TileX, TileZ));
+        int stride = LodSilhouetteTile.CellsPerEdge + 1;
+        int step = LodSilhouetteTile.CellsPerEdge / LodSilhouetteField.DefaultQuadsPerEdge;
         bool direct = true;
-        int spacing = LodSilhouetteTile.TileBlocks / LodSilhouetteField.DefaultQuadsPerEdge;
         for (int b = 0; b < verts; b++)
         {
             for (int a = 0; a < verts; a++)
             {
-                double h = LodSilhouetteField.HeightAt(TileX * (double)LodSilhouetteTile.TileBlocks + a * spacing,
-                    TileZ * (double)LodSilhouetteTile.TileBlocks + b * spacing, Node);
-                float expected = double.IsNaN(h) ? sea : (float)Math.Max(h, sea);
+                float h = filled[b * step * stride + a * step];
+                float expected = float.IsNaN(h) ? sea : Math.Max(h, sea);
                 direct &= left.Xyz[(b * verts + a) * 3 + 1] == expected;
             }
         }
-        c.True(direct, "a tile's four-by-four node snapshot holds every node its heights read");
+        c.True(direct, "a mesh vertex takes the filled height of its cell, clamped to sea level");
+    }
+
+    static void CapturedHeightsReachTiles(Check c)
+    {
+        string pipeline = Source("src", "Lod", "LodPipeline.cs");
+        string capture = Source("src", "Net", "LodServerCaptureSystem.cs");
+        string assist = Source("src", "Net", "LodAssistServerSystem.cs");
+        string builder = Source("src", "Silhouette", "LodSilhouetteBuilder.cs");
+        c.True(Regex.IsMatch(pipeline,
+                @"public bool CaptureColumn\([\s\S]*?PreviewHeightsCaptured[\s\S]*?WorldGenTerrainHeightMap[\s\S]*?return true;"),
+            "a previewed column's worldgen heights are offered as its capture job is created");
+        c.True(Regex.IsMatch(capture,
+                @"if \(Config\.SilhouettesEnabled\(sapi\.Server\.IsDedicated\)\)\s*\{[^}]*PreviewHeightsCaptured ="),
+            "the pipeline's height hook is attached only while the server offers silhouettes");
+        c.True(Regex.IsMatch(assist,
+                @"if \(!config\.SilhouettesEnabled\(sapi\.Server\.IsDedicated\)\)[\s\S]*?return;[\s\S]*?ChunkColumnLoaded \+= OnColumnLoadedForSilhouettes"),
+            "loaded columns' heights are read only while the server offers silhouettes");
+        c.Eq(1, Regex.Matches(assist, @"ChunkColumnLoaded \+=").Count,
+            "the silhouette side subscribes to column loads in one place");
+        c.True(builder.Contains("SetChunk(cx, cz, heights, EnumSilhouetteOrigin.Captured)", StringComparison.Ordinal),
+            "captured heights enter tiles as captured, the best source");
+        c.True(builder.Contains("if (HoldsChunk(cx, cz)) continue;", StringComparison.Ordinal),
+            "the builder never previews a chunk whose heights it holds");
     }
 
     static void MeshSeaAndCoverage(Check c)
     {
         const int sea = 110;
-        double Deep(int i, int j) => sea - 20;
-        LodSilhouetteMeshArrays? flat = LodSilhouetteField.BuildMesh(TileX, TileZ, Snapshot(TileX, TileZ, Deep), 0, sea);
+        LodSilhouetteTile?[,] deep = Neighbourhood((x, z) => FullTile(x, z, sea - 20), TileX, TileZ);
+        LodSilhouetteMeshArrays? flat = LodSilhouetteField.BuildMesh(deep, 0, sea);
         c.True(flat != null && Enumerable.Range(0, flat.VertexCount).All(v => flat.Xyz[v * 3 + 1] == sea),
             "ground below sea level draws as a flat sea");
-        c.True(LodSilhouetteField.BuildMesh(TileX, TileZ, Snapshot(TileX, TileZ, Deep), ulong.MaxValue, sea) == null,
+        c.True(LodSilhouetteField.BuildMesh(deep, ulong.MaxValue, sea) == null,
             "a tile cached terrain fully covers has no mesh");
-        c.True(LodSilhouetteField.BuildMesh(TileX, TileZ, Snapshot(TileX, TileZ, (_, _) => double.NaN), 0, sea) == null,
-            "a tile with no known node has no mesh");
+        c.True(LodSilhouetteField.BuildMesh(new LodSilhouetteTile?[3, 3], 0, sea) == null,
+            "a tile with nothing known around it has no mesh");
 
         ulong oneCell = 1UL << LodSilhouetteField.CoverageBit(0, 0);
-        LodSilhouetteMeshArrays? cut = LodSilhouetteField.BuildMesh(TileX, TileZ,
-            Snapshot(TileX, TileZ, Deep), oneCell, sea);
+        LodSilhouetteMeshArrays? cut = LodSilhouetteField.BuildMesh(deep, oneCell, sea);
         int quads = LodSilhouetteField.DefaultQuadsPerEdge * LodSilhouetteField.DefaultQuadsPerEdge;
         int quadsPerCellEdge = LodSection.SectionBlocks
             / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.DefaultQuadsPerEdge);

@@ -8,13 +8,16 @@ using VintageHorizons.Net;
 namespace VintageHorizons.Silhouette;
 
 /// <summary>
-/// Server half of the silhouette first look (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P1).
+/// Server half of horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P1-P2).
 ///
-/// For each player who asked, it walks the sampling lattice outward from them, nearest first,
-/// out to their reach plus one tile. It takes one chunk in every 8x8, probes it for existence
-/// and, where no terrain exists yet, previews it to the Terrain pass. Only the 32x32 height map
-/// of a preview is kept: nothing reaches the capture pipeline, and a preview writes nothing to
-/// the savegame. Tiles stay in RAM and are pushed to every player whose reach covers them.
+/// Heights come from two places. First, the worldgen heights of every column the server loads
+/// or previews for its own cache: they are free, and they outrank everything else. Second, for
+/// each player who asked, the builder walks the sampling lattice outward from them, nearest
+/// first, out to their reach plus one tile. It takes one chunk in every 8x8, skips any whose
+/// heights it already holds, probes the rest for existence and, where no terrain exists yet,
+/// previews it to the Terrain pass. Only the 32x32 height map of a preview is kept: nothing
+/// reaches the capture pipeline, and a preview writes nothing to the savegame. Tiles stay in RAM
+/// and are pushed to every player whose reach covers them.
 ///
 /// It is an automatic producer, so it never takes the world-generation authority. It holds new
 /// work while an explicit job holds that authority, or while the engine is generating real
@@ -91,6 +94,7 @@ internal sealed class LodSilhouetteBuilder
     int lastLandedCx, lastLandedCz;
 
     public int Probed, Existing, Peeked, Landed, Empty, TimedOut, YieldTicks, TilesSent;
+    public int CapturedColumns, RainColumns;
     public long BytesSent;
 
     public LodSilhouetteBuilder(ICoreServerAPI sapi, ILogger logger, Func<bool> authorityBusy,
@@ -129,7 +133,8 @@ internal sealed class LodSilhouetteBuilder
         Recentre(demand, force: true);
         logger.Notification(
             "Horizon silhouettes: {0} asked for a {1:N0}-block reach. Previewing one chunk in every "
-            + "8x8 around them, nearest first, heights only; nothing is written to the savegame.",
+            + "8x8 around them where no heights are held yet, nearest first, heights only; nothing "
+            + "is written to the savegame.",
             player.PlayerName, reach);
         EnsureListening();
     }
@@ -141,6 +146,25 @@ internal sealed class LodSilhouetteBuilder
         demandOrder.Remove(playerUid);
         if (demands.Count == 0) StopListening();
         return true;
+    }
+
+    /// <summary>
+    /// Main thread. The worldgen heights of a column the server loaded, or previewed for its own
+    /// cache (plan 4.4). They are kept whether or not anyone is asking yet, they outrank the
+    /// builder's own previews, and the builder never previews a chunk whose heights it holds.
+    /// </summary>
+    public void OfferCapturedHeights(int cx, int cz, ReadOnlySpan<ushort> heights, bool rainHeights)
+    {
+        if (heights.Length < LodSilhouetteTile.HeightMapLength) return;
+        CapturedColumns++;
+        if (rainHeights) RainColumns++;
+        (int tileX, int tileZ) = LodSilhouetteTile.TileOfChunk(cx, cz);
+        long key = LodSilhouetteTile.KeyOf(tileX, tileZ);
+        if (!tiles.TryGetValue(key, out LodSilhouetteTile? tile))
+            tiles[key] = tile = new LodSilhouetteTile(tileX, tileZ);
+        if (!tile.SetChunk(cx, cz, heights, EnumSilhouetteOrigin.Captured)) return;
+        foreach (Demand demand in demands.Values)
+            if (Covers(demand, tile)) demand.Queued.Add(key);
     }
 
     public void Dispose()
@@ -270,6 +294,14 @@ internal sealed class LodSilhouetteBuilder
         return dx * dx + dz * dz <= limit * limit;
     }
 
+    /// <summary>The builder already holds heights for this chunk, captured or previewed.</summary>
+    bool HoldsChunk(int cx, int cz)
+    {
+        (int tileX, int tileZ) = LodSilhouetteTile.TileOfChunk(cx, cz);
+        return tiles.TryGetValue(LodSilhouetteTile.KeyOf(tileX, tileZ), out LodSilhouetteTile? tile)
+            && tile.HasChunk(cx - tileX * LodSilhouetteTile.ChunksPerEdge, cz - tileZ * LodSilhouetteTile.ChunksPerEdge);
+    }
+
     void IssueWork(long now)
     {
         // A generator that stopped answering gets nothing more this session (WatchGenerator).
@@ -329,6 +361,8 @@ internal sealed class LodSilhouetteBuilder
             int cx = LodSilhouetteField.LatticeChunkOfNode(i);
             int cz = LodSilhouetteField.LatticeChunkOfNode(j);
             if (!attempted.Add(LodColumnMap.Key(cx, cz))) continue;
+            // Heights the server captured anyway make a preview pointless (plan 4.2).
+            if (HoldsChunk(cx, cz)) continue;
             Probe(cx, cz);
             return EnumProbeStep.Probed;
         }
@@ -353,8 +387,8 @@ internal sealed class LodSilhouetteBuilder
             {
                 probesInFlight--;
                 GeneratorAnswered();
-                // Existing terrain is never previewed: its heights come from capture (P2), and
-                // the client draws its cached terrain there anyway.
+                // Existing terrain is never previewed: its heights arrive when the server loads
+                // it, and the client draws its cached terrain there anyway.
                 if (exists) Existing++;
                 else if (!generatorWatch.Stalled) pendingPeeks.Enqueue((cx, cz));
             }, "vh-silhouette-probe");
@@ -501,11 +535,12 @@ internal sealed class LodSilhouetteBuilder
     public string Describe()
     {
         string text = string.Format(System.Globalization.CultureInfo.InvariantCulture,
-            "{0} player(s), {1} tiles; {2} lattice probes ({3} already hold terrain); previews {4} "
-            + "issued, {5} landed, {6} without heights, {7} timed out, {8} in flight; held {9} ticks "
-            + "for other generation; {10} tile messages sent ({11:0.0} KB)",
-            demands.Count, tiles.Count, Probed, Existing, Peeked, Landed, Empty, TimedOut,
-            peeksInFlight.Count, YieldTicks, TilesSent, BytesSent / 1024.0);
+            "{0} player(s), {1} tiles; heights from {2} loaded or previewed columns ({3} were rain "
+            + "heights from old saves); {4} lattice probes ({5} already hold terrain); previews {6} "
+            + "issued, {7} landed, {8} without heights, {9} timed out, {10} in flight; held {11} ticks "
+            + "for other generation; {12} tile messages sent ({13:0.0} KB)",
+            demands.Count, tiles.Count, CapturedColumns, RainColumns, Probed, Existing, Peeked, Landed,
+            Empty, TimedOut, peeksInFlight.Count, YieldTicks, TilesSent, BytesSent / 1024.0);
         if (!generatorWatch.Stalled) return text;
         return text + string.Format(System.Globalization.CultureInfo.InvariantCulture,
             "; STOPPED for this session: the world generator went silent for {0} s ({1} answers came "

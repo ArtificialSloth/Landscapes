@@ -84,6 +84,20 @@ public static class ConfigChecks
         c.False(new LodServerConfig { WorldGenMaxRadiusChunks = 0 }.WorldGenerationEnabled,
             "a zero real-generation ceiling also disables starts");
 
+        // Silhouettes are automatic: on where one process is both client and server. Dedicated
+        // servers wait for the dedicated-server test (silhouette plan P3).
+        c.True(config.EnableSilhouettes == null, "silhouettes are automatic by default");
+        c.True(config.SilhouettesEnabled(isDedicated: false), "automatic means on in singleplayer and LAN-hosted worlds");
+        c.False(config.SilhouettesEnabled(isDedicated: true), "automatic means off on a dedicated server");
+        c.False(new LodServerConfig { EnableSilhouettes = false }.SilhouettesEnabled(isDedicated: false),
+            "switching them off in the config switches them off in singleplayer too");
+        c.False(new LodServerConfig { EnableSilhouettes = true }.SilhouettesEnabled(isDedicated: true),
+            "dedicated servers are not offered silhouettes yet, whatever the config says");
+        c.True(config.Describe().Contains("silhouettes singleplayer and LAN only", StringComparison.Ordinal)
+                && new LodServerConfig { EnableSilhouettes = false }.Describe().Contains("silhouettes off",
+                    StringComparison.Ordinal),
+            "the config description states the silhouette setting");
+
         var untouched = new LodServerConfig();
         untouched.Sanitize();
         c.Eq(8192, untouched.ServeRadiusBlocks, "sanitizing the defaults changes nothing");

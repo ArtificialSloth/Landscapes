@@ -171,6 +171,17 @@ public class LodServerConfig
     /// <summary>Chunk columns requested per second while pre-generating. Keep it modest.</summary>
     public int PregenColumnsPerSecond = 8;
 
+    /// <summary>
+    /// Horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER 4.9). Null, the default, is
+    /// automatic: on for singleplayer and LAN-hosted worlds. False switches them off, and the
+    /// server then keeps no silhouette heights at all. Dedicated servers are not offered
+    /// silhouettes yet whatever this says; that waits for the dedicated-server test (plan P3).
+    /// </summary>
+    public bool? EnableSilhouettes;
+
+    /// <summary>Whether this server offers silhouettes and keeps their heights.</summary>
+    public bool SilhouettesEnabled(bool isDedicated) => !isDedicated && EnableSilhouettes != false;
+
     /// <summary>Clamp to values that cannot wedge the server, whatever the file says.</summary>
     public void Sanitize()
     {
@@ -235,5 +246,6 @@ public class LodServerConfig
         + $"refresh {(RefreshEnabled ? RefreshColumnsPerSecond + "/s" : "off")}, "
         + $"generate {(GenerateEnabled ? "on request up to " + GenerateMaxRadiusChunks + " chunks" : "off")}, "
         + $"world generation {(WorldGenerationEnabled ? "on request up to " + WorldGenMaxRadiusChunks
-            + " chunks, queue " + WorldGenQueueTarget : "off")}";
+            + " chunks, queue " + WorldGenQueueTarget : "off")}, "
+        + $"silhouettes {(EnableSilhouettes == false ? "off" : "singleplayer and LAN only")}";
 }

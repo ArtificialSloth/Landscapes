@@ -176,6 +176,36 @@ public sealed class LodSilhouetteTile
         return true;
     }
 
+    /// <summary>True when the chunk has known cells. A chunk's cells are only allocated with data.</summary>
+    public bool HasChunk(int chunkLocalX, int chunkLocalZ) =>
+        chunks[chunkLocalZ * ChunksPerEdge + chunkLocalX] != null;
+
+    /// <summary>
+    /// Write every known cell's height into a row-major grid, with this tile's cell (0,0) at
+    /// (<paramref name="x0"/>, <paramref name="z0"/>). Unknown cells are left as they are.
+    /// On the client a tile is never changed after <see cref="Decode"/> (a newer revision
+    /// replaces it whole), so mesh jobs may call this from worker threads.
+    /// </summary>
+    public void WriteKnownHeights(float[] grid, int stride, int x0, int z0)
+    {
+        for (int slot = 0; slot < chunks.Length; slot++)
+        {
+            ChunkData? cells = chunks[slot];
+            if (cells == null) continue;
+            int baseX = x0 + slot % ChunksPerEdge * CellsPerChunk;
+            int baseZ = z0 + slot / ChunksPerEdge * CellsPerChunk;
+            for (int j = 0; j < CellsPerChunk; j++)
+            {
+                int row = (baseZ + j) * stride + baseX;
+                for (int i = 0; i < CellsPerChunk; i++)
+                {
+                    int index = j * CellsPerChunk + i;
+                    if (cells.Origins[index] != 0) grid[row + i] = cells.Heights[index];
+                }
+            }
+        }
+    }
+
     /// <summary>
     /// Format byte, then deflated: the 2-bit state of all 16,384 cells in row-major order (four
     /// to a byte, lowest bits first), then the height of every known cell in the same order,

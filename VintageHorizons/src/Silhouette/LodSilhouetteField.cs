@@ -12,18 +12,13 @@ public sealed class LodSilhouetteMeshArrays
 }
 
 /// <summary>
-/// How the first-look slice (P1) turns sparse samples into a continuous surface.
+/// Where the server samples, and how the client turns a tile into a mesh.
 ///
-/// The server samples one chunk in every 8x8, on a global lattice (chunks 4 and 12 of every
-/// 16-chunk tile). Each sampled chunk becomes one node: the mean of its known cells, at the chunk
-/// centre. A height anywhere is the bilinear blend of the four surrounding nodes, with the
-/// weights of unknown nodes dropped and the rest renormalized.
-///
-/// It is a pure function of world position and node values. Two tiles that share a border
-/// therefore compute identical heights along it, and no crack can open between them as long as
-/// both were meshed with the same nodes. When a node changes, every tile it can reach is
-/// re-meshed. Later phases replace this with a fill over known cells at any spacing (plan 4.3);
-/// only this class changes when they do.
+/// The server previews one chunk in every 8x8, on a global lattice (chunks 4 and 12 of every
+/// 16-chunk tile), and also keeps the heights of every column it loads or previews for its
+/// cache. The client fills the unknown cells from the known ones across the tile's
+/// neighbourhood (<see cref="LodSilhouetteFill"/>) and meshes the result at one resolution.
+/// P4's mesher adds more resolutions, the anchoring and the handoff.
 /// </summary>
 public static class LodSilhouetteField
 {
@@ -39,10 +34,7 @@ public static class LodSilhouetteField
     public const double NodeOriginBlocks =
         LatticeOffsetChunks * LodSilhouetteTile.ChunkBlocks + LodSilhouetteTile.ChunkBlocks / 2.0;
 
-    /// <summary>Nodes per axis a tile's heights can read: its own two plus one either side.</summary>
-    public const int TileNodeSpan = 4;
-
-    /// <summary>Quads per tile edge in P1's single resolution: 16-block quads.</summary>
+    /// <summary>Quads per tile edge at the one resolution drawn so far: 16-block quads.</summary>
     public const int DefaultQuadsPerEdge = 32;
 
     /// <summary>
@@ -58,55 +50,15 @@ public static class LodSilhouetteField
 
     public static int LatticeChunkOfNode(int n) => n * LatticeChunks + LatticeOffsetChunks;
 
-    public static long NodeKey(int i, int j) => ((long)j << 32) | (uint)i;
-
     public static double NodeBlockX(int i) => NodeOriginBlocks + (double)i * LatticeBlocks;
 
-    /// <summary>First node index a tile's heights read, on either axis.</summary>
-    public static int FirstNodeOfTile(int tile) =>
-        (int)Math.Floor((tile * (double)LodSilhouetteTile.TileBlocks - NodeOriginBlocks) / LatticeBlocks);
-
-    /// <summary>
-    /// Tiles whose heights a node can change: every tile within one lattice step of the node on
-    /// both axes. A node sits inside one tile and influences at most 256 blocks around it, which
-    /// never reaches past the eight neighbours.
-    /// </summary>
-    public static IEnumerable<(int TileX, int TileZ)> TilesTouchedByNode(int i, int j)
+    /// <summary>Tiles whose mesh reads a given tile's heights: the tile and its eight neighbours.</summary>
+    public static IEnumerable<(int TileX, int TileZ)> TilesReading(int tileX, int tileZ)
     {
-        double x = NodeBlockX(i), z = NodeBlockX(j);
-        int minTx = (int)Math.Floor((x - LatticeBlocks) / LodSilhouetteTile.TileBlocks);
-        int maxTx = (int)Math.Floor((x + LatticeBlocks) / LodSilhouetteTile.TileBlocks);
-        int minTz = (int)Math.Floor((z - LatticeBlocks) / LodSilhouetteTile.TileBlocks);
-        int maxTz = (int)Math.Floor((z + LatticeBlocks) / LodSilhouetteTile.TileBlocks);
-        for (int tz = minTz; tz <= maxTz; tz++)
-            for (int tx = minTx; tx <= maxTx; tx++)
-                yield return (tx, tz);
-    }
-
-    /// <summary>
-    /// Height at a world block position, or NaN where none of the four surrounding nodes is
-    /// known. <paramref name="node"/> answers NaN for an unknown node.
-    /// </summary>
-    public static double HeightAt(double x, double z, Func<int, int, double> node)
-    {
-        double fx = (x - NodeOriginBlocks) / LatticeBlocks;
-        double fz = (z - NodeOriginBlocks) / LatticeBlocks;
-        int i0 = (int)Math.Floor(fx), j0 = (int)Math.Floor(fz);
-        double tx = fx - i0, tz = fz - j0;
-
-        double sum = 0, weight = 0;
-        Accumulate(node(i0, j0), (1 - tx) * (1 - tz), ref sum, ref weight);
-        Accumulate(node(i0 + 1, j0), tx * (1 - tz), ref sum, ref weight);
-        Accumulate(node(i0, j0 + 1), (1 - tx) * tz, ref sum, ref weight);
-        Accumulate(node(i0 + 1, j0 + 1), tx * tz, ref sum, ref weight);
-        return weight > 1e-6 ? sum / weight : double.NaN;
-    }
-
-    static void Accumulate(double value, double w, ref double sum, ref double weight)
-    {
-        if (double.IsNaN(value) || w <= 0) return;
-        sum += value * w;
-        weight += w;
+        int radius = LodSilhouetteFill.NeighbourhoodTiles / 2;
+        for (int dz = -radius; dz <= radius; dz++)
+            for (int dx = -radius; dx <= radius; dx++)
+                yield return (tileX + dx, tileZ + dz);
     }
 
     /// <summary>
@@ -115,38 +67,29 @@ public static class LodSilhouetteField
     public static int CoverageBit(int localCellX, int localCellZ) => localCellZ * 8 + localCellX;
 
     /// <summary>
-    /// Build one tile's mesh from the nodes it can read. <paramref name="nodes"/> is
-    /// <see cref="TileNodeSpan"/> square, indexed [j - firstNodeZ, i - firstNodeX], NaN where
-    /// unknown. A quad is drawn when all four corners are known and its level-0 cell is not
-    /// covered by cached terrain; a vertex touching a covered cell sinks. Heights are clamped to
-    /// sea level, which is Farseer's flat sea. Null when no quad is drawn.
+    /// Build the centre tile's mesh from its neighbourhood (see <see cref="LodSilhouetteFill"/>
+    /// for the layout). A quad is drawn when all four corners have heights and its level-0 cell
+    /// is not covered by cached terrain; a vertex touching a covered cell sinks. Heights are
+    /// clamped to sea level, which is Farseer's flat sea. Null when no quad is drawn.
     /// </summary>
-    public static LodSilhouetteMeshArrays? BuildMesh(int tileX, int tileZ, double[,] nodes,
+    public static LodSilhouetteMeshArrays? BuildMesh(LodSilhouetteTile?[,] neighbourhood,
         ulong coveredCells, int seaLevel, int quadsPerEdge = DefaultQuadsPerEdge,
         float sinkBlocks = DefaultSinkBlocks)
     {
-        if (quadsPerEdge < 1 || LodSilhouetteTile.TileBlocks % quadsPerEdge != 0)
+        if (quadsPerEdge < 1 || LodSilhouetteTile.CellsPerEdge % quadsPerEdge != 0)
             throw new ArgumentOutOfRangeException(nameof(quadsPerEdge));
         if (coveredCells == ulong.MaxValue) return null;
 
-        int firstX = FirstNodeOfTile(tileX), firstZ = FirstNodeOfTile(tileZ);
-        double Node(int i, int j)
-        {
-            int a = i - firstX, b = j - firstZ;
-            return a < 0 || b < 0 || a >= nodes.GetLength(1) || b >= nodes.GetLength(0)
-                ? double.NaN
-                : nodes[b, a];
-        }
-
-        int spacing = LodSilhouetteTile.TileBlocks / quadsPerEdge;
+        float[] filled = LodSilhouetteFill.FillCentre(neighbourhood);
+        int stride = LodSilhouetteTile.CellsPerEdge + 1;
+        int cellStep = LodSilhouetteTile.CellsPerEdge / quadsPerEdge;
+        int spacing = cellStep * LodSilhouetteTile.CellBlocks;
         int verts = quadsPerEdge + 1;
-        double originX = tileX * (double)LodSilhouetteTile.TileBlocks;
-        double originZ = tileZ * (double)LodSilhouetteTile.TileBlocks;
 
-        var heights = new double[verts * verts];
+        var heights = new float[verts * verts];
         for (int b = 0; b < verts; b++)
             for (int a = 0; a < verts; a++)
-                heights[b * verts + a] = HeightAt(originX + a * spacing, originZ + b * spacing, Node);
+                heights[b * verts + a] = filled[b * cellStep * stride + a * cellStep];
 
         // A quad belongs to the level-0 cell under its centre.
         bool QuadCovered(int a, int b)
@@ -169,9 +112,9 @@ public static class LodSilhouetteField
                     sunk[(b + 1) * verts + a] = sunk[(b + 1) * verts + a + 1] = true;
                     continue;
                 }
-                if (double.IsNaN(heights[b * verts + a]) || double.IsNaN(heights[b * verts + a + 1])
-                    || double.IsNaN(heights[(b + 1) * verts + a])
-                    || double.IsNaN(heights[(b + 1) * verts + a + 1])) continue;
+                if (float.IsNaN(heights[b * verts + a]) || float.IsNaN(heights[b * verts + a + 1])
+                    || float.IsNaN(heights[(b + 1) * verts + a])
+                    || float.IsNaN(heights[(b + 1) * verts + a + 1])) continue;
                 drawn[b * quadsPerEdge + a] = true;
                 quads++;
             }
@@ -185,8 +128,8 @@ public static class LodSilhouetteField
             for (int a = 0; a < verts; a++)
             {
                 int v = b * verts + a;
-                double h = heights[v];
-                float y = double.IsNaN(h) ? seaLevel : (float)Math.Max(h, seaLevel);
+                float h = heights[v];
+                float y = float.IsNaN(h) ? seaLevel : Math.Max(h, seaLevel);
                 if (sunk[v]) y -= sinkBlocks;
                 xyz[v * 3] = a * spacing;
                 xyz[v * 3 + 1] = y;
