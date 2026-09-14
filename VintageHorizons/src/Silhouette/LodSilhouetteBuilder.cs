@@ -1,5 +1,6 @@
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
+using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
 using VintageHorizons.Net;
@@ -18,6 +19,10 @@ namespace VintageHorizons.Silhouette;
 /// It is an automatic producer, so it never takes the world-generation authority. It holds new
 /// work while an explicit job holds that authority, or while the engine is generating real
 /// chunks for someone (settled decision 39). With no requesting player it registers no tick work.
+///
+/// Every probe and preview is served by the engine's one world-generation thread. If that thread
+/// stops answering, the builder adds no more work for the rest of the session and says so in the
+/// log and in chat (<see cref="LodGenerationStallWatch"/>).
 /// </summary>
 internal sealed class LodSilhouetteBuilder
 {
@@ -65,20 +70,25 @@ internal sealed class LodSilhouetteBuilder
 
     enum EnumProbeStep { Probed, Exhausted, Paused }
 
+    readonly record struct PeekInFlight(int Cx, int Cz, long IssuedMs);
+
     readonly Dictionary<string, Demand> demands = new();
     readonly List<string> demandOrder = new();
     int nextDemand;
     readonly Dictionary<long, LodSilhouetteTile> tiles = new();
     readonly HashSet<long> attempted = new();
     readonly Queue<(int Cx, int Cz)> pendingPeeks = new();
-    readonly Dictionary<long, long> peeksInFlight = new();
+    readonly Dictionary<long, PeekInFlight> peeksInFlight = new();
     readonly List<long> stale = new();
     readonly LodTickAllowance previewAllowance = new();
+    readonly LodGenerationStallWatch generatorWatch = new();
     int probesInFlight;
     long listenerId;
     bool listening;
     bool firstPeekReported;
     long nextStatusLogMs;
+    long lastLandedMs = -1;
+    int lastLandedCx, lastLandedCz;
 
     public int Probed, Existing, Peeked, Landed, Empty, TimedOut, YieldTicks, TilesSent;
     public long BytesSent;
@@ -160,6 +170,7 @@ internal sealed class LodSilhouetteBuilder
     void Tick()
     {
         long now = sapi.World.ElapsedMilliseconds;
+        WatchGenerator(now);
         ExpireStuckPeeks(now);
         foreach (Demand demand in demands.Values) Recentre(demand, force: false);
         IssueWork(now);
@@ -169,6 +180,54 @@ internal sealed class LodSilhouetteBuilder
             nextStatusLogMs = now + StatusLogIntervalMs;
             LogStatus("working");
         }
+    }
+
+    /// <summary>
+    /// When the world-generation thread stops answering, nothing the builder does can restart
+    /// it, so it stops adding work and says what it was waiting for. In 0.4.77 the only symptom
+    /// was a hang when the player left the world.
+    /// </summary>
+    void WatchGenerator(long now)
+    {
+        if (!generatorWatch.Tick(now, peeksInFlight.Count > 0 || probesInFlight > 0)) return;
+        pendingPeeks.Clear();
+
+        var waiting = new List<string>();
+        foreach (PeekInFlight peek in peeksInFlight.Values.OrderBy(p => p.IssuedMs))
+        {
+            waiting.Add($"{peek.Cx},{peek.Cz} (blocks {peek.Cx * LodSilhouetteTile.ChunkBlocks},"
+                + $"{peek.Cz * LodSilhouetteTile.ChunkBlocks}, waiting {(now - peek.IssuedMs) / 1000} s)");
+        }
+        string last = lastLandedMs < 0
+            ? "none this session"
+            : $"chunk {lastLandedCx},{lastLandedCz}, {(now - lastLandedMs) / 1000} s ago";
+        logger.Warning(
+            "Horizon silhouettes: the world generator has not answered for {0} s, with {1} previews "
+            + "and {2} existence checks outstanding. Previews stop for the rest of this session; "
+            + "tiles already built stay. A world-generation thread that stops answering also stops "
+            + "new chunks arriving, and leaving the world then hangs while the game waits for it. "
+            + "Previews still waiting, oldest first (chunk x,z): {3}. Last preview that came back: {4}.",
+            (now - generatorWatch.SilentSinceMs) / 1000, peeksInFlight.Count, probesInFlight,
+            waiting.Count == 0 ? "none" : string.Join("; ", waiting), last);
+        foreach (Demand demand in demands.Values)
+        {
+            demand.Player.SendMessage(GlobalConstants.GeneralChatGroup,
+                "[VintageHorizons] The world generator stopped answering horizon silhouette previews, "
+                + "so they are stopped for this session. If leaving the world now hangs, this is why; "
+                + "the server log has the details.", EnumChatType.Notification);
+        }
+    }
+
+    /// <summary>Main thread: a probe or a preview came back from the world-generation thread.</summary>
+    void GeneratorAnswered()
+    {
+        long now = sapi.World.ElapsedMilliseconds;
+        generatorWatch.Answered(now);
+        if (generatorWatch.LateAnswers != 1) return;
+        logger.Notification(
+            "Horizon silhouettes: the world generator answered again {0} s after previews were "
+            + "stopped, so it was slow rather than stuck. Previews stay off for this session.",
+            (now - generatorWatch.StalledAtMs) / 1000);
     }
 
     void Recentre(Demand demand, bool force)
@@ -213,6 +272,8 @@ internal sealed class LodSilhouetteBuilder
 
     void IssueWork(long now)
     {
+        // A generator that stopped answering gets nothing more this session (WatchGenerator).
+        if (generatorWatch.Stalled) return;
         if (authorityBusy()
             || sapi.WorldManager.CurrentGeneratingChunkCount >= YieldGeneratingChunks)
         {
@@ -291,17 +352,18 @@ internal sealed class LodSilhouetteBuilder
             sapi.Event.EnqueueMainThreadTask(() =>
             {
                 probesInFlight--;
+                GeneratorAnswered();
                 // Existing terrain is never previewed: its heights come from capture (P2), and
                 // the client draws its cached terrain there anyway.
                 if (exists) Existing++;
-                else pendingPeeks.Enqueue((cx, cz));
+                else if (!generatorWatch.Stalled) pendingPeeks.Enqueue((cx, cz));
             }, "vh-silhouette-probe");
         });
     }
 
     void IssuePeek(int cx, int cz, long now)
     {
-        peeksInFlight[LodColumnMap.Key(cx, cz)] = now;
+        peeksInFlight[LodColumnMap.Key(cx, cz)] = new PeekInFlight(cx, cz, now);
         Peeked++;
         sapi.WorldManager.PeekChunkColumn(cx, cz, new ChunkPeekOptions
         {
@@ -337,8 +399,13 @@ internal sealed class LodSilhouetteBuilder
 
     void Land(int cx, int cz, ushort[]? heights, int zeros, bool forestMap)
     {
+        // Even a preview already given up on shows the generator is still answering.
+        GeneratorAnswered();
         // A callback after its timeout has already been counted.
         if (!peeksInFlight.Remove(LodColumnMap.Key(cx, cz))) return;
+        lastLandedMs = sapi.World.ElapsedMilliseconds;
+        lastLandedCx = cx;
+        lastLandedCz = cz;
         if (heights == null)
         {
             if (++Empty == 1)
@@ -376,8 +443,8 @@ internal sealed class LodSilhouetteBuilder
     {
         if (peeksInFlight.Count == 0) return;
         stale.Clear();
-        foreach (KeyValuePair<long, long> entry in peeksInFlight)
-            if (now - entry.Value > StuckPeekTimeoutMs) stale.Add(entry.Key);
+        foreach (KeyValuePair<long, PeekInFlight> entry in peeksInFlight)
+            if (now - entry.Value.IssuedMs > StuckPeekTimeoutMs) stale.Add(entry.Key);
         if (stale.Count == 0) return;
         foreach (long key in stale) peeksInFlight.Remove(key);
         TimedOut += stale.Count;
@@ -431,12 +498,20 @@ internal sealed class LodSilhouetteBuilder
         return best;
     }
 
-    public string Describe() => string.Format(System.Globalization.CultureInfo.InvariantCulture,
-        "{0} player(s), {1} tiles; {2} lattice probes ({3} already hold terrain); previews {4} "
-        + "issued, {5} landed, {6} without heights, {7} timed out, {8} in flight; held {9} ticks "
-        + "for other generation; {10} tile messages sent ({11:0.0} KB)",
-        demands.Count, tiles.Count, Probed, Existing, Peeked, Landed, Empty, TimedOut,
-        peeksInFlight.Count, YieldTicks, TilesSent, BytesSent / 1024.0);
+    public string Describe()
+    {
+        string text = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "{0} player(s), {1} tiles; {2} lattice probes ({3} already hold terrain); previews {4} "
+            + "issued, {5} landed, {6} without heights, {7} timed out, {8} in flight; held {9} ticks "
+            + "for other generation; {10} tile messages sent ({11:0.0} KB)",
+            demands.Count, tiles.Count, Probed, Existing, Peeked, Landed, Empty, TimedOut,
+            peeksInFlight.Count, YieldTicks, TilesSent, BytesSent / 1024.0);
+        if (!generatorWatch.Stalled) return text;
+        return text + string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "; STOPPED for this session: the world generator went silent for {0} s ({1} answers came "
+            + "back later)", (generatorWatch.StalledAtMs - generatorWatch.SilentSinceMs) / 1000,
+            generatorWatch.LateAnswers);
+    }
 
     void LogStatus(string phase) =>
         logger.Notification("Horizon silhouettes ({0}): {1}.", phase, Describe());

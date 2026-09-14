@@ -27,15 +27,69 @@ public static class SilhouetteChecks
         MeshMatchesAcrossTileBorders(c);
         MeshSeaAndCoverage(c);
         FeatureGate(c);
+        GeneratorStallWatch(c);
     }
 
     public static void RunWiring(Check c)
     {
         MessageOrderMatches(c);
         PreviewsNeverReachCapture(c);
+        GeneratorSilenceStopsTheBuilder(c);
         UploadedUniformsAreDeclared(c);
         SamplerLayout(c);
         OffStateIsTheOldBehaviour(c);
+    }
+
+    /// <summary>
+    /// The 0.4.77 hang: the world-generation thread stopped answering previews and never came
+    /// back. The watch must declare that once, after 20 s, and never charge the generator for
+    /// silence it did not owe: nothing outstanding, or the builder itself not ticking.
+    /// </summary>
+    static void GeneratorStallWatch(Check c)
+    {
+        long t;
+        var idle = new LodGenerationStallWatch();
+        for (t = 0; t < 60_000; t += 50) idle.Tick(t, workOutstanding: false);
+        c.False(idle.Stalled, "silence with nothing asked of the generator is not a stall");
+
+        var answering = new LodGenerationStallWatch();
+        for (t = 0; t < 120_000; t += 50)
+        {
+            if (t % 15_000 == 0) answering.Answered(t);
+            answering.Tick(t, workOutstanding: true);
+        }
+        c.False(answering.Stalled, "a generator that answers every 15 s is never declared stuck");
+
+        var silent = new LodGenerationStallWatch();
+        int declared = 0;
+        for (t = 0; t <= 60_000; t += 50)
+            if (silent.Tick(t, workOutstanding: true)) declared++;
+        c.Eq(1, declared, "a stall is declared exactly once");
+        c.Eq(LodGenerationStallWatch.DefaultSilenceMs, silent.StalledAtMs,
+            "after 20 s of silence with work outstanding, and not before");
+        c.Eq(0L, silent.SilentSinceMs, "the silence counts from when the generator last owed nothing");
+        silent.Answered(t);
+        c.Eq(1, silent.LateAnswers, "an answer after the declaration counts as late");
+        c.True(silent.Stalled, "a late answer does not lift the stall: previews stay off for the session");
+
+        var gap = new LodGenerationStallWatch();
+        for (t = 0; t <= 15_000; t += 50) gap.Tick(t, workOutstanding: true);
+        t += 6_000; // a save or a hitch: the builder itself did not run
+        for (; t <= 40_000; t += 50) gap.Tick(t, workOutstanding: true);
+        c.False(gap.Stalled, "a gap between builder ticks restarts the count instead of charging the generator");
+        for (; t <= 42_000; t += 50) gap.Tick(t, workOutstanding: true);
+        c.True(gap.Stalled, "silence after the gap still counts");
+    }
+
+    static void GeneratorSilenceStopsTheBuilder(Check c)
+    {
+        string builder = Source("src", "Silhouette", "LodSilhouetteBuilder.cs");
+        c.Eq(2, Regex.Matches(builder, @"\bGeneratorAnswered\(\);").Count,
+            "both the probe callback and the preview landing tell the watch the generator answered");
+        c.True(builder.Contains("if (generatorWatch.Stalled) return;", StringComparison.Ordinal),
+            "the builder issues no probes or previews once the generator is declared stuck");
+        c.True(Regex.IsMatch(builder, @"void Tick\(\)\s*\{[^}]*WatchGenerator\(now\);"),
+            "the builder watches the generator on every tick");
     }
 
     static ushort[] HeightMap(Func<int, int, int> height)
