@@ -1,7 +1,10 @@
 # Plan - World generation and complete distant terrain
 
-**Status:** In progress. P1-P3 are complete (0.4.66-0.4.69, Sessions 89-90); P4-P8 are open, and
-the owner decided W1-W8 on 2026-09-13 (section 1.2). Written at the owner's request on 2026-09-12 from report-only investigations against
+**Status:** Core complete. P1–P5 and P7 landed in 0.4.66–0.4.76 (Sessions 89–91). P0 proved the
+engine's multi-thread setting active but failed both the useful-speedup and terrain-identity gates,
+so P6 is closed without a player option. P8 documentation is complete; its final-completion,
+restart, dedicated-server and long-run runtime checks remain verification debt. Further speed
+overlap was deferred by the owner on 2026-09-14. Written at the owner's request on 2026-09-12 from report-only investigations against
 0.4.64 (code `dd0394c`, docs `b6c2950`). The owner decides the order of work (decision W6).
 **Created:** 2026-09-12
 **Scope:** Three defects seen on a new world during vanilla `/wgen pregen` (the first join drew only
@@ -35,7 +38,8 @@ opportunity turned up.
      complete version.
 3. **Vanilla pregen is slow because the engine generates on one thread.** On a 16-thread CPU the
    game kept about 2 threads busy. The engine has a built-in multi-threaded mode, switched off by
-   default.
+   default. Session 91 proved it active in controlled tests, but it gave negligible or negative
+   speedup and changed completed terrain, so this mod does not expose it.
 
 The plan fixes 1 and 2 first, because they affect every world, pregen or not. Then it adds
 **Generate World**: a page in the Horizons settings where the player chooses an area and how much
@@ -228,6 +232,22 @@ the client first saw it, so no update was ever published. (Measured offline.)
 
 These figures calibrate the page's estimates until the running job measures its own rate.
 
+### 2.9 P0 result: the setting was active and failed the gate
+
+The controlled launcher wrote `MaxWorldgenThreads` to each sandbox's
+`servermagicnumbers.json`; six-thread results named `worldgen1`–`worldgen5`, two-thread results
+named `worldgen1`, and no launch used `--reducedthreads`. The thread option was therefore really
+active. Full-stack one-thread controls took 448.45 s and 444.81 s for 3,721 requested columns; six
+threads took 437.73 s, only about 1.02× faster. Minimal-stack controls took 99.38 s and 99.25 s for
+961 columns; six threads took 99.87 s and two took 111.46 s.
+
+The two one-thread controls also supplied an order-stability witness. Where they agreed, the
+full-stack six-thread save differed in 4,050 chunk rows (3,215 block payloads); the minimal
+six-thread save differed in 1,055 (892 payloads), and the minimal two-thread save differed in 408
+(288 payloads). All requested coordinates completed without overflow, stuck or exception warnings.
+This is valid scheduling-dependent terrain, not a failed run. W2's conditional option is therefore
+rejected.
+
 ## 3. Design
 
 ### 3.1 Fix A - the GPU check measures the frame, and a passing failure is retried
@@ -322,18 +342,19 @@ These figures calibrate the page's estimates until the running job measures its 
 Hosted by `LodServerCaptureSystem`. It opens the server pipeline on demand, as `/vhgen` does.
 
 - **Area.** A centre (my position, world spawn, or typed coordinates), a radius in chunks, and a
-  shape (square or circle).
-- **Order.** Tiles of 16x16 chunks (one L3 section, 512 blocks), nearest tile first in a spiral,
-  rows inside a tile. Each tile completes its part of the distant-terrain pyramid before the next
-  starts. A far section is then whole the first time the client sees it, which also blunts the
-  problem Fix C addresses.
-- **Skip.** Columns the server cache has already captured, or that the job's own state records as
-  done. Columns that exist but are not captured are loaded rather than skipped, which costs little.
+  shape (square or circle). Circle is the shipped default.
+- **Order.** Tiles of 16x16 chunks (one L3 section, 512 blocks). The player tile is first; tiles
+  advance through circular radial bands, clockwise within a band, and columns are nearest-first
+  within each tile. Each tile completes its job-owned distant-terrain obligations before the next
+  starts. State format 2 prevents an older bitmap from being reused against this changed order.
+- **Skip.** Only the job's own durable completion state pre-skips a requested column. A server-cache
+  row is not proof of savegame terrain because `/vhgen` and future frontier peeks populate the same
+  cache; an existing real column which is not done is loaded and captured normally.
 - **Issue.** `LoadChunkColumn(x, z, keepLoaded: true)`: the engine generates and saves the column
   as it does for `/wgen pregen`. The job holds each column loaded until the pipeline reports it
-  captured, then releases it. P5 must verify that `UnloadChunkColumn` saves before it unloads, or
-  release through the normal ageing path instead. This removes the capture drop for generated
-  columns, and RAM stays bounded by the in-flight cap.
+  captured and its job-owned durability obligation is safe, then releases its entry through the
+  validated force-loaded-list seam. The public `UnloadChunkColumn` disposes immediately and is not
+  used as the assumed save path (G195). RAM stays bounded by the in-flight cap.
 - **Depth.** Keep the engine's generating queue (`CurrentGeneratingChunkCount`, which includes
   neighbour requests) near a target depth set by the preset. The hard ceiling stays well below the
   engine's 2,000 (for example 1,200), because an overflow clears the engine's whole queue.
@@ -343,7 +364,8 @@ Hosted by `LodServerCaptureSystem`. It opens the server pipeline on demand, as `
 - **Pacing gates.** Each is named in the status when it is holding the job:
   1. the engine queue is at its target depth;
   2. the capture backlog is full (`CaptureBacklogFull`);
-  3. the save backlog is too old or too large (from Fix B);
+  3. the save backlog is too old or too large (from Fix B); tile completion itself waits only for
+     this job's captured-undurable L0 rows, not global pipeline dirtiness (G197);
   4. the server is overloaded (tick time);
   5. the player is playing (Light preset only: holds while the player travels faster than walking
      or tick time rises).
@@ -353,37 +375,38 @@ Hosted by `LodServerCaptureSystem`. It opens the server pipeline on demand, as `
 - **Status.** Columns done and total, rate (one-minute average), time left, disk used so far
   (savegame and cache growth since start), and the active gate. Written to the log on demand and at
   every 5%, from the owning thread (G29).
-- **One worldgen authority.** While a job runs, `/vhgen`, startup pregen and the frontier planner
-  (once built) hold. A job refuses to start while another of them runs, and says why. It also warns
-  when the engine is already generating heavily for other reasons, such as vanilla `/wgen pregen`.
+- **One worldgen authority.** While a job runs, `/vhgen` and startup pregen hold. The future
+  travelling frontier never owns the authority exclusively and yields to either explicit job. A
+  job refuses to start while another explicit generator owns it and says why. It also warns when
+  the engine is already generating heavily for other reasons, such as vanilla `/wgen pregen`.
 - **Disk check.** Before starting, compare the estimate (2.8, refined by the live rate) against free
   space on the savegame's drive, and refuse with the numbers when it will not fit.
 - **Command.** `/vhworldgen start|pause|resume|stop|status`, with the `controlserver` privilege. It
   is a new name; a duplicate would disable the rest of the mod's startup (G41).
 - **Off state.** With no job, nothing is registered: no tick listener, no status traffic.
 
-### 3.6 Worldgen threads (only if P0 passes)
+### 3.6 Worldgen threads — rejected by P0
 
-- The page shows how many worldgen threads the engine is currently using.
-- **Per world.** The desired count is stored in the world's mod data. At server start, before
-  GameReady, the mod sets `additionalWorldGenThreadsCount` through reflection, provided that:
-  - the field exists;
-  - `--reducedthreads` is not set;
-  - the owner has enabled the option.
+The mod does not set or expose an engine thread count. Vintage Story reads
+`MaxWorldgenThreads` once per process from `servermagicnumbers.json`; the value is total pipeline
+threads, so 6 produces five additional named pass threads plus `chunkdbthread`.
+`--reducedthreads` suppresses them.
 
-  The count is clamped to 1-6 and to the logical CPU count minus 2. It takes effect the next time
-  the world loads, and the page says so.
-- **Fail safe.** If the reflection fails, the mod logs one line and leaves the engine alone.
-  Dedicated servers can keep using `servermagicnumbers.json`.
-- **Expected gain.** Unknown until measured. The threads form a pipeline, one per generation pass,
-  so the gain is limited by the slowest pass and will be less than 6x. With one thread, keeping the
-  queue full should add only a few percent over vanilla's pregen.
+Session 91's launcher wrote and re-read the requested setting in every sandbox, omitted
+`--reducedthreads`, and recorded `worldgen1`–`worldgen5` in each six-thread run and `worldgen1` in
+the two-thread run. The full-stack six-thread run improved only from 8.30–8.37 to 8.50 columns/s;
+the minimal six-thread run was no faster than its two one-thread controls and two threads were
+slower. Semantic save comparisons also found thousands of chunk rows which agreed between the
+one-thread controls and differed in the multi-thread result. P0 therefore failed: the proposed
+Experimental selector is not built, and its Fast, Maximum and Custom thread-bearing presets do not
+ship.
 
 ### 3.7 The Generate World page (client) and its messages
 
 **Where.** A "Generate" tab in the Horizons editor (vanilla Settings and the `.vhconfig` window),
-after General and Anti-Aliasing (W7). P7 must check the width of every label in the tab strip,
-including the planned Silhouettes tab.
+after General and Anti-Aliasing (W7). Integrated Settings pauses its server, so that route offers
+**Open live controls**, closes Settings and reopens the same page in standalone `.vhconfig` before
+sending actions (G196). The planned Silhouettes tab must still recheck total strip width.
 
 **When it is available.** The tab is greyed out, with a one-line reason, in any of these cases:
 
@@ -392,46 +415,31 @@ including the planned Silhouettes tab.
   `AssistWelcome`, shared with the frontier plan);
 - when the player lacks permission, in which case progress is shown read-only.
 
-**Controls (proposed).**
+**Controls (shipped core).**
 
 - **Area:** centre (my position, world spawn, or coordinates), radius slider in chunks with the
   distance in blocks beside it, and shape (square or circle). Below it: the column count, the
   estimated disk use (savegame and distant-terrain cache, from 2.8), and the estimated time at the
   chosen preset.
-- **Resources:** a preset (Light, Balanced, Fast, Maximum or Custom), each with a one-line plain
-  description. Custom shows the advanced controls:
-  - worldgen threads (1-6, Experimental, applies after reloading the world);
-  - columns kept in progress (the engine queue depth; roughly the RAM used);
-  - "Pause while I am travelling";
-  - "Keep generating while the pause menu is open" (W5);
-  - capture pacing: follow the generator, or a limit.
+- **Resources:** Balanced only. Queue, in-flight and save-backlog limits remain server settings;
+  the page does not advertise unmeasured Light/Fast/Maximum presets or engine thread controls.
 - **Buttons:** Start opens a confirmation that shows the area, disk and time, says "This adds
   terrain to your world permanently", and suggests a backup. Pause/Resume and Stop act at once.
   The page's choices (preset, radius, centre) are remembered through Save like other settings, and
   Defaults resets them.
-- **Live status** while a job runs: a progress bar, done and total, rate, time left, disk used, the
-  worldgen threads in use, and the gate currently holding the job in plain words (for example,
+- **Live status** while a job runs: a progress bar, done and total, rate, time left, disk used, and
+  the gate currently holding the job in plain words (for example,
   "waiting for distant terrain to finish saving").
 - **Refresh.** The server sends a status message about once a second, only while the page is open
   or a job is running.
 
-**Presets (proposed; P0 and P5 set the real values):**
-
-| Preset | Engine queue target | Worldgen threads | Yields to play | Meant for |
-|---|---|---|---|---|
-| Light | 24 | unchanged | Yes: holds while travelling or under load | Playing while it works |
-| Balanced (default) | 120 | unchanged | Only when the server is overloaded | Most players |
-| Fast | 400 | 3, if enabled | No | Staying nearby, not playing |
-| Maximum | 900 | 6, if enabled | No | Walking away from the PC |
-| Custom | slider | slider | toggle | Players who want to tune |
-
-"Resources" in the player's terms: threads are CPU cores, queue depth is RAM (P0 measures the RAM
-per column), and the area is disk.
+**Preset outcome.** Balanced is the sole shipped preset, with queue target 120 and the engine's
+ordinary single worldgen pipeline. P0 rejected the assumptions behind the other rows.
 
 **Messages.** Appended on channel `vintagehorizons`; the protocol stays 1:
 
-- `WorldGenRequest` (start, pause, resume, stop, with the options);
-- `WorldGenStatus` (progress);
+- `AssistWorldGenRequest` (prepare, confirm, pause, resume, stop, with the options);
+- `AssistWorldGenStatus` (action result and progress);
 - the `Features` bit.
 
 Every request ends in success, refusal with a reason, or retryable (G6). Player-visible text avoids
@@ -440,8 +448,9 @@ existing tabs (G178).
 
 ### 3.8 How this fits with the frontier plan
 
-- **One worldgen authority.** The frontier plan already suspends its planner while `/vhgen` or
-  startup pregen runs. A Generate World job joins the same rule (3.5).
+- **One worldgen authority.** Explicit `/vhworldgen` and `/vhgen` jobs own the authority while
+  active. The automatic frontier may borrow idle capacity but never holds the authority
+  exclusively; it yields immediately to either explicit job (3.5, settled decision 39).
 - **Shared pieces:** the capture-backlog gate, Fix B's save-backlog gate,
   `CurrentGeneratingChunkCount` as the engine-yield signal, the `Features` bit, and status to the
   log.
@@ -456,6 +465,10 @@ Each playable build takes the next patch number, is installed copy-only, and get
 commit. Phases P1-P4 are independent of each other and of the generation feature.
 
 ### P0 - Engine measurements and the thread test (owner-assisted)
+
+**Closed, failed gate (Session 91).** The requested values were active and named runtime threads
+proved it. Throughput was negligible/negative and terrain differed, so P6 is rejected. The steps
+below are retained as the protocol which produced that result.
 
 - **Deliver:** steps and scripts only. The owner restarts the game and runs the commands; nothing is
   launched without asking.
@@ -474,17 +487,24 @@ commit. Phases P1-P4 are independent of each other and of the generation feature
 
 ### P1 - Fix A (GPU check)
 
+**Complete in 0.4.66; owner-passed.**
+
 - **Deliver:** 3.1.
 - **Checks:** the rule and retry tests.
 - **Gate:** the owner's new-world test in 3.1.
 
 ### P2 - Fix B (server saving) with D1's counters and D3's report
 
+**Complete in 0.4.67–0.4.69.** Cache draining is runtime-passed; the 0.4.69 paced-sweep line remains
+an explicit follow-up.
+
 - **Deliver:** 3.2 and D1's counters.
 - **Checks:** the starvation, order and throughput tests.
 - **Gate:** the pregen evidence in 3.2, read from the owner's server log and an offline snapshot.
 
 ### P3 - Fix C (client copies) with D4
+
+**Complete in 0.4.68; owner-passed.**
 
 - **Deliver:** 3.3 and 3.4 D4.
 - **Checks:** the merge, rowid and key-set tests.
@@ -493,10 +513,15 @@ commit. Phases P1-P4 are independent of each other and of the generation feature
 
 ### P4 - D2 (sweep false alarm)
 
+**Complete in 0.4.71.** Concurrent generation makes the sample inconclusive.
+
 - **Deliver:** D2, riding with P2 or P3.
 - **Gate:** a sweep during vanilla pregen logs "inconclusive" instead of the warning.
 
 ### P5 - The generation job and `/vhworldgen` (no page yet)
+
+**Core complete in 0.4.72–0.4.76.** The owner's control-recovery run ended in “Success.” Final
+durable completion, a real restart/resume and a long-run profile remain verification debt.
 
 - **Deliver:** 3.5, including the shared worldgen authority.
 - **Checks:**
@@ -514,12 +539,17 @@ commit. Phases P1-P4 are independent of each other and of the generation feature
 
 ### P6 - Worldgen threads (only if P0 passed)
 
+**Closed without implementation.** P0 failed; see 3.6.
+
 - **Deliver:** 3.6.
 - **Checks:** clamping, and the fail-safe when the engine field is missing.
 - **Evidence:** the engine logs the extra threads, and the per-thread CPU sample shows them working.
 - **Gate:** P0's terrain comparison repeated on the build.
 
 ### P7 - The Generate World page, its messages and presets
+
+**Core complete in 0.4.74–0.4.76.** Singleplayer controls are human-tested. Dedicated-server
+permission/read-only behavior remains verification debt; only Balanced ships.
 
 - **Deliver:** 3.7.
 - **Checks:**
@@ -534,19 +564,20 @@ commit. Phases P1-P4 are independent of each other and of the generation feature
 
 ### P8 - Verification matrix and documentation
 
-Run when the owner calls the doc pass (section 8).
+**Documentation complete in Session 91.** The remaining runtime matrix is listed under P5/P7 and in
+`dev/TODO.md`.
 
 ## 5. Risks and unknowns
 
 | Risk | Handling |
 |---|---|
-| Multi-thread worldgen produces wrong terrain with a worldgen mod | P0's offline comparison is the gate; the option stays Experimental (W2). |
-| Kept-loaded columns hold RAM, or leak after a crash | Bounded by the in-flight cap; released on stop and shutdown; leftovers cleared at start. P5 checks whether the engine persists its force-loaded list. |
+| Multi-thread worldgen produces wrong terrain with a worldgen mod | Realized in P0. The feature was rejected; no thread selector ships. |
+| Kept-loaded columns hold RAM, or leak after a crash | Bounded by the in-flight cap; released through the validated force-loaded-list seam on stop/shutdown; a long-run profile remains open. |
 | Reflection into engine internals breaks on an engine update | Fail safe: log one line and leave the engine default. |
 | Engine queue overflow clears the whole generating queue | Hard ceiling well below 2,000, including neighbour requests. |
 | A faster generator exposes the next bottleneck (capture thread, client mesh and upload) | Gates hold the job. The capture thread used about 15% of a core at 9.5 columns/s, so there is estimated headroom, which P5 measures. |
 | Disk fills | Estimate and free-space check before start; disk used shown live. |
-| The world only generates while the game is unpaused | Stated on the page; W5. |
+| Integrated Settings pauses the server which must answer controls | The embedded page hands off to standalone `.vhconfig` live controls; simulation remains paused. |
 | The engine path behind 2.1 is still not pinned | Fix A removes the dependence; P1 logs viewport, frame and texture sizes to settle it. |
 | A merge copies stale content | The fill rule only fills uncaptured columns and never overwrites; revision-checked (G7). |
 
@@ -563,6 +594,8 @@ Run when the owner calls the doc pass (section 8).
 - G57: every playable build takes a new patch number.
 - `WIRE_HISTORY`: appended messages, the `Features` bit, and the additive client table are recorded
   there.
+- P0 rejected W2's optional thread control; only Balanced ships. This is a measured outcome, not an
+  unimplemented future phase.
 
 ## 7. Files expected to change
 
@@ -585,7 +618,7 @@ Run when the owner calls the doc pass (section 8).
 
 ## 8. Documentation at completion
 
-At the owner's doc pass, following the `CLAUDE.md` ritual:
+Completed in Session 91 following the `CLAUDE.md` ritual:
 
 - a session record;
 - `CHANGELOG`;

@@ -8,11 +8,60 @@ first.
 
 ## [Unreleased]
 
-**Known open:** P4's sweep diagnostic; 0.4.69's sweep pacing is not yet runtime-tested; dedicated
-servers still cannot fill a section a client held before joining; winter temporal convergence (a real
-accumulation and melt, `/vhrefresh` boundaries, campaign cost). The owner decided W1-W8 on
-2026-09-13: P4 comes next, then the P5-P7 generation feature. The last accepted baseline remains 0.4.64; 0.4.66 passed
-its GPU owner check, 0.4.67 its cache-drain runtime check, and 0.4.68 the owner's far-terrain look.
+**Multi-thread generation was measured and rejected.** The benchmark did enable Vintage Story's
+real engine setting: each sandbox's `servermagicnumbers.json` held the requested
+`MaxWorldgenThreads`, no run used `--reducedthreads`, six-thread runs exposed named
+`worldgen1`–`worldgen5` threads, and the two-thread run exposed `worldgen1`. With the full active
+mod stack, six total pipeline threads improved 8.30–8.37 columns/s only to 8.50/s (about 1.02×,
+within run variation); with Vintage Horizons plus vanilla they were no faster than either
+one-thread control, while two threads were slower. More importantly, multi-thread scheduling
+changed thousands of chunk rows that agreed between the one-thread controls. The Generate page
+therefore keeps only its Balanced behavior and does not expose thread controls or Fast/Maximum
+presets.
+
+**Known open:** let a small `/vhworldgen` job reach final durable completion; exercise offered resume
+across a real server restart; check dedicated-server permissions and long-run memory/disk behavior;
+make the fixed 15-second shutdown-save deadline configurable; runtime-check 0.4.69's sweep pacing
+line and the P3 after-comparison; winter temporal convergence. The owner deferred overlap/speed
+optimization on 2026-09-14 and chose the Farseer silhouette plan next. The last accepted baseline
+remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and fresh-start recovery received the
+owner's “Success” report, but not the full completion/restart matrix.
+
+## [0.4.76] - 2026-09-13
+
+This entry groups the 0.4.71–0.4.76 private test checkpoints.
+
+**Generate World now builds permanent savegame terrain on explicit request.** `/vhworldgen` and the
+Generate tab prepare an area, show the permanent-write confirmation and estimates, then drive real
+engine generation under bounded queue, capture, durability, load and disk-space gates. Progress is
+durable; jobs can pause, resume and stop, and an interrupted job is offered for manual resume rather
+than starting silently. Only a permitted player may control it; other clients may observe status.
+
+The default area is a circle. Its 16×16-chunk tiles begin at the player's tile, advance through
+circular radial bands clockwise, and visit columns nearest-first inside each tile. The large tile
+keeps persistence efficient while the overall reveal grows outward like ordinary exploration.
+
+The integrated Settings window pauses an integrated server, so its Generate page now hands off to
+standalone live controls instead of trying to start through a suspended server. Start/control
+errors survive status polls, and the job no longer stalls after pause/resume or stop/reopen: tile
+boundaries wait only for that job's kept leases and captured-undurable rows, not for unrelated
+global capture/dirty work. The owner ultimately reported “Success.”
+
+Correctness fixes include the 64-block L0 section's real 2×2-chunk mapping, progress credit for all
+planned chunks represented by a captured L0 row, provenance-safe skipping (a cache row may be only
+a transient `/vhgen` peek), and force-loaded release through the exact engine kept-list seam.
+Concurrent external generation also makes the sweep's absence sample inconclusive rather than a
+false accusation.
+
+Protocol 1 gains append-compatible Generate support: `AssistWelcome.Features` field 7 and
+`CanControlWorldGeneration` field 8, server-settings fields 17–23,
+`AssistWorldGenRequest`, `AssistWorldGenStatus`, and status `Action` field 28. Feature bits reserve
+0 for Generate, 1 for frontier and 2 for silhouettes. Protocol, blob and schema numbers remain
+`1 / 4 / 6`.
+
+Release and Debug builds completed with zero warnings/errors; the fast tier passed 24,747
+assertions. The 0.4.76 package has SHA-256
+`E0E9A9EC98A554334EA5E466627CD851C9DD54165B327D3456CF5F3E4CB40028`.
 
 ## [0.4.70] - 2026-09-13
 

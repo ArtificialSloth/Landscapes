@@ -21,6 +21,8 @@ Current message types:
 - `AssistKeyManifest`
 - `AssistSectionRequest`
 - `AssistSection`
+- `AssistWorldGenRequest`
+- `AssistWorldGenStatus`
 
 Protobuf fields are append-compatible. Bump the protocol when an existing message or field changes meaning, required sequencing changes, or old peers would interpret a valid exchange incorrectly.
 
@@ -34,6 +36,18 @@ or required sequence. New clients route the replacement through the same bounded
 format-4 blob path, guard install by the submitted content revision, and retire the update route
 only after the replacement's persistence revision is acknowledged. These additions therefore do
 not require a protocol bump.
+
+**Append-compatible protocol-1 additions for Generate World (0.4.74–0.4.75).**
+`AssistWelcome.Features` is field 7 and `CanControlWorldGeneration` is field 8. Feature bit 0
+advertises Generate World; bits 1 and 2 are reserved for frontier generation and silhouette tiles
+respectively, in planned landing order. `AssistServerSettings` fields 17–23 report the enabled,
+maximum/default radius, queue target, in-flight limit, dirty-section limit and oldest-dirty limit.
+The `AssistWorldGenRequest` and `AssistWorldGenStatus` message types were appended after the five
+existing channel registrations; older peers neither send nor register them. Status field 28,
+`Action`, was appended in 0.4.75 so a client can keep the exact control result visible across later
+polls. Old protobuf peers ignore every unknown field, a zero `Features` value means unavailable,
+and no existing message, field or required sequence changed meaning. The compatibility numbers
+therefore remain `1 / 4 / 6`.
 
 ## Section blob-format ledger
 

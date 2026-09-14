@@ -3,19 +3,42 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-09-13`
-**Mod version:** `0.4.70` — current private test build, verified, copy-installed and checkpointed; 0.4.69's sweep pacing and 0.4.70's shader edit are not yet runtime-tested
+**Status date:** `2026-09-14`
+**Mod version:** `0.4.76` — current private test build, verified, copy-installed and checkpointed; the owner reported success for the repaired core Generate controls, while final completion/restart and dedicated-server matrices remain open
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.66 `0ed190c`, 0.4.67 `28746a7`, 0.4.68 `52d3aa2`, 0.4.69 `ae677b7`, 0.4.70 `593fd66`; nothing pushed
+**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.71 `6a510ae`, 0.4.72 `1cd1040`, 0.4.73 `30858f4`, 0.4.74 `439bc68`, 0.4.75 `088923a`, 0.4.76 `9ea75c5`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `108` C# files under `VintageHorizons/src`
+**Source files:** `112` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
 
 ## Current result
 
-**P1-P3 of the world-generation/LOD-coverage plan are complete, and distant terrain fills in.**
+**The core world-generation/LOD-coverage plan is complete.** P1–P5 and P7 landed in
+0.4.66–0.4.76. P0 proved the engine's multi-thread pipeline was really active but rejected it for
+negligible speedup and scheduling-dependent terrain, so P6 is closed without exposing thread
+controls. P8's documentation is Session 91; the remaining runtime matrix is explicit verification
+debt, not a gate for beginning the Farseer silhouette plan.
+
+`/vhworldgen` is the deliberate, confirmed exception which writes real terrain to the savegame.
+It works in persistence-friendly 16×16-chunk tiles; the default circle begins at the player's tile,
+moves through clockwise circular radial bands, and visits nearest columns first. Engine-queue,
+capture, durability, load and disk gates bound the job. A durable bitmap supports pause, resume,
+stop and an offered manual restart resume. The Generate page shares the Settings editor; if normal
+integrated Settings has paused the server, it hands off to standalone `.vhconfig` live controls.
+Versions 0.4.74–0.4.76 fixed the L0 2×2-chunk progress map, transient-cache skip provenance,
+force-loaded release, action/status races and boundaries waiting on unrelated global dirtiness.
+
+| Generate evidence | Result | Level |
+|---|---|---|
+| Core owner test | After earlier start and pause/resume failures were fixed, the owner reported “Success” following stop/reopen/fresh-start recovery | Human-tested; full completion/restart matrix still open |
+| Full stack, radius 30 | One-thread controls: 448.45 s / 444.81 s; six threads: 437.73 s, 8.50 columns/s versus 8.30–8.37 | Controlled runtime benchmark |
+| Minimal stack, radius 15 | One-thread controls: 99.38 s / 99.25 s; six threads: 99.87 s; two threads: 111.46 s | Controlled runtime benchmark |
+| Thread activation | Six-thread runs named `worldgen1`–`worldgen5`; two-thread run named `worldgen1`; files held the requested `MaxWorldgenThreads`; no `--reducedthreads` | Config-, launch- and runtime-verified |
+| Terrain identity | Full-stack six-thread: 4,050 rows differ where controls agree (3,215 block payloads); minimal six-thread: 1,055/892; minimal two-thread: 408/288 | Offline semantic save comparison; P0 failed |
+
+**P1-P3 remain complete, and distant terrain fills in.**
 0.4.66 fixed GPU depth-copy validation under render scaling and 0.4.67 made server cache saving
 oldest-first (Session 89). 0.4.68 makes the client take the server half's fuller rows for sections
 it already holds. The sibling cache is scanned by rowid at every level; a first sighting and every
@@ -214,7 +237,10 @@ from live blocks. No cache purge or schema-meaning change is required.
 
 Protocol 1 added optional `AssistServerSettings` field 16 for the refresh rate and
 `AssistKeyManifest` field 4 to distinguish newer durable contents from a newly discovered key. Older
-protobuf peers ignore them. Since 0.4.68 a refreshed row is merged into the client's copy column by
+protobuf peers ignore them. Versions 0.4.74–0.4.75 append `AssistWelcome.Features` field 7 and
+`CanControlWorldGeneration` field 8, server-settings fields 17–23, the
+`AssistWorldGenRequest`/`AssistWorldGenStatus` message types, and status `Action` field 28. Feature
+bits reserve 0 for Generate, 1 for frontier and 2 for silhouettes. Since 0.4.68 a refreshed row is merged into the client's copy column by
 column instead of replacing it, and wins only while the client's content revision is unchanged since
 the row was handed to the decoder; otherwise it only fills. Only L0 is transferred; parents rebuild
 locally. The compatibility numbers remain `1 / 4 / 6`; `dev/WIRE_HISTORY.md` records the
@@ -225,7 +251,8 @@ world holds a chisel. Every reader already resolves an ordinary block code, so n
 format nor the schema meaning moved; `dev/WIRE_HISTORY.md` carries the note. Sessions 84-89 changed
 nothing on the wire or in the blob format; Sessions 86 and 88 added client configuration keys only.
 Session 90 added the client table `SiblingMerge`, recording which server-cache rows a stored copy
-already contains; it is additive and the numbers stay `1 / 4 / 6`.
+already contains; it is additive. Session 91's worldgen state is a separate mod-data plan, not a
+section-schema meaning. The numbers stay `1 / 4 / 6`.
 
 ## Diagnostics
 
@@ -247,7 +274,7 @@ Session-only unless stated; all write their findings to the client log.
 
 ## Performance and artifact evidence
 
-The final fast tier passed **24,584 assertions with zero failures**, and the 0.4.70 Release and
+The final fast tier passed **24,747 assertions with zero failures**, and the 0.4.76 Release and
 Debug builds completed with zero warnings and zero errors. The sibling-cache scanner's cost is in the
 current-result table; merging into held sections runs under the existing install budget and is not
 separately measured. Distant anti-aliasing's measured cost is in its table above; automatic
@@ -259,17 +286,18 @@ frames where the physics step changed the player's block; snow adds 1,024 uncomp
 bytes per resident section before compression; no paired large-world capture yet isolates winter
 campaign cost.
 
-The verified `dist/vintagehorizons_0.4.70.zip` has 38 entries and SHA-256
-`7D38C85FD533C4BC8FACACDE99AE6EC5277039E0A17C65173A81B37B3014B322`; `modinfo.json` and the DLL both
-report 0.4.70, the zip DLL matches the Release output, no PDB is present, and the installed
-Mods-folder copy has the same hash. Older test zips remain in that folder. Every incremented private
+The verified `dist/vintagehorizons_0.4.76.zip` is 583,065 bytes and has SHA-256
+`E0E9A9EC98A554334EA5E466627CD851C9DD54165B327D3456CF5F3E4CB40028`; `modinfo.json` reports
+0.4.76 and the verified artifact was copy-installed during its build workflow. Older test zips
+remain in that folder. Every incremented private
 test build receives an exact Git checkpoint after verification and installation; this does not
 authorize a push, tag, publication or public release. The assistant did not launch the game in
-Session 90; the owner ran 0.4.68.
+Session 91's controlled servers ran only after the owner's approval; no additional game launch was
+needed for this documentation pass.
 
-Documentation validation passed **2,318 checks** with no failures at the Session 90 doc pass.
+Documentation validation passed **9,488 checks** with no failures at the Session 91 doc pass.
 Current version, changelog coverage, source count, compatibility, links, session routing, shader
-ASCII and active performance-plan routing pass.
+ASCII and active-plan routing pass.
 
 ## Established product state retained
 
@@ -288,30 +316,32 @@ ASCII and active performance-plan routing pass.
   development still may not redefine shared terrain ownership.
 - A held section is merged, never replaced: first sightings and parents fill only, and a level-0 row
   the server rewrote after the client saw it wins column by column (owner, 2026-09-12; G188).
+- Real saved terrain is generated only by an explicit, privileged, confirmed `/vhworldgen` job;
+  sweep, `/vhgen` and automatic frontier work retain the generates-nothing promise (settled
+  decision 38).
+- The automatic frontier never monopolizes generation authority; it yields to explicit
+  `/vhworldgen` and `/vhgen` work (settled decision 39).
+- Multi-thread generation is not a player option. The engine setting was active in P0, but failed
+  both the material-speedup and terrain-identity gates (G198).
 
 ## Next work
 
-Begin with [Session 90](dev/sessions/SESSION_90.md), the top of [TODO](dev/TODO.md), and
-[the world-generation/LOD-coverage plan](dev/plans/PLAN_WORLD_GENERATION_AND_LOD_COVERAGE.md).
+Begin with [Session 91](dev/sessions/SESSION_91.md), the top of [TODO](dev/TODO.md), and
+[the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. Runtime-check 0.4.70: distant terrain must still draw, with its snow, because the edited
-   terrain shader compiles only in game. Runtime-check 0.4.69: during the startup sweep the server's cache-work line should keep
-   unloaded-before-capture drops near zero; the sweep takes longer.
-2. P4: a sweep during vanilla pregen should report `inconclusive`, not warn. It needs an engine
-   signal the mod does not read yet.
-3. The owner decided W1-W8 on 2026-09-13 (plan section 1.2): P4 next, then P5-P7; P0 when a
-   restart is convenient. W5 (generation behind the pause menu, simulation paused) and W8 (quit
-   save 15 s, configurable) differ from the proposals. P5's job would also finish vanilla's
-   unfinished pregen lines (G191).
-4. Known P3 limits: dedicated servers cannot fill a section a client held before joining, and snow
-   refreshes do not reach far parents.
-5. Preserve older open verification debt in TODO, including winter convergence, pause loading and
-   the Session 84 diagnostic cleanup.
+1. The owner chose Farseer silhouettes next. Preserve the shared-authority rule: an automatic
+   travelling frontier yields immediately to explicit `/vhworldgen` and `/vhgen` jobs.
+2. Worldgen's remaining checks are not gates for silhouette work: final durable completion, a real
+   restart/offered resume, dedicated permissions/read-only status, and a long-run memory/disk pass.
+3. The fixed 15-second shutdown-save deadline still needs the W8 config setting if this plan is
+   revisited. The owner deferred starting a new tile while the preceding tile saves.
+4. Runtime-check the 0.4.69 sweep pacing/drop line and preserve older TODO debt including P3's
+   after-comparison, winter convergence, pause loading and Session 84 diagnostic cleanup.
 
-[Session 90](dev/sessions/SESSION_90.md) is the authoritative continuation point. Sessions 89-82
-retain the world-coverage, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and
-water history. Architecture owns the established invariants, `dev/WIRE_HISTORY.md` owns
-compatibility, and G166-G191 in `dev/GOTCHAS.md` preserve the recent traps.
+[Session 91](dev/sessions/SESSION_91.md) is the authoritative continuation point. Sessions 90-82
+retain the delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water
+history. Architecture owns the established invariants, `dev/WIRE_HISTORY.md` owns compatibility,
+and G166-G198 in `dev/GOTCHAS.md` preserve the recent traps.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md); GPU renderer work

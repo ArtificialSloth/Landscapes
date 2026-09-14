@@ -3721,3 +3721,108 @@ columns were finished ones the server half had failed to capture.
 vanilla finishes them, for example when a player flies near them.
 
 **Found:** 2026-09-12, Session 90 (measured read-only against the live files; the owner's flight).
+
+### G192 - An absence sample cannot accuse one producer while another generator is active
+
+**Trigger:** checking that a savegame sweep did not generate positions which were absent before
+its probe, while vanilla pregen or another producer may be filling the same world.
+
+**Trap:** observing a position become present establishes a change, not which producer caused it.
+A correct non-generating sweep then reports a false safety failure.
+
+**Safer action:** observe the engine generation queue before the sweep issues its own loads. If
+other generation was already active and an absent sample grows, report `Inconclusive`; reserve
+`Unsafe` for a change the sweep can actually own.
+
+**Found:** 2026-09-13, Session 91 (source-traced; fixed and harness-tested in 0.4.71).
+
+### G193 - A server-cache row is not proof of saved terrain
+
+**Trigger:** skipping real world generation because the LOD server cache already holds the column.
+
+**Trap:** `/vhgen` and future frontier peeks deliberately put transient seed-generated terrain in
+that cache without writing a map chunk to the savegame. Treating the row as provenance leaves the
+real world permanently absent.
+
+**Safer action:** pre-skip only the real-generation job's own durable completion bitmap, or prove
+the map chunk exists through the engine/savegame existence test. Cache presence alone is never the
+proof.
+
+**Found:** 2026-09-13, Session 91 (source-traced; fixed in 0.4.74).
+
+### G194 - One level-0 LOD section is four vanilla chunk columns
+
+**Trigger:** translating a captured `SectionKey(0, sx, sz)` into progress for a plan indexed in
+vanilla chunk coordinates.
+
+**Trap:** L0 is 64×64 blocks while a vanilla chunk column is 32×32. Treating `sx,sz` as chunk
+coordinates checks and credits the wrong plan cell, so durable progress, checkpoints, resume bits
+and percentage logs do not advance.
+
+**Safer action:** map an L0 key to its 2×2 chunk footprint and credit every planned chunk in that
+footprint which the captured bitset actually contains. Keep section and chunk units explicit in
+names and tests.
+
+**Found:** 2026-09-13, Session 91 (source-traced; fixed and checked in 0.4.74).
+
+### G195 - Public chunk unload is not a safe kept-generation release
+
+**Trigger:** calling the public `UnloadChunkColumn` after generating with
+`LoadChunkColumn(..., keepLoaded: true)`.
+
+**Trap:** the public 1.22 path disposes the column immediately; it is not the normal age-and-save
+path assumed by the initial design. Calling it before the job's exact capture/durability obligation
+is satisfied can discard the state the lease existed to protect.
+
+**Safer action:** bind the concrete WorldAPI wrapper to `ServerMain`, remove only the job's entry
+from the force-loaded collection, and do so only after the job-owned obligation is safe. Fail closed
+if that engine seam cannot be validated.
+
+**Found:** 2026-09-13, Session 91 (decompiled 1.22.7; fixed in 0.4.75).
+
+### G196 - A Settings action cannot depend on the integrated server it just paused
+
+**Trigger:** putting a server round-trip control inside Vintage Story's ordinary Settings window
+in integrated singleplayer.
+
+**Trap:** opening Settings pauses the game and suspends the integrated server. The client can draw
+and click the page, but its prepare/start request cannot be answered until the page closes; a brief
+status change then reverts or times out.
+
+**Safer action:** make the embedded page hand off to the same editor in a standalone live dialog,
+closing Settings first. Do not resume simulation merely to make the control work.
+
+**Found:** 2026-09-13, Session 91 (human-observed; fixed in 0.4.75).
+
+### G197 - A bounded producer must wait on its own obligations, not global dirtiness
+
+**Trigger:** deciding that a generation tile can finish only when the shared LOD pipeline has zero
+dirty or capture work.
+
+**Trap:** savegame sweep, snow refresh, player movement and ordinary captures may keep the global
+counters nonzero forever. The bounded job has finished its own tile but appears unable to resume or
+restart after a pause.
+
+**Safer action:** at tile and final boundaries, wait only for the producer's kept-column leases and
+its captured-but-not-durable L0 rows. Retain the shared backlog thresholds as brakes while issuing
+new work, not as a global-idle completion condition.
+
+**Found:** 2026-09-13, Session 91 (human-observed; fixed and then human-passed in 0.4.76).
+
+### G198 - Prove the worldgen thread setting at runtime, not from the intended test label
+
+**Trigger:** comparing world generation under different thread counts.
+
+**Trap:** the relevant Vintage Story setting is `MaxWorldgenThreads` in
+`servermagicnumbers.json`, read once per server process; there is no equivalent ordinary
+`serverconfig.json` Boolean. A value of 6 means five additional pass threads plus
+`chunkdbthread`, while `--reducedthreads` suppresses all additional threads. A mislabeled run can
+therefore silently measure one thread.
+
+**Safer action:** inspect the exact sandbox file and launch arguments, then record named engine
+threads. A six-thread run must expose `worldgen1` through `worldgen5`; a two-thread run must expose
+`worldgen1`. CPU samples can show how much each performs, but a zero one-second delta on a brief pass
+does not mean the thread was absent.
+
+**Found:** 2026-09-14, Session 91 (decompiled engine source plus controlled full/minimal-stack
+runtime benchmarks).

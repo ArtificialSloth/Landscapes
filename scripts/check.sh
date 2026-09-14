@@ -43,6 +43,13 @@ build() {
 run_fast() {
     rule "fast - pure logic and static assets"
 
+    local py
+    py="$(command -v python3 || command -v python)" || {
+        echo "  worldgen comparator selftest: FAILED (no Python 3)"
+        return 1
+    }
+    "$py" "$ROOT/scripts/worldgen-save-compare.py" selftest || return 1
+
     # Nothing else enforces that either project still compiles; there is no CI to catch
     # it, and the bench harness in particular is easy to break without noticing because
     # no normal workflow touches it.

@@ -2,6 +2,23 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-13–14 - Generate World built; multi-thread engine path measured and rejected (0.4.71-0.4.76)
+
+Completed P4, P5 and P7 of the world-generation/LOD-coverage plan. `/vhworldgen` now writes real,
+confirmed savegame terrain under bounded queue/capture/save/disk gates, in 16×16-chunk tiles ordered
+as circular radial bands from the player with nearest-first columns. Durable state supports
+pause/resume/stop and an offered restart resume. The Generate tab shares the Settings editor, but
+hands integrated play to standalone live controls when Settings has paused the server. Corrected
+the L0 2×2-chunk progress map, provenance-unsafe cache skips, kept-column release, action/status
+races and global-dirty boundary stalls; the owner ultimately reported “Success.”
+
+P0 used copied sandbox worlds and proved `MaxWorldgenThreads` active through
+`servermagicnumbers.json`, launch arguments and named `worldgen1`–`worldgen5` threads. Six total
+pipeline threads improved the full-stack result only about 1.02× and did not improve the minimal
+stack, while changing thousands of chunk rows that agreed between one-thread controls. P6 is
+therefore closed without implementation: no thread selector or Fast/Maximum preset is exposed.
+Further next-tile/save overlap work was deferred by the owner. See Session 91 and G192–G198.
+
 ## 2026-09-12 - Client copies fill from the server cache; sweep paced to capture (0.4.68-0.4.70)
 
 P3 of the world-generation/LOD-coverage plan is complete. Version 0.4.68 scans the server half's

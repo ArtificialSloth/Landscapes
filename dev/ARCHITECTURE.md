@@ -42,10 +42,12 @@ server cache key manifest
 ```
 
 Integrated singleplayer sibling-cache discovery adds a dedicated read-only SQLite reader.
-It scans at a coarse cadence, computes key deltas on its own thread, and publishes bounded
-immutable batches for owning-thread registration. It also compares level-zero `ModifiedMs`
-values and publishes changed-key batches, allowing a newer server-side capture to replace an
-older client row without a reconnect. Visibility-driven blob reads use a
+It scans new and rewritten rows by `rowid` at a coarse cadence, with a periodic full-key backstop,
+computes key deltas on its own thread, and publishes bounded immutable batches for owning-thread
+registration. A newer durable level-zero server capture may merge into an older client row without
+a reconnect. First sightings and parents fill only missing columns; a changed L0 source may replace
+the columns it carries only while the client's submitted content revision is unchanged, and never
+erases client-only columns or observed snow. Visibility-driven blob reads use a
 second bounded worker and worker-owned read-only connection; the game thread only requests
 keys and publishes completed immutable blobs.
 
@@ -331,10 +333,12 @@ Persistence has its own monotonically increasing per-section revision, separate 
 content revision used by mip jobs. This distinction is required because clearing the
 persisted `ApplyToParent` flag changes a row without changing terrain content. Snapshot
 enqueue reserves a revision but leaves `SaveDirty` set. Normal mutations stay solely in
-authoritative RAM until a 30-second checkpoint begins. The owning thread freezes at most
-one section per tick under its elapsed-time/byte admission budget because live section and
-registry state cannot be read safely by the worker; serialization, compression, and I/O do
-not run there. One checkpoint admits at most 256 distinct dirty keys. The storage owner
+authoritative RAM until a 30-second checkpoint begins. The owning thread freezes a bounded
+oldest-first batch—up to eight snapshots per pump, subject to its elapsed-time/byte admission
+budget—because live section and registry state cannot be read safely by the worker; serialization,
+compression, and I/O do not run there. A drained checkpoint can be followed immediately when more
+work is ready, while an idle pipeline retains the coarse cadence. One checkpoint admits at most
+256 distinct dirty keys. The storage owner
 coalesces newer pending snapshots for the same key and publishes the completed checkpoint
 as one SQLite transaction. Additional dirty keys remain in RAM for the next checkpoint.
 
@@ -353,9 +357,26 @@ not part of the SQLite schema, section blob, or assist protocol.
 
 ## Optional server behavior
 
-Server capture and serving are additive. Players without the mod remain unaffected. Client-local capture wins over a server-offered section because it represents terrain that client actually observed, including edits.
+Server capture and serving are additive. Players without the mod remain unaffected. A first server
+offer or a parent merge only fills missing columns. A newer durable server L0 may replace the
+columns it carries only if the client's content revision has not advanced since submission; later
+client observation wins that race, and remote data never erases client-only columns or observed
+snow.
 
-Savegame sweeping may load only terrain already known to exist with a safe generated neighborhood. Transient generation uses `PeekChunkColumn` and must not write generated terrain to the savegame. Runtime absence verification measures this promise.
+Savegame sweeping may load only terrain already known to exist with a safe generated neighborhood.
+Transient generation uses `PeekChunkColumn` and must not write generated terrain to the savegame.
+Runtime absence verification measures this promise, and reports inconclusive when another generator
+was already active.
+
+`/vhworldgen` is the sole deliberate terrain-writing exception. After a permitted player prepares
+and confirms the permanent operation, it requests real chunk columns with `keepLoaded: true`, works
+in 16×16-chunk tiles, and records durable progress. A circle is the default: the player's tile is
+first, tiles advance through clockwise circular radial bands, and columns are nearest-first within
+each tile. Engine-queue, capture, persistence, server-load and disk-space gates bound the job. It
+can pause, resume and stop; an interrupted plan is offered after restart and never resumes silently.
+Kept leases are released through the validated force-loaded-list seam only after the job's exact
+capture/durability obligation is safe. A server-cache row alone is not completion provenance,
+because transient peeks populate the same cache.
 
 After the sweep has built its generated-column map, dormant snow refresh is change-driven rather
 than a perpetual terrain scan. Loaded chunks take the exact path through vanilla's chunk-dirty
@@ -510,6 +531,15 @@ live until the exact replacement persistence revision is acknowledged.
     so mod Cancel never rolls it back. Its neutral visual band ends before the coloured L0 band.
     The saved pause-loading choice reuses the same bounded owner-thread LOD work from a render stage
     at 50 ms cadence; it never unpauses or advances simulation (G184-G186).
+38. **Real terrain generation is explicit and permanent.** Savegame sweeping, `/vhgen` and every
+    automatic frontier path retain the generates-nothing promise. `/vhworldgen` alone may write
+    new terrain, only after a player with `controlserver` privilege prepares and confirms the area.
+    Its durable plan, kept leases and job-owned persistence obligations make pause, resume, stop and
+    restart recovery bounded and visible; no interrupted job resumes silently (G193-G197).
+39. **The frontier yields; explicit jobs own generation authority.** A future travelling frontier
+    may borrow otherwise idle generation capacity but never holds the exclusive authority merely
+    because it is enabled. It yields immediately to `/vhworldgen` and `/vhgen`; simultaneous
+    producers cannot make each other's provenance, completion or absence diagnostics ambiguous.
 
 ## Concurrency invariants
 

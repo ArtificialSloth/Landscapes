@@ -48,7 +48,7 @@ in advance.
 | --- | --- |
 | `.vhinfo` | Status: cached/resident sections, meshes, current far edge, settings |
 | `.vhdiag [on\|off]` | Show or hide the diagnostics side panel for this session. Off by default. |
-| `.vhconfig` | Open the settings window. The **General** tab holds one logarithmic scale of labeled L1-L6 transition markers up to 32,768 blocks, each constrained by its neighbours, with an **Automatic** switch (on by default) that chooses them from your field of view and render resolution instead; a slider for cached-terrain draw distance up to 32,768 in 512-block increments; and switches for the optional visual passes with Performance / Balanced / Quality presets. The **Anti-Aliasing** tab has a slider for each distant anti-aliasing setting (see `.vhtaa`); its changes show at once, Save keeps them and Cancel puts them back. `Defaults` resets the tab you are on: on General it turns Automatic on, keeps the accepted 512-to-16,384 sequence as your own distances, and restores a 4,096-block draw distance, which is also what a fresh install starts at. |
+| `.vhconfig` | Open the settings window. **General** holds distance and visual settings; **Anti-Aliasing** holds every `.vhtaa` dial; **Generate** prepares and controls permanent world generation. Changes preview live where applicable, Save keeps them and Cancel restores the previous values. If ordinary in-game Settings has paused an integrated server, Generate offers **Open live controls** and hands off to this standalone window before sending server actions. |
 | `.vhdetail [auto\|manual\|target <px>\|<blocks>]` | Without an argument, report the six transition distances and where they come from. `auto` (the default) chooses them from your field of view and render resolution so every level hands over at the same size on screen, and `target <px>` sets that size (1.5 by default); `manual` returns to your own distances; a number sets a doubling sequence beginning there and switches automatic off. Saved; `.vhconfig` edits them individually. |
 | `.vhfar <blocks>` | Cap the LOD render distance. `0` means unlimited, which is the default. |
 | `.vhtaa [on\|off\|show\|reach\|nudge\|sharpen\|blend\|still\|clip\|reset]` | Distant anti-aliasing: stops distant terrain shimmering as you move by nudging it a fraction of a pixel each frame and blending frames together, on cached terrain only. On by default and saved; also a switch in `.vhconfig`. `reach <px>` sets where it begins as the on-screen width of one block; `nudge`, `sharpen`, `blend` (memory while turning), `still` (memory when still) and `clip` (how strictly old frames must match) tune it. All are saved and all are sliders on the `.vhconfig` Anti-Aliasing tab; `reset` restores the defaults, `show` tints what it touches for the session. With no argument it reports its settings and GPU cost to chat and the client log. |
@@ -77,6 +77,11 @@ in advance.
 | `.vhsubtree [on\|off\|heights\|reset]` | Cull whole quadtree branches by how tall the terrain under them really is. On by default. No argument reports what it rejected. |
 | `.vhslabs [surface\|near\|off]` | Draw terrain slabs at half height. `surface` is the default. Rebuilds distant terrain. |
 | `.vhcutout [on\|off]` | Let crops, tall grass and vines hide the terrain behind them again. Off by default, which is correct — on reopens the holes at the seam it was added to fix. Rebuilds distant terrain. |
+
+Server commands include `/vhworldgen start [radius] [circle|square] [here|spawn|coords] [x] [z]`,
+followed by `/vhworldgen confirm`, plus `/vhworldgen pause|resume|stop|status`. They require the
+`controlserver` privilege and generate permanent savegame terrain; see below. `/vhgen` remains the
+separate transient horizon-only command.
 
 ### Making distant terrain match the game's
 
@@ -210,7 +215,38 @@ for the direction that cannot change them.
 `/vhrefresh [radius]` is the manual catch-up path. It performs the same two-pass existence and
 safe-neighbourhood proof as the sweep, then recaptures only existing columns. Updated level-zero
 rows are offered to already connected modded clients after they are durably stored; integrated
-singleplayer detects the same replacement through the sibling cache's modification timestamp.
+singleplayer detects the same replacement through the sibling cache's incremental rowid offers.
+
+### Generating the real world (/vhworldgen)
+
+`/vhworldgen` deliberately creates complete vanilla terrain and saves it in the world, like
+vanilla pregen. It is different from `/vhgen`, which builds only a transient, bare LOD picture and
+does not add terrain to the savegame. Because this operation is permanent, `start` only prepares
+the plan and reports its area, estimated time and disk use; `confirm` starts it after you have read
+the warning and considered a backup.
+
+The default is a circle around the player. Generation begins with the player's 16×16-chunk tile,
+moves outward through circular radial bands clockwise, and handles the nearest columns first inside
+each tile. Large tiles let the distant-terrain cache save efficiently, while the overall reveal
+grows outward in the same broad shape as ordinary map exploration. Choose `square`, `spawn` or
+explicit `coords x z` when needed.
+
+The job can pause, resume and stop, and stores durable progress so an interrupted job can be offered
+for manual resume after restart. It holds only bounded work in flight and slows itself when the
+engine queue, capture path, distant-terrain saves, server load or free disk space require it. The
+Generate tab shows progress and the active gate. In integrated singleplayer, ordinary Settings
+pauses the server; use its **Open live controls** handoff or open `.vhconfig` directly.
+
+Only the Balanced behavior is exposed. Vintage Story's optional multi-thread pipeline was tested
+with its real `MaxWorldgenThreads` setting and named threads, but it gave no material speedup and
+made generated chunk contents scheduling-dependent, so Vintage Horizons does not offer a thread
+selector or Fast/Maximum presets.
+
+Server bounds live in `ModConfig/vintagehorizons-server.json`:
+`EnableWorldGeneration`, `WorldGenMaxRadiusChunks` (default 256),
+`WorldGenDefaultRadiusChunks` (32), `WorldGenQueueTarget` (120),
+`WorldGenMaxInFlight` (160), `WorldGenDirtySectionLimit` (512), and
+`WorldGenOldestDirtySeconds` (120).
 
 ### Generating the horizon (/vhgen)
 
