@@ -27,6 +27,22 @@ optimization on 2026-09-14 and chose the Farseer silhouette plan next. The last 
 remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and fresh-start recovery received the
 owner's “Success” report, but not the full completion/restart matrix.
 
+## [0.4.77] - 2026-09-14
+
+**Horizon silhouettes, first look.** In a singleplayer or LAN-hosted world, `.vhsilhouette on`
+asks the server for silhouettes out to 8,192 blocks; it lasts for the session only.
+- **Server.** Nearest first, it previews one chunk in every 8x8 around the player to the Terrain
+  pass. It keeps only heights and writes nothing to the savegame. It holds whenever an explicit
+  generation job runs or the game is generating real chunks.
+- **Client.** It draws a smooth surface in Farseer's classic sky-derived colour, with a flat hazy
+  sea, wherever cached terrain is missing.
+- **Far plane.** It widens only while silhouettes draw.
+- **Wire.** Four assist message types are appended; the compatibility numbers are unchanged.
+
+The owner saw silhouettes in game. They do not yet join cleanly with adjacent terrain. A hang at
+game exit after using them is open and undiagnosed. The silhouette plan was also revised with the
+owner's decisions D8–D15 (Session 92).
+
 ## [0.4.76] - 2026-09-13
 
 This entry groups the 0.4.71–0.4.76 private test checkpoints.

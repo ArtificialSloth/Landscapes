@@ -2,16 +2,45 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.76 and Farseer silhouettes
+## Start here: 0.4.77 and horizon silhouettes
 
-Read [Session 91](sessions/SESSION_91.md), then
-[the horizon-silhouette/frontier plan](plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
-The world-generation/LOD-coverage plan's core is complete: P1–P5 and P7 landed in 0.4.66–0.4.76;
-P0 proved the engine's multi-thread setting was active but rejected it for negligible speedup and
-nondeterministic terrain, so P6 is closed without a player option. The owner chose Farseer
-silhouettes next and explicitly deferred further `/vhworldgen` speed work.
+Read [Session 92](sessions/SESSION_92.md), then
+[the horizon-silhouette and Terrain Ahead plan](plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md),
+revised with the owner's decisions D8–D15. P1, the first look, landed in 0.4.77, and the owner saw
+silhouettes in singleplayer.
 
-World-generation verification debt, not a gate for beginning silhouettes:
+Open, in the order they block further work:
+
+- **Exit hang (defect, not diagnosed).** After using silhouettes, the owner left the world and quit.
+  The game hung at the exit screen until the process was killed.
+  - The server log shows a clean stop. The client's last line is "Exiting game now".
+  - Next: find what keeps the process alive, from thread names or a dump of the hung process. Ask
+    before any run.
+  - Then compare the same exit three ways: silhouettes never switched on; switched on and then off;
+    and on at the moment of exit.
+- **Joins with adjacent terrain.** The owner: silhouettes "don't connect well with immediately
+  adjacent terrain". Known contributors in 0.4.77:
+  - coverage is cut per 64-block cell, with 16-block quads;
+  - heights come from one sample per 256 blocks, with no anchoring to cached edge heights;
+  - cached terrain's edge still fades to sky.
+
+  The plan's answers are captured heights (P2), anchoring along covered edges (4.7) and the
+  fade-target handoff (P4). Ask the owner for a screenshot of the worst case before choosing.
+- **Preview throughput.** Log-measured at about 5 previews/s with 16 in flight on the owner's stack,
+  so the engine is the limit. An 8 km disc then takes over 10 minutes standing still, and nothing
+  is added while real chunks generate. This raises the value of the accelerator comparison (P0.3)
+  and of captured heights (P2).
+- **Next phases.**
+  - P2: the tile store and captured heights.
+  - P3: the builder, with coast refinement and accelerators.
+  - P4: drawing, the handoff and settings (the reach and draw distance on the scale, the
+    Silhouettes tab).
+  - P6: Terrain Ahead, a separate feature.
+- **Not yet measured:** silhouette GPU cost, the off-state A/B, a dedicated server (the feature is
+  not offered there in 0.4.77), and accelerator accuracy.
+
+The world-generation/LOD-coverage plan's core is complete (Session 91). Its verification debt,
+not a gate for silhouette work:
 
 - **Final durability.** Let one small circular job reach its final completed state and verify the
   server/cache rows are durable after a normal quit.

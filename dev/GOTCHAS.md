@@ -3826,3 +3826,31 @@ does not mean the thread was absent.
 
 **Found:** 2026-09-14, Session 91 (decompiled engine source plus controlled full/minimal-stack
 runtime benchmarks).
+
+### G199 - The engine's generating-chunk count never sees peeks
+
+**Trigger:** pacing transient previews (`PeekChunkColumn`) by `WorldAPI.CurrentGeneratingChunkCount`.
+
+**Trap:** the counter is the size of the real-generation request queue. Peeks live in a separate
+peek queue, with capacity `RequestChunkColumnsQueueSize / 5`. A producer braked only by the counter,
+as Farseer's is, never slows itself however many peeks it has queued.
+
+**Safer action:** count your own peeks in flight and cap them. Read the counter only as the "real
+loads are pending" signal, and yield to it. The silhouette builder does both: 16 in flight, and it
+holds while 8 or more real chunks are pending.
+
+**Found:** 2026-09-13/14, silhouette preparation and Session 92 (decompiled 1.22.x).
+
+### G200 - The cached draw step returns early when no cached terrain is in view
+
+**Trigger:** adding a pass that must draw where cached terrain is absent, such as silhouettes seen
+out to sea.
+
+**Trap:** `LodTerrainRenderer.PrepareRenderFrame` stops before preparing the frame when there are
+no cached meshes or the draw list is empty, and `RenderFrame` then returns at once. A pass placed
+inside `RenderFrame` draws nothing in exactly the views it exists for, and nothing reports it.
+
+**Safer action:** give such a pass its own step after `RenderFrame` in `OnRenderFrame`, with its own
+guards. Let it call `ApplyZFar`, which does nothing when the needed distance is unchanged.
+
+**Found:** 2026-09-14, Session 92 (source-traced while building 0.4.77).

@@ -1,7 +1,9 @@
 # Plan - Horizon silhouettes and terrain ahead
 
 **Status:** Active. Revised 2026-09-14 with the owner's decisions D8-D15, against 0.4.76
-(`9ea75c5`; documentation `229c04b`). No source has changed for it yet.
+(`9ea75c5`; documentation `229c04b`). P1, the first look, landed in 0.4.77 (`4c7720c`), and the
+owner saw silhouettes in game. The join with adjacent terrain and a hang at game exit are open
+(Session 92).
 - Silhouettes come first (D14).
 - Terrain Ahead is a separate, later feature (D15).
 

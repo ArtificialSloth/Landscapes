@@ -23,6 +23,10 @@ Current message types:
 - `AssistSection`
 - `AssistWorldGenRequest`
 - `AssistWorldGenStatus`
+- `AssistSilhouetteRequest`
+- `AssistSilhouetteManifest`
+- `AssistSilhouetteTileRequest`
+- `AssistSilhouetteTile`
 
 Protobuf fields are append-compatible. Bump the protocol when an existing message or field changes meaning, required sequencing changes, or old peers would interpret a valid exchange incorrectly.
 
@@ -48,6 +52,26 @@ existing channel registrations; older peers neither send nor register them. Stat
 polls. Old protobuf peers ignore every unknown field, a zero `Features` value means unavailable,
 and no existing message, field or required sequence changed meaning. The compatibility numbers
 therefore remain `1 / 4 / 6`.
+
+**Append-compatible protocol-1 additions for horizon silhouettes (0.4.77).** Four message types
+were appended after `AssistWorldGenStatus`, in this order on both sides:
+- `AssistSilhouetteRequest` (client to server): enabled, reach, mod version.
+- `AssistSilhouetteManifest`: registered, unused in 0.4.77.
+- `AssistSilhouetteTileRequest`: registered, unused in 0.4.77.
+- `AssistSilhouetteTile` (server to client): tile X and Z, revision, payload, retryable.
+
+Features bit 2 is now advertised; in 0.4.77 only singleplayer and LAN-hosted servers advertise it.
+A client sends the request only when the bit is set, and older peers neither register nor send the
+new types.
+
+The tile payload is its own format, version 1:
+- one format byte;
+- then, deflated, a 2-bit state for each of the 128x128 cells of a 512-block L3 footprint (unknown,
+  captured, preview or accelerator), four to a byte in row-major order;
+- followed by the little-endian height of every known cell, in the same order.
+
+No existing message, field or sequence changed meaning. The compatibility numbers therefore remain
+`1 / 4 / 6`.
 
 ## Section blob-format ledger
 

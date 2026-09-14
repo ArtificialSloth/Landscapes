@@ -4,16 +4,37 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-14`
-**Mod version:** `0.4.76` — current private test build, verified, copy-installed and checkpointed; the owner reported success for the repaired core Generate controls, while final completion/restart and dedicated-server matrices remain open
+**Mod version:** `0.4.77` — current private test build (the horizon-silhouette first look), verified, copy-installed and checkpointed; the owner saw silhouettes in game, and the join with adjacent terrain and a hang at game exit remain open
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.71 `6a510ae`, 0.4.72 `1cd1040`, 0.4.73 `30858f4`, 0.4.74 `439bc68`, 0.4.75 `088923a`, 0.4.76 `9ea75c5`; nothing pushed
+**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.71 `6a510ae`, 0.4.72 `1cd1040`, 0.4.73 `30858f4`, 0.4.74 `439bc68`, 0.4.75 `088923a`, 0.4.76 `9ea75c5`, 0.4.77 `4c7720c`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `112` C# files under `VintageHorizons/src`
+**Source files:** `118` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
 
 ## Current result
+
+**Horizon silhouettes: the first look (0.4.77).** The silhouette plan was revised with the owner's
+decisions D8–D15 (Session 92), and P1 landed.
+- **Scope.** A singleplayer or LAN-hosted server, behind the session command `.vhsilhouette on`.
+- **Server.** It previews one chunk in every 8x8 around the player to the Terrain pass, keeping
+  heights only and writing nothing to the savegame. It yields to explicit generation and to real
+  chunk loads, and pushes 512-block tiles over four appended assist messages.
+- **Client.** It draws a continuous surface in Farseer's classic sky-derived colour where cached
+  terrain is missing, in its own step after the cached draw (G200).
+- **Far plane.** It widens only while silhouettes draw.
+- **Not built yet:** Terrain Ahead, settings, the join handoff, persistence and accelerators.
+
+| Silhouette evidence | Result | Level |
+|---|---|---|
+| Owner test, singleplayer | Silhouettes drew; they "don't connect well with immediately adjacent terrain"; the game hung at exit and had to be killed | Human-tested |
+| Worldgen heights on previews (P0.1) | 0 of 1,024 zero on the first preview; forest map present (Watersheds and TerraPrety, 1.22.7) | Log-measured |
+| Preview throughput | About 5 landed/s with 16 in flight; held 705 ticks while real chunks generated | Log-measured |
+| Client | 117 tiles, 401 sample points, 33–41 tile draws per frame; the shader compiled | Log-measured |
+| Checks | 88 new assertions; 24,835 pass | Harness-tested |
+| Exit hang | Server stopped cleanly; client's last line "Exiting game now"; cause not diagnosed | Log-measured symptom only |
+| GPU cost, off-state A/B, dedicated server, accelerators | Not measured | — |
 
 **The core world-generation/LOD-coverage plan is complete.** P1–P5 and P7 landed in
 0.4.66–0.4.76. P0 proved the engine's multi-thread pipeline was really active but rejected it for
