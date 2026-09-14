@@ -905,7 +905,12 @@ public class LodAssistServerSystem : ModSystem
     public override void Dispose()
     {
         if (sapi != null) sapi.Event.PlayerDisconnect -= OnPlayerDisconnect;
-        if (sapi != null && silhouettes != null) sapi.Event.ChunkColumnLoaded -= OnColumnLoadedForSilhouettes;
+        if (sapi != null && silhouettes != null)
+        {
+            sapi.Event.ChunkColumnLoaded -= OnColumnLoadedForSilhouettes;
+            sapi.Event.GameWorldSave -= OnSilhouettesWorldSave;
+        }
+        // Saves the tiles changed since the last world save, then closes the tile store.
         silhouettes?.Dispose();
         blobReader?.Dispose();
         blobReader = null;
@@ -916,10 +921,11 @@ public class LodAssistServerSystem : ModSystem
     /// Horizon silhouettes, when the world starts running and only if the server config allows
     /// them (plan 4.9). The builder then also keeps the worldgen heights of every column the
     /// server loads. That costs a copy of one height map, because the column is in memory
-    /// anyway (plan 4.4).
+    /// anyway (plan 4.4). Tiles persist in their own file, written at every world save.
     /// </summary>
     void StartSilhouettes()
     {
+        RegisterSilhouetteCommand();
         LodServerConfig config = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>()?.Config
             ?? new LodServerConfig();
         if (!config.SilhouettesEnabled(sapi.Server.IsDedicated))
@@ -931,10 +937,82 @@ public class LodAssistServerSystem : ModSystem
             }
             return;
         }
+        // A world that has never used silhouettes gets no file until a player asks for them: a
+        // database opened in every singleplayer world "in case" is the cost the section cache's
+        // startup guard exists to avoid.
+        string? storePath = SilhouetteStorePath();
+        LodSilhouetteStore? store = storePath != null && File.Exists(storePath)
+            ? OpenSilhouetteStore(storePath)
+            : null;
         silhouettes = new LodSilhouetteBuilder(sapi, Mod.Logger,
             () => sapi.ModLoader.GetModSystem<LodServerCaptureSystem>()?.GenerationAuthorityBusy == true,
-            (player, tile) => channel.SendPacket(tile, player));
+            (player, tile) => channel.SendPacket(tile, player), store,
+            storePath == null ? null : () => OpenSilhouetteStore(storePath));
         sapi.Event.ChunkColumnLoaded += OnColumnLoadedForSilhouettes;
+        sapi.Event.GameWorldSave += OnSilhouettesWorldSave;
+    }
+
+    /// <summary>
+    /// Where the world's tile store lives: beside the section cache, named after the savegame the
+    /// same way (LodPipeline.Open). Null if even the path cannot be made; silhouettes then work
+    /// for the session only.
+    /// </summary>
+    string? SilhouetteStorePath()
+    {
+        try
+        {
+            string worldKey = sapi.World.SavegameIdentifier;
+            if (string.IsNullOrEmpty(worldKey)) worldKey = "seed-" + sapi.World.Seed;
+            worldKey = System.Text.RegularExpressions.Regex.Replace(worldKey, "[^A-Za-z0-9_-]", "_");
+            string directory = sapi.GetOrCreateDataPath("ModData/vintagehorizons");
+            return Path.Combine(directory, worldKey + "-silhouette-server.db");
+        }
+        catch (Exception e)
+        {
+            Mod.Logger.Warning("Horizon silhouettes: no tile store this session, so nothing is kept: {0}",
+                e.Message);
+            return null;
+        }
+    }
+
+    LodSilhouetteStore? OpenSilhouetteStore(string path)
+    {
+        try
+        {
+            return new LodSilhouetteStore(path, Mod.Logger);
+        }
+        catch (Exception e)
+        {
+            Mod.Logger.Warning("Horizon silhouettes: no tile store this session, so nothing is kept: {0}",
+                e.Message);
+            return null;
+        }
+    }
+
+    void OnSilhouettesWorldSave() => silhouettes?.SaveDirty();
+
+    void RegisterSilhouetteCommand()
+    {
+        TextCommandResult Status()
+        {
+            string line = "[VintageHorizons] Horizon silhouettes: " + (silhouettes?.Describe()
+                ?? "off on this server (EnableSilhouettes in ModConfig/vintagehorizons-server.json; "
+                + "dedicated servers are not offered them yet)") + ".";
+            // Chat cannot be copied, so the same line always reaches the log.
+            Mod.Logger.Notification("{0}", line);
+            return TextCommandResult.Success(line);
+        }
+
+        // Not "vhsilhouette": that is the client's switch, and every command name stays unique
+        // across both sides (StaticAssetChecks.ChatCommandNamesAreUnique).
+        sapi.ChatCommands.Create("vhsilhouetteserver")
+            .WithDescription("Horizon silhouettes on this server: tiles, heights, previews and the tile store")
+            .RequiresPrivilege(Privilege.controlserver)
+            .HandleWith(_ => Status())
+            .BeginSubCommand("status")
+                .WithDescription("The same report")
+                .HandleWith(_ => Status())
+            .EndSubCommand();
     }
 
     /// <summary>Main thread: the engine raises this from a main-thread task.</summary>

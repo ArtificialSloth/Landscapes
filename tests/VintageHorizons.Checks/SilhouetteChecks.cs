@@ -28,6 +28,7 @@ public static class SilhouetteChecks
         MeshSeaAndCoverage(c);
         FeatureGate(c);
         GeneratorStallWatch(c);
+        TileMergeAndSnapshot(c);
     }
 
     public static void RunWiring(Check c)
@@ -36,9 +37,183 @@ public static class SilhouetteChecks
         PreviewsNeverReachCapture(c);
         GeneratorSilenceStopsTheBuilder(c);
         CapturedHeightsReachTiles(c);
+        StoreKeepsTilesAcrossSessions(c);
+        StoredTilesAreReadBeforePreviewing(c);
         UploadedUniformsAreDeclared(c);
         SamplerLayout(c);
         OffStateIsTheOldBehaviour(c);
+    }
+
+    /// <summary>
+    /// An older copy of a tile (the stored one) fills what a newer copy lacks and never
+    /// overrides it from the same source; a snapshot is independent of later changes.
+    /// </summary>
+    static void TileMergeAndSnapshot(Check c)
+    {
+        int cx = TileX * 16, cz = TileZ * 16;
+        var older = new LodSilhouetteTile(TileX, TileZ, revision: 40);
+        older.SetChunk(cx, cz, HeightMap((_, _) => 70), EnumSilhouetteOrigin.Captured);
+        older.SetChunk(cx + 1, cz, HeightMap((_, _) => 71), EnumSilhouetteOrigin.Preview);
+        older.SetChunk(cx + 2, cz, HeightMap((_, _) => 72), EnumSilhouetteOrigin.Preview);
+
+        var newer = new LodSilhouetteTile(TileX, TileZ);
+        newer.SetChunk(cx, cz, HeightMap((_, _) => 90), EnumSilhouetteOrigin.Preview);
+        newer.SetChunk(cx + 1, cz, HeightMap((_, _) => 91), EnumSilhouetteOrigin.Preview);
+        newer.SetChunk(cx + 3, cz, HeightMap((_, _) => 93), EnumSilhouetteOrigin.Captured);
+
+        c.True(newer.MergeFrom(older), "merging an older copy that knows more changes the tile");
+        c.True(newer.TryGetHeight(0, 0, out ushort better) && better == 70
+                && newer.OriginAt(0, 0) == EnumSilhouetteOrigin.Captured,
+            "a cell the older copy knows from a better source takes it");
+        c.True(newer.TryGetHeight(8, 0, out ushort same) && same == 91,
+            "where both know a cell from the same source, the newer height stands");
+        c.True(newer.TryGetHeight(16, 0, out ushort onlyOlder) && onlyOlder == 72,
+            "a cell only the older copy knows is taken");
+        c.True(newer.TryGetHeight(24, 0, out ushort onlyNewer) && onlyNewer == 93,
+            "a cell only the newer copy knows is kept");
+        c.Eq(4 * 64, newer.KnownCells, "merged cells are counted once");
+        c.Eq(older.Revision + 1, newer.Revision, "the revision passes the older copy's, so it never goes back");
+        c.False(newer.MergeFrom(older), "merging the same copy again changes nothing");
+        c.Eq(older.Revision + 1, newer.Revision, "no change, no new revision");
+        c.Throws<ArgumentException>(() => newer.MergeFrom(new LodSilhouetteTile(TileX + 1, TileZ)),
+            "only copies of the same tile merge");
+
+        LodSilhouetteTile copy = newer.Snapshot();
+        newer.SetChunk(cx + 5, cz, HeightMap((_, _) => 95), EnumSilhouetteOrigin.Preview);
+        c.False(copy.TryGetHeight(40, 0, out _), "a snapshot does not see later changes");
+        c.Eq(4 * 64, copy.KnownCells, "a snapshot keeps the count it was taken with");
+        c.Eq(older.Revision + 1, copy.Revision, "and the revision");
+    }
+
+    static bool WaitForIndex(LodSilhouetteStore store, out HashSet<long> keys)
+    {
+        long deadline = Environment.TickCount64 + 5000;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (store.TryTakeIndex(out keys)) return true;
+            Thread.Sleep(2);
+        }
+        keys = new HashSet<long>();
+        return false;
+    }
+
+    static LodSilhouetteStoredTile? WaitForLoad(LodSilhouetteStore store)
+    {
+        long deadline = Environment.TickCount64 + 5000;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (store.TryTakeLoaded(out LodSilhouetteStoredTile result)) return result;
+            Thread.Sleep(2);
+        }
+        return null;
+    }
+
+    static void RunSql(string path, string sql)
+    {
+        var options = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = path, Pooling = false };
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection(options.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// The tile store keeps tiles across sessions. A tile saved before a close is listed and
+    /// read back after reopening; a later save merges into the stored row rather than replacing
+    /// it; a row that does not decode reads as nothing; a store of another format is emptied.
+    /// </summary>
+    static void StoreKeepsTilesAcrossSessions(Check c)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "vh-silhouette-store-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        string path = Path.Combine(dir, "world-silhouette-server.db");
+        int cx = TileX * 16, cz = TileZ * 16;
+        var logger = new CaptureLogger();
+        try
+        {
+            using (var store = new LodSilhouetteStore(path, logger))
+            {
+                c.True(WaitForIndex(store, out HashSet<long> keys) && keys.Count == 0, "a new store lists no tiles");
+                var first = new LodSilhouetteTile(TileX, TileZ);
+                first.SetChunk(cx, cz, HeightMap((_, _) => 80), EnumSilhouetteOrigin.Preview);
+                c.True(store.Save(first.Snapshot()), "a save is accepted");
+            }
+
+            using (var store = new LodSilhouetteStore(path, logger))
+            {
+                c.True(WaitForIndex(store, out HashSet<long> keys)
+                        && keys.SetEquals(new[] { LodSilhouetteTile.KeyOf(TileX, TileZ) }),
+                    "a reopened store lists the tile saved before it closed");
+
+                // Rebuilt this session without reading the stored copy first: the write must merge.
+                var second = new LodSilhouetteTile(TileX, TileZ);
+                second.SetChunk(cx + 1, cz, HeightMap((_, _) => 81), EnumSilhouetteOrigin.Captured);
+                store.Save(second.Snapshot());
+                long deadline = Environment.TickCount64 + 5000;
+                while (store.Saved < 1 && Environment.TickCount64 < deadline) Thread.Sleep(2);
+
+                c.True(store.TryRequestLoad(TileX, TileZ), "a load is accepted");
+                LodSilhouetteTile? merged = WaitForLoad(store)?.Tile;
+                c.True(merged != null && merged.TryGetHeight(0, 0, out ushort kept) && kept == 80
+                        && merged.TryGetHeight(8, 0, out ushort added) && added == 81,
+                    "a later save merges into the stored row instead of replacing it");
+
+                c.True(store.TryRequestLoad(TileX + 5, TileZ), "a load of a tile never stored is accepted");
+                LodSilhouetteStoredTile? none = WaitForLoad(store);
+                c.True(none != null && none.Value.Tile == null, "a tile the store never held reads as nothing");
+            }
+
+            RunSql(path, "INSERT OR REPLACE INTO Tile (TX, TZ, Revision, Data, ModifiedMs) VALUES (1, 2, 1, x'0102', 0);");
+            using (var store = new LodSilhouetteStore(path, logger))
+            {
+                WaitForIndex(store, out _);
+                store.TryRequestLoad(1, 2);
+                LodSilhouetteStoredTile? broken = WaitForLoad(store);
+                c.True(broken != null && broken.Value.Tile == null && store.Undecodable == 1,
+                    "a row that does not decode reads as nothing, and is counted");
+            }
+
+            RunSql(path, "UPDATE Meta SET Value = '0' WHERE Key = 'SchemaVersion';");
+            using (var store = new LodSilhouetteStore(path, logger))
+            {
+                c.True(WaitForIndex(store, out HashSet<long> keys) && keys.Count == 0,
+                    "a store written in another format is emptied when opened");
+                c.False(store.OpenFailed, "and still opens");
+            }
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
+    static void StoredTilesAreReadBeforePreviewing(Check c)
+    {
+        string builder = Source("src", "Silhouette", "LodSilhouetteBuilder.cs");
+        string assist = Source("src", "Net", "LodAssistServerSystem.cs");
+        c.True(Regex.IsMatch(builder,
+                @"if \(!TileReady\(tileKey\)\)[\s\S]*?return EnumProbeStep\.Paused;[\s\S]*?Probe\(cx, cz\);"),
+            "a tile's stored copy is read back before anything in it is previewed");
+        c.True(builder.Contains("if (store != null && storedBeforeSession == null) return;", StringComparison.Ordinal),
+            "nothing is previewed until the store has said which tiles it holds");
+        c.True(assist.Contains("GameWorldSave += OnSilhouettesWorldSave", StringComparison.Ordinal)
+                && assist.Contains("void OnSilhouettesWorldSave() => silhouettes?.SaveDirty();", StringComparison.Ordinal),
+            "changed tiles are written at every world save");
+        c.True(Regex.IsMatch(builder, @"public void Dispose\(\)[\s\S]*?SaveDirty\(\);\s*store\?\.Dispose\(\);"),
+            "shutdown saves what changed before it closes the store");
+        c.True(Regex.IsMatch(assist, @"storePath != null && File\.Exists\(storePath\)\s*\?\s*OpenSilhouetteStore\(storePath\)")
+                && Regex.IsMatch(builder, @"if \(store == null && openStore != null\)\s*\{[^}]*store = openStore\(\);"),
+            "a world that has never used silhouettes gets no tile store file until a player asks for them");
     }
 
     /// <summary>

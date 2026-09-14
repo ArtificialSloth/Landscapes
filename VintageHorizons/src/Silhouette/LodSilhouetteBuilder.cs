@@ -16,8 +16,13 @@ namespace VintageHorizons.Silhouette;
 /// first, out to their reach plus one tile. It takes one chunk in every 8x8, skips any whose
 /// heights it already holds, probes the rest for existence and, where no terrain exists yet,
 /// previews it to the Terrain pass. Only the 32x32 height map of a preview is kept: nothing
-/// reaches the capture pipeline, and a preview writes nothing to the savegame. Tiles stay in RAM
-/// and are pushed to every player whose reach covers them.
+/// reaches the capture pipeline, and a preview writes nothing to the savegame.
+///
+/// Tiles persist in <see cref="LodSilhouetteStore"/>, so each area is paid for once per world.
+/// A world that has never used silhouettes gets its store with the first request. Changed tiles
+/// are written at every world save and at shutdown. A stored tile is read back before the
+/// builder previews anything in it, and RAM lets go of saved tiles nobody's reach covers once it
+/// holds more than <see cref="SoftTileCap"/>.
 ///
 /// It is an automatic producer, so it never takes the world-generation authority. It holds new
 /// work while an explicit job holds that authority, or while the engine is generating real
@@ -48,6 +53,12 @@ internal sealed class LodSilhouetteBuilder
 
     public const int TilesPerSecondPerPlayer = 20;
 
+    /// <summary>
+    /// Tiles held in RAM above which saved tiles no reach covers are let go. An 8,192-block reach
+    /// covers about 900 tiles.
+    /// </summary>
+    public const int SoftTileCap = 2048;
+
     const double TickWorkBudgetMs = 1.0;
     const long StuckPeekTimeoutMs = 300_000;
     const long StatusLogIntervalMs = 30_000;
@@ -57,6 +68,8 @@ internal sealed class LodSilhouetteBuilder
     readonly ILogger logger;
     readonly Func<bool> authorityBusy;
     readonly Action<IServerPlayer, AssistSilhouetteTile> send;
+    LodSilhouetteStore? store;
+    Func<LodSilhouetteStore?>? openStore;
 
     sealed class Demand
     {
@@ -93,17 +106,32 @@ internal sealed class LodSilhouetteBuilder
     long lastLandedMs = -1;
     int lastLandedCx, lastLandedCz;
 
+    // The store's side. A tile is "ready" when RAM holds everything the store holds for it:
+    // never stored, or its stored copy merged in. Nothing is previewed in a tile until it is.
+    HashSet<long>? storedBeforeSession;
+    readonly HashSet<long> savedThisSession = new();
+    readonly HashSet<long> storeMerged = new();
+    readonly HashSet<long> loadWanted = new();
+    readonly HashSet<long> loading = new();
+    readonly HashSet<long> dirtyTiles = new();
+    readonly List<long> evictable = new();
+
     public int Probed, Existing, Peeked, Landed, Empty, TimedOut, YieldTicks, TilesSent;
-    public int CapturedColumns, RainColumns;
+    public int CapturedColumns, RainColumns, StoreReads, TilesSaved, Evicted;
     public long BytesSent;
 
+    /// <param name="store">The world's tile store, when its file already exists.</param>
+    /// <param name="openStore">Creates the store on the first request, for a world that has none.</param>
     public LodSilhouetteBuilder(ICoreServerAPI sapi, ILogger logger, Func<bool> authorityBusy,
-        Action<IServerPlayer, AssistSilhouetteTile> send)
+        Action<IServerPlayer, AssistSilhouetteTile> send, LodSilhouetteStore? store,
+        Func<LodSilhouetteStore?>? openStore)
     {
         this.sapi = sapi;
         this.logger = logger;
         this.authorityBusy = authorityBusy;
         this.send = send;
+        this.store = store;
+        this.openStore = store == null ? openStore : null;
     }
 
     public int TileCount => tiles.Count;
@@ -118,6 +146,13 @@ internal sealed class LodSilhouetteBuilder
                 logger.Notification("Horizon silhouettes: {0} switched them off; their demand is dropped.",
                     player.PlayerName);
             return;
+        }
+
+        if (store == null && openStore != null)
+        {
+            // A world that has never used silhouettes gets its store with the first request.
+            store = openStore();
+            openStore = null;
         }
 
         int reach = Math.Clamp(request.ReachBlocks <= 0 ? DefaultReachBlocks : request.ReachBlocks,
@@ -163,15 +198,45 @@ internal sealed class LodSilhouetteBuilder
         if (!tiles.TryGetValue(key, out LodSilhouetteTile? tile))
             tiles[key] = tile = new LodSilhouetteTile(tileX, tileZ);
         if (!tile.SetChunk(cx, cz, heights, EnumSilhouetteOrigin.Captured)) return;
+        dirtyTiles.Add(key);
         foreach (Demand demand in demands.Values)
             if (Covers(demand, tile)) demand.Queued.Add(key);
     }
 
+    /// <summary>
+    /// Main thread, at every world save and at shutdown: hand a copy of every changed tile to the
+    /// store, then let go of saved tiles nobody's reach covers when RAM holds too many.
+    /// </summary>
+    public void SaveDirty()
+    {
+        if (store == null) return;
+        TakeStoredIndex();
+        foreach (long key in dirtyTiles)
+        {
+            if (!tiles.TryGetValue(key, out LodSilhouetteTile? tile)) continue;
+            // RAM holds all the store has for this tile only if its stored copy was merged in,
+            // or there never was one. The store merges on write either way; this only decides
+            // whether the tile may later be let go of and read back without loss.
+            bool complete = storeMerged.Contains(key) || storedBeforeSession != null && !IsStored(key);
+            if (!store.Save(tile.Snapshot())) return;
+            savedThisSession.Add(key);
+            if (complete) storeMerged.Add(key);
+            TilesSaved++;
+        }
+        dirtyTiles.Clear();
+        Evict();
+    }
+
+    /// <summary>Main thread, at shutdown: saves what changed, then closes the store.</summary>
     public void Dispose()
     {
-        if (!listening) return;
-        sapi.Event.UnregisterGameTickListener(listenerId);
-        listening = false;
+        if (listening)
+        {
+            sapi.Event.UnregisterGameTickListener(listenerId);
+            listening = false;
+        }
+        SaveDirty();
+        store?.Dispose();
     }
 
     void EnsureListening()
@@ -188,12 +253,14 @@ internal sealed class LodSilhouetteBuilder
         sapi.Event.UnregisterGameTickListener(listenerId);
         listening = false;
         pendingPeeks.Clear();
+        loadWanted.Clear();
         LogStatus("idle, no player is asking");
     }
 
     void Tick()
     {
         long now = sapi.World.ElapsedMilliseconds;
+        PumpStore();
         WatchGenerator(now);
         ExpireStuckPeeks(now);
         foreach (Demand demand in demands.Values) Recentre(demand, force: false);
@@ -204,6 +271,90 @@ internal sealed class LodSilhouetteBuilder
             nextStatusLogMs = now + StatusLogIntervalMs;
             LogStatus("working");
         }
+    }
+
+    bool IsStored(long key) => storedBeforeSession?.Contains(key) == true || savedThisSession.Contains(key);
+
+    /// <summary>RAM holds everything the store holds for this tile, so previewing in it is safe.</summary>
+    bool TileReady(long key) =>
+        store == null || storedBeforeSession != null && (!IsStored(key) || storeMerged.Contains(key));
+
+    void TakeStoredIndex()
+    {
+        if (store == null || storedBeforeSession != null || !store.TryTakeIndex(out HashSet<long> keys))
+            return;
+        storedBeforeSession = keys;
+        logger.Notification("Horizon silhouettes: the tile store holds {0} tiles from earlier sessions ({1}).",
+            keys.Count, System.IO.Path.GetFileName(store.Path));
+        foreach (Demand demand in demands.Values) WantStoredTiles(demand);
+    }
+
+    void WantLoad(long key)
+    {
+        if (!IsStored(key) || storeMerged.Contains(key) || loading.Contains(key)) return;
+        loadWanted.Add(key);
+    }
+
+    /// <summary>Every stored tile within the demand's reach that RAM does not hold in full.</summary>
+    void WantStoredTiles(Demand demand)
+    {
+        if (storedBeforeSession == null) return;
+        foreach (long key in storedBeforeSession)
+            if (CoversTile(demand, LodWorld.KeySx(key), LodWorld.KeySz(key))) WantLoad(key);
+        foreach (long key in savedThisSession)
+            if (CoversTile(demand, LodWorld.KeySx(key), LodWorld.KeySz(key))) WantLoad(key);
+    }
+
+    /// <summary>Main thread: take what the store answered, then ask for the tiles demands need, nearest first.</summary>
+    void PumpStore()
+    {
+        if (store == null) return;
+        TakeStoredIndex();
+        while (store.TryTakeLoaded(out LodSilhouetteStoredTile result))
+        {
+            long key = LodSilhouetteTile.KeyOf(result.TileX, result.TileZ);
+            loading.Remove(key);
+            storeMerged.Add(key);
+            if (result.Tile == null) continue;
+            StoreReads++;
+            if (tiles.TryGetValue(key, out LodSilhouetteTile? held))
+            {
+                if (!held.MergeFrom(result.Tile)) continue;
+            }
+            else
+            {
+                tiles[key] = held = result.Tile;
+            }
+            foreach (Demand demand in demands.Values)
+                if (Covers(demand, held)) demand.Queued.Add(key);
+        }
+        while (loadWanted.Count > 0)
+        {
+            long key = NearestTo(loadWanted);
+            if (!store.TryRequestLoad(LodWorld.KeySx(key), LodWorld.KeySz(key))) break;
+            loadWanted.Remove(key);
+            loading.Add(key);
+        }
+    }
+
+    /// <summary>After a save, let go of saved tiles nobody's reach covers, if RAM holds too many.</summary>
+    void Evict()
+    {
+        if (tiles.Count <= SoftTileCap) return;
+        evictable.Clear();
+        foreach (KeyValuePair<long, LodSilhouetteTile> entry in tiles)
+        {
+            if (dirtyTiles.Contains(entry.Key) || !IsStored(entry.Key)) continue;
+            bool wanted = false;
+            foreach (Demand demand in demands.Values) wanted |= Covers(demand, entry.Value);
+            if (!wanted) evictable.Add(entry.Key);
+        }
+        foreach (long key in evictable)
+        {
+            tiles.Remove(key);
+            storeMerged.Remove(key);
+        }
+        Evicted += evictable.Count;
     }
 
     /// <summary>
@@ -271,7 +422,8 @@ internal sealed class LodSilhouetteBuilder
         demand.SpiralIndex = 0;
         demand.Exhausted = false;
 
-        // Anything already built that the player now reaches and does not hold goes out again.
+        // Anything already built that the player now reaches and does not hold goes out again,
+        // and stored tiles they now reach are read back.
         foreach (KeyValuePair<long, LodSilhouetteTile> entry in tiles)
         {
             if (!Covers(demand, entry.Value)) continue;
@@ -279,16 +431,21 @@ internal sealed class LodSilhouetteBuilder
                 continue;
             demand.Queued.Add(entry.Key);
         }
+        WantStoredTiles(demand);
     }
 
     static int NearestNode(double blockCoordinate) => (int)Math.Round(
         (blockCoordinate - LodSilhouetteField.NodeOriginBlocks) / LodSilhouetteField.LatticeBlocks);
 
+    static bool Covers(Demand demand, LodSilhouetteTile tile) => CoversTile(demand, tile.TileX, tile.TileZ);
+
     /// <summary>The tile's nearest point lies within the reach plus the one-tile margin.</summary>
-    static bool Covers(Demand demand, LodSilhouetteTile tile)
+    static bool CoversTile(Demand demand, int tileX, int tileZ)
     {
-        double nearestX = Math.Clamp(demand.CentreX, tile.BlockX, tile.BlockX + LodSilhouetteTile.TileBlocks);
-        double nearestZ = Math.Clamp(demand.CentreZ, tile.BlockZ, tile.BlockZ + LodSilhouetteTile.TileBlocks);
+        double blockX = tileX * (double)LodSilhouetteTile.TileBlocks;
+        double blockZ = tileZ * (double)LodSilhouetteTile.TileBlocks;
+        double nearestX = Math.Clamp(demand.CentreX, blockX, blockX + LodSilhouetteTile.TileBlocks);
+        double nearestZ = Math.Clamp(demand.CentreZ, blockZ, blockZ + LodSilhouetteTile.TileBlocks);
         double dx = nearestX - demand.CentreX, dz = nearestZ - demand.CentreZ;
         double limit = demand.ReachBlocks + LodSilhouetteTile.TileBlocks;
         return dx * dx + dz * dz <= limit * limit;
@@ -306,6 +463,8 @@ internal sealed class LodSilhouetteBuilder
     {
         // A generator that stopped answering gets nothing more this session (WatchGenerator).
         if (generatorWatch.Stalled) return;
+        // Until the store has said what it holds, any preview might repeat one already paid for.
+        if (store != null && storedBeforeSession == null) return;
         if (authorityBusy()
             || sapi.WorldManager.CurrentGeneratingChunkCount >= YieldGeneratingChunks)
         {
@@ -360,8 +519,17 @@ internal sealed class LodSilhouetteBuilder
             if (nx * nx + nz * nz > limit * limit) continue;
             int cx = LodSilhouetteField.LatticeChunkOfNode(i);
             int cz = LodSilhouetteField.LatticeChunkOfNode(j);
+            (int tileX, int tileZ) = LodSilhouetteTile.TileOfChunk(cx, cz);
+            long tileKey = LodSilhouetteTile.KeyOf(tileX, tileZ);
+            if (!TileReady(tileKey))
+            {
+                // Its stored copy may hold these heights already: read it before previewing.
+                WantLoad(tileKey);
+                demand.SpiralIndex--;
+                return EnumProbeStep.Paused;
+            }
             if (!attempted.Add(LodColumnMap.Key(cx, cz))) continue;
-            // Heights the server captured anyway make a preview pointless (plan 4.2).
+            // Heights the server captured anyway, or stored, make a preview pointless (plan 4.2).
             if (HoldsChunk(cx, cz)) continue;
             Probe(cx, cz);
             return EnumProbeStep.Probed;
@@ -469,6 +637,7 @@ internal sealed class LodSilhouetteBuilder
             tiles[key] = tile = new LodSilhouetteTile(tileX, tileZ);
         if (!tile.SetChunk(cx, cz, heights, EnumSilhouetteOrigin.Preview)) return;
         Landed++;
+        dirtyTiles.Add(key);
         foreach (Demand demand in demands.Values)
             if (Covers(demand, tile)) demand.Queued.Add(key);
     }
@@ -532,17 +701,56 @@ internal sealed class LodSilhouetteBuilder
         return best;
     }
 
+    /// <summary>The key nearest to any requesting player.</summary>
+    long NearestTo(HashSet<long> keys)
+    {
+        long best = 0;
+        double bestDistance = double.MaxValue;
+        foreach (long key in keys)
+        {
+            foreach (Demand demand in demands.Values)
+            {
+                double x = (LodWorld.KeySx(key) + 0.5) * LodSilhouetteTile.TileBlocks - demand.CentreX;
+                double z = (LodWorld.KeySz(key) + 0.5) * LodSilhouetteTile.TileBlocks - demand.CentreZ;
+                double distance = x * x + z * z;
+                if (distance >= bestDistance) continue;
+                bestDistance = distance;
+                best = key;
+            }
+        }
+        return best;
+    }
+
     public string Describe()
     {
-        string text = string.Format(System.Globalization.CultureInfo.InvariantCulture,
-            "{0} player(s), {1} tiles; heights from {2} loaded or previewed columns ({3} were rain "
-            + "heights from old saves); {4} lattice probes ({5} already hold terrain); previews {6} "
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        string text = string.Format(culture,
+            "{0} player(s), {1} tiles in memory; heights from {2} loaded or previewed columns ({3} were "
+            + "rain heights from old saves); {4} lattice probes ({5} already hold terrain); previews {6} "
             + "issued, {7} landed, {8} without heights, {9} timed out, {10} in flight; held {11} ticks "
             + "for other generation; {12} tile messages sent ({13:0.0} KB)",
             demands.Count, tiles.Count, CapturedColumns, RainColumns, Probed, Existing, Peeked, Landed,
             Empty, TimedOut, peeksInFlight.Count, YieldTicks, TilesSent, BytesSent / 1024.0);
+        if (store == null)
+        {
+            text += openStore != null
+                ? "; no tile store yet: this world gets one the first time a player asks for silhouettes"
+                : "; no tile store, so nothing is kept after this session";
+        }
+        else
+        {
+            text += string.Format(culture,
+                "; tile store {0}: {1} tiles stored, {2} read back, {3} saves this session ({4} waiting for "
+                + "the next world save, {5} being written), {6} let go from memory, {7:0.0} MiB on disk{8}",
+                store.OpenFailed ? "FAILED to open" : "open",
+                Math.Max(store.StoredTiles, storedBeforeSession?.Count ?? 0), StoreReads, TilesSaved,
+                dirtyTiles.Count, store.PendingSaves, Evicted, store.FileBytes / (1024.0 * 1024.0),
+                store.SaveErrors + store.ReadErrors + store.Undecodable == 0 ? ""
+                    : string.Format(culture, ", {0} save errors, {1} read errors, {2} undecodable rows",
+                        store.SaveErrors, store.ReadErrors, store.Undecodable));
+        }
         if (!generatorWatch.Stalled) return text;
-        return text + string.Format(System.Globalization.CultureInfo.InvariantCulture,
+        return text + string.Format(culture,
             "; STOPPED for this session: the world generator went silent for {0} s ({1} answers came "
             + "back later)", (generatorWatch.StalledAtMs - generatorWatch.SilentSinceMs) / 1000,
             generatorWatch.LateAnswers);

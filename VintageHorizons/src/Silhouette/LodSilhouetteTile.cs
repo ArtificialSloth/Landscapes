@@ -206,6 +206,54 @@ public sealed class LodSilhouetteTile
         }
     }
 
+    /// <summary>A deep copy, for another thread to encode while this one keeps changing.</summary>
+    public LodSilhouetteTile Snapshot()
+    {
+        var copy = new LodSilhouetteTile(TileX, TileZ, Revision) { KnownCells = KnownCells };
+        for (int slot = 0; slot < chunks.Length; slot++)
+        {
+            ChunkData? cells = chunks[slot];
+            if (cells == null) continue;
+            var target = copy.chunks[slot] = new ChunkData();
+            cells.Origins.CopyTo(target.Origins, 0);
+            cells.Heights.CopyTo(target.Heights, 0);
+        }
+        return copy;
+    }
+
+    /// <summary>
+    /// Take from an older copy of this tile every cell this one does not know, and every cell
+    /// the older copy knows from a strictly better source. Where both know a cell from the same
+    /// source, this copy's height stands, because it is the newer one. The revision becomes the
+    /// larger of the two, plus one if anything changed, so it never goes backwards. True when
+    /// this tile changed.
+    /// </summary>
+    public bool MergeFrom(LodSilhouetteTile older)
+    {
+        if (older.TileX != TileX || older.TileZ != TileZ)
+            throw new ArgumentException("Only copies of the same tile merge.", nameof(older));
+        bool changed = false;
+        for (int slot = 0; slot < chunks.Length; slot++)
+        {
+            ChunkData? source = older.chunks[slot];
+            if (source == null) continue;
+            ChunkData target = chunks[slot] ??= new ChunkData();
+            for (int i = 0; i < ChunkCells; i++)
+            {
+                var from = (EnumSilhouetteOrigin)source.Origins[i];
+                if (from == EnumSilhouetteOrigin.Unknown) continue;
+                var held = (EnumSilhouetteOrigin)target.Origins[i];
+                if (held != EnumSilhouetteOrigin.Unknown && Rank(from) >= Rank(held)) continue;
+                if (held == EnumSilhouetteOrigin.Unknown) KnownCells++;
+                target.Origins[i] = source.Origins[i];
+                target.Heights[i] = source.Heights[i];
+                changed = true;
+            }
+        }
+        Revision = Math.Max(Revision, older.Revision) + (changed ? 1 : 0);
+        return changed;
+    }
+
     /// <summary>
     /// Format byte, then deflated: the 2-bit state of all 16,384 cells in row-major order (four
     /// to a byte, lowest bits first), then the height of every known cell in the same order,
