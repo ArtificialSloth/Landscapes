@@ -6,7 +6,7 @@ namespace VintageHorizons;
 /// <summary>
 /// Horizon silhouettes, first look (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P1): session-only,
 /// off until `.vhsilhouette on`, and available only where the server advertises the feature,
-/// which in this build means singleplayer and LAN-hosted worlds.
+/// which means singleplayer/LAN by default and dedicated servers whose admin opts in.
 /// </summary>
 public partial class VintageHorizonsModSystem
 {
@@ -17,9 +17,14 @@ public partial class VintageHorizonsModSystem
     {
         silhouettes = new LodSilhouetteClient(Mod.Logger,
             () => assist?.SilhouettesAvailable == true,
-            (on, reach) => assist?.SendSilhouetteRequest(on, reach));
+            (on, reach, session) => assist?.SendSilhouetteRequest(on, reach, session) == true,
+            (keys, session) => assist?.SendSilhouetteTileRequest(keys, session) == true);
         renderer.Silhouettes = silhouettes;
-        if (assist != null) assist.SilhouetteTileArrived = silhouettes.OnTileArrived;
+        if (assist != null)
+        {
+            assist.SilhouetteManifestArrived = silhouettes.OnManifestArrived;
+            assist.SilhouetteTileArrived = silhouettes.OnTileArrived;
+        }
     }
 
     void PumpSilhouettes()
@@ -39,7 +44,7 @@ public partial class VintageHorizonsModSystem
     {
         capi.ChatCommands.Create("vhsilhouette")
             .WithDescription("Horizon silhouettes, first look: on, off, log or stats. This session "
-                + "only, and only where the server offers them (singleplayer in this build).")
+                + "only, and only where the server offers them.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("action"))
             .HandleWith(args =>
             {
@@ -75,13 +80,14 @@ public partial class VintageHorizonsModSystem
             return "horizon silhouettes are unavailable while another LOD mod draws.";
         LodSilhouetteClient s = silhouettes;
         string server = assist?.SilhouettesAvailable != true
-            ? "does not offer them (this build offers them in singleplayer only)"
+            ? "does not offer them"
             : s.RequestSent
                 ? $"was asked for a {s.ReachBlocks:N0}-block reach"
                 : "offers them";
         return $"horizon silhouettes {(s.Enabled ? "on" : "off")} (first look, this session only). "
-            + $"The server {server}. {s.TileCount} tiles held ({s.TilesReceived} received, "
-            + $"{s.TilesRejected} refused), {s.KnownCells:N0} cells with heights, "
+            + $"The server {server}. {s.TileCount} tiles held of {s.OfferedTiles} offered "
+            + $"({s.TilesInFlight} requested, {s.TilesRefused} refused, {s.TilesRejected} corrupt), "
+            + $"{s.KnownCells:N0} cells with heights, "
             + $"{renderer.SilhouetteMeshCount} meshes ({s.PendingMeshes} waiting, {s.EmptyMeshes} "
             + $"with nothing to draw), {renderer.SilhouetteDrawsLastFrame} drawn last frame. "
             + $"Shader: {renderer.SilhouetteShaderState}.";

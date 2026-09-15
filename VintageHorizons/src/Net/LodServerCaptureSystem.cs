@@ -1296,6 +1296,31 @@ public class LodServerCaptureSystem : ModSystem
         }
     }
 
+    /// <summary>The named authority, so automatic producers can prove they yield to every owner.</summary>
+    public EnumWorldGenAuthority GenerationAuthority
+    {
+        get
+        {
+            RefreshWorldGenAuthority();
+            return worldGenAuthority.Current;
+        }
+    }
+
+    /// <summary>
+    /// Shared pressure gates for automatic preview producers. No job-specific pause, fault, or
+    /// kept-column count is invented here; the common server, capture, save, and engine gates are
+    /// the ones an independent producer can truthfully observe.
+    /// </summary>
+    public EnumWorldGenGate AutomaticGenerationGate => pipeline == null
+        ? EnumWorldGenGate.None
+        : LodWorldGenGates.Select(paused: false, faulted: false,
+            serverOverloaded: Environment.TickCount64 < overloadedUntilMs,
+            pipeline.CaptureBacklogFull, pipeline.DirtySections,
+            Config.WorldGenDirtySectionLimit, pipeline.OldestDirtyAgeMs,
+            Config.WorldGenOldestDirtySeconds * 1000L,
+            sapi.WorldManager.CurrentGeneratingChunkCount, Config.WorldGenQueueTarget,
+            inFlight: 0, maxInFlight: int.MaxValue);
+
     void RefreshWorldGenAuthority()
     {
         if (pregen is { Done: true })

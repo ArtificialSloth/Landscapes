@@ -60,6 +60,26 @@ public static class LodAssist
     public const int MaxSectionsPerSecondTotal = 32;
 
     /// <summary>
+    /// Silhouette tiles are much smaller than terrain sections, but decoding and remeshing still
+    /// need an explicit client-side bound. Requests are batched at this size and retain their
+    /// slots until success, refusal, or a retryable answer arrives.
+    /// </summary>
+    public const int MaxSilhouetteTilesInFlight = 16;
+
+    /// <summary>Per-player tile replies per second, enforced by the server.</summary>
+    public const int MaxSilhouetteTilesPerSecondPerPlayer = 20;
+
+    /// <summary>Total tile replies per second across all players, enforced by the server.</summary>
+    public const int MaxSilhouetteTilesPerSecondTotal = 80;
+
+    /// <summary>
+    /// Append-only silhouette delivery generation. Zero is the 0.4.77 direct-push prototype;
+    /// one is the manifest/request path. Carrying this in the request preserves old-client
+    /// interoperability without changing the channel's message order or protocol number.
+    /// </summary>
+    public const int SilhouetteTransportVersion = 1;
+
+    /// <summary>
     /// Append-only capabilities advertised by <see cref="AssistWelcome.Features"/>. An older
     /// server sends zero; an older client ignores the field. Capability and terrain serving are
     /// separate so an admin may disable map sharing while still allowing explicit generation.
@@ -157,6 +177,8 @@ public class AssistServerSettings
     [ProtoMember(22)] public int WorldGenDirtySectionLimit;
     [ProtoMember(23)] public int WorldGenOldestDirtySeconds;
     [ProtoMember(24)] public bool SilhouetteUseAccelerators;
+    [ProtoMember(25)] public int SilhouetteReachBlocks;
+    [ProtoMember(26)] public int SilhouettePreviewsPerSecond;
 
     public static AssistServerSettings From(LodServerConfig config) => new()
     {
@@ -184,6 +206,8 @@ public class AssistServerSettings
         WorldGenDirtySectionLimit = config.WorldGenDirtySectionLimit,
         WorldGenOldestDirtySeconds = config.WorldGenOldestDirtySeconds,
         SilhouetteUseAccelerators = config.SilhouetteUseAccelerators,
+        SilhouetteReachBlocks = config.SilhouetteReachBlocks,
+        SilhouettePreviewsPerSecond = config.SilhouettePreviewsPerSecond,
     };
 }
 
@@ -371,12 +395,14 @@ public class AssistSilhouetteRequest
     [ProtoMember(1)] public bool Enabled;
     [ProtoMember(2)] public int ReachBlocks;
     [ProtoMember(3)] public string ModVersion = "";
+    [ProtoMember(4)] public int TransportVersion;
+    [ProtoMember(5)] public long SessionId;
 }
 
 /// <summary>
 /// Server -> client: silhouette tile keys with their revisions, chunked with sequence/last like
-/// <see cref="AssistKeyManifest"/>. Registered now so the message order is final; the first-look
-/// build pushes tiles instead and sends none of these.
+/// <see cref="AssistKeyManifest"/>. A direct-push fallback remains only for older clients that
+/// predate the final manifest/request transport.
 /// </summary>
 [ProtoContract]
 public class AssistSilhouetteManifest
@@ -385,6 +411,7 @@ public class AssistSilhouetteManifest
     [ProtoMember(2)] public bool Last;
     [ProtoMember(3)] public long[] Keys = Array.Empty<long>();
     [ProtoMember(4)] public int[] Revisions = Array.Empty<int>();
+    [ProtoMember(5)] public long SessionId;
 }
 
 /// <summary>Client -> server: send these silhouette tiles. Every key is answered.</summary>
@@ -392,6 +419,7 @@ public class AssistSilhouetteManifest
 public class AssistSilhouetteTileRequest
 {
     [ProtoMember(1)] public long[] Keys = Array.Empty<long>();
+    [ProtoMember(2)] public long SessionId;
 }
 
 /// <summary>
@@ -406,4 +434,12 @@ public class AssistSilhouetteTile
     [ProtoMember(3)] public int Revision;
     [ProtoMember(4)] public byte[] Payload = Array.Empty<byte>();
     [ProtoMember(5)] public bool Retryable;
+    [ProtoMember(6)] public long SessionId;
+
+    /// <summary>
+    /// Exact requested key, including malformed/refused keys whose coordinates cannot encode the
+    /// same value. A legacy reply is identified by SessionId zero and derives its key from the
+    /// coordinates instead.
+    /// </summary>
+    [ProtoMember(7)] public long Key;
 }

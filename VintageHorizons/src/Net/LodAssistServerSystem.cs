@@ -30,7 +30,7 @@ public class LodAssistServerSystem : ModSystem
 
     /// <summary>
     /// Horizon silhouettes: created when the world runs, where the server config allows them
-    /// (singleplayer and LAN-hosted worlds in this build), or on a dedicated test server that
+    /// (singleplayer and LAN-hosted worlds by default, dedicated when explicitly enabled), or on a dedicated test server that
     /// measures their heights (LodServerConfig.MeasureSilhouettesVariable).
     /// </summary>
     LodSilhouetteBuilder? silhouettes;
@@ -77,7 +77,8 @@ public class LodAssistServerSystem : ModSystem
             .SetMessageHandler<AssistHello>(OnHello)
             .SetMessageHandler<AssistSectionRequest>(OnSectionRequest)
             .SetMessageHandler<AssistWorldGenRequest>(OnWorldGenRequest)
-            .SetMessageHandler<AssistSilhouetteRequest>(OnSilhouetteRequest);
+            .SetMessageHandler<AssistSilhouetteRequest>(OnSilhouetteRequest)
+            .SetMessageHandler<AssistSilhouetteTileRequest>(OnSilhouetteTileRequest);
 
         // Decided when the world runs rather than here: the server config is loaded by the
         // capture system, and nothing orders its start before this one's.
@@ -199,6 +200,46 @@ public class LodAssistServerSystem : ModSystem
             if (silhouettes == null || !silhouettesOffered || !ledger.HasGreeted(fromPlayer.PlayerUID)) return;
             silhouettes.Request(fromPlayer, request);
         }, "vintagehorizons-silhouette-request");
+    }
+
+    void OnSilhouetteTileRequest(IServerPlayer fromPlayer, AssistSilhouetteTileRequest request)
+    {
+        sapi.Event.EnqueueMainThreadTask(() =>
+        {
+            if (silhouettes == null || !silhouettesOffered || !ledger.HasGreeted(fromPlayer.PlayerUID))
+                return;
+            silhouettes.RequestTiles(fromPlayer, request);
+        }, "vintagehorizons-silhouette-tile-request");
+    }
+
+    bool SendSilhouetteManifest(IServerPlayer player, AssistSilhouetteManifest manifest)
+    {
+        try
+        {
+            channel.SendPacket(manifest, player);
+            return true;
+        }
+        catch (Exception e)
+        {
+            Mod.Logger.Warning("Horizon silhouettes: a manifest could not be sent to {0}: {1}",
+                player.PlayerName, e.Message);
+            return false;
+        }
+    }
+
+    bool SendSilhouetteTile(IServerPlayer player, AssistSilhouetteTile tile)
+    {
+        try
+        {
+            channel.SendPacket(tile, player);
+            return true;
+        }
+        catch (Exception e)
+        {
+            Mod.Logger.Warning("Horizon silhouettes: a tile reply could not be sent to {0}: {1}",
+                player.PlayerName, e.Message);
+            return false;
+        }
     }
 
     void HandleWorldGenRequest(IServerPlayer player, AssistWorldGenRequest request)
@@ -971,11 +1012,16 @@ public class LodAssistServerSystem : ModSystem
             Mod.Logger.Notification("Horizon silhouettes: optional height accelerators are disabled in the server config; using engine previews.");
         }
         silhouettes = new LodSilhouetteBuilder(sapi, Mod.Logger,
-            () => sapi.ModLoader.GetModSystem<LodServerCaptureSystem>()?.GenerationAuthorityBusy == true,
-            (player, tile) => channel.SendPacket(tile, player), store,
+            () => sapi.ModLoader.GetModSystem<LodServerCaptureSystem>()?.GenerationAuthority
+                ?? EnumWorldGenAuthority.None,
+            () => sapi.ModLoader.GetModSystem<LodServerCaptureSystem>()?.AutomaticGenerationGate
+                ?? EnumWorldGenGate.None,
+            SendSilhouetteManifest, SendSilhouetteTile, store,
             storePath == null ? null : () => OpenSilhouetteStore(storePath),
             // ModLogger's prefix: the mod's own log lines never count as worldgen errors.
-            "[" + Mod.Info.ModID + "]", accelerator, sapi.World.SeaLevel);
+            "[" + Mod.Info.ModID + "]", accelerator, sapi.World.SeaLevel,
+            sapi.Server.IsDedicated ? config.SilhouetteReachBlocks : LodSilhouetteBuilder.MaxReachBlocks,
+            config.SilhouettePreviewsPerSecond);
         sapi.Event.ChunkColumnLoaded += OnColumnLoadedForSilhouettes;
         sapi.Event.GameWorldSave += OnSilhouettesWorldSave;
     }
@@ -1021,8 +1067,7 @@ public class LodAssistServerSystem : ModSystem
         TextCommandResult Status()
         {
             string line = "[VintageHorizons] Horizon silhouettes: " + (silhouettes == null
-                ? "off on this server (EnableSilhouettes in ModConfig/vintagehorizons-server.json; "
-                    + "dedicated servers are not offered them yet)"
+                ? "off on this server (EnableSilhouettes in ModConfig/vintagehorizons-server.json)"
                 : (silhouettesOffered ? "" : "measuring heights only, players are offered none; ")
                     + silhouettes.Describe()) + ".";
             // Chat cannot be copied, so the same line always reaches the log.

@@ -9,7 +9,7 @@ using VintageHorizons.Net;
 namespace VintageHorizons.Silhouette;
 
 /// <summary>
-/// Server half of horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P1-P2).
+/// Server half of horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P1-P3).
 ///
 /// Heights come from three places, in quality order. Captured terrain and engine previews outrank
 /// an accepted optional accelerator. Watersheds is preferred when both supported accelerators are
@@ -64,7 +64,7 @@ internal sealed class LodSilhouetteBuilder
     /// </summary>
     public const int YieldGeneratingChunks = 8;
 
-    public const int TilesPerSecondPerPlayer = 20;
+    public const int TilesPerSecondPerPlayer = LodAssist.MaxSilhouetteTilesPerSecondPerPlayer;
 
     /// <summary>
     /// Tiles held in RAM above which saved tiles no reach covers are let go. An 8,192-block reach
@@ -79,10 +79,14 @@ internal sealed class LodSilhouetteBuilder
 
     readonly ICoreServerAPI sapi;
     readonly ILogger logger;
-    readonly Func<bool> authorityBusy;
-    readonly Action<IServerPlayer, AssistSilhouetteTile> send;
+    readonly Func<EnumWorldGenAuthority> generationAuthority;
+    readonly Func<EnumWorldGenGate> generationGate;
+    readonly System.Func<IServerPlayer, AssistSilhouetteManifest, bool> sendManifest;
+    readonly System.Func<IServerPlayer, AssistSilhouetteTile, bool> sendTile;
     readonly ILodHeightAccelerator? accelerator;
     readonly int seaLevel;
+    readonly int maxReachBlocks;
+    readonly int previewsPerSecond;
     readonly SemaphoreSlim acceleratorCallGate = new(1, 1);
     LodSilhouetteStore? store;
     Func<LodSilhouetteStore?>? openStore;
@@ -95,8 +99,13 @@ internal sealed class LodSilhouetteBuilder
         public int CentreI, CentreJ;
         public int SpiralIndex, SpiralTotal;
         public bool Exhausted;
-        public readonly Dictionary<long, int> Sent = new();
+        public int TransportVersion;
+        public long SessionId;
+        public int ManifestSequence;
+        public bool ManifestPending;
+        public readonly Dictionary<long, int> Offered = new();
         public readonly HashSet<long> Queued = new();
+        public readonly Queue<(long Key, long SessionId)> Requests = new();
         public readonly LodTickAllowance SendAllowance = new();
     }
 
@@ -118,10 +127,12 @@ internal sealed class LodSilhouetteBuilder
     readonly ConcurrentQueue<AcceleratorResult> acceleratorResults = new();
     readonly List<long> stale = new();
     readonly LodTickAllowance previewAllowance = new();
+    readonly LodTickAllowance tileSendAllowance = new();
     readonly LodGenerationStallWatch generatorWatch = new();
     readonly LodWorldgenErrorBrake errorBrake;
     LogEntryDelegate? logWatcher;
     int probesInFlight;
+    int nextSendDemand;
     long listenerId;
     bool listening;
     bool firstPeekReported;
@@ -141,6 +152,7 @@ internal sealed class LodSilhouetteBuilder
     readonly List<long> evictable = new();
 
     public int Probed, Existing, Peeked, Landed, Empty, TimedOut, YieldTicks, TilesSent;
+    public int ManifestsSent, TilesRequested, TilesRefused, TilesRetryable;
     public int AcceleratorTilesIssued, AcceleratorTilesLanded, AcceleratorCells, AcceleratorFailures,
         CoastPreviews;
     public int CapturedColumns, RainColumns, StoreReads, TilesSaved, Evicted;
@@ -149,17 +161,24 @@ internal sealed class LodSilhouetteBuilder
     /// <param name="store">The world's tile store, when its file already exists.</param>
     /// <param name="openStore">Creates the store on the first request, for a world that has none.</param>
     /// <param name="ownLogMarker">Marks the mod's own log lines, which never count as worldgen errors.</param>
-    public LodSilhouetteBuilder(ICoreServerAPI sapi, ILogger logger, Func<bool> authorityBusy,
-        Action<IServerPlayer, AssistSilhouetteTile> send, LodSilhouetteStore? store,
+    public LodSilhouetteBuilder(ICoreServerAPI sapi, ILogger logger,
+        Func<EnumWorldGenAuthority> generationAuthority, Func<EnumWorldGenGate> generationGate,
+        System.Func<IServerPlayer, AssistSilhouetteManifest, bool> sendManifest,
+        System.Func<IServerPlayer, AssistSilhouetteTile, bool> sendTile, LodSilhouetteStore? store,
         Func<LodSilhouetteStore?>? openStore, string? ownLogMarker,
-        ILodHeightAccelerator? accelerator = null, int? seaLevel = null)
+        ILodHeightAccelerator? accelerator = null, int? seaLevel = null,
+        int maxReachBlocks = MaxReachBlocks, int previewsPerSecond = PreviewsPerSecond)
     {
         this.sapi = sapi;
         this.logger = logger;
-        this.authorityBusy = authorityBusy;
-        this.send = send;
+        this.generationAuthority = generationAuthority;
+        this.generationGate = generationGate;
+        this.sendManifest = sendManifest;
+        this.sendTile = sendTile;
         this.accelerator = accelerator;
         this.seaLevel = seaLevel ?? sapi.World.SeaLevel;
+        this.maxReachBlocks = Math.Clamp(maxReachBlocks, MinReachBlocks, MaxReachBlocks);
+        this.previewsPerSecond = Math.Clamp(previewsPerSecond, 1, 64);
         this.store = store;
         this.openStore = store == null ? openStore : null;
         errorBrake = new LodWorldgenErrorBrake(ownLogMarker);
@@ -186,8 +205,8 @@ internal sealed class LodSilhouetteBuilder
             openStore = null;
         }
 
-        int reach = Math.Clamp(request.ReachBlocks <= 0 ? DefaultReachBlocks : request.ReachBlocks,
-            MinReachBlocks, MaxReachBlocks);
+        int askedReach = request.ReachBlocks <= 0 ? DefaultReachBlocks : request.ReachBlocks;
+        int reach = Math.Clamp(askedReach, MinReachBlocks, maxReachBlocks);
         if (!demands.TryGetValue(player.PlayerUID, out Demand? demand))
         {
             demand = new Demand { Player = player };
@@ -195,8 +214,19 @@ internal sealed class LodSilhouetteBuilder
             demandOrder.Add(player.PlayerUID);
         }
         demand.Player = player;
+        bool newSession = demand.SessionId != request.SessionId
+            || demand.TransportVersion != request.TransportVersion;
+        demand.TransportVersion = request.TransportVersion;
+        demand.SessionId = request.SessionId;
+        if (newSession)
+        {
+            demand.ManifestSequence = 0;
+            demand.Offered.Clear();
+            demand.Queued.Clear();
+        }
         demand.ReachBlocks = reach;
         Recentre(demand, force: true);
+        demand.ManifestPending = demand.TransportVersion >= LodAssist.SilhouetteTransportVersion;
         string source = accelerator == null
             ? "using one engine preview in each 512-block region"
             : $"sampling every {LodSilhouetteAcceleratorSampling.CoarseSpacingBlocks} blocks with "
@@ -205,7 +235,27 @@ internal sealed class LodSilhouetteBuilder
             "Horizon silhouettes: {0} asked for a {1:N0}-block reach, {2}, nearest first, heights "
             + "only; nothing is written to the savegame.",
             player.PlayerName, reach, source);
+        if (reach != askedReach)
+            logger.Notification("Horizon silhouettes: {0}'s requested reach was clamped from {1:N0} "
+                + "to this server's {2:N0}-block ceiling.", player.PlayerName, askedReach, reach);
         EnsureListening();
+    }
+
+    /// <summary>Main thread: retain every accepted key until it receives one explicit answer.</summary>
+    public void RequestTiles(IServerPlayer player, AssistSilhouetteTileRequest request)
+    {
+        long[] keys = request.Keys ?? Array.Empty<long>();
+        if (!demands.TryGetValue(player.PlayerUID, out Demand? demand))
+        {
+            foreach (long key in keys) SendRefusal(player, key, request.SessionId, retryable: false);
+            return;
+        }
+        foreach (long key in keys)
+        {
+            demand.Requests.Enqueue((key, request.SessionId));
+            TilesRequested++;
+        }
+        if (keys.Length > 0) EnsureListening();
     }
 
     /// <summary>Main thread. True when the player had a demand.</summary>
@@ -310,7 +360,8 @@ internal sealed class LodSilhouetteBuilder
         ExpireStuckPeeks(now);
         foreach (Demand demand in demands.Values) Recentre(demand, force: false);
         IssueWork(now);
-        SendTiles(now);
+        SendOffers();
+        ServeTiles(now);
         if (now >= nextStatusLogMs)
         {
             nextStatusLogMs = now + StatusLogIntervalMs;
@@ -602,12 +653,20 @@ internal sealed class LodSilhouetteBuilder
         demand.SpiralIndex = 0;
         demand.Exhausted = false;
 
+        // An offer is a statement about the current reach, not a permanent map grant. Forget old
+        // directions so returning later re-offers them after the client has pruned its RAM set.
+        foreach (long key in demand.Offered.Keys
+            .Where(key => !CoversTile(demand, LodWorld.KeySx(key), LodWorld.KeySz(key))).ToArray())
+            demand.Offered.Remove(key);
+        demand.Queued.RemoveWhere(key =>
+            !CoversTile(demand, LodWorld.KeySx(key), LodWorld.KeySz(key)));
+
         // Anything already built that the player now reaches and does not hold goes out again,
         // and stored tiles they now reach are read back.
         foreach (KeyValuePair<long, LodSilhouetteTile> entry in tiles)
         {
             if (!Covers(demand, entry.Value)) continue;
-            if (demand.Sent.TryGetValue(entry.Key, out int revision) && revision == entry.Value.Revision)
+            if (demand.Offered.TryGetValue(entry.Key, out int revision) && revision == entry.Value.Revision)
                 continue;
             demand.Queued.Add(entry.Key);
         }
@@ -635,8 +694,8 @@ internal sealed class LodSilhouetteBuilder
     {
         // Until the store has said what it holds, any preview might repeat one already paid for.
         if (store != null && storedBeforeSession == null) return;
-        if (authorityBusy()
-            || sapi.WorldManager.CurrentGeneratingChunkCount >= YieldGeneratingChunks)
+        if (MustYield(generationAuthority(), generationGate(),
+                sapi.WorldManager.CurrentGeneratingChunkCount))
         {
             YieldTicks++;
             return;
@@ -646,7 +705,7 @@ internal sealed class LodSilhouetteBuilder
         // Only previews spend the rate: they are the worldgen cost. Probes are existence reads,
         // bounded by their own in-flight cap and by the short queue of empty positions. A stopped
         // generator does not stop the independent accelerator path.
-        int allowance = previewAllowance.Available(now, PreviewsPerSecond);
+        int allowance = previewAllowance.Available(now, previewsPerSecond);
         var budget = new LodWorkBudget(TickWorkBudgetMs);
         int peeks = 0;
         while (previewsAvailable && peeks < allowance && pendingPeeks.Count > 0
@@ -676,6 +735,10 @@ internal sealed class LodSilhouetteBuilder
             }
         }
     }
+
+    internal static bool MustYield(EnumWorldGenAuthority authority, EnumWorldGenGate gate,
+        int generatingChunks) => authority != EnumWorldGenAuthority.None
+        || gate != EnumWorldGenGate.None || generatingChunks >= YieldGeneratingChunks;
 
     EnumProbeStep ProbeNext(Demand demand, bool previewsAvailable)
     {
@@ -856,34 +919,159 @@ internal sealed class LodSilhouetteBuilder
             + "({1} total). Those positions stay without heights this session.", stale.Count, TimedOut);
     }
 
-    void SendTiles(long now)
+    /// <summary>
+    /// Offer current revisions without encoding their payloads. One protocol-sized manifest per
+    /// player per tick bounds the owner-thread work; later tile changes are ordinary delta chunks.
+    /// The direct-push branch exists only for clients from before the final transport landed.
+    /// </summary>
+    void SendOffers()
     {
         foreach (Demand demand in demands.Values)
         {
-            if (demand.Queued.Count == 0) continue;
-            int allowance = demand.SendAllowance.Available(now, TilesPerSecondPerPlayer);
-            int sent = 0;
-            while (sent < allowance && demand.Queued.Count > 0)
+            if (demand.TransportVersion < LodAssist.SilhouetteTransportVersion) continue;
+            if (demand.Queued.Count == 0 && !demand.ManifestPending) continue;
+
+            long[] ordered = demand.Queued
+                .OrderBy(key => DistanceSq(demand, key))
+                .Take(LodAssist.ManifestKeysPerMessage)
+                .ToArray();
+            var keys = new List<long>(ordered.Length);
+            var revisions = new List<int>(ordered.Length);
+            foreach (long key in ordered)
             {
-                long key = NearestQueued(demand);
-                demand.Queued.Remove(key);
                 if (!tiles.TryGetValue(key, out LodSilhouetteTile? tile)) continue;
-                if (demand.Sent.TryGetValue(key, out int revision) && revision == tile.Revision) continue;
-                byte[] payload = tile.Encode();
-                send(demand.Player, new AssistSilhouetteTile
-                {
-                    TileX = tile.TileX,
-                    TileZ = tile.TileZ,
-                    Revision = tile.Revision,
-                    Payload = payload,
-                });
-                demand.Sent[key] = tile.Revision;
-                sent++;
-                TilesSent++;
-                BytesSent += payload.Length;
+                if (demand.Offered.TryGetValue(key, out int revision) && revision == tile.Revision) continue;
+                keys.Add(key);
+                revisions.Add(tile.Revision);
             }
-            demand.SendAllowance.Spend(sent);
+            bool last = ordered.Length == demand.Queued.Count;
+            var message = new AssistSilhouetteManifest
+            {
+                Sequence = demand.ManifestSequence,
+                Last = last,
+                Keys = keys.ToArray(),
+                Revisions = revisions.ToArray(),
+                SessionId = demand.SessionId,
+            };
+            if (!sendManifest(demand.Player, message)) continue;
+            foreach (long key in ordered) demand.Queued.Remove(key);
+            for (int i = 0; i < keys.Count; i++) demand.Offered[keys[i]] = revisions[i];
+            demand.ManifestSequence++;
+            demand.ManifestPending = !last;
+            ManifestsSent++;
         }
+    }
+
+    /// <summary>
+    /// Serve at most one reply per player per tick, rotating who starts. The independent global
+    /// allowance caps aggregate work while the per-player allowances prevent one client taking it.
+    /// Legacy pushes use the same caps.
+    /// </summary>
+    void ServeTiles(long now)
+    {
+        if (demandOrder.Count == 0) return;
+        int global = tileSendAllowance.Available(now, LodAssist.MaxSilhouetteTilesPerSecondTotal);
+        int sent = 0;
+        int visited = 0;
+        int start = nextSendDemand % demandOrder.Count;
+        while (sent < global && visited < demandOrder.Count)
+        {
+            int index = (start + visited++) % demandOrder.Count;
+            if (!demands.TryGetValue(demandOrder[index], out Demand? demand)) continue;
+            int allowance = demand.SendAllowance.Available(now, TilesPerSecondPerPlayer);
+            if (allowance <= 0) continue;
+
+            bool used = demand.TransportVersion < LodAssist.SilhouetteTransportVersion
+                ? SendLegacyTile(demand)
+                : SendRequestedTile(demand);
+            if (!used) continue;
+            demand.SendAllowance.Spend(1);
+            sent++;
+        }
+        tileSendAllowance.Spend(sent);
+        nextSendDemand = (start + 1) % Math.Max(1, demandOrder.Count);
+    }
+
+    bool SendLegacyTile(Demand demand)
+    {
+        while (demand.Queued.Count > 0)
+        {
+            long key = NearestQueued(demand);
+            if (!tiles.TryGetValue(key, out LodSilhouetteTile? tile))
+            {
+                demand.Queued.Remove(key);
+                continue;
+            }
+            if (demand.Offered.TryGetValue(key, out int revision) && revision == tile.Revision)
+            {
+                demand.Queued.Remove(key);
+                continue;
+            }
+            byte[] payload = tile.Encode();
+            if (!sendTile(demand.Player, TileMessage(tile, payload, sessionId: 0))) return false;
+            demand.Queued.Remove(key);
+            demand.Offered[key] = tile.Revision;
+            TilesSent++;
+            BytesSent += payload.Length;
+            return true;
+        }
+        return false;
+    }
+
+    bool SendRequestedTile(Demand demand)
+    {
+        if (demand.Requests.Count == 0) return false;
+        (long key, long sessionId) = demand.Requests.Peek();
+        if (sessionId != demand.SessionId || LodWorld.KeyLevel(key) != LodSilhouetteTile.Level
+            || !demand.Offered.ContainsKey(key)
+            || !CoversTile(demand, LodWorld.KeySx(key), LodWorld.KeySz(key)))
+        {
+            if (!SendRefusal(demand.Player, key, sessionId, retryable: false)) return false;
+            demand.Requests.Dequeue();
+            return true;
+        }
+        if (!tiles.TryGetValue(key, out LodSilhouetteTile? tile))
+        {
+            if (IsStored(key)) WantLoad(key);
+            if (!SendRefusal(demand.Player, key, sessionId, retryable: IsStored(key))) return false;
+            demand.Requests.Dequeue();
+            return true;
+        }
+
+        byte[] payload = tile.Encode();
+        if (!sendTile(demand.Player, TileMessage(tile, payload, sessionId))) return false;
+        demand.Requests.Dequeue();
+        TilesSent++;
+        BytesSent += payload.Length;
+        return true;
+    }
+
+    static AssistSilhouetteTile TileMessage(LodSilhouetteTile tile, byte[] payload, long sessionId) => new()
+    {
+        TileX = tile.TileX,
+        TileZ = tile.TileZ,
+        Revision = tile.Revision,
+        Payload = payload,
+        SessionId = sessionId,
+        Key = tile.Key,
+    };
+
+    bool SendRefusal(IServerPlayer player, long key, long sessionId, bool retryable)
+    {
+        int tileX = LodWorld.KeyLevel(key) == LodSilhouetteTile.Level ? LodWorld.KeySx(key) : 0;
+        int tileZ = LodWorld.KeyLevel(key) == LodSilhouetteTile.Level ? LodWorld.KeySz(key) : 0;
+        if (!sendTile(player, new AssistSilhouetteTile
+        {
+            TileX = tileX,
+            TileZ = tileZ,
+            Payload = Array.Empty<byte>(),
+            Retryable = retryable,
+            SessionId = sessionId,
+            Key = key,
+        })) return false;
+        if (retryable) TilesRetryable++;
+        else TilesRefused++;
+        return true;
     }
 
     long NearestQueued(Demand demand)
@@ -900,6 +1088,13 @@ internal sealed class LodSilhouetteBuilder
             best = key;
         }
         return best;
+    }
+
+    static double DistanceSq(Demand demand, long key)
+    {
+        double x = (LodWorld.KeySx(key) + 0.5) * LodSilhouetteTile.TileBlocks - demand.CentreX;
+        double z = (LodWorld.KeySz(key) + 0.5) * LodSilhouetteTile.TileBlocks - demand.CentreZ;
+        return x * x + z * z;
     }
 
     /// <summary>The key nearest to any requesting player.</summary>
@@ -972,6 +1167,9 @@ internal sealed class LodSilhouetteBuilder
             + "for other generation; {12} tile messages sent ({13:0.0} KB)",
             demands.Count, tiles.Count, CapturedColumns, RainColumns, Probed, Existing, Peeked, Landed,
             Empty, TimedOut, peeksInFlight.Count, YieldTicks, TilesSent, BytesSent / 1024.0);
+        text += string.Format(culture,
+            "; delivery {0} manifests, {1} tile requests, {2} explicit refusals, {3} retryable",
+            ManifestsSent, TilesRequested, TilesRefused, TilesRetryable);
         if (accelerator != null)
         {
             text += string.Format(culture,

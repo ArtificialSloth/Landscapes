@@ -51,7 +51,10 @@ public sealed class LodAssistClient
     /// <summary>True only when this server advertised silhouette tiles (plan 4.6).</summary>
     public bool SilhouettesAvailable => LodAssist.SilhouettesAvailable(serverProtocol, serverFeatures);
 
-    /// <summary>Called on the network thread for every silhouette tile the server pushes.</summary>
+    /// <summary>Called on the network thread for each silhouette manifest chunk.</summary>
+    public Action<AssistSilhouetteManifest>? SilhouetteManifestArrived { get; set; }
+
+    /// <summary>Called on the network thread for every silhouette tile reply.</summary>
     public Action<AssistSilhouetteTile>? SilhouetteTileArrived { get; set; }
 
     public bool CanControlWorldGeneration { get; private set; }
@@ -96,6 +99,7 @@ public sealed class LodAssistClient
             .SetMessageHandler<AssistKeyManifest>(OnKeyManifest)
             .SetMessageHandler<AssistSection>(OnSection)
             .SetMessageHandler<AssistWorldGenStatus>(OnWorldGenStatus)
+            .SetMessageHandler<AssistSilhouetteManifest>(OnSilhouetteManifest)
             .SetMessageHandler<AssistSilhouetteTile>(OnSilhouetteTile);
     }
 
@@ -177,15 +181,18 @@ public sealed class LodAssistClient
     internal void OnWorldGenStatus(AssistWorldGenStatus status) =>
         worldGenStatuses.Enqueue(status);
 
+    internal void OnSilhouetteManifest(AssistSilhouetteManifest manifest) =>
+        SilhouetteManifestArrived?.Invoke(manifest);
+
     internal void OnSilhouetteTile(AssistSilhouetteTile tile) => SilhouetteTileArrived?.Invoke(tile);
 
     /// <summary>
     /// Main thread. Nothing is sent unless the server advertised the feature, so a server without
     /// it is never sent a message id it did not register.
     /// </summary>
-    public void SendSilhouetteRequest(bool enabled, int reachBlocks)
+    public bool SendSilhouetteRequest(bool enabled, int reachBlocks, long sessionId)
     {
-        if (channel == null || !channel.Connected || !SilhouettesAvailable) return;
+        if (channel == null || !channel.Connected || !SilhouettesAvailable) return false;
         try
         {
             channel.SendPacket(new AssistSilhouetteRequest
@@ -193,12 +200,33 @@ public sealed class LodAssistClient
                 Enabled = enabled,
                 ReachBlocks = reachBlocks,
                 ModVersion = modVersion,
+                TransportVersion = LodAssist.SilhouetteTransportVersion,
+                SessionId = sessionId,
             });
+            return true;
         }
         catch (Exception e)
         {
             logger.Warning("VintageHorizons: the silhouette request failed, continuing without it: {0}",
                 e.Message);
+            return false;
+        }
+    }
+
+    /// <summary>Send one bounded batch selected by the owning silhouette client.</summary>
+    public bool SendSilhouetteTileRequest(long[] keys, long sessionId)
+    {
+        if (keys.Length == 0 || keys.Length > LodAssist.MaxSilhouetteTilesInFlight
+            || channel == null || !channel.Connected || !SilhouettesAvailable) return false;
+        try
+        {
+            channel.SendPacket(new AssistSilhouetteTileRequest { Keys = keys, SessionId = sessionId });
+            return true;
+        }
+        catch (Exception e)
+        {
+            logger.Warning("VintageHorizons: the silhouette tile request failed: {0}", e.Message);
+            return false;
         }
     }
 

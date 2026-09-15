@@ -1,4 +1,5 @@
 using VintageHorizons.Net;
+using VintageHorizons.Silhouette;
 
 namespace VintageHorizons.Checks;
 
@@ -88,12 +89,14 @@ public static class ConfigChecks
         // servers wait for the dedicated-server test (silhouette plan P3).
         c.True(config.EnableSilhouettes == null, "silhouettes are automatic by default");
         c.True(config.SilhouetteUseAccelerators, "accepted optional silhouette accelerators are on by default");
+        c.Eq(8192, config.SilhouetteReachBlocks, "dedicated silhouettes default to an 8,192-block ceiling");
+        c.Eq(16, config.SilhouettePreviewsPerSecond, "silhouette previews default to 16 per second");
         c.True(config.SilhouettesEnabled(isDedicated: false), "automatic means on in singleplayer and LAN-hosted worlds");
         c.False(config.SilhouettesEnabled(isDedicated: true), "automatic means off on a dedicated server");
         c.False(new LodServerConfig { EnableSilhouettes = false }.SilhouettesEnabled(isDedicated: false),
             "switching them off in the config switches them off in singleplayer too");
-        c.False(new LodServerConfig { EnableSilhouettes = true }.SilhouettesEnabled(isDedicated: true),
-            "dedicated servers are not offered silhouettes yet, whatever the config says");
+        c.True(new LodServerConfig { EnableSilhouettes = true }.SilhouettesEnabled(isDedicated: true),
+            "true explicitly opts a dedicated server into silhouettes");
         c.True(config.SilhouetteHeightsKept(isDedicated: true, measuring: true),
             "a dedicated test server measuring silhouettes keeps their heights");
         c.False(config.SilhouetteHeightsKept(isDedicated: true, measuring: false),
@@ -102,7 +105,7 @@ public static class ConfigChecks
             "measuring never overrides silhouettes switched off in the config");
         c.True(config.SilhouetteHeightsKept(isDedicated: false, measuring: false),
             "singleplayer keeps heights wherever it offers silhouettes");
-        c.True(config.Describe().Contains("silhouettes singleplayer and LAN only", StringComparison.Ordinal)
+        c.True(config.Describe().Contains("silhouettes automatic (singleplayer and LAN only)", StringComparison.Ordinal)
                 && config.Describe().Contains("silhouette accelerators on", StringComparison.Ordinal)
                 && new LodServerConfig { EnableSilhouettes = false }.Describe().Contains("silhouettes off",
                     StringComparison.Ordinal),
@@ -202,6 +205,16 @@ public static class ConfigChecks
             "the oldest-save gate retains a safety minimum");
         c.Eq(600, Sanitized(cfg => cfg.WorldGenOldestDirtySeconds = 99999).WorldGenOldestDirtySeconds,
             "the oldest-save gate is bounded at ten minutes");
+        c.Eq(LodSilhouetteBuilder.MinReachBlocks,
+            Sanitized(cfg => cfg.SilhouetteReachBlocks = -1).SilhouetteReachBlocks,
+            "a dedicated silhouette reach cannot fall below one tile ring's useful minimum");
+        c.Eq(LodSilhouetteBuilder.MaxReachBlocks,
+            Sanitized(cfg => cfg.SilhouetteReachBlocks = 99999).SilhouetteReachBlocks,
+            "a dedicated silhouette reach cannot exceed the distance scale");
+        c.Eq(1, Sanitized(cfg => cfg.SilhouettePreviewsPerSecond = 0).SilhouettePreviewsPerSecond,
+            "a zero silhouette preview rate cannot stall the builder");
+        c.Eq(64, Sanitized(cfg => cfg.SilhouettePreviewsPerSecond = 9999).SilhouettePreviewsPerSecond,
+            "the silhouette preview rate is bounded");
 
         // The cross-field clamp. A lowered ceiling must never leave a default the
         // command itself then refuses as out of range.

@@ -33,6 +33,8 @@ public static class SilhouetteChecks
         HeightComparisonArithmetic(c);
         PresampleAndMapFiles(c);
         AcceleratorSelectionAndSampling(c);
+        TileTransferState(c);
+        BuilderYieldRules(c);
     }
 
     public static void RunWiring(Check c)
@@ -45,9 +47,130 @@ public static class SilhouetteChecks
         StoredTilesAreReadBeforePreviewing(c);
         PreviewsStayFewPerRegion(c);
         AcceleratorComparisonWiring(c);
+        TileTransportWiring(c);
         UploadedUniformsAreDeclared(c);
         SamplerLayout(c);
         OffStateIsTheOldBehaviour(c);
+    }
+
+    /// <summary>The bounded manifest/request lifecycle, without a live network channel.</summary>
+    static void TileTransferState(Check c)
+    {
+        const long session = 47;
+        var state = new LodSilhouetteTransferState();
+        state.Reset(session);
+        long[] keys = Enumerable.Range(0, LodAssist.ManifestKeysPerMessage + 1)
+            .Select(i => LodSilhouetteTile.KeyOf(i - 1024, i % 7 - 3)).ToArray();
+        int[] revisions = Enumerable.Repeat(1, LodAssist.ManifestKeysPerMessage).ToArray();
+        c.True(state.Apply(new AssistSilhouetteManifest
+        {
+            Sequence = 0, Last = false, SessionId = session,
+            Keys = keys[..LodAssist.ManifestKeysPerMessage], Revisions = revisions,
+        }), "the first protocol-sized silhouette manifest chunk is accepted");
+        c.True(state.Apply(new AssistSilhouetteManifest
+        {
+            Sequence = 1, Last = true, SessionId = session,
+            Keys = keys[^1..], Revisions = new[] { 2 },
+        }), "the final silhouette manifest chunk is accepted");
+        c.Eq(LodAssist.ManifestKeysPerMessage + 1, state.Offered,
+            "manifest chunking retains every offered key");
+        c.True(state.ManifestComplete, "the final chunk completes the silhouette manifest");
+        c.False(state.Apply(new AssistSilhouetteManifest
+        {
+            Sequence = 2, Last = true, SessionId = session - 1,
+            Keys = new[] { LodSilhouetteTile.KeyOf(9999, 9999) }, Revisions = new[] { 1 },
+        }), "a previous world's manifest is rejected");
+        c.False(state.Apply(new AssistSilhouetteManifest
+        {
+            Sequence = 2, Last = true, SessionId = session,
+            Keys = new[] { keys[0] }, Revisions = Array.Empty<int>(),
+        }), "a manifest whose key and revision arrays disagree is rejected");
+
+        long[] requested = state.Select(0, 0, _ => 0, now: 1000);
+        c.Eq(LodAssist.MaxSilhouetteTilesInFlight, requested.Length,
+            "one request batch fills but never exceeds the silhouette in-flight cap");
+        c.Eq(LodAssist.MaxSilhouetteTilesInFlight, state.InFlight,
+            "request slots remain held until replies arrive");
+        c.Eq(0, state.Select(0, 0, _ => 0, now: 1000).Length,
+            "a full in-flight set admits no more requests");
+
+        long retry = requested[0];
+        c.False(state.BeginReply(session - 1, retry),
+            "an old-session reply cannot release a current-world slot");
+        c.True(state.BeginReply(session, retry), "a current reply releases its exact slot");
+        c.True(state.Failed(retry, retryable: true, now: 1000),
+            "a retryable answer leaves the offer alive");
+        c.False(state.Select(0, 0, _ => 0, now: 1000).Contains(retry),
+            "retry backoff prevents an immediate request loop");
+        foreach (long key in requested.Skip(1))
+        {
+            c.True(state.BeginReply(session, key), "each current reply releases its slot");
+            state.Succeeded(key);
+        }
+        c.True(state.Select(0, 0, key => key == retry ? 0 : 1,
+                now: 1000 + LodSilhouetteTransferState.RetryDelayMs).Contains(retry),
+            "the retryable key becomes eligible again after its bounded delay");
+        c.True(state.BeginReply(session, retry), "the retried key owns a new slot");
+        c.False(state.Failed(retry, retryable: false, now: 9999),
+            "an explicit refusal is terminal");
+        c.Eq(1, state.Refused, "terminal refusals are remembered");
+        state.Prune(key => key == keys[1]);
+        c.Eq(1, state.Offered, "moving reach prunes old manifest offers from client memory");
+        c.True(LodSilhouetteClient.WithinReach(LodSilhouetteTile.KeyOf(3, 0), 0, 0, 1536),
+            "the one-tile margin keeps the tile whose near edge meets it");
+        c.False(LodSilhouetteClient.WithinReach(LodSilhouetteTile.KeyOf(4, 0), 0, 0, 1536),
+            "a tile beyond the reach and margin is not retained");
+    }
+
+    static void BuilderYieldRules(Check c)
+    {
+        c.False(LodSilhouetteBuilder.MustYield(EnumWorldGenAuthority.None, EnumWorldGenGate.None, 0),
+            "an idle generator leaves silhouette work runnable");
+        foreach (EnumWorldGenAuthority authority in Enum.GetValues<EnumWorldGenAuthority>())
+            if (authority != EnumWorldGenAuthority.None)
+                c.True(LodSilhouetteBuilder.MustYield(authority, EnumWorldGenGate.None, 0),
+                    "silhouettes yield to authority " + authority);
+        foreach (EnumWorldGenGate gate in Enum.GetValues<EnumWorldGenGate>())
+            if (gate != EnumWorldGenGate.None)
+                c.True(LodSilhouetteBuilder.MustYield(EnumWorldGenAuthority.None, gate, 0),
+                    "silhouettes yield to gate " + gate);
+        c.True(LodSilhouetteBuilder.MustYield(EnumWorldGenAuthority.None, EnumWorldGenGate.None,
+                LodSilhouetteBuilder.YieldGeneratingChunks),
+            "the measured real-chunk threshold independently yields silhouette work");
+    }
+
+    static void TileTransportWiring(Check c)
+    {
+        string client = Source("src", "Net", "LodAssistClient.cs");
+        string server = Source("src", "Net", "LodAssistServerSystem.cs");
+        string builder = Source("src", "Silhouette", "LodSilhouetteBuilder.cs");
+        string silhouette = Source("src", "Silhouette", "LodSilhouetteClient.cs");
+        string transfer = Source("src", "Silhouette", "LodSilhouetteTransferState.cs");
+        c.True(client.Contains("SetMessageHandler<AssistSilhouetteManifest>(OnSilhouetteManifest)",
+                StringComparison.Ordinal)
+                && server.Contains("SetMessageHandler<AssistSilhouetteTileRequest>(OnSilhouetteTileRequest)",
+                    StringComparison.Ordinal),
+            "both halves install the final manifest/request handlers");
+        c.True(builder.Contains("Take(LodAssist.ManifestKeysPerMessage)", StringComparison.Ordinal)
+                && builder.Contains("Sequence = demand.ManifestSequence", StringComparison.Ordinal)
+                && builder.Contains("demand.ManifestSequence++", StringComparison.Ordinal),
+            "the server chunks silhouette manifests with an ordered sequence");
+        c.True(builder.Contains("MaxSilhouetteTilesPerSecondTotal", StringComparison.Ordinal)
+                && builder.Contains("demand.SendAllowance", StringComparison.Ordinal),
+            "tile replies have independent total and per-player limits");
+        c.True(builder.Contains("SendRefusal", StringComparison.Ordinal)
+                && builder.Contains("Retryable = retryable", StringComparison.Ordinal),
+            "server tile requests end in data, refusal, or retryable state");
+        c.True(builder.Contains("demand.Requests.Peek()", StringComparison.Ordinal)
+                && builder.Contains("if (!sendTile", StringComparison.Ordinal),
+            "a failed channel send retains the request instead of silently consuming it");
+        c.True(transfer.Contains("MaxSilhouetteTilesInFlight", StringComparison.Ordinal)
+                && silhouette.Contains("message.SessionId", StringComparison.Ordinal)
+                && silhouette.Contains("message.Revision < wantedRevision", StringComparison.Ordinal),
+            "the client caps requests and rejects old sessions and stale revisions");
+        c.True(builder.Contains("TransportVersion < LodAssist.SilhouetteTransportVersion", StringComparison.Ordinal)
+                && silhouette.Contains("message.SessionId == 0", StringComparison.Ordinal),
+            "the direct-push prototype remains usable only as a mixed-version fallback");
     }
 
     /// <summary>

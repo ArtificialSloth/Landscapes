@@ -173,9 +173,9 @@ public class LodServerConfig
 
     /// <summary>
     /// Horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER 4.9). Null, the default, is
-    /// automatic: on for singleplayer and LAN-hosted worlds. False switches them off, and the
-    /// server then keeps no silhouette heights at all. Dedicated servers are not offered
-    /// silhouettes yet whatever this says; that waits for the dedicated-server test (plan P3).
+    /// automatic: on for singleplayer and LAN-hosted worlds and off on dedicated servers. True
+    /// explicitly opts a dedicated server in. False switches them off everywhere, and the server
+    /// then keeps no silhouette heights at all.
     /// </summary>
     public bool? EnableSilhouettes;
 
@@ -187,14 +187,24 @@ public class LodServerConfig
     public bool SilhouetteUseAccelerators = true;
 
     /// <summary>
+    /// Maximum silhouette reach a dedicated server grants, in blocks. Integrated servers do not
+    /// apply this clamp: their player owns both the work and the map being revealed.
+    /// </summary>
+    public int SilhouetteReachBlocks = 8192;
+
+    /// <summary>Engine terrain previews issued per second when no accepted accelerator answers.</summary>
+    public int SilhouettePreviewsPerSecond = Silhouette.LodSilhouetteBuilder.PreviewsPerSecond;
+
+    /// <summary>
     /// Set to "1" in a dedicated test server's environment to keep silhouette heights there for
-    /// the accelerator comparison (plan P0.3), before dedicated servers are offered silhouettes.
-    /// Developer-only: players are offered nothing, and no config file can switch it on.
+    /// the accelerator comparison (plan P0.3) without opting players into silhouettes.
+    /// Developer-only: players are offered nothing unless EnableSilhouettes is explicitly true.
     /// </summary>
     public const string MeasureSilhouettesVariable = "VINTAGEHORIZONS_SILHOUETTE_MEASURE";
 
     /// <summary>Whether this server offers silhouettes and keeps their heights.</summary>
-    public bool SilhouettesEnabled(bool isDedicated) => !isDedicated && EnableSilhouettes != false;
+    public bool SilhouettesEnabled(bool isDedicated) => EnableSilhouettes != false
+        && (!isDedicated || EnableSilhouettes == true);
 
     /// <summary>
     /// Whether this server keeps silhouette heights: wherever it offers silhouettes, and on a
@@ -239,6 +249,10 @@ public class LodServerConfig
         WorldGenQueueTarget = Math.Min(WorldGenQueueTarget, WorldGenMaxInFlight);
         WorldGenDirtySectionLimit = Math.Clamp(WorldGenDirtySectionLimit, 16, 4096);
         WorldGenOldestDirtySeconds = Math.Clamp(WorldGenOldestDirtySeconds, 10, 600);
+        SilhouetteReachBlocks = Math.Clamp(SilhouetteReachBlocks,
+            Silhouette.LodSilhouetteBuilder.MinReachBlocks,
+            Silhouette.LodSilhouetteBuilder.MaxReachBlocks);
+        SilhouettePreviewsPerSecond = Math.Clamp(SilhouettePreviewsPerSecond, 1, 64);
         // Ceilings derived from measurement, not taste: a served section costs ~0.9ms of
         // main-thread SQLite blob read (415 sections, 348ms, on a warm cache). So 128/s is
         // ~115ms per second, around 11% of a core, which is the most an admin should be
@@ -269,6 +283,9 @@ public class LodServerConfig
         + $"generate {(GenerateEnabled ? "on request up to " + GenerateMaxRadiusChunks + " chunks" : "off")}, "
         + $"world generation {(WorldGenerationEnabled ? "on request up to " + WorldGenMaxRadiusChunks
             + " chunks, queue " + WorldGenQueueTarget : "off")}, "
-        + $"silhouettes {(EnableSilhouettes == false ? "off" : "singleplayer and LAN only")}, "
-        + $"silhouette accelerators {(SilhouetteUseAccelerators ? "on" : "off")}";
+        + $"silhouettes {(EnableSilhouettes == false ? "off" : EnableSilhouettes == true
+            ? "on (dedicated reach up to " + SilhouetteReachBlocks + " blocks)"
+            : "automatic (singleplayer and LAN only)")}, "
+        + $"silhouette accelerators {(SilhouetteUseAccelerators ? "on" : "off")}, "
+        + $"previews {SilhouettePreviewsPerSecond}/s";
 }

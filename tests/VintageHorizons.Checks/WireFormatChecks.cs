@@ -1,6 +1,7 @@
 using System.Reflection;
 using ProtoBuf;
 using VintageHorizons.Net;
+using VintageHorizons.Silhouette;
 
 namespace VintageHorizons.Checks;
 
@@ -62,6 +63,8 @@ public static class WireFormatChecks
             "20:WorldGenQueueTarget:Int32", "21:WorldGenMaxInFlight:Int32",
             "22:WorldGenDirtySectionLimit:Int32", "23:WorldGenOldestDirtySeconds:Int32",
             "24:SilhouetteUseAccelerators:Boolean",
+            "25:SilhouetteReachBlocks:Int32",
+            "26:SilhouettePreviewsPerSecond:Int32",
             "2:EnableServing:Boolean",
             "3:ServeRadiusBlocks:Int32", "4:MaxSectionsPerSecondPerPlayer:Int32",
             "5:MaxSectionsPerSecondTotal:Int32", "6:SweepSavegame:Boolean",
@@ -107,6 +110,24 @@ public static class WireFormatChecks
         // ignores a field it does not know, and 1 and 2 still mean what they meant.
         c.SeqEq(new[] { "1:Key:Int64", "2:Blob:Byte[]", "3:Retryable:Boolean" },
             Layout(typeof(AssistSection)), "AssistSection field numbers");
+
+        c.SeqEq(new[]
+        {
+            "1:Enabled:Boolean", "2:ReachBlocks:Int32", "3:ModVersion:String",
+            "4:TransportVersion:Int32", "5:SessionId:Int64",
+        }, Layout(typeof(AssistSilhouetteRequest)), "AssistSilhouetteRequest field numbers");
+        c.SeqEq(new[]
+        {
+            "1:Sequence:Int32", "2:Last:Boolean", "3:Keys:Int64[]",
+            "4:Revisions:Int32[]", "5:SessionId:Int64",
+        }, Layout(typeof(AssistSilhouetteManifest)), "AssistSilhouetteManifest field numbers");
+        c.SeqEq(new[] { "1:Keys:Int64[]", "2:SessionId:Int64" },
+            Layout(typeof(AssistSilhouetteTileRequest)), "AssistSilhouetteTileRequest field numbers");
+        c.SeqEq(new[]
+        {
+            "1:TileX:Int32", "2:TileZ:Int32", "3:Revision:Int32", "4:Payload:Byte[]",
+            "5:Retryable:Boolean", "6:SessionId:Int64", "7:Key:Int64",
+        }, Layout(typeof(AssistSilhouetteTile)), "AssistSilhouetteTile field numbers");
 
         // The negotiated protocol number itself. A client takes Math.Min of its own and
         // the server's, so bumping this is a deliberate compatibility decision.
@@ -162,6 +183,8 @@ public static class WireFormatChecks
                 WorldGenDirtySectionLimit = 512,
                 WorldGenOldestDirtySeconds = 120,
                 SilhouetteUseAccelerators = true,
+                SilhouetteReachBlocks = 8192,
+                SilhouettePreviewsPerSecond = 16,
             },
         });
         c.Eq(true, welcome.Enabled, "welcome enabled flag survives");
@@ -181,6 +204,10 @@ public static class WireFormatChecks
             "welcome real-world generation settings survive");
         c.True(welcome.ServerSettings?.SilhouetteUseAccelerators == true,
             "welcome silhouette accelerator setting survives");
+        c.Eq(8192, welcome.ServerSettings?.SilhouetteReachBlocks ?? -1,
+            "welcome dedicated silhouette reach survives");
+        c.Eq(16, welcome.ServerSettings?.SilhouettePreviewsPerSecond ?? -1,
+            "welcome silhouette preview rate survives");
 
         var worldGenRequest = Roundtrip(new AssistWorldGenRequest
         {
@@ -268,6 +295,43 @@ public static class WireFormatChecks
         var refusal = Roundtrip(new AssistSection { Key = 42 });
         c.Eq(42L, refusal.Key, "a refusal carries its key");
         c.Eq(0, refusal.Blob?.Length ?? 0, "a refusal carries no blob bytes");
+
+        const long silhouetteSession = 91234;
+        long tileKey = LodSilhouetteTile.KeyOf(12, -7);
+        var silhouetteRequest = Roundtrip(new AssistSilhouetteRequest
+        {
+            Enabled = true, ReachBlocks = 8192, ModVersion = "0.4.86",
+            TransportVersion = LodAssist.SilhouetteTransportVersion, SessionId = silhouetteSession,
+        });
+        c.Eq((LodAssist.SilhouetteTransportVersion, silhouetteSession),
+            (silhouetteRequest.TransportVersion, silhouetteRequest.SessionId),
+            "silhouette transport and world session survive");
+        var silhouetteManifest = Roundtrip(new AssistSilhouetteManifest
+        {
+            Sequence = 3, Last = true, Keys = new[] { tileKey }, Revisions = new[] { 9 },
+            SessionId = silhouetteSession,
+        });
+        c.Eq((3, true, silhouetteSession),
+            (silhouetteManifest.Sequence, silhouetteManifest.Last, silhouetteManifest.SessionId),
+            "silhouette manifest framing survives");
+        c.SeqEq(new[] { tileKey }, silhouetteManifest.Keys, "silhouette manifest keys survive");
+        c.SeqEq(new[] { 9 }, silhouetteManifest.Revisions, "silhouette manifest revisions survive");
+        var silhouetteTileRequest = Roundtrip(new AssistSilhouetteTileRequest
+        {
+            Keys = new[] { tileKey }, SessionId = silhouetteSession,
+        });
+        c.Eq(silhouetteSession, silhouetteTileRequest.SessionId,
+            "silhouette tile request session survives");
+        var silhouetteTile = Roundtrip(new AssistSilhouetteTile
+        {
+            TileX = 12, TileZ = -7, Key = tileKey, Revision = 9,
+            Payload = new byte[] { 1, 2, 3 }, Retryable = true, SessionId = silhouetteSession,
+        });
+        c.Eq((tileKey, 9, silhouetteSession),
+            (silhouetteTile.Key, silhouetteTile.Revision, silhouetteTile.SessionId),
+            "silhouette tile identity survives");
+        c.True(silhouetteTile.Retryable && silhouetteTile.Payload.SequenceEqual(new byte[] { 1, 2, 3 }),
+            "silhouette tile payload and retry state survive");
     }
 
     static T Roundtrip<T>(T value)
