@@ -794,40 +794,51 @@ internal sealed class LodSilhouetteBuilder
     }
 
     /// <summary>
-    /// Main thread. Up to <paramref name="count"/> positions where the builder holds real heights
-    /// (captured or previewed): the first cell of every chunk that has one, thinned evenly across
-    /// the tiles in memory. For the accelerator comparison (plan P0.3).
+    /// Main thread: every cell where the builder holds a real height (captured or previewed) in the
+    /// square of (2r+1) chunks a side centred on a chunk. For the accelerator comparison (plan P0.3).
     /// </summary>
-    public List<LodRealHeight> RealHeightSamples(int count)
+    public List<LodRealHeight> RealHeightCells(int centreCx, int centreCz, int radiusChunks)
     {
-        var all = new List<LodRealHeight>();
-        foreach (LodSilhouetteTile tile in tiles.Values)
+        var cells = new List<LodRealHeight>();
+        for (int cz = centreCz - radiusChunks; cz <= centreCz + radiusChunks; cz++)
         {
-            for (int cellZ = 0; cellZ < LodSilhouetteTile.CellsPerEdge; cellZ += LodSilhouetteTile.CellsPerChunk)
+            for (int cx = centreCx - radiusChunks; cx <= centreCx + radiusChunks; cx++)
             {
-                for (int cellX = 0; cellX < LodSilhouetteTile.CellsPerEdge; cellX += LodSilhouetteTile.CellsPerChunk)
+                (int tileX, int tileZ) = LodSilhouetteTile.TileOfChunk(cx, cz);
+                if (!tiles.TryGetValue(LodSilhouetteTile.KeyOf(tileX, tileZ), out LodSilhouetteTile? tile)) continue;
+                int cellX0 = (cx - tileX * LodSilhouetteTile.ChunksPerEdge) * LodSilhouetteTile.CellsPerChunk;
+                int cellZ0 = (cz - tileZ * LodSilhouetteTile.ChunksPerEdge) * LodSilhouetteTile.CellsPerChunk;
+                for (int cellZ = cellZ0; cellZ < cellZ0 + LodSilhouetteTile.CellsPerChunk; cellZ++)
                 {
-                    EnumSilhouetteOrigin origin = tile.OriginAt(cellX, cellZ);
-                    if (origin != EnumSilhouetteOrigin.Captured && origin != EnumSilhouetteOrigin.Preview) continue;
-                    if (!tile.TryGetHeight(cellX, cellZ, out ushort height)) continue;
-                    all.Add(new LodRealHeight(tile.BlockX + cellX * LodSilhouetteTile.CellBlocks,
-                        tile.BlockZ + cellZ * LodSilhouetteTile.CellBlocks, height, origin));
+                    for (int cellX = cellX0; cellX < cellX0 + LodSilhouetteTile.CellsPerChunk; cellX++)
+                    {
+                        EnumSilhouetteOrigin origin = tile.OriginAt(cellX, cellZ);
+                        if (origin != EnumSilhouetteOrigin.Captured && origin != EnumSilhouetteOrigin.Preview) continue;
+                        if (!tile.TryGetHeight(cellX, cellZ, out ushort height)) continue;
+                        cells.Add(new LodRealHeight(tile.BlockX + cellX * LodSilhouetteTile.CellBlocks,
+                            tile.BlockZ + cellZ * LodSilhouetteTile.CellBlocks, height, origin));
+                    }
                 }
             }
         }
-        if (all.Count <= count) return all;
-        var picked = new List<LodRealHeight>(count);
-        double step = (double)all.Count / count;
-        for (int i = 0; i < count; i++) picked.Add(all[(int)(i * step)]);
-        return picked;
+        return cells;
+    }
+
+    /// <summary>Main thread: the chunks of that square for which the builder holds real heights now.</summary>
+    public HashSet<long> HeldChunks(int centreCx, int centreCz, int radiusChunks)
+    {
+        var held = new HashSet<long>();
+        foreach (LodRealHeight cell in RealHeightCells(centreCx, centreCz, radiusChunks))
+            held.Add(LodAcceleratorPresampleRun.ChunkKey(cell.X >> 5, cell.Z >> 5));
+        return held;
     }
 
     public string Describe()
     {
         var culture = System.Globalization.CultureInfo.InvariantCulture;
         string text = string.Format(culture,
-            "{0} player(s), {1} tiles in memory; heights from {2} loaded or previewed columns ({3} were "
-            + "rain heights from old saves); {4} lattice probes ({5} already hold terrain); previews {6} "
+            "{0} player(s), {1} tiles in memory; heights from {2} loaded or previewed columns ({3} "
+            + "matched their rain heights, like an old save's copy or bare ground); {4} lattice probes ({5} already hold terrain); previews {6} "
             + "issued, {7} landed, {8} without heights, {9} timed out, {10} in flight; held {11} ticks "
             + "for other generation; {12} tile messages sent ({13:0.0} KB)",
             demands.Count, tiles.Count, CapturedColumns, RainColumns, Probed, Existing, Peeked, Landed,

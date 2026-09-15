@@ -12,32 +12,41 @@ repository-local, disposable data path, .testdata\silhouette-compare\<Profile>. 
   disable) and ModConfig, plus the exact current Vintage Horizons zip;
 - pins a Vintage Horizons server config that captures, serves, sweeps and generates nothing;
 - starts the server with VINTAGEHORIZONS_SILHOUETTE_MEASURE=1, so it keeps the worldgen heights
-  of every column it loads and offers players nothing;
-- generates a fresh world with /wgen pregen <Range> and waits for the queue to stay empty;
-- runs /vhsilhouetteserver compare <Points> while generation is idle, because whether the
-  samplers are safe beside real generation is unknown;
-- stops the server cleanly and writes the report lines to compare-report.txt.
+  of every column it loads and offers players nothing.
 
--PlanOnly lists the mods it would copy and launches nothing.
+It runs two sessions on one fresh world:
+
+1. presample: /vhsilhouetteserver presample <Range> asks every accelerator for every cell of the
+   square around the world centre before that land is generated, writes the answers to disk, and
+   the server stops.  A second process, because a generator in the same process could reuse the
+   samplers' cached region data and agree with them for the wrong reason.
+2. compare: /wgen pregen <Range> generates the same square; once the queue has stayed empty,
+   /vhsilhouetteserver compare <Range> measures the accelerators against the real heights, both
+   as sampled now and as presampled, and writes a map of every cell.
+
+Comparisons run while generation is idle, because whether the samplers are safe beside real
+generation is unknown.  The report lines go to compare-report.txt, and
+scripts/silhouette-compare-render.py draws the map as a side-by-side page.
+
+-NoPresample skips the first session.  -PlanOnly lists the mods it would copy and launches nothing.
 
 Examples:
   pwsh scripts/silhouette-compare.ps1 -PlanOnly
-  pwsh scripts/silhouette-compare.ps1 -Profile p03-first -Range 20
+  pwsh scripts/silhouette-compare.ps1 -Profile p03-cold -Range 32
 #>
 
 [CmdletBinding()]
 param(
     [ValidatePattern('^[A-Za-z0-9_-]+$')]
     [string]$Profile = ('p03-' + (Get-Date -Format 'yyyyMMdd-HHmmss')),
-    [ValidateRange(1, 50)]
-    [int]$Range = 20,
-    [ValidateRange(16, 4096)]
-    [int]$Points = 4096,
+    [ValidateRange(1, 48)]
+    [int]$Range = 32,
     [ValidateRange(5, 240)]
     [int]$TimeoutMinutes = 60,
     [ValidateRange(1024, 65535)]
     [int]$Port = 42433,
     [string[]]$RequiredModIds = @('terraprety', 'watersheds', 'algernonsterrainsampler'),
+    [switch]$NoPresample,
     [switch]$PlanOnly,
     [string]$GamePath,
     [string]$ModSource,
@@ -180,9 +189,12 @@ function Initialize-Environment {
         Join-Path $configsTarget 'vintagehorizons-server.json') -Encoding utf8
 }
 
-function Invoke-Comparison {
-    $consolePath = Join-Path $profileRoot 'console.log'
-    $errorPath = Join-Path $profileRoot 'console.err.log'
+# One server session. 'presample' asks the accelerators about the square before it is generated;
+# 'compare' generates the square, then compares. Both stop the server cleanly when done.
+function Invoke-Server {
+    param([Parameter(Mandatory)][ValidateSet('presample', 'compare')][string]$Session)
+    $consolePath = Join-Path $profileRoot "console-$Session.log"
+    $errorPath = Join-Path $profileRoot "console-$Session.err.log"
     $reportPath = Join-Path $profileRoot 'compare-report.txt'
     $pidPath = Join-Path $profileRoot 'server.pid'
 
@@ -207,7 +219,9 @@ function Invoke-Comparison {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $expectedColumns = (2 * $Range + 1) * (2 * $Range + 1)
     $refusals = @('Horizon silhouettes are off on this server', 'No height accelerator is installed',
-        'The server holds no real heights yet', 'A comparison is already running')
+        'The server holds no real heights', 'is already running; its report will follow')
+    $finishedLine = if ($Session -eq 'presample') { '[VintageHorizons] Accelerator presample finished' } else {
+        '[VintageHorizons] Accelerator comparison finished' }
     $report = [Collections.Generic.List[string]]::new()
     $phase = 'startup'
     $zeroSamples = 0
@@ -224,12 +238,19 @@ function Invoke-Comparison {
         if (-not $Quiet) { Write-Host "  sent $Command" }
     }
 
+    function Request-Stop {
+        Send-ServerCommand '/vhsilhouetteserver status'
+        Send-ServerCommand '/stop'
+        Set-Variable -Name stopSentAt -Scope 1 -Value $clock.Elapsed.TotalSeconds
+        Set-Variable -Name phase -Scope 1 -Value 'stopping'
+    }
+
     try {
         if (-not $process.Start()) { throw 'Vintage Story server process did not start.' }
         $started = $true
         $process.StandardInput.AutoFlush = $true
         Set-Content -LiteralPath $pidPath -Value $process.Id
-        Write-Host "  server pid $($process.Id), dataPath $profileRoot"
+        Write-Host "  $Session session: server pid $($process.Id), dataPath $profileRoot"
         $stdoutTask = $process.StandardOutput.ReadLineAsync()
         $stderrTask = $process.StandardError.ReadLineAsync()
 
@@ -239,19 +260,30 @@ function Invoke-Comparison {
                 if ($null -eq $line) { $stdoutTask = $null; break }
                 Add-Content -LiteralPath $consolePath -Value $line -Encoding utf8
                 if ($line.Contains('[VintageHorizons] Horizon silhouettes', [StringComparison]::Ordinal) -or
-                    $line.Contains('[VintageHorizons] Accelerator comparison', [StringComparison]::Ordinal) -or
+                    $line.Contains('[VintageHorizons] Accelerator ', [StringComparison]::Ordinal) -or
                     $line.Contains('Horizon silhouettes: measuring', [StringComparison]::Ordinal)) {
                     $report.Add($line)
                     Write-Host "  $line"
                 }
                 if ($line.Contains('Exception', [StringComparison]::OrdinalIgnoreCase)) { Write-Host "  log: $line" }
+                if ($phase -in 'presampling', 'comparing') {
+                    foreach ($refusal in $refusals) {
+                        if ($line.Contains($refusal, [StringComparison]::Ordinal)) { $failure = "the $Session was refused: $refusal" }
+                    }
+                    if ($line.Contains($finishedLine, [StringComparison]::Ordinal)) { $finished = $true }
+                    if ($finished -or $failure) { Request-Stop }
+                }
 
                 if ($phase -eq 'startup' -and $line.Contains('Dedicated Server now running', [StringComparison]::Ordinal)) {
                     Write-Host '  server ready'
-                    Send-ServerCommand '/seed'
-                    Send-ServerCommand "/wgen pregen $Range"
-                    $generationStarted = $clock.Elapsed.TotalSeconds
-                    $phase = 'generating'
+                    if ($Session -eq 'presample') {
+                        Send-ServerCommand "/vhsilhouetteserver presample $Range"
+                        $phase = 'presampling'
+                    } else {
+                        Send-ServerCommand "/wgen pregen $Range"
+                        $generationStarted = $clock.Elapsed.TotalSeconds
+                        $phase = 'generating'
+                    }
                 } elseif ($phase -eq 'generating' -and
                     $line.Contains("Ok, $expectedColumns columns, generated!", [StringComparison]::Ordinal)) {
                     Write-Host '  pregen submitted its final batch; waiting for the queue to drain'
@@ -262,23 +294,8 @@ function Invoke-Comparison {
                     if ($zeroSamples -ge 3) {
                         Write-Host ('  generation idle after {0:0}s' -f ($clock.Elapsed.TotalSeconds - $generationStarted))
                         Send-ServerCommand '/vhsilhouetteserver status'
-                        Send-ServerCommand "/vhsilhouetteserver compare $Points"
+                        Send-ServerCommand "/vhsilhouetteserver compare $Range"
                         $phase = 'comparing'
-                    }
-                } elseif ($phase -eq 'comparing') {
-                    foreach ($refusal in $refusals) {
-                        if ($line.Contains($refusal, [StringComparison]::Ordinal)) {
-                            $failure = "the comparison refused to start: $refusal"
-                        }
-                    }
-                    if ($line.Contains('[VintageHorizons] Accelerator comparison finished', [StringComparison]::Ordinal)) {
-                        $finished = $true
-                    }
-                    if ($finished -or $failure) {
-                        Send-ServerCommand '/vhsilhouetteserver status'
-                        Send-ServerCommand '/stop'
-                        $stopSentAt = $clock.Elapsed.TotalSeconds
-                        $phase = 'stopping'
                     }
                 }
                 $stdoutTask = $process.StandardOutput.ReadLineAsync()
@@ -297,9 +314,7 @@ function Invoke-Comparison {
             if ($phase -ne 'stopping' -and $clock.Elapsed.TotalMinutes -gt $TimeoutMinutes) {
                 $failure = "no result within $TimeoutMinutes minutes (phase $phase)"
                 Write-Warning $failure
-                Send-ServerCommand '/stop'
-                $stopSentAt = $clock.Elapsed.TotalSeconds
-                $phase = 'stopping'
+                Request-Stop
             }
             if ($phase -eq 'stopping' -and $clock.Elapsed.TotalSeconds - $stopSentAt -gt 120) {
                 Write-Warning "Exact sandbox process $($process.Id) did not stop after 120s; force-stopping the disposable copy."
@@ -309,22 +324,21 @@ function Invoke-Comparison {
         }
         $process.WaitForExit()
         Remove-Item -LiteralPath $pidPath -Force -ErrorAction SilentlyContinue
-        $report | Set-Content -LiteralPath $reportPath -Encoding utf8
+        $report | Add-Content -LiteralPath $reportPath -Encoding utf8
 
         $modLine = @(Get-Content -LiteralPath $consolePath |
             Where-Object { $_.Contains('Mods, sorted by dependency:', [StringComparison]::Ordinal) } |
             Select-Object -First 1)[0]
         foreach ($requiredMod in $effectiveRequiredModIds) {
             if (-not $modLine -or $modLine.IndexOf($requiredMod, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
-                throw "The server log does not prove that required mod '$requiredMod' loaded."
+                throw "The $Session server log does not prove that required mod '$requiredMod' loaded."
             }
         }
         if (-not (Select-String -LiteralPath $consolePath -SimpleMatch 'Horizon silhouettes: measuring heights only' -Quiet)) {
-            throw 'The server log does not prove that the measuring switch took effect.'
+            throw "The $Session server log does not prove that the measuring switch took effect."
         }
         if ($failure) { throw $failure }
-        if (-not $finished) { throw "The server exited before the comparison finished (phase $phase)." }
-        Write-Host "  report: $reportPath"
+        if (-not $finished) { throw "The $Session server exited before it finished (phase $phase)." }
     } catch {
         if ($started -and -not $process.HasExited) {
             try { $process.StandardInput.WriteLine('/stop') } catch { }
@@ -334,7 +348,7 @@ function Invoke-Comparison {
             }
         }
         Remove-Item -LiteralPath $pidPath -Force -ErrorAction SilentlyContinue
-        if ($report.Count -gt 0) { $report | Set-Content -LiteralPath $reportPath -Encoding utf8 }
+        if ($report.Count -gt 0) { $report | Add-Content -LiteralPath $reportPath -Encoding utf8 }
         throw
     } finally {
         $process.Dispose()
@@ -360,4 +374,18 @@ if (Test-Path -LiteralPath $profileRoot) {
     throw "Profile already exists; choose another name rather than overwriting it: $profileRoot"
 }
 Initialize-Environment $mods
-Invoke-Comparison
+if (-not $NoPresample) { Invoke-Server -Session presample }
+Invoke-Server -Session compare
+Write-Host "  report: $(Join-Path $profileRoot 'compare-report.txt')"
+
+$map = Get-ChildItem -LiteralPath (Join-Path $profileRoot 'ModData\vintagehorizons\silhouette-compare') -Filter '*-map-*.csv.gz' -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$python = Get-Command python3, python -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($null -eq $map) {
+    Write-Warning 'The comparison wrote no map file.'
+} elseif ($null -eq $python) {
+    Write-Warning "Python is not installed, so the side-by-side was not drawn. Map: $($map.FullName)"
+} else {
+    & $python.Source (Join-Path $PSScriptRoot 'silhouette-compare-render.py') $map.FullName
+    if ($LASTEXITCODE -ne 0) { throw "The side-by-side renderer failed with exit code $LASTEXITCODE" }
+}

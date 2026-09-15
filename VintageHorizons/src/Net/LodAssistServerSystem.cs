@@ -976,11 +976,8 @@ public class LodAssistServerSystem : ModSystem
     {
         try
         {
-            string worldKey = sapi.World.SavegameIdentifier;
-            if (string.IsNullOrEmpty(worldKey)) worldKey = "seed-" + sapi.World.Seed;
-            worldKey = System.Text.RegularExpressions.Regex.Replace(worldKey, "[^A-Za-z0-9_-]", "_");
             string directory = sapi.GetOrCreateDataPath("ModData/vintagehorizons");
-            return Path.Combine(directory, worldKey + "-silhouette-server.db");
+            return Path.Combine(directory, WorldFileKey() + "-silhouette-server.db");
         }
         catch (Exception e)
         {
@@ -1030,71 +1027,145 @@ public class LodAssistServerSystem : ModSystem
                 .WithDescription("The same report")
                 .HandleWith(_ => Status())
             .EndSubCommand()
+            .BeginSubCommand("presample")
+                .WithDescription("Ask each installed height accelerator for every cell of the chunk square "
+                    + "around you (the world centre from the console) and keep the answers on disk, so a later "
+                    + "session can compare them with the terrain once it is generated (silhouette plan P0.3)")
+                .WithArgs(sapi.ChatCommands.Parsers.OptionalIntRange("radiusChunks", 1, MaxCompareRadiusChunks, 32))
+                .HandleWith(StartAcceleratorPresample)
+            .EndSubCommand()
             .BeginSubCommand("compare")
-                .WithDescription("Measure each installed height accelerator against real heights the "
-                    + "server holds (silhouette plan P0.3); the report follows in chat and the log")
-                .WithArgs(sapi.ChatCommands.Parsers.OptionalIntRange("points", 16, 4096, 512))
+                .WithDescription("Measure each installed height accelerator against the real heights the "
+                    + "server holds in the chunk square around you (the world centre from the console), and the "
+                    + "presample if there is one; writes a map for the side-by-side (silhouette plan P0.3)")
+                .WithArgs(sapi.ChatCommands.Parsers.OptionalIntRange("radiusChunks", 1, MaxCompareRadiusChunks, 32))
                 .HandleWith(StartAcceleratorComparison)
             .EndSubCommand();
     }
 
-    // One accelerator comparison at a time; the report is read on the main thread as it finishes.
-    LodAcceleratorComparisonRun? comparison;
-    long comparisonListener;
+    // One accelerator comparison or presample at a time; its lines are read on the main thread.
+    ILodBackgroundReport? acceleratorRun;
+    long acceleratorListener;
+
+    /// <summary>Radius cap for compare and presample: 97 chunks a side, about 600,000 cells.</summary>
+    const int MaxCompareRadiusChunks = 48;
+
+    /// <summary>
+    /// The chunk both commands centre their square on: the caller's, or from the console the world's
+    /// centre, computed as the game's /wgen pregen does (it uses the map's X size for both axes), so a
+    /// script can presample, pregenerate and compare the same square.
+    /// </summary>
+    (int Cx, int Cz) CompareCentre(TextCommandCallingArgs args)
+    {
+        int chunk = Vintagestory.API.Config.GlobalConstants.ChunkSize;
+        if (args.Caller.Player is IServerPlayer player && player.Entity != null)
+            return ((int)player.Entity.Pos.X / chunk, (int)player.Entity.Pos.Z / chunk);
+        int centre = sapi.WorldManager.MapSizeX / Vintagestory.API.Config.GlobalConstants.ChunkSize / 2;
+        return (centre, centre);
+    }
+
+    /// <summary>A comparison file for this world, beside the tile store and named after the savegame.</summary>
+    string CompareFilePath(string suffix) =>
+        Path.Combine(sapi.GetOrCreateDataPath("ModData/vintagehorizons/silhouette-compare"), WorldFileKey() + suffix);
+
+    /// <summary>The savegame's name made safe for a file name, as the section cache names its files.</summary>
+    string WorldFileKey()
+    {
+        string worldKey = sapi.World.SavegameIdentifier;
+        if (string.IsNullOrEmpty(worldKey)) worldKey = "seed-" + sapi.World.Seed;
+        return System.Text.RegularExpressions.Regex.Replace(worldKey, "[^A-Za-z0-9_-]", "_");
+    }
+
+    List<ILodHeightAccelerator>? AcceleratorsForRun(out TextCommandResult? refusal)
+    {
+        refusal = null;
+        if (silhouettes == null)
+        {
+            refusal = TextCommandResult.Error("[VintageHorizons] Horizon silhouettes are off on this server, "
+                + "so there are no real heights to compare against.");
+        }
+        else if (acceleratorRun != null)
+        {
+            refusal = TextCommandResult.Error("[VintageHorizons] A comparison or presample is already running; "
+                + "its report will follow.");
+        }
+        else if (LodHeightAccelerators.Find(sapi) is { Count: > 0 } found)
+        {
+            return found;
+        }
+        else
+        {
+            refusal = TextCommandResult.Error("[VintageHorizons] No height accelerator is installed. This build "
+                + "knows Algernon's Terrain Sampler and Watersheds' own sampler.");
+        }
+        return null;
+    }
+
+    TextCommandResult StartAcceleratorPresample(TextCommandCallingArgs args)
+    {
+        if (AcceleratorsForRun(out TextCommandResult? refusal) is not { } accelerators) return refusal!;
+        (int cx, int cz) = CompareCentre(args);
+        int radius = (int)args[0];
+        List<(int X, int Z)> cells = LodAcceleratorPresampleRun.SquareCells(cx, cz, radius);
+        var run = new LodAcceleratorPresampleRun(CompareFilePath("-presample.csv.gz"), cells,
+            silhouettes!.HeldChunks(cx, cz, radius), accelerators, sapi.World.SeaLevel);
+        return StartAcceleratorRun("presample", run, args, string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "[VintageHorizons] Accelerator presample of {0} cells around chunk {1},{2} (radius {3} chunks), asking "
+            + "{4}. It runs in the background; each report follows in chat and the server log.",
+            cells.Count, cx, cz, radius, string.Join(" and ", accelerators.Select(a => a.Name))));
+    }
 
     TextCommandResult StartAcceleratorComparison(TextCommandCallingArgs args)
     {
-        if (silhouettes == null)
+        if (AcceleratorsForRun(out TextCommandResult? refusal) is not { } accelerators) return refusal!;
+        (int cx, int cz) = CompareCentre(args);
+        int radius = (int)args[0];
+        List<LodRealHeight> cells = silhouettes!.RealHeightCells(cx, cz, radius);
+        if (cells.Count == 0)
         {
-            return TextCommandResult.Error("[VintageHorizons] Horizon silhouettes are off on this server, "
-                + "so there are no real heights to compare against.");
+            return TextCommandResult.Error("[VintageHorizons] The server holds no real heights in that square yet. "
+                + "Load or explore some terrain, or switch silhouettes on, then try again.");
         }
-        if (comparison != null)
-            return TextCommandResult.Error("[VintageHorizons] A comparison is already running; its report will follow.");
-        List<ILodHeightAccelerator> accelerators = LodHeightAccelerators.Find(sapi);
-        if (accelerators.Count == 0)
-        {
-            return TextCommandResult.Error("[VintageHorizons] No height accelerator is installed. This build "
-                + "knows Algernon's Terrain Sampler and Watersheds' own sampler.");
-        }
-        List<LodRealHeight> points = silhouettes.RealHeightSamples((int)args[0]);
-        if (points.Count == 0)
-        {
-            return TextCommandResult.Error("[VintageHorizons] The server holds no real heights yet. Load or "
-                + "explore some terrain, or switch silhouettes on, then try again.");
-        }
+        string map = CompareFilePath("-map-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss",
+            System.Globalization.CultureInfo.InvariantCulture) + ".csv.gz");
+        var run = new LodAcceleratorComparisonRun(cells, accelerators, sapi.World.SeaLevel,
+            CompareFilePath("-presample.csv.gz"), map);
+        return StartAcceleratorRun("comparison", run, args, string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "[VintageHorizons] Accelerator comparison at {0} cells where the server holds real heights ({1} captured, "
+            + "{2} previewed) around chunk {3},{4} (radius {5} chunks), against {6}. It runs in the background; each "
+            + "report follows in chat and the server log.", cells.Count,
+            cells.Count(p => p.Origin == EnumSilhouetteOrigin.Captured),
+            cells.Count(p => p.Origin == EnumSilhouetteOrigin.Preview), cx, cz, radius,
+            string.Join(" and ", accelerators.Select(a => a.Name))));
+    }
 
+    TextCommandResult StartAcceleratorRun(string what, ILodBackgroundReport run, TextCommandCallingArgs args,
+        string header)
+    {
+        acceleratorRun = run;
         IServerPlayer? caller = args.Caller.Player as IServerPlayer;
-        comparison = new LodAcceleratorComparisonRun(points, accelerators, sapi.World.SeaLevel);
-        string header = string.Format(System.Globalization.CultureInfo.InvariantCulture,
-            "[VintageHorizons] Accelerator comparison at {0} points where the server holds real heights "
-            + "({1} captured, {2} previewed), against {3}. It runs in the background; each report follows "
-            + "in chat and the server log.", points.Count,
-            points.Count(p => p.Origin == EnumSilhouetteOrigin.Captured),
-            points.Count(p => p.Origin == EnumSilhouetteOrigin.Preview),
-            string.Join(" and ", accelerators.Select(a => a.Name)));
         Mod.Logger.Notification("{0}", header);
-        comparisonListener = sapi.Event.RegisterGameTickListener(_ => PumpComparison(caller), 500);
+        acceleratorListener = sapi.Event.RegisterGameTickListener(_ => PumpAcceleratorRun(caller, what), 500);
         return TextCommandResult.Success(header);
     }
 
-    void PumpComparison(IServerPlayer? caller)
+    void PumpAcceleratorRun(IServerPlayer? caller, string what)
     {
-        LodAcceleratorComparisonRun? run = comparison;
+        ILodBackgroundReport? run = acceleratorRun;
         if (run == null) return;
         bool done = run.Finished;
         while (run.TryTakeLine(out string line))
         {
-            string text = "[VintageHorizons] Accelerator comparison, " + line + ".";
+            string text = "[VintageHorizons] Accelerator " + what + ", " + line + ".";
             // Chat cannot be copied, so every line also reaches the log.
             Mod.Logger.Notification("{0}", text);
             caller?.SendMessage(Vintagestory.API.Config.GlobalConstants.GeneralChatGroup, text,
                 EnumChatType.Notification);
         }
         if (!done) return;
-        sapi.Event.UnregisterGameTickListener(comparisonListener);
-        comparison = null;
-        Mod.Logger.Notification("[VintageHorizons] Accelerator comparison finished.");
+        sapi.Event.UnregisterGameTickListener(acceleratorListener);
+        acceleratorRun = null;
+        Mod.Logger.Notification("[VintageHorizons] Accelerator " + what + " finished.");
     }
 
     /// <summary>Main thread: the engine raises this from a main-thread task.</summary>

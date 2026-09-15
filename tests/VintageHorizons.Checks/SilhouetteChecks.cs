@@ -31,6 +31,7 @@ public static class SilhouetteChecks
         TileMergeAndSnapshot(c);
         WorldgenErrorBrake(c);
         HeightComparisonArithmetic(c);
+        PresampleAndMapFiles(c);
     }
 
     public static void RunWiring(Check c)
@@ -82,11 +83,82 @@ public static class SilhouetteChecks
             "an empty comparison reports no points");
     }
 
+    /// <summary>
+    /// The comparison's square and files (P0.3; Session 94's side-by-side and unexplored-land test):
+    /// the cells of a chunk square, and presample and map files that read back what was written.
+    /// </summary>
+    static void PresampleAndMapFiles(Check c)
+    {
+        List<(int X, int Z)> cells = LodAcceleratorPresampleRun.SquareCells(100, -3, 1);
+        c.Eq(9 * LodSilhouetteTile.ChunkCells, cells.Count, "a square of radius 1 is 3x3 chunks of 8x8 cells");
+        c.True(cells.Contains((99 * 32, -4 * 32)) && cells.Contains((101 * 32 + 28, -2 * 32 + 28))
+                && cells.All(p => p.X % 4 == 0 && p.Z % 4 == 0),
+            "cells are the 4-block corners of every chunk in the square, negative coordinates included");
+
+        string dir = Path.Combine(Path.GetTempPath(), "vh-silhouette-compare-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var presample = new LodPresample
+            {
+                Accelerators = new[] { "A", "B" }, SeaLevel = 110, TakenUtc = "2026-09-15T00:00:00Z",
+            };
+            presample.Cells[(0, 4)] = new LodPresampleCell(false, new int?[] { 112, null }, new[] { 1.5, 0 });
+            presample.Cells[(-8, 12)] = new LodPresampleCell(true, new int?[] { 90, 91 }, new[] { 0.25, 0.5 });
+            string path = Path.Combine(dir, "w-presample.csv.gz");
+            LodHeightSampleFile.WritePresample(path, presample);
+            LodPresample? back = LodHeightSampleFile.ReadPresample(path);
+            c.True(back != null && back.Accelerators.SequenceEqual(new[] { "A", "B" }) && back.SeaLevel == 110
+                    && back.TakenUtc == presample.TakenUtc,
+                "a presample reads back its accelerators, sea level and time");
+            c.True(back != null && back.Cells.Count == 2
+                    && back.Cells[(0, 4)] is { Held: false } first && first.Heights[0] == 112 && first.Heights[1] == null
+                    && first.Ms[0] == 1.5 && back.Cells[(-8, 12)].Held && back.Cells[(-8, 12)].Heights[1] == 91,
+                "every cell reads back, with a failed answer as none");
+            c.True(LodHeightSampleFile.ReadPresample(Path.Combine(dir, "missing.csv.gz")) == null,
+                "a missing presample reads as none");
+
+            string map = Path.Combine(dir, "w-map.csv.gz");
+            LodHeightSampleFile.WriteMap(map, new[] { "A" }, 110, "t", new[]
+            {
+                new LodMapRow(0, 4, 111, EnumSilhouetteOrigin.Captured, new int?[] { 112 }, new int?[] { 113 }),
+                new LodMapRow(4, 4, 90, EnumSilhouetteOrigin.Preview, new int?[] { null }, null),
+            });
+            string[] rows;
+            using (var reader = new StreamReader(new GZipStream(File.OpenRead(map), CompressionMode.Decompress)))
+                rows = reader.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.TrimEnd('\r')).ToArray();
+            c.True(rows[0] == "# vintagehorizons silhouette map 1" && rows.Contains("x,z,real,origin,a0now,a0before")
+                    && rows.Contains("0,4,111,C,112,113") && rows.Contains("4,4,90,P,,"),
+                "the map has a header and one row per cell, empty where nothing was answered");
+            c.True(LodHeightSampleFile.ReadPresample(map) == null, "a map is never read as a presample");
+            c.False(File.Exists(path + ".tmp") || File.Exists(map + ".tmp"),
+                "files are moved into place, leaving no temporary copy");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     static void AcceleratorComparisonWiring(Check c)
     {
         string assist = Source("src", "Net", "LodAssistServerSystem.cs");
         string run = Source("src", "Silhouette", "LodAcceleratorComparisonRun.cs");
         string builder = Source("src", "Silhouette", "LodSilhouetteBuilder.cs");
+        string presampleRun = Source("src", "Silhouette", "LodAcceleratorPresampleRun.cs");
+        c.True(Regex.IsMatch(assist, @"BeginSubCommand\(""presample""\)[\s\S]*?HandleWith\(StartAcceleratorPresample\)"),
+            "the presample is a subcommand of the same admin command");
+        c.True(presampleRun.Contains("IsBackground = true", StringComparison.Ordinal)
+                && presampleRun.Contains("accelerators[a].Sample(", StringComparison.Ordinal),
+            "the presample calls accelerators on its own background thread");
+        c.True(assist.Contains("sapi.WorldManager.MapSizeX / Vintagestory.API.Config.GlobalConstants.ChunkSize / 2",
+                StringComparison.Ordinal),
+            "from the console both commands centre where /wgen pregen does");
+        c.True(run.Contains("LodHeightSampleFile.ReadPresample(presamplePath)", StringComparison.Ordinal)
+                && run.Contains("LodHeightSampleFile.WriteMap(", StringComparison.Ordinal),
+            "the comparison reads the presample and writes the map");
+        c.False(Source("src", "Silhouette", "LodHeightAccelerators.cs").Contains("before rivers", StringComparison.Ordinal),
+            "no accelerator is labelled as before rivers: both include river valleys (G205)");
         c.True(Regex.IsMatch(assist,
                 @"Create\(""vhsilhouetteserver""\)[\s\S]*?RequiresPrivilege\(Privilege\.controlserver\)[\s\S]*?BeginSubCommand\(""compare""\)"),
             "the accelerator comparison is an admin subcommand of the server's silhouette command");

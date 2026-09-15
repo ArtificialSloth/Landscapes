@@ -41,9 +41,10 @@ internal static class LodHeightAccelerators
 
     /// <summary>
     /// Algernon's Terrain Sampler (github.com/Algernon733/AlgernonsTerrainSampler). It recomputes
-    /// vanilla GenTerra heights from the region maps without generating chunks, and with
-    /// Watersheds loaded it answers Watersheds' height before rivers. It answers sea level,
-    /// without saying so, when its own generator throws.
+    /// vanilla GenTerra heights from the region maps without generating chunks. With Watersheds
+    /// loaded it answers Watersheds' GetPreWatershedsBlockColumnHeight, which runs the same steps as
+    /// Watersheds' own sampler, river valleys included (G205). It answers sea level, without saying
+    /// so, when its own generator throws.
     /// </summary>
     sealed class AlgernonsTerrainSampler : ILodHeightAccelerator
     {
@@ -72,7 +73,7 @@ internal static class LodHeightAccelerators
             bool viaWatersheds = system.GetType().GetProperty("WatershedsLoaded")?.GetValue(system) is true;
             return new AlgernonsTerrainSampler(system, height, system.GetType().GetProperty("GenTerra"),
                 "Algernon's Terrain Sampler " + Version(sapi, "algernonsterrainsampler")
-                + (viaWatersheds ? " (Watersheds' height before rivers)" : ""));
+                + (viaWatersheds ? " (answering through Watersheds)" : ""));
         }
 
         public int[] Sample(IReadOnlyList<(int X, int Z)> positions)
@@ -87,8 +88,8 @@ internal static class LodHeightAccelerators
 
     /// <summary>
     /// Watersheds' own GenTerraSampler. It runs Watersheds' generation height steps for the given
-    /// positions, rivers included, without generating chunks. Erosion is a separate step it does
-    /// not apply.
+    /// positions without generating chunks: river valleys included, but not the river channels real
+    /// generation carves last, nor erosion, which is a separate step (G205).
     /// </summary>
     sealed class WatershedsTerrainSampler : ILodHeightAccelerator
     {
@@ -118,7 +119,7 @@ internal static class LodHeightAccelerators
             if (instance == null || samplerField == null || batch == null
                 || batch.ReturnType != typeof(Dictionary<(int, int), int>)) return null;
             return new WatershedsTerrainSampler(instance, samplerField, batch,
-                "Watersheds' own sampler " + Version(sapi, "watersheds") + " (rivers included)");
+                "Watersheds' own sampler " + Version(sapi, "watersheds"));
         }
 
         public int[] Sample(IReadOnlyList<(int X, int Z)> positions)
