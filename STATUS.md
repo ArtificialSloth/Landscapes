@@ -4,52 +4,71 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-14`
-**Mod version:** `0.4.77` — current private test build (the horizon-silhouette first look), verified, copy-installed and checkpointed; the owner saw silhouettes in game, and the join with adjacent terrain and a hang at game exit remain open
+**Mod version:** `0.4.82` — current private test build (the silhouette accelerator comparison), verified, copy-installed and checkpointed; 0.4.81 and 0.4.82 are not yet tested in game
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.71 `6a510ae`, 0.4.72 `1cd1040`, 0.4.73 `30858f4`, 0.4.74 `439bc68`, 0.4.75 `088923a`, 0.4.76 `9ea75c5`, 0.4.77 `4c7720c`; nothing pushed
+**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.77 `4c7720c`, 0.4.78 `3664aa2`, 0.4.79 `612770f`, 0.4.80 `f93bbbf`, 0.4.81 `3db5e3e`, 0.4.82 `96f8e06`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `118` C# files under `VintageHorizons/src`
+**Source files:** `125` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
 
 ## Current result
 
-**Horizon silhouettes: the first look (0.4.77).** The silhouette plan was revised with the owner's
-decisions D8–D15 (Session 92), and P1 landed.
-- **Scope.** A singleplayer or LAN-hosted server, behind the session command `.vhsilhouette on`.
-- **Server.** It previews one chunk in every 8x8 around the player to the Terrain pass, keeping
-  heights only and writing nothing to the savegame. It yields to explicit generation and to real
-  chunk loads, and pushes 512-block tiles over four appended assist messages.
-- **Client.** It draws a continuous surface in Farseer's classic sky-derived colour where cached
-  terrain is missing, in its own step after the cached draw (G200).
-- **Far plane.** It widens only while silhouettes draw.
-- **Not built yet:** Terrain Ahead, settings, the join handoff, persistence and accelerators.
+**Horizon silhouettes: P1 and P2 built, P3 begun (0.4.77–0.4.82).** Sessions 92 and 93.
+- **Scope.** Singleplayer and LAN-hosted worlds, behind the session command `.vhsilhouette on`.
+  `EnableSilhouettes` in the server config turns the feature off. Dedicated servers stay off until
+  P3's test.
+- **Heights.** The server keeps the worldgen heights of every column it loads or previews for its
+  cache.
+  - For each asking player it previews one chunk in each unexplored 512-block region, nearest first,
+    out to 8,192 blocks, keeping heights only.
+  - It yields to explicit generation and to real chunk loads.
+  - It stops previews for the session if the generator goes 20 s without answering, or logs three
+    errors while previews are being generated.
+- **Store.** Tiles are saved to `<savegame>-silhouette-server.db` at each world save and on quit.
+  They are read back before anything in them is previewed. A world gets the file on its first
+  silhouette request.
+- **Client.** A deterministic fill over each tile and its eight neighbours, meeting neighbouring
+  tiles exactly. It is drawn in Farseer's classic colour where cached terrain is missing, in its own
+  step (G200).
+- **Comparison.** `/vhsilhouetteserver compare [points]` measures Algernon's Terrain Sampler and
+  Watersheds' own sampler against real heights (P0.3). Silhouettes use neither yet.
+- **Not built yet:**
+  - P3: coast refinement, accelerator use, the manifest/tile-request transport and dedicated
+    support;
+  - P4: the handoff, settings and scale handles;
+  - P5: client persistence;
+  - P6: Terrain Ahead.
 
 | Silhouette evidence | Result | Level |
 |---|---|---|
-| Owner test, singleplayer | Silhouettes drew; they "don't connect well with immediately adjacent terrain"; the game hung at exit and had to be killed | Human-tested |
+| Owner test 0.4.77, singleplayer | Silhouettes drew; they "don't connect well with immediately adjacent terrain" | Human-tested |
+| 0.4.77 exit hang | The 16:04 `bodanboys` launch, not the 16:11 quit. Previews stopped being answered after 99 coast-map errors, the server never suspended, and the owner killed the game (G201) | Log-measured (Session 93) |
+| Owner test 0.4.80, `bodanboys` | The stall guard fired. The world-generation thread was silent about 3.5 min after 144 coast-map errors; three suspend timeouts named `chunkdbthread`; leaving took about 2 min and completed (G204) | Log-measured |
+| Store after that test | 96 tiles written at exit (61 KB) | Read offline, read-only |
+| Region rebuilt per preview | Identical dungeon placements repeated 4× per region on `bodanboys` and `test2`; `test2` did not stall (G203) | Log-measured; source-traced |
 | Worldgen heights on previews (P0.1) | 0 of 1,024 zero on the first preview; forest map present (Watersheds and TerraPrety, 1.22.7) | Log-measured |
-| Preview throughput | About 5 landed/s with 16 in flight; held 705 ticks while real chunks generated | Log-measured |
-| Client | 117 tiles, 401 sample points, 33–41 tile draws per frame; the shader compiled | Log-measured |
-| Checks | 88 new assertions; 24,835 pass | Harness-tested |
-| Exit hang | Server stopped cleanly; client's last line "Exiting game now"; cause not diagnosed | Log-measured symptom only |
-| GPU cost, off-state A/B, dedicated server, accelerators | Not measured | — |
+| Checks | 24,916 pass | Harness-tested |
+| Joins, restart read-back, error brake, comparison, GPU cost, off-state A/B, dedicated | Not observed or measured | — |
 
-**The core world-generation/LOD-coverage plan is complete.** P1–P5 and P7 landed in
-0.4.66–0.4.76. P0 proved the engine's multi-thread pipeline was really active but rejected it for
-negligible speedup and scheduling-dependent terrain, so P6 is closed without exposing thread
-controls. P8's documentation is Session 91; the remaining runtime matrix is explicit verification
-debt, not a gate for beginning the Farseer silhouette plan.
+**The core world-generation/LOD-coverage plan is complete.**
+- P1–P5 and P7 landed in 0.4.66–0.4.76.
+- P0 proved the engine's multi-thread pipeline was really active, but rejected it for negligible
+  speedup and scheduling-dependent terrain. P6 is therefore closed without exposing thread
+  controls.
+- P8's documentation is Session 91. The remaining runtime matrix is explicit verification debt, not
+  a gate for the silhouette plan.
 
 `/vhworldgen` is the deliberate, confirmed exception which writes real terrain to the savegame.
-It works in persistence-friendly 16×16-chunk tiles; the default circle begins at the player's tile,
-moves through clockwise circular radial bands, and visits nearest columns first. Engine-queue,
-capture, durability, load and disk gates bound the job. A durable bitmap supports pause, resume,
-stop and an offered manual restart resume. The Generate page shares the Settings editor; if normal
-integrated Settings has paused the server, it hands off to standalone `.vhconfig` live controls.
-Versions 0.4.74–0.4.76 fixed the L0 2×2-chunk progress map, transient-cache skip provenance,
-force-loaded release, action/status races and boundaries waiting on unrelated global dirtiness.
+- **Tiles.** It works in persistence-friendly 16×16-chunk tiles. The default circle begins at the
+  player's tile, moves through clockwise circular radial bands, and visits nearest columns first.
+- **Gates.** Engine-queue, capture, durability, load and disk gates bound the job.
+- **Resume.** A durable bitmap supports pause, resume, stop and an offered manual restart resume.
+- **Settings.** The Generate page shares the Settings editor. If normal integrated Settings has
+  paused the server, it hands off to standalone `.vhconfig` live controls.
+- **Fixes in 0.4.74–0.4.76:** the L0 2×2-chunk progress map, transient-cache skip provenance,
+  force-loaded release, action/status races, and boundaries waiting on unrelated global dirtiness.
 
 | Generate evidence | Result | Level |
 |---|---|---|
@@ -60,14 +79,17 @@ force-loaded release, action/status races and boundaries waiting on unrelated gl
 | Terrain identity | Full-stack six-thread: 4,050 rows differ where controls agree (3,215 block payloads); minimal six-thread: 1,055/892; minimal two-thread: 408/288 | Offline semantic save comparison; P0 failed |
 
 **P1-P3 remain complete, and distant terrain fills in.**
-0.4.66 fixed GPU depth-copy validation under render scaling and 0.4.67 made server cache saving
-oldest-first (Session 89). 0.4.68 makes the client take the server half's fuller rows for sections
-it already holds. The sibling cache is scanned by rowid at every level; a first sighting and every
-parent fill only the columns the client lacks, and a level-0 row the server rewrote after the client
-saw it wins column by column (the owner's choice), never erasing columns only the client holds or
-replacing observed snow with a generated peek. Merges are recorded in the additive `SiblingMerge`
-table once durable. 0.4.69 paces the savegame sweep to the capture queue, and 0.4.70 retires the
-`.vhsnowline` comparison, fixing the current snow-line design in place.
+- **0.4.66** fixed GPU depth-copy validation under render scaling.
+- **0.4.67** made server cache saving oldest-first (Session 89).
+- **0.4.68** makes the client take the server half's fuller rows for sections it already holds.
+  - The sibling cache is scanned by rowid at every level.
+  - A first sighting and every parent fill only the columns the client lacks.
+  - A level-0 row the server rewrote after the client saw it wins column by column (the owner's
+    choice). It never erases columns only the client holds, or replaces observed snow with a
+    generated peek.
+  - Merges are recorded in the additive `SiblingMerge` table once durable.
+- **0.4.69** paces the savegame sweep to the capture queue.
+- **0.4.70** retires the `.vhsnowline` comparison, fixing the current snow-line design in place.
 
 | Evidence | Result | Level |
 |---|---|---|
@@ -81,25 +103,33 @@ The accepted 0.4.64 Settings result and all earlier rendering results remain in 
 
 ## Distant structures and chiselled blocks
 
-Ruins drew near-white at distance while looking right up close. A chiselled block, a clutter piece
-or a cluttered bookshelf has no colour of its own: its look is stored in its block entity, which
-only the side holding the loaded chunk can read. The server half has no texture atlas and stores
-colour 0, and the client coloured such sections by block type, whose only texture is the game's
-missing-texture image (G181). The check meant to catch that image compared an alpha-free atlas
-value exactly against an opaque repack and never fired (G180), and a section's palette keeps its
-first colour per block id, so the client's own later capture reused the white entry (G182).
+Ruins drew near-white at distance while looking right up close. Three things combined:
+- **No colour of its own.** A chiselled block, a clutter piece or a cluttered bookshelf stores its
+  look in its block entity, which only the side holding the loaded chunk can read.
+- **Coloured by block type.** The server half has no texture atlas and stores colour 0, and the
+  client coloured such sections by block type. That type's only texture is the game's
+  missing-texture image (G181).
+- **The guard never fired.** The check meant to catch that image compared an alpha-free atlas value
+  exactly against an opaque repack (G180).
+- **The white stuck.** A section's palette keeps its first colour per block id, so the client's own
+  later capture reused the white entry (G182).
 
 - **Stand-ins (settled decision 36).** Where a capture job is created, the mod copies each chiselled
-  block's cuboids and materials; the capture worker records the block as the eligible material with
-  the most exposed voxel faces, summed per block, ties to the first material. Eligible means
-  something distant terrain draws as ground: not snow, liquid, markers, flowers or a block-entity
-  block. The chisel's own flags still decide the column's snow. Server and client store the same
-  ordinary block, so its colour, tint and band texture come from the existing paths.
+  block's cuboids and materials.
+  - The capture worker records the block as the eligible material with the most exposed voxel
+    faces, summed per block; ties go to the first material.
+  - Eligible means something distant terrain draws as ground: not snow, liquid, markers, flowers or
+    a block-entity block.
+  - The chisel's own flags still decide the column's snow.
+  - Server and client store the same ordinary block, so its colour, tint and band texture come from
+    the existing paths.
 - **Placeholder fallbacks.** The missing-texture colour is recognised on RGB against both the atlas
-  average and the file mean. A block-entity block whose answer is the placeholder takes another of
-  its own textures or neutral grey, and a real entity answer is kept. A plain block whose own answer
-  is the placeholder keeps it, because the game draws a removed mod's block the same way up close. A
-  block with no colour texture stays grey.
+  average and the file mean.
+  - A block-entity block whose answer is the placeholder takes another of its own textures, or
+    neutral grey. A real entity answer is kept.
+  - A plain block whose own answer is the placeholder keeps it, because the game draws a removed
+    mod's block the same way up close.
+  - A block with no colour texture stays grey.
 - **Existing caches.** Stored placeholder colours on block-entity blocks are repaired to that
   fallback on load and written back. Their real materials arrive when the ground is captured again.
 
@@ -111,34 +141,40 @@ first colour per block id, so the client's own later capture reused the white en
 | Owner's first 30 s on 0.4.62 | 4,496 chiselled blocks captured as their material, 28 with no material that can stand in, 0 failed reads; 1,105 stored placeholder colours repaired | Log-measured (client captures only) |
 | 0.4.62 in play | "Excellent! Looks fantastic." | Human-tested |
 
-Limits: clutter, bookshelves, ground storage and lamps have no single material and take one of their
-own textures' colours or grey; structures cached before 0.4.62 stay grey until recaptured; the
-server half's stand-in counts are not in the client log; the cost of copying chisel contents where
-capture jobs are created is not measured.
+Limits:
+- Clutter, bookshelves, ground storage and lamps have no single material, so they take one of their
+  own textures' colours or grey.
+- Structures cached before 0.4.62 stay grey until recaptured.
+- The server half's stand-in counts are not in the client log.
+- The cost of copying chisel contents where capture jobs are created is not measured.
 
 ## Distant anti-aliasing
 
-The shimmer was sub-pixel aliasing. Past about a thousand blocks one rendered pixel covers several
-blocks but shows only the one under its centre, so a camera movement smaller than a pixel swaps a
+The shimmer was sub-pixel aliasing. Past about a thousand blocks, one rendered pixel covers several
+blocks but shows only the one under its centre. So a camera movement smaller than a pixel swaps a
 white snow top for the dark wall beside it. The fix nudges distant cached terrain by a different
-fraction of a pixel every frame and blends each pixel with where the same ground was in earlier
-frames, so it settles on the average of what it covers.
+fraction of a pixel every frame. It then blends each pixel with where the same ground was in
+earlier frames, so the pixel settles on the average of what it covers.
 
 - **Ownership.** A depth snapshot taken before the first cached draw marks the pixels cached terrain
-  drew. Only those, and sky pixels beside them, are nudged, blended and written back; vanilla
+  drew. Only those, and sky pixels beside them, are nudged, blended and written back. Vanilla
   terrain, creatures and water keep their pixels (settled decision 34).
-- **Strength** follows on-screen block size against the reach: none where a block is the reach or
-  wider, full where it is half as wide. History reaches full share over the first half of that fade
-  and the nudge comes in over the second.
-- **Resolve.** Catmull-Rom history re-sampling; a safety check against the mean +/- clip standard
-  deviations of the 3x3 neighbourhood, inside its range; history only from cached terrain or sky;
-  the still memory only once the whole camera has held still, eased in over 16 frames; fast turns
-  keep 85% of the turning memory.
-- **Composite.** Writes back only the pixels the resolve owns, with contrast-adaptive sharpening
+- **Strength** follows on-screen block size against the reach.
+  - There is none where a block is the reach or wider, and full strength where it is half as wide.
+  - History reaches its full share over the first half of that fade, and the nudge comes in over
+    the second.
+- **Resolve:**
+  - Catmull-Rom history re-sampling;
+  - a safety check against the mean +/- clip standard deviations of the 3x3 neighbourhood, inside
+    its range;
+  - history only from cached terrain or sky;
+  - the still memory only once the whole camera has held still, eased in over 16 frames;
+  - fast turns keep 85% of the turning memory.
+- **Composite.** It writes back only the pixels the resolve owns, with contrast-adaptive sharpening
   that never reaches the history.
-- **Failure.** A shader compile failure or an early GL error stops the feature for the session with
-  one log line, and terrain draws as it did without it. No GLSL validator is installed here, so the
-  shaders are only ever compiled in game.
+- **Failure.** A shader compile failure or an early GL error stops the feature for the session,
+  with one log line, and terrain draws as it did without it. No GLSL validator is installed here,
+  so the shaders are only ever compiled in game.
 
 | Setting | Command | Default (owner's tuning) | Range | Before 0.4.61 |
 |---|---|---|---|---|
@@ -149,11 +185,14 @@ frames, so it settles on the average of what it covers.
 | Memory when still | `.vhtaa still` | 0.99 | 0-0.99 | 0.97 |
 | Smear guard | `.vhtaa clip` | 2.25 | 0.5-4 | 1.25 |
 
-All are saved, all are sliders on the `.vhconfig` Anti-Aliasing tab, and `.vhtaa reset` restores
-the defaults. The owner kept these ranges on 2026-09-12, although sharpen and both memories sit at
-their tops. `.vhtaa` with no argument reports the state, the reach in blocks, the dials, the share of
-frames with the camera fully still, history resets and GPU cost, in chat and the client log.
-`.vhtaa show` tints what it touches.
+- **Saved and on sliders.** All the dials are saved and have sliders on the `.vhconfig`
+  Anti-Aliasing tab. `.vhtaa reset` restores the defaults.
+- **Ranges kept.** The owner kept these ranges on 2026-09-12, although sharpen and both memories
+  sit at their tops.
+- **Reporting.** `.vhtaa` with no argument reports, in chat and the client log: the state, the reach
+  in blocks, the dials, the share of frames with the camera fully still, history resets and GPU
+  cost.
+- **Showing.** `.vhtaa show` tints what it touches.
 
 | Evidence | Result | Level |
 |---|---|---|
@@ -168,42 +207,53 @@ frames with the camera fully still, history resets and GPU cost, in chat and the
 
 ## Automatic LOD thresholds
 
-With **Automatic** on (the default), L1 is where a level-0 column reaches 1.5 px on screen
-(`.vhdetail target`), and each later level doubles it, so every level hands over at the same
-on-screen size (settled decision 35). Level 0 is held past the vanilla view distance, the blend band
-and one section. At the owner's settings (60 degrees, 1,080 rendered rows, view distance 128, band
-128) that gives 624 / 1,248 / 2,496 / 4,992 / 9,984 / 19,968 blocks; his own list stays in the file
-for `.vhdetail manual`. It re-selects at most once a second, only when the render height, FOV, floor
-or target changes, and logs what it applies. In use since 0.4.57 without complaint; not evaluated
-at other FOVs, render scales or view distances.
+With **Automatic** on (the default), each level hands over at the same on-screen size (settled
+decision 35).
+- **Where levels start.** L1 is where a level-0 column reaches 1.5 px on screen
+  (`.vhdetail target`), and each later level doubles it.
+- **Level 0** is held past the vanilla view distance, the blend band and one section.
+- **At the owner's settings** (60 degrees, 1,080 rendered rows, view distance 128, band 128) that
+  gives 624 / 1,248 / 2,496 / 4,992 / 9,984 / 19,968 blocks. His own list stays in the file for
+  `.vhdetail manual`.
+- **Re-selection.** It re-selects at most once a second, only when the render height, FOV, floor or
+  target changes, and logs what it applies.
+- **Evidence.** In use since 0.4.57 without complaint; not evaluated at other FOVs, render scales or
+  view distances.
 
 ## Settings integration and editor
 
-In an active world, the vanilla Settings header has a dedicated **Horizons** tab. Vintage Story
-1.22 exposes no public page registry, so one guarded adapter extends the private
-`GuiCompositeSettings.ComposerHeader` seam and the established Settings leave paths. It validates
-every reflected member before patching; if the seam moves, vanilla Settings remains usable and the
-log directs the player to `.vhconfig`. Both entries compose one stateful editor (settled decision
-37), so behavior cannot drift between two implementations.
+In an active world, the vanilla Settings header has a dedicated **Horizons** tab.
+- **The seam.** Vintage Story 1.22 exposes no public page registry. One guarded adapter therefore
+  extends the private `GuiCompositeSettings.ComposerHeader` seam and the established Settings leave
+  paths.
+- **Guarding.** It validates every reflected member before patching. If the seam moves, vanilla
+  Settings remains usable and the log directs the player to `.vhconfig`.
+- **One editor.** Both entries compose one stateful editor (settled decision 37), so behaviour
+  cannot drift between two implementations.
 
-- **General** holds automatic/manual LOD distances, far draw cap, the saved **Load terrain while
-  paused** switch, and visual features with presets. **Anti-Aliasing** holds a slider for every
-  dial. Descriptions appear on hover; secondary tabs sit below the vanilla header; compact rows and
-  independently placed actions keep text and controls inside the page. Defaults resets the current
-  page. Save keeps mod changes; Cancel or closing restores live anti-aliasing previews.
-- **Distance map.** A logarithmic map begins at 32 blocks. Vanilla's range is neutral grey; the
-  coloured and labelled L0-L6 spans begin at its edge, and each L1-L6 marker frame matches the
-  region it introduces. This picture is explanatory and does not remove the renderer's internal
-  seam overlap.
+- **The pages.** **General** holds automatic/manual LOD distances, the far draw cap, the saved
+  **Load terrain while paused** switch, and visual features with presets. **Anti-Aliasing** holds a
+  slider for every dial.
+  - Descriptions appear on hover.
+  - Secondary tabs sit below the vanilla header.
+  - Compact rows and independently placed actions keep text and controls inside the page.
+  - Defaults resets the current page. Save keeps mod changes; Cancel or closing restores live
+    anti-aliasing previews.
+- **Distance map.** A logarithmic map begins at 32 blocks.
+  - Vanilla's range is neutral grey. The coloured and labelled L0-L6 spans begin at its edge, and
+    each L1-L6 marker frame matches the region it introduces.
+  - This picture is explanatory, and does not remove the renderer's internal seam overlap.
 - **Vanilla render distance.** The white Vanilla marker is a second control for
-  `ClientSettings.ViewDistance`, not mod configuration. It uses the game's exact 32-1,536 range,
-  32-block increments, mouse-up commit and Graphics-Custom side effect, then refreshes automatic
-  thresholds immediately. Mod Cancel deliberately does not undo it.
-- **Paused loading.** Render stages continue when ordinary single-player game ticks stop. When the
-  saved default-on switch is enabled, the renderer invokes the same bounded owner-thread LOD work
-  at 50 ms cadence; it neither unpauses nor advances simulation. Source and harness verification
-  are complete; a direct runtime progress observation remains open.
-- **Presets.** Quality now equals the deliberate default visual set and leaves costly Far Biome
+  `ClientSettings.ViewDistance`, not mod configuration.
+  - It uses the game's exact 32-1,536 range, 32-block increments, mouse-up commit and
+    Graphics-Custom side effect, then refreshes automatic thresholds immediately.
+  - Mod Cancel deliberately does not undo it.
+- **Paused loading.** Render stages continue when ordinary single-player game ticks stop.
+  - When the saved default-on switch is enabled, the renderer invokes the same bounded owner-thread
+    LOD work at 50 ms cadence. It neither unpauses nor advances simulation.
+  - Source and harness verification are complete; a direct runtime progress observation remains
+    open.
+- **Presets.** Quality now equals the deliberate default visual set, and leaves costly Far Biome
   Colors off. Players may enable the feature individually, producing a Custom configuration.
 
 The owner's first 0.4.63 screenshots exposed the remaining tab, colour and Vanilla/L0 separation
@@ -211,23 +261,32 @@ defects. He reviewed the corrected 0.4.64 window and said, "This looked good."
 
 ## Tree and glacier corrections: accepted
 
-Version 0.4.54 gave a block's top, X walls and Z walls their own atlas rows, so standing logs show
-bark on their sides; 0.4.55 makes wall lookup skip the already-selected top texture, so Redwood
-quarter-trunks do too, while a lying-log control preserves a real wall-facing cut end. 0.4.55 also
-limits liquid classification to Water and Lava: every `EnumBlockMaterial.Ice` block, including the
-opaque packed glacier ice of mountain summits, had been drawn as water and written to the liquid
-depth that drives underwater murk, painting a dark rim round glacier summits (G173). The owner
-confirmed all three on 2026-09-12: Redwood bark on all four sides with a cut-end top, no dark rim on
-the captured snowy peak with murk on, and frozen lake and glacier ice reading right as solid terrain.
+- **0.4.54** gave a block's top, X walls and Z walls their own atlas rows, so standing logs show
+  bark on their sides.
+- **0.4.55** makes wall lookup skip the already-selected top texture, so Redwood quarter-trunks show
+  bark too. A lying-log control preserves a real wall-facing cut end.
+- **0.4.55 also** limits liquid classification to Water and Lava. Every `EnumBlockMaterial.Ice`
+  block, including the opaque packed glacier ice of mountain summits, had been drawn as water. It
+  was also written to the liquid depth that drives underwater murk, painting a dark rim round
+  glacier summits (G173).
+
+The owner confirmed all three on 2026-09-12:
+- Redwood bark on all four sides, with a cut-end top;
+- no dark rim on the captured snowy peak with murk on;
+- frozen lake and glacier ice reading right as solid terrain.
 
 ## Handoff flash result retained
 
 The one-frame flash of open sky at the edge of vanilla's draw range came from deciding range
-ownership at Before/0.994, before the player's physics step at Before/1.0 (G170); the lag dates from
-0.4.13. 0.4.53's loss-only late range check at Before/1.001 fixed it, and the owner confirmed.
-`.vhlaterange off` restores the old timing for comparison. [Session 84](dev/sessions/SESSION_84.md)
-holds the evidence and settled decision 33 owns the rule. The owner's earlier build bisection to
-0.4.40 is not supported by the code, and why 0.4.39 was judged clean is not established (G172).
+ownership at Before/0.994, before the player's physics step at Before/1.0 (G170). The lag dates
+from 0.4.13.
+- **The fix.** 0.4.53's loss-only late range check at Before/1.001 fixed it, and the owner
+  confirmed.
+- **Comparing.** `.vhlaterange off` restores the old timing for comparison.
+- **Records.** [Session 84](dev/sessions/SESSION_84.md) holds the evidence, and settled decision 33
+  owns the rule.
+- **Not supported.** The owner's earlier build bisection to 0.4.40 is not supported by the code, and
+  why 0.4.39 was judged clean is not established (G172).
 
 ## Winter data and update paths
 
@@ -244,127 +303,193 @@ holds the evidence and settled decision 33 owns the rule. The owner's earlier bu
 | Live delivery | Durable changed L0 rows reach clients: integrated play through the sibling cache's rowids, dedicated play through refresh manifests. A held section merges them column by column, the newer copy winning, never erasing client-only columns (0.4.68); clients rebuild parents | Source/check evidence; integrated merge human-tested in 0.4.68; dedicated multiplayer temporal run remains open |
 
 Snow accumulation and melt are rare transitions, so the scheduler does no column work between
-relevant weather changes. During a finite campaign, `RefreshColumnsPerSecond` defaults to 1, clamps
-to 0–16, and 0 disables automatic refresh. Work stays inside the sweep's generated-column map and
-shares a 1 ms owning-thread issue budget.
+relevant weather changes.
+- During a finite campaign, `RefreshColumnsPerSecond` defaults to 1 and clamps to 0–16; 0 disables
+  automatic refresh.
+- Work stays inside the sweep's generated-column map and shares a 1 ms owning-thread issue budget.
 
 ## Storage, wire, and replacement semantics
 
-Section blob format 4 has two optional append-only 512-byte maps before compression: observed snow
-provenance and covered state. Old readers ignore the tail. Current readers treat a missing tail as
-unknown, reject partial tails, and downgrade provenance-only 0.4.43 rows to unknown rather than
-falsely asserting bare terrain. Derived snow palette flags use bits 32 and 64 and are reclassified
-from live blocks. No cache purge or schema-meaning change is required.
+**Section blob format 4** has two optional append-only 512-byte maps before compression: observed
+snow provenance and covered state.
+- Old readers ignore the tail.
+- Current readers treat a missing tail as unknown and reject partial tails.
+- They downgrade provenance-only 0.4.43 rows to unknown, rather than falsely asserting bare terrain.
+- Derived snow palette flags use bits 32 and 64 and are reclassified from live blocks.
 
-Protocol 1 added optional `AssistServerSettings` field 16 for the refresh rate and
-`AssistKeyManifest` field 4 to distinguish newer durable contents from a newly discovered key. Older
-protobuf peers ignore them. Versions 0.4.74–0.4.75 append `AssistWelcome.Features` field 7 and
-`CanControlWorldGeneration` field 8, server-settings fields 17–23, the
-`AssistWorldGenRequest`/`AssistWorldGenStatus` message types, and status `Action` field 28. Feature
-bits reserve 0 for Generate, 1 for frontier and 2 for silhouettes. Since 0.4.68 a refreshed row is merged into the client's copy column by
-column instead of replacing it, and wins only while the client's content revision is unchanged since
-the row was handed to the decoder; otherwise it only fills. Only L0 is transferred; parents rebuild
-locally. The compatibility numbers remain `1 / 4 / 6`; `dev/WIRE_HISTORY.md` records the
+No cache purge or schema-meaning change is required.
+
+**Protocol 1** has grown only by append-compatible additions:
+- optional `AssistServerSettings` field 16, for the refresh rate;
+- `AssistKeyManifest` field 4, which distinguishes newer durable contents from a newly discovered
+  key;
+- in 0.4.74–0.4.75: `AssistWelcome.Features` field 7 and `CanControlWorldGeneration` field 8,
+  server-settings fields 17–23, the `AssistWorldGenRequest`/`AssistWorldGenStatus` message types,
+  and status `Action` field 28;
+- in 0.4.77: four silhouette message types. The server pushes tiles; the manifest and tile-request
+  types are still unused.
+
+Older protobuf peers ignore the new fields. Feature bits reserve 0 for Generate, 1 for frontier and
+2 for silhouettes.
+
+**Refreshed rows.** Since 0.4.68 a refreshed row is merged into the client's copy column by column
+instead of replacing it. It wins only while the client's content revision is unchanged since the row
+was handed to the decoder; otherwise it only fills. Only L0 is transferred, and parents rebuild
+locally. The compatibility numbers remain `1 / 4 / 6`, and `dev/WIRE_HISTORY.md` records the
 append-compatible extensions.
 
-Since 0.4.62 a chiselled position stores its stand-in's block code, for example planks where the
-world holds a chisel. Every reader already resolves an ordinary block code, so neither the blob
-format nor the schema meaning moved; `dev/WIRE_HISTORY.md` carries the note. Sessions 84-89 changed
-nothing on the wire or in the blob format; Sessions 86 and 88 added client configuration keys only.
-Session 90 added the client table `SiblingMerge`, recording which server-cache rows a stored copy
-already contains; it is additive. Session 91's worldgen state is a separate mod-data plan, not a
-section-schema meaning. The numbers stay `1 / 4 / 6`.
+**Chiselled positions.** Since 0.4.62 a chiselled position stores its stand-in's block code, for
+example planks where the world holds a chisel. Every reader already resolves an ordinary block code,
+so neither the blob format nor the schema meaning moved; `dev/WIRE_HISTORY.md` carries the note.
+
+**Additive storage since then:**
+- Sessions 84-89 changed nothing on the wire or in the blob format; Sessions 86 and 88 added client
+  configuration keys only.
+- Session 90 added the client table `SiblingMerge`, which records which server-cache rows a stored
+  copy already contains. It is additive.
+- Session 91's worldgen state is a separate mod-data plan, not a section-schema meaning.
+- Session 93 added the silhouette tile store, a separate server file with its own schema `1`.
+  - It is created on a world's first silhouette request.
+  - A save merges into the stored row.
+  - It shares nothing with the section cache.
+
+The numbers stay `1 / 4 / 6`.
 
 ## Diagnostics
 
-Session-only unless stated; all write their findings to the client log.
+Session-only unless stated; client commands write their findings to the client log, server commands
+to the server log.
 
 - `.vhtaa` reports distant anti-aliasing (above); `.vhtaa show` tints what it touches.
-- The 30-second report's `chiselled blocks:` line (0.4.62) counts chiselled blocks captured as their
-  material, those with no material that can stand in, failed reads, and stored placeholder colours
-  repaired on load.
-- `.vhdiag on|off` (0.4.56) shows or hides the diagnostics side panel for the session; off by
+- The 30-second report's `chiselled blocks:` line (0.4.62) counts:
+  - chiselled blocks captured as their material;
+  - those with no material that can stand in;
+  - failed reads;
+  - stored placeholder colours repaired on load.
+- `.vhdiag on|off` (0.4.56) shows or hides the diagnostics side panel for the session; it is off by
   default. The panel lists every `.vhtaa` dial, saved and live.
-- `.vhsky on|off` counts sky below the horizon after all opaque terrain is drawn and logs each flash
-  with the captured mask; `.vhsky verify on|off` reads the mask texture back after every upload.
+- `.vhsky on|off` counts sky below the horizon after all opaque terrain is drawn, and logs each flash
+  with the captured mask. `.vhsky verify on|off` reads the mask texture back after every upload.
 - `.vhlaterange on|off` switches the 0.4.53 fix; on by default.
 - `.vhgap on|off` and `.vhgap release on|off` log, and optionally release, cells the mask gives to
   vanilla while vanilla is not drawing them. The scan still runs before the physics step.
-- `.vhwater capture` stores a frame's colour and depth stages with the projection; Session 86 measured
-  the shimmer from one.
+- `.vhwater capture` stores a frame's colour and depth stages with the projection. Session 86
+  measured the shimmer from one.
+- `.vhsilhouette on|off|log|stats` switches silhouettes for the session. It reports tiles, cells
+  with heights, meshes and the shader.
+- `/vhsilhouetteserver [status]` (controlserver) reports the builder, heights, previews, the store
+  and any stop.
+- `/vhsilhouetteserver compare [points]` runs the accelerator comparison.
+- The builder logs a status line every 30 s while a player asks for silhouettes.
 
 ## Performance and artifact evidence
 
-The final fast tier passed **24,747 assertions with zero failures**, and the 0.4.76 Release and
-Debug builds completed with zero warnings and zero errors. The sibling-cache scanner's cost is in the
-current-result table; merging into held sections runs under the existing install budget and is not
-separately measured. Distant anti-aliasing's measured cost is in its table above; automatic
-thresholds cost nothing per frame unless their inputs change. The pause-time path
-runs the already-bounded owner-thread work at 50 ms cadence but has no paired frame-time capture.
-Chisel stand-ins add a copy of each chiselled block's contents where a capture job is created and
-arithmetic on the capture worker; neither is measured. The late range check of 0.4.53 sweeps only on
-frames where the physics step changed the player's block; snow adds 1,024 uncompressed bits-array
-bytes per resident section before compression; no paired large-world capture yet isolates winter
-campaign cost.
+**Checks and builds.** The final fast tier passed **24,916 assertions with zero failures** at 0.4.82,
+and the Release build completed with zero errors.
 
-The verified `dist/vintagehorizons_0.4.76.zip` is 583,065 bytes and has SHA-256
-`E0E9A9EC98A554334EA5E466627CD851C9DD54165B327D3456CF5F3E4CB40028`; `modinfo.json` reports
-0.4.76 and the verified artifact was copy-installed during its build workflow. Older test zips
-remain in that folder. Every incremented private
-test build receives an exact Git checkpoint after verification and installation; this does not
-authorize a push, tag, publication or public release. The assistant did not launch the game in
-Session 91's controlled servers ran only after the owner's approval; no additional game launch was
-needed for this documentation pass.
+Measured costs, and what is not measured:
+- **Sibling-cache scanner.** Its cost is in the current-result table. Merging into held sections
+  runs under the existing install budget and is not separately measured.
+- **Distant anti-aliasing.** Its measured cost is in its table above.
+- **Automatic thresholds** cost nothing per frame unless their inputs change.
+- **Pause-time loading** runs the already-bounded owner-thread work at 50 ms cadence, but has no
+  paired frame-time capture.
+- **Chisel stand-ins** add a copy of each chiselled block's contents where a capture job is created,
+  plus arithmetic on the capture worker. Neither is measured.
+- **The late range check (0.4.53)** sweeps only on frames where the physics step changed the
+  player's block.
+- **Snow** adds 1,024 uncompressed bits-array bytes per resident section before compression. No
+  paired large-world capture yet isolates winter campaign cost.
+- **Silhouettes:**
+  - GPU cost and the off-state A/B are not measured.
+  - Captured heights cost one 2 KB copy per column the server loads.
+  - The fill runs on worker threads with pooled arrays.
 
-Documentation validation passed **9,488 checks** with no failures at the Session 91 doc pass.
-Current version, changelog coverage, source count, compatibility, links, session routing, shader
-ASCII and active-plan routing pass.
+**The 0.4.82 artifact.** The verified `dist/vintagehorizons_0.4.82.zip` is 617,711 bytes and has
+SHA-256 `D519ACDE999DDB708BD25C8420A2D1A620F32C1CA340199FBFEB68B26571A6EB`. Its `modinfo.json`
+reports 0.4.82, and it was copy-installed during its build workflow. Older test zips remain in that
+folder.
+
+**Checkpoints.** Every incremented private test build receives an exact Git checkpoint after
+verification and installation. This does not authorize a push, tag, publication or public release.
+
+**Launches.** Session 93 launched no game; the owner ran every in-game test. Session 91's controlled
+servers ran only after the owner's approval.
+
+**Documentation.** Validation passed **9,510 checks** with no failures at the Session 93 doc pass.
+It covers:
+- current version and changelog coverage;
+- source count;
+- compatibility numbers;
+- links;
+- session routing;
+- shader ASCII;
+- active-plan routing.
 
 ## Established product state retained
 
-- Version 0.4.64 is the accepted baseline (owner, 2026-09-12). Its water keeps the settled seam and
+- **Accepted baseline.** Version 0.4.64 (owner, 2026-09-12). Its water keeps the settled seam and
   narrowly scoped loading guard accepted in 0.4.39.
-- The client remains useful on an unmodified server. Server capture, safe sweeping, optional
-  generation, dormant snow refresh and live assist remain additive.
-- Packed clustered terrain is still the required visible opaque path; dedicated OIT water remains
-  required. Automatic plausible renderer fallback remains disabled.
-- Distant anti-aliasing never changes a vanilla pixel and never keys anything to a fixed distance.
-- A block is recorded as what it shows: a chiselled block as its most visible material (settled
-  decision 36).
-- Settings has one editor with two entry points, while the mirrored vanilla distance remains
-  vanilla-owned and pause loading reuses bounded owner-thread work (settled decision 37).
-- The handoff fix changes when ownership's range half is decided, not what ownership means. Water
-  development still may not redefine shared terrain ownership.
-- A held section is merged, never replaced: first sightings and parents fill only, and a level-0 row
-  the server rewrote after the client saw it wins column by column (owner, 2026-09-12; G188).
-- Real saved terrain is generated only by an explicit, privileged, confirmed `/vhworldgen` job;
-  sweep, `/vhgen` and automatic frontier work retain the generates-nothing promise (settled
-  decision 38).
-- The automatic frontier never monopolizes generation authority; it yields to explicit
-  `/vhworldgen` and `/vhgen` work (settled decision 39).
-- Multi-thread generation is not a player option. The engine setting was active in P0, but failed
-  both the material-speedup and terrain-identity gates (G198).
+- **Server independence.** The client remains useful on an unmodified server. Server capture, safe
+  sweeping, optional generation, dormant snow refresh and live assist remain additive.
+- **Renderer paths.** Packed clustered terrain is still the required visible opaque path, and
+  dedicated OIT water remains required. Automatic plausible renderer fallback remains disabled.
+- **Distant anti-aliasing** never changes a vanilla pixel, and never keys anything to a fixed
+  distance.
+- **Recorded as shown.** A block is recorded as what it shows: a chiselled block as its most visible
+  material (settled decision 36).
+- **One Settings editor.** Settings has one editor with two entry points. The mirrored vanilla
+  distance remains vanilla-owned, and pause loading reuses bounded owner-thread work (settled
+  decision 37).
+- **Ownership.** The handoff fix changes when ownership's range half is decided, not what ownership
+  means. Water development still may not redefine shared terrain ownership.
+- **Held sections merge.** A held section is merged, never replaced. First sightings and parents
+  fill only; a level-0 row the server rewrote after the client saw it wins column by column (owner,
+  2026-09-12; G188).
+- **Writing real terrain.** Real saved terrain is generated only by an explicit, privileged,
+  confirmed `/vhworldgen` job. Sweep, `/vhgen`, automatic frontier work and silhouette previews keep
+  the generates-nothing promise (settled decision 38).
+- **Yielding.** Automatic producers never monopolize generation authority; the frontier and the
+  silhouette builder yield to explicit `/vhworldgen` and `/vhgen` work (settled decision 39).
+- **Silhouettes.** Silhouettes never replace real cached terrain. They draw only where cached
+  terrain is missing.
+- **Thread count.** Multi-thread generation is not a player option. The engine setting was active in
+  P0, but failed both the material-speedup and terrain-identity gates (G198).
 
 ## Next work
 
-Begin with [Session 91](dev/sessions/SESSION_91.md), the top of [TODO](dev/TODO.md), and
+Begin with [Session 93](dev/sessions/SESSION_93.md), the top of [TODO](dev/TODO.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. The owner chose Farseer silhouettes next. Preserve the shared-authority rule: an automatic
-   travelling frontier yields immediately to explicit `/vhworldgen` and `/vhgen` jobs.
-2. Worldgen's remaining checks are not gates for silhouette work: final durable completion, a real
-   restart/offered resume, dedicated permissions/read-only status, and a long-run memory/disk pass.
-3. The fixed 15-second shutdown-save deadline still needs the W8 config setting if this plan is
-   revisited. The owner deferred starting a new tile while the preceding tile saves.
-4. Runtime-check the 0.4.69 sweep pacing/drop line and preserve older TODO debt including P3's
-   after-comparison, winter convergence, pause loading and Session 84 diagnostic cleanup.
+1. **P0.3.** Run `/vhsilhouetteserver compare` on a world with the owner's worldgen mods and the
+   samplers; the owner judges the figures.
+   - The owner allows test-server runs for needed tests.
+   - A dedicated test server has silhouettes forced off, so the run needs singleplayer or a
+     server-side change.
+2. **P3, remaining:**
+   - coast refinement and the land/sea hint;
+   - accelerator use after the verdict;
+   - the manifest and tile-request transport;
+   - the dedicated-server opt-in with the reach clamp;
+   - yields to `LodWorldGenGates`.
+3. **Observe in game:** silhouette joins, tile read-back after a restart, and the error brake. The
+   `bodanboys` stall is set aside (G204).
+4. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
+   offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
+5. **Older TODO debt:** runtime-check the 0.4.69 sweep pacing and drop line, and keep the debt
+   including:
+   - P3's after-comparison;
+   - winter convergence;
+   - pause loading;
+   - Session 84 diagnostic cleanup.
 
-[Session 91](dev/sessions/SESSION_91.md) is the authoritative continuation point. Sessions 90-82
-retain the delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water
-history. Architecture owns the established invariants, `dev/WIRE_HISTORY.md` owns compatibility,
-and G166-G198 in `dev/GOTCHAS.md` preserve the recent traps.
+[Session 93](dev/sessions/SESSION_93.md) is the authoritative continuation point.
+- Sessions 92-82 retain the silhouette first look, and the Generate, delivery, Settings,
+  structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
+- Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
+- G166-G204 in `dev/GOTCHAS.md` preserve the recent traps.
 
 The active performance route remains
-[the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md); GPU renderer work
+[the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work
 is further specified by
 [the GPU-driven terrain renderer plan](dev/plans/PLAN_GPU_DRIVEN_TERRAIN_RENDERER.md).

@@ -2,42 +2,54 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.77 and horizon silhouettes
+## Start here: 0.4.82 and horizon silhouettes
 
-Read [Session 92](sessions/SESSION_92.md), then
-[the horizon-silhouette and Terrain Ahead plan](plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md),
-revised with the owner's decisions D8–D15. P1, the first look, landed in 0.4.77, and the owner saw
-silhouettes in singleplayer.
+Read [Session 93](sessions/SESSION_93.md), then
+[the horizon-silhouette and Terrain Ahead plan](plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md). P1
+and P2 are built. P3 began in 0.4.82. The plan's "How the build differs" note lists where the code
+has moved from its text.
 
 Open, in the order they block further work:
 
-- **Exit hang (defect, not diagnosed).** After using silhouettes, the owner left the world and quit.
-  The game hung at the exit screen until the process was killed.
-  - The server log shows a clean stop. The client's last line is "Exiting game now".
-  - Next: find what keeps the process alive, from thread names or a dump of the hung process. Ask
-    before any run.
-  - Then compare the same exit three ways: silhouettes never switched on; switched on and then off;
-    and on at the moment of exit.
-- **Joins with adjacent terrain.** The owner: silhouettes "don't connect well with immediately
-  adjacent terrain". Known contributors in 0.4.77:
-  - coverage is cut per 64-block cell, with 16-block quads;
-  - heights come from one sample per 256 blocks, with no anchoring to cached edge heights;
-  - cached terrain's edge still fades to sky.
-
-  The plan's answers are captured heights (P2), anchoring along covered edges (4.7) and the
-  fade-target handoff (P4). Ask the owner for a screenshot of the worst case before choosing.
-- **Preview throughput.** Log-measured at about 5 previews/s with 16 in flight on the owner's stack,
-  so the engine is the limit. An 8 km disc then takes over 10 minutes standing still, and nothing
-  is added while real chunks generate. This raises the value of the accelerator comparison (P0.3)
-  and of captured heights (P2).
-- **Next phases.**
-  - P2: the tile store and captured heights.
-  - P3: the builder, with coast refinement and accelerators.
+- **P0.3: the accelerator comparison.** `/vhsilhouetteserver compare [points]` (0.4.82) has not been
+  run. The owner judges its figures (D8), and silhouettes use no accelerator until then.
+  - It needs a server with the owner's worldgen mods, the samplers, and real heights.
+  - A dedicated test server has silhouettes forced off, because the P3 opt-in is not built, so the
+    comparison cannot run there yet.
+  - Both samplers run Watersheds' generator code on a background thread. Whether that is safe
+    alongside real generation is unknown.
+- **P3, remaining.**
+  - Coast refinement and the land/sea hint (`GenMaps.oceanGen`). Use an accepted accelerator or,
+    failing that, extra previews near coasts only.
+  - Accelerator use in the builder, after P0.3.
+  - The manifest and tile-request transport.
+  - Dedicated-server opt-in with the reach clamp (`SilhouetteReachBlocks`).
+  - Yields to `LodWorldGenGates`, and a per-player share.
+  - Gate: integration-tested in singleplayer and a dedicated sandbox.
+- **Not yet observed in game (0.4.79–0.4.81).**
+  - Whether silhouettes now join explored terrain better, with captured heights and the fill. The
+    cached edge still fades to sky until P4.
+  - Whether stored tiles come back after a restart. 96 tiles were saved at exit on `bodanboys`;
+    none has been read back yet.
+  - The error brake and the one-preview-per-region rule.
+- **`bodanboys` preview stall** (set aside by the owner, 2026-09-14). Previews there stall the
+  world-generation thread for minutes after Watersheds/TerraPrety coast-map errors, and leaving
+  waits for it (G204).
+  - Unknown: the cause, which needs a dump of the stalled process.
+  - Unknown: whether new land there stalls without silhouettes.
+- **P2 integration gate.** No `/vhworldgen` run has been checked for its columns appearing in tiles.
+- **Then:**
   - P4: drawing, the handoff and settings (the reach and draw distance on the scale, the
-    Silhouettes tab).
-  - P6: Terrain Ahead, a separate feature.
-- **Not yet measured:** silhouette GPU cost, the off-state A/B, a dedicated server (the feature is
-  not offered there in 0.4.77), and accelerator accuracy.
+    Silhouettes tab);
+  - P5: tuning and client persistence;
+  - P6: Terrain Ahead, a separate feature;
+  - P7: canopy.
+- **Not yet measured:** silhouette GPU cost, the off-state A/B, and a dedicated server.
+- **Later, not now: the sampler's other values** (owner, 2026-09-14). Besides height, Algernon's
+  Terrain Sampler returns rainfall, temperature, geologic activity, forest density and shrub density
+  for a position without generating chunks. These could help other parts of the mod, for example
+  the planned canopy (P7), which otherwise takes forest density from previews. Look into it later;
+  nothing is planned yet.
 
 The world-generation/LOD-coverage plan's core is complete (Session 91). Its verification debt,
 not a gate for silhouette work:

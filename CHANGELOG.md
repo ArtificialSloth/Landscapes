@@ -27,6 +27,40 @@ optimization on 2026-09-14 and chose the Farseer silhouette plan next. The last 
 remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and fresh-start recovery received the
 owner's “Success” report, but not the full completion/restart matrix.
 
+## [0.4.82] - 2026-09-14
+
+This entry groups the 0.4.78–0.4.82 private test checkpoints.
+
+**Silhouettes keep real heights and remember them (0.4.79–0.4.80).**
+- **Real heights.** The server keeps the ground height of every column it loads or previews for its
+  cache, so silhouettes beside explored land start from real heights.
+- **The fill.** Heights in between are filled from every known height, and neighbouring tiles meet
+  exactly.
+- **Persistence.** Tiles are saved to their own file at each world save and on quit, and read back
+  in later sessions. A world gets the file only when a player first asks for silhouettes.
+- **Off switch.** `EnableSilhouettes` in the server config turns silhouettes off entirely. Left
+  empty it is automatic: on for singleplayer and LAN-hosted worlds.
+- **Status.** `/vhsilhouetteserver status` (admins) reports tiles, heights, previews and the store.
+
+**Previews stop before they can wedge the world generator (0.4.78, 0.4.81).**
+- **Stops.** Previews stop for the session if the world generator stops answering them for
+  20 seconds, or if the server logs three errors while they are being generated. A chat line and
+  a log line say which.
+- **Fewer previews.** Each unexplored 512-block region is previewed once, not four times, and at
+  most four previews wait on the generator.
+
+**Accelerator comparison (0.4.82).** `/vhsilhouetteserver compare [points]` measures Algernon's
+Terrain Sampler and Watersheds' own sampler, when installed, against real heights. Silhouettes do
+not use either yet.
+
+The exit hang Session 92 left open was the `bodanboys` launch at 16:04 (Session 93). On that world,
+previews still stall the world generator for minutes, and leaving waits for it; the owner set it
+aside.
+
+The compatibility numbers remain `1 / 4 / 6`; the silhouette store is a separate server file with
+its own schema. The fast tier passes 24,916 assertions. The 0.4.82 package has SHA-256
+`D519ACDE999DDB708BD25C8420A2D1A620F32C1CA340199FBFEB68B26571A6EB`.
+
 ## [0.4.77] - 2026-09-14
 
 **Horizon silhouettes, first look.** In a singleplayer or LAN-hosted world, `.vhsilhouette on`

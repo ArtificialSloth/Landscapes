@@ -1,11 +1,31 @@
 # Plan - Horizon silhouettes and terrain ahead
 
 **Status:** Active. Revised 2026-09-14 with the owner's decisions D8-D15, against 0.4.76
-(`9ea75c5`; documentation `229c04b`). P1, the first look, landed in 0.4.77 (`4c7720c`), and the
-owner saw silhouettes in game. The join with adjacent terrain and a hang at game exit are open
-(Session 92).
+(`9ea75c5`; documentation `229c04b`).
+- P1, the first look, landed in 0.4.77 (`4c7720c`). The owner accepted the classic look apart from
+  the joins.
+- P2 landed in 0.4.79-0.4.80, with a stall guard and an error brake in 0.4.78 and 0.4.81 (Session
+  93).
+- P3 began in 0.4.82 with the P0.3 comparison command.
 - Silhouettes come first (D14).
 - Terrain Ahead is a separate, later feature (D15).
+
+**How the build differs from this text (Session 93),** until a revision folds it in:
+- **Heights of loaded columns** come from the server's column-loaded event, not the
+  `ScheduleCaptures` site in 4.4. Previewed cache columns come through
+  `LodPipeline.PreviewHeightsCaptured`. This works with the sweep off and without the server cache
+  open.
+- **The 4.3 fill** replaced P1's lattice blend in P2 rather than P4, because captured heights are
+  invisible without it.
+- **The tile store** is created on a world's first silhouette request, and a save merges into the
+  stored row.
+- **The coarse pass (4.5)** previews one chunk per unexplored 512-block region, not four, because a
+  preview rebuilds its map region and throws it away (G203). At most four previews are in flight.
+- **Previews stop for the session** after 20 s of generator silence or three logged errors (G204).
+- **The server command** is `/vhsilhouetteserver [status|compare]`, not `/vhsilhouette`; the client
+  owns that name.
+- **`EnableSilhouettes`** is `null` (automatic) as planned, but dedicated servers stay off whatever it
+  says until P3's test.
 
 The first version was written from a report-only investigation on 2026-09-12 against 0.4.64
 (`dd0394c`).

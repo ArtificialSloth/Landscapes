@@ -3854,3 +3854,68 @@ inside `RenderFrame` draws nothing in exactly the views it exists for, and nothi
 guards. Let it call `ApplyZFar`, which does nothing when the needed distance is unchanged.
 
 **Found:** 2026-09-14, Session 92 (source-traced while building 0.4.77).
+
+### G201 - The log folder holds only the latest launch
+
+**Trigger:** diagnosing a hang or crash from the game's logs.
+
+**Trap:** `VintagestoryData/Logs` holds only the most recent launch. When the game next starts, each
+earlier launch moves to `Logs/Archive/<start time>`. Session 92 examined the clean 16:11 quit and
+blamed it for a hang that happened in the launch before.
+
+**Safer action:** check every launch in `Logs` and `Logs/Archive`. Look for "Stopped the server!" in
+the server log and "Exiting game now" in the client log. A launch missing them is the one that hung
+or was killed.
+
+**Found:** 2026-09-14, Session 93.
+
+### G202 - Server elapsed time stops while the game is paused
+
+**Trigger:** timing server work with `sapi.World.ElapsedMilliseconds`.
+
+**Trap:** it is `ServerMain.totalUnpausedTime`, which `ServerMain.Suspend` stops. A duration measured
+with it leaves out every pause. In 0.4.80, "answered again 2 s after previews were stopped" spanned
+minutes of wall time.
+
+**Safer action:** use it deliberately where paused time must not count; the silhouette stall watch
+does. Say which clock a logged duration uses, and otherwise use wall-clock time.
+
+**Found:** 2026-09-14, Session 93 (source-traced, decompiled 1.22.7; log-measured).
+
+### G203 - A preview never keeps the map region it builds
+
+**Trigger:** issuing several previews (`PeekChunkColumn`) in a region the savegame does not hold.
+
+**Trap:**
+- `PeekChunkAreaLocking` builds each chunk's map region through `GetOrCreateMapRegionNoStore`. That
+  runs every worldgen mod's region step, and the region is dropped when the preview ends.
+- The next preview in the same region builds it again.
+- The silhouette lattice previewed each unexplored region four times. The server debug log shows
+  identical dungeon placements repeated four times per region on both of the owner's worlds.
+
+**Safer action:** preview an unexplored region once, as 0.4.81 does, or use a height source that
+builds no regions.
+
+**Found:** 2026-09-14, Session 93 (source-traced; log-measured).
+
+### G204 - A busy world-generation thread delays pausing and quitting
+
+**Trigger:** anything that queues long work on the world-generation thread (`chunkdbthread`), such as
+previews on a heavily modded world.
+
+**Trap:**
+- Pausing waits up to 60 s for every server thread (`ServerMain.Suspend`), then gives up with "The
+  following threads were not suspended: chunkdbthread".
+- Stopping also waits for the thread's current tick.
+- In 0.4.80, on the owner's `bodanboys` world, one tick lasted about 3.5 minutes, and leaving the
+  world took about 2 minutes.
+- Why the tick lasted so long is not established. Both such stalls followed a burst of
+  Watersheds/TerraPrety coast-map errors.
+
+**Safer action:**
+- Never assume the thread answers promptly.
+- Count your own answers and stop early (G199, `LodGenerationStallWatch`).
+- Stop on worldgen errors (`LodWorldgenErrorBrake`).
+- Keep few items queued on the thread.
+
+**Found:** 2026-09-14, Session 93 (log-measured; source-traced).

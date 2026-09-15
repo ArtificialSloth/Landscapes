@@ -73,6 +73,26 @@ The tile payload is its own format, version 1:
 No existing message, field or sequence changed meaning. The compatibility numbers therefore remain
 `1 / 4 / 6`.
 
+**Silhouette changes without a wire change (0.4.78–0.4.82).**
+- The server still pushes tiles in payload format 1.
+- The manifest and tile-request types stay registered and unused.
+- Features bit 2 is still advertised only by singleplayer and LAN-hosted servers.
+- The server setting `EnableSilhouettes` is configuration and is not mirrored into
+  `AssistServerSettings`.
+
+**Silhouette tile store (0.4.80).** A separate server file,
+`ModData/vintagehorizons/<savegame>-silhouette-server.db`. It is created the first time a player in
+that world asks for silhouettes.
+- Its `Meta` table carries its own `SchemaVersion`, `1`.
+- Its `Tile` table holds `(TX, TZ, Revision, Data, ModifiedMs)`, where `Data` is the tile payload
+  above.
+- A write merges into the stored row. The stored copy fills the cells the new one lacks, and those
+  it knows from a strictly better source.
+- A different schema value empties the table on open, with a count in the log.
+
+It shares nothing with the section cache, so the section blob format and schema meaning are
+unchanged.
+
 ## Section blob-format ledger
 
 | Blob format | Current schema | Meaning |

@@ -2,6 +2,25 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-14 - Silhouettes: stall guard, captured heights, tile store, error brake, accelerator comparison (0.4.78-0.4.82)
+
+Session 92's exit hang was re-attributed from the archived logs to the 16:04 `bodanboys` launch, and
+five private test builds shipped:
+- **0.4.78** stops previews after 20 s of generator silence.
+- **0.4.79** feeds tiles the worldgen heights of loaded and cache-previewed columns. It fills unknown
+  cells with a deterministic push-pull that agrees across tile borders.
+- **0.4.80** persists tiles in their own lazily created store, and adds `/vhsilhouetteserver status`.
+- **0.4.81** stops previews on worldgen errors and previews each unexplored region once.
+- **0.4.82** adds the P0.3 comparison command.
+
+The owner's 0.4.80 test on `bodanboys` stalled again, for about 3.5 minutes, and the exit completed
+on its own. `bodanboys` is set aside, and P3 has begun. See Session 93 and G201–G204.
+
+These items closed:
+- the 0.4.77 exit-hang investigation, which moved to the set-aside `bodanboys` stall;
+- the 0.4.77 join contributors: captured heights and the fill shipped, the fade handoff is P4;
+- the throughput item: one preview per unexplored region.
+
 ## 2026-09-13–14 - Generate World built; multi-thread engine path measured and rejected (0.4.71-0.4.76)
 
 Completed P4, P5 and P7 of the world-generation/LOD-coverage plan. `/vhworldgen` now writes real,
