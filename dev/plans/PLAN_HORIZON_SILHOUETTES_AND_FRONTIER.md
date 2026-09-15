@@ -6,11 +6,15 @@
   the joins.
 - P2 landed in 0.4.79-0.4.80, with a stall guard and an error brake in 0.4.78 and 0.4.81 (Session
   93).
-- P3 began in 0.4.82 with the P0.3 comparison command.
+- P3 began in 0.4.82 with the P0.3 comparison command. In 0.4.83 the comparison ran twice on
+  isolated test servers (Session 94); the owner's verdict is pending.
 - Silhouettes come first (D14).
 - Terrain Ahead is a separate, later feature (D15).
 
-**How the build differs from this text (Session 93),** until a revision folds it in:
+**How the build differs from this text (Sessions 93–94),** until a revision folds it in:
+- **A dedicated test server can measure heights** with the developer switch
+  `VINTAGEHORIZONS_SILHOUETTE_MEASURE` (0.4.83). It keeps heights and runs `compare`, and offers
+  players nothing (G206).
 - **Heights of loaded columns** come from the server's column-loaded event, not the
   `ScheduleCaptures` site in 4.4. Previewed cache columns come through
   `LodPipeline.PreviewHeightsCaptured`. This works with the sweep off and without the server cache
@@ -311,9 +315,12 @@ GitHub source and ModDB page, read 2026-09-14.
 - **Sides:** server-side. Its modinfo says `RequiredOnClient: true`, so a server that installs it
   makes every client install it.
 - **Version:** listed for 1.22.0-1.22.2; the owner runs 1.22.7.
-- **Speed:** the author quotes 1-2 ms per sample, once a region's maps are built.
-- **Other mods:** with Watersheds loaded it calls Watersheds' `GetPreWatershedsBlockColumnHeight`,
-  which by its name is the height before rivers. It has no TerraPrety handling.
+- **Speed:** the author quotes 1-2 ms per sample, once a region's maps are built. Session 94
+  measured 0.01-0.02 ms through Watersheds, in freshly generated land.
+- **Other mods:** with Watersheds loaded it calls Watersheds' `GetPreWatershedsBlockColumnHeight`.
+  Despite the name, that includes river valleys and runs the same steps as Watersheds' own sampler,
+  so with Watersheds installed the two accelerators are one function (Session 94, G205). It has no
+  TerraPrety handling.
 - **Licence:** the repository publishes none, so reflection-only use is the only option.
 
 **Watersheds' sampler.** Source-traced from decompiled 7.0.4, 2026-09-13.
@@ -781,6 +788,9 @@ Dev-only logging; no player-visible change.
     `WorldGenTerrainHeightMap` on the same points: coast, river, mountain, TerraPrety coast.
   - Time per 1,024 samples on 1.22.7.
   - The owner judges the tolerance by eye on a side-by-side (D8).
+  - Status (Session 94): run twice on isolated test servers against captured heights, with
+    `scripts/silhouette-compare.ps1`, at about 10-20 ms per 1,024 samples. Still to do: mountains,
+    rivers, land nobody has generated, and the side-by-side.
 - **0.4** Dedicated server: time from a section's persistence to the client's install at the 30 s
   cadence (Terrain Ahead input).
 

@@ -3919,3 +3919,61 @@ previews on a heavily modded world.
 - Keep few items queued on the thread.
 
 **Found:** 2026-09-14, Session 93 (log-measured; source-traced).
+
+### G205 - With Watersheds installed, both height accelerators are one function
+
+**Trigger:** comparing, choosing or combining Algernon's Terrain Sampler and Watersheds' own
+sampler.
+
+**Trap:**
+- With Watersheds loaded, Algernon's Terrain Sampler answers
+  `WatershedsGenTerra.GetPreWatershedsBlockColumnHeight`.
+- Watersheds' `GenTerraSampler.SampleHeightWithContextCore` runs the same steps: column distortion,
+  river-valley influence, `CalculateColumnHeight` and the climate sea-level adjustment.
+- In both Session 94 runs the two gave identical errors, down to the worst points; only timing
+  differed.
+- "Pre-Watersheds" does not mean before rivers. Both include river valleys, and neither applies the
+  channel carve that real generation does last.
+
+**Safer action:**
+- Treat them as one accelerator wherever Watersheds is installed.
+- Judge Algernon's own generator only on worlds without Watersheds.
+- Describe neither as "before rivers".
+
+**Found:** 2026-09-14, Session 94 (source-traced, decompiled Watersheds 7.0.4 and Algernon's
+Terrain Sampler 1.3.0; measured on two test servers).
+
+### G206 - A silhouette builder on a dedicated server would serve every modded client
+
+**Trigger:** letting a dedicated server hold a silhouette builder, for example to measure heights.
+
+**Trap:**
+- Until 0.4.83 the welcome advertised Features bit 2 wherever a builder existed.
+- `LodAssistClient.SendSilhouetteRequest` sends whenever that bit is set.
+- Every modded client that joined would then be sent silhouettes with no reach clamp. That is P3's
+  unbuilt dedicated opt-in.
+
+**Safer action:**
+- Keep "holds heights" and "offers silhouettes" separate. Since 0.4.83, `silhouettesOffered` gates
+  both the bit and the request handler.
+- The developer switch `VINTAGEHORIZONS_SILHOUETTE_MEASURE` only keeps heights.
+- The real opt-in waits for the reach clamp.
+
+**Found:** 2026-09-14, Session 94 (source-traced).
+
+### G207 - "Rain heights from old saves" also counts bare columns in new worlds
+
+**Trigger:** reading the rain-height count in the silhouette status line.
+
+**Trap:**
+- A column counts when its worldgen height map equals its rain height map in all 1,024 entries.
+- An old save's copied map looks like that, but so, presumably, does a new column with nothing
+  above its ground.
+- Two brand-new worlds counted 6 of 2,003 and 51 of 5,438 column loads.
+- The heights are used as captured either way.
+
+**Safer action:** do not read the count as old-save columns. Check how old the save is before
+drawing conclusions from it.
+
+**Found:** 2026-09-14, Session 94 (log-measured; the check is source-traced, the bare-column cause
+inferred).

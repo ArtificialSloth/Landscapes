@@ -3,10 +3,10 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-09-14`
-**Mod version:** `0.4.82` — current private test build (the silhouette accelerator comparison), verified, copy-installed and checkpointed; 0.4.81 and 0.4.82 are not yet tested in game
+**Status date:** `2026-09-15`
+**Mod version:** `0.4.83` — current private test build (measuring silhouette heights on a test server), verified, copy-installed and checkpointed; players see 0.4.82's behaviour, and 0.4.81–0.4.83 are not yet tested in game
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.77 `4c7720c`, 0.4.78 `3664aa2`, 0.4.79 `612770f`, 0.4.80 `f93bbbf`, 0.4.81 `3db5e3e`, 0.4.82 `96f8e06`; nothing pushed
+**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.77 `4c7720c`, 0.4.78 `3664aa2`, 0.4.79 `612770f`, 0.4.80 `f93bbbf`, 0.4.81 `3db5e3e`, 0.4.82 `96f8e06`, 0.4.83 `dd1692b`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
 **Source files:** `125` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
@@ -15,10 +15,11 @@
 
 ## Current result
 
-**Horizon silhouettes: P1 and P2 built, P3 begun (0.4.77–0.4.82).** Sessions 92 and 93.
+**Horizon silhouettes: P1 and P2 built, P3 begun (0.4.77–0.4.83).** Sessions 92–94.
 - **Scope.** Singleplayer and LAN-hosted worlds, behind the session command `.vhsilhouette on`.
   `EnableSilhouettes` in the server config turns the feature off. Dedicated servers stay off until
-  P3's test.
+  P3's test. Since 0.4.83 a developer switch lets a dedicated test server keep heights for the
+  comparison, offering players nothing (G206).
 - **Heights.** The server keeps the worldgen heights of every column it loads or previews for its
   cache.
   - For each asking player it previews one chunk in each unexplored 512-block region, nearest first,
@@ -32,8 +33,10 @@
 - **Client.** A deterministic fill over each tile and its eight neighbours, meeting neighbouring
   tiles exactly. It is drawn in Farseer's classic colour where cached terrain is missing, in its own
   step (G200).
-- **Comparison.** `/vhsilhouetteserver compare [points]` measures Algernon's Terrain Sampler and
-  Watersheds' own sampler against real heights (P0.3). Silhouettes use neither yet.
+- **Comparison (P0.3).** `/vhsilhouetteserver compare [points]` measures Algernon's Terrain Sampler
+  and Watersheds' own sampler against real heights, and `scripts/silhouette-compare.ps1` runs it on
+  an isolated test server. With Watersheds installed the two are one height function (G205).
+  Silhouettes use neither until the owner's verdict.
 - **Not built yet:**
   - P3: coast refinement, accelerator use, the manifest/tile-request transport and dedicated
     support;
@@ -49,8 +52,10 @@
 | Store after that test | 96 tiles written at exit (61 KB) | Read offline, read-only |
 | Region rebuilt per preview | Identical dungeon placements repeated 4× per region on `bodanboys` and `test2`; `test2` did not stall (G203) | Log-measured; source-traced |
 | Worldgen heights on previews (P0.1) | 0 of 1,024 zero on the first preview; forest map present (Watersheds and TerraPrety, 1.22.7) | Log-measured |
-| Checks | 24,916 pass | Harness-tested |
-| Joins, restart read-back, error brake, comparison, GPU cost, off-state A/B, dedicated | Not observed or measured | — |
+| P0.3 comparison, two fresh worlds (1,680 and 4,096 points) | Median error 1 and 2 blocks, 95% within 5, worst 21 and 11 (sea floor); lean +1.5 and +1.9; land/sea disagreement 11.6% and 5.9%, almost all at the waterline; 0.01–0.02 ms per sample; both accelerators identical | Integration-tested on isolated dedicated servers (Session 94) |
+| Accelerators with Watersheds installed | Algernon's sampler answers Watersheds' height function. Both include river valleys, neither applies the channel carve, and both return the top solid block, as the stored map does | Source-traced (decompiled) |
+| Checks | 24,923 pass | Harness-tested |
+| Joins, restart read-back, error brake, GPU cost, off-state A/B, a dedicated server with players, the comparison on mountains or unexplored land, the owner's side-by-side verdict | Not observed or measured | — |
 
 **The core world-generation/LOD-coverage plan is complete.**
 - P1–P5 and P7 landed in 0.4.66–0.4.76.
@@ -352,6 +357,8 @@ so neither the blob format nor the schema meaning moved; `dev/WIRE_HISTORY.md` c
   - It is created on a world's first silhouette request.
   - A save merges into the stored row.
   - It shares nothing with the section cache.
+- Session 94 changed no stored or transmitted meaning. Features bit 2 now marks a server that
+  offers silhouettes, not every server holding a builder (`dev/WIRE_HISTORY.md`).
 
 The numbers stay `1 / 4 / 6`.
 
@@ -379,12 +386,18 @@ to the server log.
   with heights, meshes and the shader.
 - `/vhsilhouetteserver [status]` (controlserver) reports the builder, heights, previews, the store
   and any stop.
-- `/vhsilhouetteserver compare [points]` runs the accelerator comparison.
+- `/vhsilhouetteserver compare [points]` runs the accelerator comparison and logs "Accelerator
+  comparison finished." after its last report.
+- `VINTAGEHORIZONS_SILHOUETTE_MEASURE=1` (developer-only, dedicated servers) keeps silhouette
+  heights so the comparison can run there, offering players nothing. The status line then starts
+  "measuring heights only".
+- `scripts/silhouette-compare.ps1` runs the comparison on an isolated dedicated test server with the
+  owner's enabled mods; `-PlanOnly` lists the mods and launches nothing.
 - The builder logs a status line every 30 s while a player asks for silhouettes.
 
 ## Performance and artifact evidence
 
-**Checks and builds.** The final fast tier passed **24,916 assertions with zero failures** at 0.4.82,
+**Checks and builds.** The final fast tier passed **24,923 assertions with zero failures** at 0.4.83,
 and the Release build completed with zero errors.
 
 Measured costs, and what is not measured:
@@ -404,19 +417,24 @@ Measured costs, and what is not measured:
   - GPU cost and the off-state A/B are not measured.
   - Captured heights cost one 2 KB copy per column the server loads.
   - The fill runs on worker threads with pooled arrays.
+  - An accelerator height took 0.01–0.02 ms in freshly generated land (Session 94). Land nobody has
+    generated is not measured.
 
-**The 0.4.82 artifact.** The verified `dist/vintagehorizons_0.4.82.zip` is 617,711 bytes and has
-SHA-256 `D519ACDE999DDB708BD25C8420A2D1A620F32C1CA340199FBFEB68B26571A6EB`. Its `modinfo.json`
-reports 0.4.82, and it was copy-installed during its build workflow. Older test zips remain in that
+**The 0.4.83 artifact.** The verified `dist/vintagehorizons_0.4.83.zip` is 618,021 bytes and has
+SHA-256 `F13602AB1440287008AC20B8CAD382C2051C358E511D2F9850DE6C80CFA1D07B`. Its `modinfo.json`
+reports 0.4.83, and it was copy-installed during its build workflow. Older test zips remain in that
 folder.
 
 **Checkpoints.** Every incremented private test build receives an exact Git checkpoint after
 verification and installation. This does not authorize a push, tag, publication or public release.
 
-**Launches.** Session 93 launched no game; the owner ran every in-game test. Session 91's controlled
-servers ran only after the owner's approval.
+**Launches.**
+- Session 94 launched two headless, isolated dedicated test servers under the owner's standing
+  permission for needed tests.
+- It launched no game client, and the owner ran no in-game test.
+- Session 91's controlled servers ran only after the owner's approval.
 
-**Documentation.** Validation passed **9,510 checks** with no failures at the Session 93 doc pass.
+**Documentation.** Validation passed **10,263 checks** with no failures at the Session 94 doc pass.
 It covers:
 - current version and changelog coverage;
 - source count;
@@ -458,14 +476,17 @@ It covers:
 
 ## Next work
 
-Begin with [Session 93](dev/sessions/SESSION_93.md), the top of [TODO](dev/TODO.md), and
+Begin with [Session 94](dev/sessions/SESSION_94.md), the top of [TODO](dev/TODO.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. **P0.3.** Run `/vhsilhouetteserver compare` on a world with the owner's worldgen mods and the
-   samplers; the owner judges the figures.
-   - The owner allows test-server runs for needed tests.
-   - A dedicated test server has silhouettes forced off, so the run needs singleplayer or a
-     server-side change.
+1. **P0.3, the owner's verdict.** The comparison has run twice on test servers (Session 94).
+   - The next build is the owner's choice:
+     - A: a side-by-side picture of real and sampled heights (D8);
+     - B: sampling land before it is generated, then generating it and comparing;
+     - C: both (recommended).
+   - Still uncovered: mountains and rivers, land nobody has generated, and sampling beside real
+     generation.
+   - Two labels need fixing (G205, G207).
 2. **P3, remaining:**
    - coast refinement and the land/sea hint;
    - accelerator use after the verdict;
@@ -483,11 +504,11 @@ Begin with [Session 93](dev/sessions/SESSION_93.md), the top of [TODO](dev/TODO.
    - pause loading;
    - Session 84 diagnostic cleanup.
 
-[Session 93](dev/sessions/SESSION_93.md) is the authoritative continuation point.
-- Sessions 92-82 retain the silhouette first look, and the Generate, delivery, Settings,
+[Session 94](dev/sessions/SESSION_94.md) is the authoritative continuation point.
+- Sessions 93-82 retain silhouette P2 and the first look, and the Generate, delivery, Settings,
   structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G204 in `dev/GOTCHAS.md` preserve the recent traps.
+- G166-G207 in `dev/GOTCHAS.md` preserve the recent traps.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work

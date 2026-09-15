@@ -73,10 +73,13 @@ The tile payload is its own format, version 1:
 No existing message, field or sequence changed meaning. The compatibility numbers therefore remain
 `1 / 4 / 6`.
 
-**Silhouette changes without a wire change (0.4.78–0.4.82).**
+**Silhouette changes without a wire change (0.4.78–0.4.83).**
 - The server still pushes tiles in payload format 1.
 - The manifest and tile-request types stay registered and unused.
 - Features bit 2 is still advertised only by singleplayer and LAN-hosted servers.
+- Since 0.4.83 the bit means "this server offers silhouettes", not "this server holds a silhouette
+  builder". A dedicated server measuring heights (`VINTAGEHORIZONS_SILHOUETTE_MEASURE`) holds a
+  builder, advertises nothing and ignores silhouette requests.
 - The server setting `EnableSilhouettes` is configuration and is not mirrored into
   `AssistServerSettings`.
 

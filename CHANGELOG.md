@@ -27,6 +27,33 @@ optimization on 2026-09-14 and chose the Farseer silhouette plan next. The last 
 remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and fresh-start recovery received the
 owner's “Success” report, but not the full completion/restart matrix.
 
+## [0.4.83] - 2026-09-14
+
+**Measuring silhouette heights on a test server (developer-only).**
+- A dedicated server started with `VINTAGEHORIZONS_SILHOUETTE_MEASURE=1` keeps the worldgen heights
+  of the columns it loads, so `/vhsilhouetteserver compare` can run there. No config file can turn
+  this on.
+- It offers players nothing. The silhouette feature is advertised, and requests are answered, only
+  where silhouettes are offered.
+- The comparison logs a final "finished" line.
+
+**`scripts/silhouette-compare.ps1`** runs the accelerator comparison (P0.3) on an isolated dedicated
+test server with the owner's enabled mods, after generating a fresh area.
+
+**First comparison figures (Session 94).** Two fresh Watersheds/TerraPrety worlds:
+- **Height error:** typically 1–2 blocks, 95% within 5.
+- **Lean:** about 1.5–1.9 blocks high.
+- **Land and sea:** disagreed at 5.9–11.6% of points, almost all at the waterline.
+- **Speed:** 0.01–0.02 ms per height.
+- **One function:** with Watersheds installed, Algernon's Terrain Sampler and Watersheds' sampler
+  are the same height function.
+
+Silhouettes still use neither; the owner's verdict is pending.
+
+Player-visible behaviour is unchanged. The compatibility numbers remain `1 / 4 / 6`. The fast tier
+passes 24,923 assertions. The 0.4.83 package has SHA-256
+`F13602AB1440287008AC20B8CAD382C2051C358E511D2F9850DE6C80CFA1D07B`.
+
 ## [0.4.82] - 2026-09-14
 
 This entry groups the 0.4.78–0.4.82 private test checkpoints.

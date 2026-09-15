@@ -2,6 +2,23 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-14 - P0.3 begins: silhouette heights measured on test servers, first accelerator figures (0.4.83)
+
+Dedicated servers have no silhouette builder, so the 0.4.82 comparison could not run on a test
+server. 0.4.83 adds:
+- the developer-only switch `VINTAGEHORIZONS_SILHOUETTE_MEASURE`, which keeps heights and allows
+  `/vhsilhouetteserver compare` without offering players anything;
+- `scripts/silhouette-compare.ps1`.
+
+Two isolated runs measured both accelerators against real heights on fresh worlds with the owner's
+mods. See Session 94 and G205–G207.
+
+These items closed:
+- running the comparison at all, and the blocker that a dedicated test server could not;
+- what Algernon's Terrain Sampler answers with Watersheds installed (G205).
+
+The owner's verdict on the figures stays open in TODO.
+
 ## 2026-09-14 - Silhouettes: stall guard, captured heights, tile store, error brake, accelerator comparison (0.4.78-0.4.82)
 
 Session 92's exit hang was re-attributed from the archived logs to the 16:04 `bodanboys` launch, and

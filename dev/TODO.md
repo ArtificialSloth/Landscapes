@@ -2,22 +2,37 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.82 and horizon silhouettes
+## Start here: 0.4.83 and horizon silhouettes
 
-Read [Session 93](sessions/SESSION_93.md), then
+Read [Session 94](sessions/SESSION_94.md), then
 [the horizon-silhouette and Terrain Ahead plan](plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md). P1
-and P2 are built. P3 began in 0.4.82. The plan's "How the build differs" note lists where the code
-has moved from its text.
+and P2 are built. P3 began in 0.4.82, and the P0.3 comparison has run twice on test servers
+(0.4.83). The plan's "How the build differs" note lists where the code has moved from its text.
 
 Open, in the order they block further work:
 
-- **P0.3: the accelerator comparison.** `/vhsilhouetteserver compare [points]` (0.4.82) has not been
-  run. The owner judges its figures (D8), and silhouettes use no accelerator until then.
-  - It needs a server with the owner's worldgen mods, the samplers, and real heights.
-  - A dedicated test server has silhouettes forced off, because the P3 opt-in is not built, so the
-    comparison cannot run there yet.
-  - Both samplers run Watersheds' generator code on a background thread. Whether that is safe
-    alongside real generation is unknown.
+- **P0.3: the accelerator comparison.** It has run twice on isolated test servers, with
+  `scripts/silhouette-compare.ps1` (0.4.83). Figures are in Session 94:
+  - median error 1–2 blocks, 95% within 5;
+  - a lean of +1.5 to +1.9;
+  - land/sea disagreement almost all at the waterline;
+  - 0.01–0.02 ms per sample.
+
+  With Watersheds installed, the two accelerators are one function (G205). The owner judges (D8),
+  and silhouettes use no accelerator until then.
+  - **Waiting on the owner:** the next build.
+    - A: a side-by-side picture of real and sampled heights.
+    - B: sampling land before it is generated, then generating it and comparing.
+    - C: both (recommended).
+  - **Not yet covered:**
+    - mountains and rivers: both areas were coast-heavy, and console pregen always centres on the
+      world centre;
+    - speed and correctness on land nobody has generated;
+    - sampling beside real generation.
+  - **Label fixes for the next build:** "Watersheds' height before rivers" is wrong (G205), and the
+    status line's rain count misleads in new worlds (G207).
+  - **Proposed:** where Watersheds is installed, call its sampler directly. Algernon's Terrain
+    Sampler adds nothing there, and every client must install it.
 - **P3, remaining.**
   - Coast refinement and the land/sea hint (`GenMaps.oceanGen`). Use an accepted accelerator or,
     failing that, extra previews near coasts only.
