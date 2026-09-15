@@ -262,7 +262,9 @@ function Invoke-Server {
                 if ($line.Contains('[VintageHorizons] Horizon silhouettes', [StringComparison]::Ordinal) -or
                     $line.Contains('[VintageHorizons] Accelerator ', [StringComparison]::Ordinal) -or
                     $line.Contains('Horizon silhouettes: measuring', [StringComparison]::Ordinal)) {
-                    $report.Add($line)
+                    # The report is shareable: the server logs full file paths, so the machine's own
+                    # folders are replaced (dev/DocCheck.ps1 rejects personal paths in text files).
+                    $report.Add($line.Replace($profileRoot, '<profile>'))
                     Write-Host "  $line"
                 }
                 if ($line.Contains('Exception', [StringComparison]::OrdinalIgnoreCase)) { Write-Host "  log: $line" }

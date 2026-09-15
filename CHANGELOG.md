@@ -27,6 +27,32 @@ optimization on 2026-09-14 and chose the Farseer silhouette plan next. The last 
 remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and fresh-start recovery received the
 owner's “Success” report, but not the full completion/restart matrix.
 
+## [0.4.84] - 2026-09-15
+
+**Side-by-side and unexplored-land comparison (developer tools, P0.3).**
+- **Every cell.** `/vhsilhouetteserver compare [radiusChunks]` measures every 4-block cell the server
+  holds in a square around the caller, or around the world centre from the console. It writes a map
+  of every cell, and replaces the thinned `[points]` sample.
+- **Presample.** `/vhsilhouetteserver presample [radiusChunks]` asks each accelerator about a square
+  before the land is generated, and keeps the answers on disk. A later `compare` measures them
+  against the real terrain.
+- **Scripts.** `scripts/silhouette-compare.ps1` runs both in two isolated server sessions, and
+  `scripts/silhouette-compare-render.py` draws the side-by-side.
+- **Labels.** Algernon's Terrain Sampler is shown as answering through Watersheds, and the status
+  line no longer calls every rain-height match an old save.
+
+**Figures (Session 95):**
+- **Before and after.** Answers taken before the land existed matched those taken after at every one
+  of 270,336 cells.
+- **Height error:** typically 1 block, 95% within 4, and about 1.4 blocks high.
+- **Land and sea:** they disagreed at 3.7% of cells, mostly lakes and the waterline.
+
+Silhouettes still use no accelerator; the owner's verdict is pending.
+
+Player-visible behaviour is unchanged. The compatibility numbers remain `1 / 4 / 6`. The fast tier
+passes 24,936 assertions. The 0.4.84 package has SHA-256
+`135187F8F94863172C60E26EBB064C764A3DDBAF0305B580E0489A4473408A31`.
+
 ## [0.4.83] - 2026-09-14
 
 **Measuring silhouette heights on a test server (developer-only).**

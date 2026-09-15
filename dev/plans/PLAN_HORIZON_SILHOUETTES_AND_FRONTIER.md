@@ -6,8 +6,12 @@
   the joins.
 - P2 landed in 0.4.79-0.4.80, with a stall guard and an error brake in 0.4.78 and 0.4.81 (Session
   93).
-- P3 began in 0.4.82 with the P0.3 comparison command. In 0.4.83 the comparison ran twice on
-  isolated test servers (Session 94); the owner's verdict is pending.
+- P3 began in 0.4.82 with the P0.3 comparison command.
+  - It ran on isolated test servers in 0.4.83 (Session 94).
+  - In 0.4.84 it compared every cell, sampled land before it existed, and produced the side-by-side
+    (Session 95).
+  - The owner's verdict is pending, and [the silhouette handoff](HANDOFF_HORIZON_SILHOUETTES.md)
+    describes where to pick up.
 - Silhouettes come first (D14).
 - Terrain Ahead is a separate, later feature (D15).
 
@@ -26,8 +30,8 @@
 - **The coarse pass (4.5)** previews one chunk per unexplored 512-block region, not four, because a
   preview rebuilds its map region and throws it away (G203). At most four previews are in flight.
 - **Previews stop for the session** after 20 s of generator silence or three logged errors (G204).
-- **The server command** is `/vhsilhouetteserver [status|compare]`, not `/vhsilhouette`; the client
-  owns that name.
+- **The server command** is `/vhsilhouetteserver [status|compare|presample]`, not `/vhsilhouette`;
+  the client owns that name.
 - **`EnableSilhouettes`** is `null` (automatic) as planned, but dedicated servers stay off whatever it
   says until P3's test.
 
@@ -315,8 +319,10 @@ GitHub source and ModDB page, read 2026-09-14.
 - **Sides:** server-side. Its modinfo says `RequiredOnClient: true`, so a server that installs it
   makes every client install it.
 - **Version:** listed for 1.22.0-1.22.2; the owner runs 1.22.7.
-- **Speed:** the author quotes 1-2 ms per sample, once a region's maps are built. Session 94
-  measured 0.01-0.02 ms through Watersheds, in freshly generated land.
+- **Speed:** the author quotes 1-2 ms per sample, once a region's maps are built. Through Watersheds:
+  - Session 94 measured 0.01-0.02 ms in freshly generated land;
+  - Session 95 measured under 0.01 ms on land nobody had generated, and under 1 ms for a new
+    region's first sample.
 - **Other mods:** with Watersheds loaded it calls Watersheds' `GetPreWatershedsBlockColumnHeight`.
   Despite the name, that includes river valleys and runs the same steps as Watersheds' own sampler,
   so with Watersheds installed the two accelerators are one function (Session 94, G205). It has no
@@ -788,9 +794,11 @@ Dev-only logging; no player-visible change.
     `WorldGenTerrainHeightMap` on the same points: coast, river, mountain, TerraPrety coast.
   - Time per 1,024 samples on 1.22.7.
   - The owner judges the tolerance by eye on a side-by-side (D8).
-  - Status (Session 94): run twice on isolated test servers against captured heights, with
-    `scripts/silhouette-compare.ps1`, at about 10-20 ms per 1,024 samples. Still to do: mountains,
-    rivers, land nobody has generated, and the side-by-side.
+  - Status (Sessions 94-95): run on isolated test servers against captured heights with
+    `scripts/silhouette-compare.ps1`, at 10-20 ms or less per 1,024 samples.
+    - 0.4.84 added the side-by-side and sampling before the land exists. Those early answers
+      matched later ones at every cell.
+    - Still to do: the owner's verdict, mountains, and sampling beside real generation.
 - **0.4** Dedicated server: time from a section's persistence to the client's install at the 30 s
   cadence (Terrain Ahead input).
 

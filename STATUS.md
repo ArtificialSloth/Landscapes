@@ -4,11 +4,11 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-15`
-**Mod version:** `0.4.83` — current private test build (measuring silhouette heights on a test server), verified, copy-installed and checkpointed; players see 0.4.82's behaviour, and 0.4.81–0.4.83 are not yet tested in game
+**Mod version:** `0.4.84` — current private test build (the P0.3 side-by-side and unexplored-land test), verified, copy-installed and checkpointed; players see 0.4.82's behaviour, and 0.4.81–0.4.84 are not yet tested in game
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.77 `4c7720c`, 0.4.78 `3664aa2`, 0.4.79 `612770f`, 0.4.80 `f93bbbf`, 0.4.81 `3db5e3e`, 0.4.82 `96f8e06`, 0.4.83 `dd1692b`; nothing pushed
+**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.77 `4c7720c`, 0.4.78 `3664aa2`, 0.4.79 `612770f`, 0.4.80 `f93bbbf`, 0.4.81 `3db5e3e`, 0.4.82 `96f8e06`, 0.4.83 `dd1692b`, 0.4.84 `8cd445f`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `125` C# files under `VintageHorizons/src`
+**Source files:** `127` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
@@ -33,10 +33,14 @@
 - **Client.** A deterministic fill over each tile and its eight neighbours, meeting neighbouring
   tiles exactly. It is drawn in Farseer's classic colour where cached terrain is missing, in its own
   step (G200).
-- **Comparison (P0.3).** `/vhsilhouetteserver compare [points]` measures Algernon's Terrain Sampler
-  and Watersheds' own sampler against real heights, and `scripts/silhouette-compare.ps1` runs it on
-  an isolated test server. With Watersheds installed the two are one height function (G205).
-  Silhouettes use neither until the owner's verdict.
+- **Comparison (P0.3).**
+  - `/vhsilhouetteserver compare [radiusChunks]` measures Algernon's Terrain Sampler and Watersheds'
+    own sampler at every cell the server holds in a square.
+  - `presample` asks them about land before it is generated (0.4.84).
+  - `scripts/silhouette-compare.ps1` runs both across two isolated server sessions and draws the
+    side-by-side.
+  - With Watersheds installed the two are one height function (G205).
+  - Silhouettes use neither until the owner's verdict.
 - **Not built yet:**
   - P3: coast refinement, accelerator use, the manifest/tile-request transport and dedicated
     support;
@@ -52,10 +56,11 @@
 | Store after that test | 96 tiles written at exit (61 KB) | Read offline, read-only |
 | Region rebuilt per preview | Identical dungeon placements repeated 4× per region on `bodanboys` and `test2`; `test2` did not stall (G203) | Log-measured; source-traced |
 | Worldgen heights on previews (P0.1) | 0 of 1,024 zero on the first preview; forest map present (Watersheds and TerraPrety, 1.22.7) | Log-measured |
-| P0.3 comparison, two fresh worlds (1,680 and 4,096 points) | Median error 1 and 2 blocks, 95% within 5, worst 21 and 11 (sea floor); lean +1.5 and +1.9; land/sea disagreement 11.6% and 5.9%, almost all at the waterline; 0.01–0.02 ms per sample; both accelerators identical | Integration-tested on isolated dedicated servers (Session 94) |
+| P0.3 comparison, 0.4.83, two fresh worlds (1,680 and 4,096 chunk corners) | Median error 1 and 2 blocks, 95% within 5, worst 21 and 11; lean +1.5 and +1.9; land/sea disagreement 11.6% and 5.9%, almost all at the waterline; 0.01–0.02 ms per sample; both accelerators identical. The worst points were most likely shallow water and low land, not the sea floor first recorded (G208) | Integration-tested on isolated dedicated servers (Session 94) |
+| P0.3, 0.4.84, `p03-cold` (270,336 cells, every 4 blocks) | Median error 1, 95% within 4, max 63; lean +1.4; land/sea disagreement 3.7%; 0.16% of cells 8+ blocks off, almost all on land or at the coast. Answers taken before the land existed matched later ones at every cell, and a new region's first sample took under 1 ms. Sea level 82 | Integration-tested over two server sessions (Session 95) |
 | Accelerators with Watersheds installed | Algernon's sampler answers Watersheds' height function. Both include river valleys, neither applies the channel carve, and both return the top solid block, as the stored map does | Source-traced (decompiled) |
-| Checks | 24,923 pass | Harness-tested |
-| Joins, restart read-back, error brake, GPU cost, off-state A/B, a dedicated server with players, the comparison on mountains or unexplored land, the owner's side-by-side verdict | Not observed or measured | — |
+| Checks | 24,936 pass | Harness-tested |
+| Joins, restart read-back, error brake, GPU cost, off-state A/B, a dedicated server with players, the comparison on mountains or beside real generation, the owner's side-by-side verdict | Not observed or measured | — |
 
 **The core world-generation/LOD-coverage plan is complete.**
 - P1–P5 and P7 landed in 0.4.66–0.4.76.
@@ -386,18 +391,23 @@ to the server log.
   with heights, meshes and the shader.
 - `/vhsilhouetteserver [status]` (controlserver) reports the builder, heights, previews, the store
   and any stop.
-- `/vhsilhouetteserver compare [points]` runs the accelerator comparison and logs "Accelerator
-  comparison finished." after its last report.
+- `/vhsilhouetteserver compare [radiusChunks]` compares every cell the server holds in a square
+  around the caller (the world centre from the console), and writes a map for the side-by-side.
+- `/vhsilhouetteserver presample [radiusChunks]` asks the accelerators about that square before it
+  is generated.
+- Each of those two logs "Accelerator comparison finished." or "Accelerator presample finished."
+  after its last report (0.4.84).
 - `VINTAGEHORIZONS_SILHOUETTE_MEASURE=1` (developer-only, dedicated servers) keeps silhouette
   heights so the comparison can run there, offering players nothing. The status line then starts
   "measuring heights only".
-- `scripts/silhouette-compare.ps1` runs the comparison on an isolated dedicated test server with the
-  owner's enabled mods; `-PlanOnly` lists the mods and launches nothing.
+- `scripts/silhouette-compare.ps1` runs presample and compare in two isolated dedicated server
+  sessions with the owner's enabled mods. `scripts/silhouette-compare-render.py` then draws the
+  side-by-side. `-PlanOnly` lists the mods and launches nothing.
 - The builder logs a status line every 30 s while a player asks for silhouettes.
 
 ## Performance and artifact evidence
 
-**Checks and builds.** The final fast tier passed **24,923 assertions with zero failures** at 0.4.83,
+**Checks and builds.** The final fast tier passed **24,936 assertions with zero failures** at 0.4.84,
 and the Release build completed with zero errors.
 
 Measured costs, and what is not measured:
@@ -417,24 +427,25 @@ Measured costs, and what is not measured:
   - GPU cost and the off-state A/B are not measured.
   - Captured heights cost one 2 KB copy per column the server loads.
   - The fill runs on worker threads with pooled arrays.
-  - An accelerator height took 0.01–0.02 ms in freshly generated land (Session 94). Land nobody has
-    generated is not measured.
+  - An accelerator height took 0.01–0.02 ms in freshly generated land (Session 94). On land nobody
+    had generated it took under 0.01 ms, and under 1 ms for a new region's first sample (Session 95).
+    Sampling beside real generation is not measured.
 
-**The 0.4.83 artifact.** The verified `dist/vintagehorizons_0.4.83.zip` is 618,021 bytes and has
-SHA-256 `F13602AB1440287008AC20B8CAD382C2051C358E511D2F9850DE6C80CFA1D07B`. Its `modinfo.json`
-reports 0.4.83, and it was copy-installed during its build workflow. Older test zips remain in that
+**The 0.4.84 artifact.** The verified `dist/vintagehorizons_0.4.84.zip` is 624,243 bytes and has
+SHA-256 `135187F8F94863172C60E26EBB064C764A3DDBAF0305B580E0489A4473408A31`. Its `modinfo.json`
+reports 0.4.84, and it was copy-installed during its build workflow. Older test zips remain in that
 folder.
 
 **Checkpoints.** Every incremented private test build receives an exact Git checkpoint after
 verification and installation. This does not authorize a push, tag, publication or public release.
 
 **Launches.**
-- Session 94 launched two headless, isolated dedicated test servers under the owner's standing
-  permission for needed tests.
-- It launched no game client, and the owner ran no in-game test.
+- Sessions 94 and 95 launched headless, isolated dedicated test servers under the owner's standing
+  permission for needed tests: two runs in Session 94, and one two-session run in Session 95.
+- They launched no game client, and the owner ran no in-game test.
 - Session 91's controlled servers ran only after the owner's approval.
 
-**Documentation.** Validation passed **10,263 checks** with no failures at the Session 94 doc pass.
+**Documentation.** Validation passed **10,653 checks** with no failures at the Session 95 doc pass.
 It covers:
 - current version and changelog coverage;
 - source count;
@@ -476,17 +487,14 @@ It covers:
 
 ## Next work
 
-Begin with [Session 94](dev/sessions/SESSION_94.md), the top of [TODO](dev/TODO.md), and
+Begin with [the silhouette handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
+[Session 95](dev/sessions/SESSION_95.md), the top of [TODO](dev/TODO.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. **P0.3, the owner's verdict.** The comparison has run twice on test servers (Session 94).
-   - The next build is the owner's choice:
-     - A: a side-by-side picture of real and sampled heights (D8);
-     - B: sampling land before it is generated, then generating it and comparing;
-     - C: both (recommended).
-   - Still uncovered: mountains and rivers, land nobody has generated, and sampling beside real
-     generation.
-   - Two labels need fixing (G205, G207).
+1. **P0.3, the owner's verdict (D8).** The owner has the side-by-side from Session 95's run.
+   - If accepted: silhouettes use Watersheds' sampler where Watersheds is installed, keeping
+     previews for coasts and lakes. Also decide whether to correct the +1.4 lean.
+   - Still uncovered: mountains, sampling beside real generation, and why sea level is 82 (G208).
 2. **P3, remaining:**
    - coast refinement and the land/sea hint;
    - accelerator use after the verdict;
@@ -504,11 +512,12 @@ Begin with [Session 94](dev/sessions/SESSION_94.md), the top of [TODO](dev/TODO.
    - pause loading;
    - Session 84 diagnostic cleanup.
 
-[Session 94](dev/sessions/SESSION_94.md) is the authoritative continuation point.
-- Sessions 93-82 retain silhouette P2 and the first look, and the Generate, delivery, Settings,
-  structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
+[Session 95](dev/sessions/SESSION_95.md) is the authoritative continuation point, and
+[the silhouette handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md) orients a new agent.
+- Sessions 94-82 retain the silhouette comparison, P2 and the first look, and the Generate,
+  delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G207 in `dev/GOTCHAS.md` preserve the recent traps.
+- G166-G208 in `dev/GOTCHAS.md` preserve the recent traps.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work

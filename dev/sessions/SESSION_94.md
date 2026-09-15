@@ -124,9 +124,10 @@ exited after `/stop` without being forced.
   points; only timing differed. This matches §4.
 - **Waterline.** Nearly every land/sea disagreement lies within 4 blocks of sea level (171 of 195,
   and 236 of 241).
-- **Worst points.** All ten have real heights of 63–87, far below the sea level of about 110 that a
-  256-block map implies. They are therefore sea floor, which silhouettes draw as flat sea. The sea
-  level itself was not logged.
+- **Worst points.** All ten have real heights of 63–87. This record first called them sea floor,
+  inferring a sea level of about 110 from the map height. **Corrected in Session 95:** a later world
+  with the same mods and configs measured sea level 82, so these were most likely shallow water and
+  low land (G208). This run's own sea level was not logged.
 - **Speed.** At these rates 1,024 heights take about 10–20 ms of a spare core. A preview's 1,024
   heights take about 43 ms of the single world-generation thread (plan 3.2).
 - **Rain count.** The status line counted 6 and 51 "rain heights from old saves" in these brand-new

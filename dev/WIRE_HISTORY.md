@@ -96,6 +96,14 @@ that world asks for silhouettes.
 It shares nothing with the section cache, so the section blob format and schema meaning are
 unchanged.
 
+**Comparison files (0.4.84, developer tools).** `/vhsilhouetteserver presample` and `compare` write
+gzip CSV files under `ModData/vintagehorizons/silhouette-compare/`:
+- `<world>-presample.csv.gz`, magic line `# vintagehorizons silhouette presample 1`;
+- `<world>-map-<utc>.csv.gz`, magic line `# vintagehorizons silhouette map 1`.
+
+`compare` reads a presample only when its magic line matches. Nothing else reads these files, and
+they share nothing with the section cache or the tile store.
+
 ## Section blob-format ledger
 
 | Blob format | Current schema | Meaning |

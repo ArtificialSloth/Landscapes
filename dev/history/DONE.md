@@ -2,6 +2,20 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-15 - P0.3 side-by-side and unexplored-land test (0.4.84)
+
+0.4.84:
+- compares every 4-block cell and writes a map;
+- adds `presample`, for land not yet generated;
+- runs both across two isolated server sessions (`scripts/silhouette-compare.ps1`);
+- draws the side-by-side (`scripts/silhouette-compare-render.py`).
+
+The owner has the page. Session 95 also corrected Session 94's sea-level reading (G208).
+
+These items closed:
+- Session 94's options A and B: the side-by-side, and the unexplored-land test;
+- the two label fixes (G205, G207).
+
 ## 2026-09-14 - P0.3 begins: silhouette heights measured on test servers, first accelerator figures (0.4.83)
 
 Dedicated servers have no silhouette builder, so the 0.4.82 comparison could not run on a test

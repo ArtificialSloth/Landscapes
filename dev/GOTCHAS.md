@@ -3977,3 +3977,21 @@ drawing conclusions from it.
 
 **Found:** 2026-09-14, Session 94 (log-measured; the check is source-traced, the bare-column cause
 inferred).
+
+### G208 - Sea level comes from the world, not the map height
+
+**Trigger:** reading heights against sea level, as in comparison figures, silhouette water or
+land/sea counts.
+
+**Trap:**
+- The default formula gives about 110 on a 256-block map.
+- Fresh test worlds with the owner's mods and configs report 82 (`sapi.World.SeaLevel`, recorded in
+  0.4.84's map file).
+- Session 94 inferred 110 and called the worst comparison points sea floor. At 82 they were shallow
+  water and low land. In the dense run, 422 of the 430 cells off by 8 blocks or more were on land or
+  at the coast.
+
+**Safer action:** read sea level from the world and say where it came from. The comparison's
+statistics already do, and the map file records it.
+
+**Found:** 2026-09-15, Session 95 (measured; why it is 82 is not traced).
