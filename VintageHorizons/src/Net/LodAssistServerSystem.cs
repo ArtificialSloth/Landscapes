@@ -1014,7 +1014,71 @@ public class LodAssistServerSystem : ModSystem
             .BeginSubCommand("status")
                 .WithDescription("The same report")
                 .HandleWith(_ => Status())
+            .EndSubCommand()
+            .BeginSubCommand("compare")
+                .WithDescription("Measure each installed height accelerator against real heights the "
+                    + "server holds (silhouette plan P0.3); the report follows in chat and the log")
+                .WithArgs(sapi.ChatCommands.Parsers.OptionalIntRange("points", 16, 4096, 512))
+                .HandleWith(StartAcceleratorComparison)
             .EndSubCommand();
+    }
+
+    // One accelerator comparison at a time; the report is read on the main thread as it finishes.
+    LodAcceleratorComparisonRun? comparison;
+    long comparisonListener;
+
+    TextCommandResult StartAcceleratorComparison(TextCommandCallingArgs args)
+    {
+        if (silhouettes == null)
+        {
+            return TextCommandResult.Error("[VintageHorizons] Horizon silhouettes are off on this server, "
+                + "so there are no real heights to compare against.");
+        }
+        if (comparison != null)
+            return TextCommandResult.Error("[VintageHorizons] A comparison is already running; its report will follow.");
+        List<ILodHeightAccelerator> accelerators = LodHeightAccelerators.Find(sapi);
+        if (accelerators.Count == 0)
+        {
+            return TextCommandResult.Error("[VintageHorizons] No height accelerator is installed. This build "
+                + "knows Algernon's Terrain Sampler and Watersheds' own sampler.");
+        }
+        List<LodRealHeight> points = silhouettes.RealHeightSamples((int)args[0]);
+        if (points.Count == 0)
+        {
+            return TextCommandResult.Error("[VintageHorizons] The server holds no real heights yet. Load or "
+                + "explore some terrain, or switch silhouettes on, then try again.");
+        }
+
+        IServerPlayer? caller = args.Caller.Player as IServerPlayer;
+        comparison = new LodAcceleratorComparisonRun(points, accelerators, sapi.World.SeaLevel);
+        string header = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "[VintageHorizons] Accelerator comparison at {0} points where the server holds real heights "
+            + "({1} captured, {2} previewed), against {3}. It runs in the background; each report follows "
+            + "in chat and the server log.", points.Count,
+            points.Count(p => p.Origin == EnumSilhouetteOrigin.Captured),
+            points.Count(p => p.Origin == EnumSilhouetteOrigin.Preview),
+            string.Join(" and ", accelerators.Select(a => a.Name)));
+        Mod.Logger.Notification("{0}", header);
+        comparisonListener = sapi.Event.RegisterGameTickListener(_ => PumpComparison(caller), 500);
+        return TextCommandResult.Success(header);
+    }
+
+    void PumpComparison(IServerPlayer? caller)
+    {
+        LodAcceleratorComparisonRun? run = comparison;
+        if (run == null) return;
+        bool done = run.Finished;
+        while (run.TryTakeLine(out string line))
+        {
+            string text = "[VintageHorizons] Accelerator comparison, " + line + ".";
+            // Chat cannot be copied, so every line also reaches the log.
+            Mod.Logger.Notification("{0}", text);
+            caller?.SendMessage(Vintagestory.API.Config.GlobalConstants.GeneralChatGroup, text,
+                EnumChatType.Notification);
+        }
+        if (!done) return;
+        sapi.Event.UnregisterGameTickListener(comparisonListener);
+        comparison = null;
     }
 
     /// <summary>Main thread: the engine raises this from a main-thread task.</summary>

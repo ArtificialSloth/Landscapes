@@ -793,6 +793,35 @@ internal sealed class LodSilhouetteBuilder
         return best;
     }
 
+    /// <summary>
+    /// Main thread. Up to <paramref name="count"/> positions where the builder holds real heights
+    /// (captured or previewed): the first cell of every chunk that has one, thinned evenly across
+    /// the tiles in memory. For the accelerator comparison (plan P0.3).
+    /// </summary>
+    public List<LodRealHeight> RealHeightSamples(int count)
+    {
+        var all = new List<LodRealHeight>();
+        foreach (LodSilhouetteTile tile in tiles.Values)
+        {
+            for (int cellZ = 0; cellZ < LodSilhouetteTile.CellsPerEdge; cellZ += LodSilhouetteTile.CellsPerChunk)
+            {
+                for (int cellX = 0; cellX < LodSilhouetteTile.CellsPerEdge; cellX += LodSilhouetteTile.CellsPerChunk)
+                {
+                    EnumSilhouetteOrigin origin = tile.OriginAt(cellX, cellZ);
+                    if (origin != EnumSilhouetteOrigin.Captured && origin != EnumSilhouetteOrigin.Preview) continue;
+                    if (!tile.TryGetHeight(cellX, cellZ, out ushort height)) continue;
+                    all.Add(new LodRealHeight(tile.BlockX + cellX * LodSilhouetteTile.CellBlocks,
+                        tile.BlockZ + cellZ * LodSilhouetteTile.CellBlocks, height, origin));
+                }
+            }
+        }
+        if (all.Count <= count) return all;
+        var picked = new List<LodRealHeight>(count);
+        double step = (double)all.Count / count;
+        for (int i = 0; i < count; i++) picked.Add(all[(int)(i * step)]);
+        return picked;
+    }
+
     public string Describe()
     {
         var culture = System.Globalization.CultureInfo.InvariantCulture;

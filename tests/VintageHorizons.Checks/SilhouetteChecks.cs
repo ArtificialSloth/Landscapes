@@ -30,6 +30,7 @@ public static class SilhouetteChecks
         GeneratorStallWatch(c);
         TileMergeAndSnapshot(c);
         WorldgenErrorBrake(c);
+        HeightComparisonArithmetic(c);
     }
 
     public static void RunWiring(Check c)
@@ -41,9 +42,59 @@ public static class SilhouetteChecks
         StoreKeepsTilesAcrossSessions(c);
         StoredTilesAreReadBeforePreviewing(c);
         PreviewsStayFewPerRegion(c);
+        AcceleratorComparisonWiring(c);
         UploadedUniformsAreDeclared(c);
         SamplerLayout(c);
         OffStateIsTheOldBehaviour(c);
+    }
+
+    /// <summary>
+    /// The accelerator comparison's arithmetic on a hand-computed set: nearest-rank percentiles,
+    /// bias, land/sea disagreement overall and on the coast, and quiet sea-level answers.
+    /// </summary>
+    static void HeightComparisonArithmetic(Check c)
+    {
+        const int sea = 110;
+        var points = new List<LodHeightPoint>
+        {
+            new(0, 0, 120, 121, EnumSilhouetteOrigin.Captured),
+            new(4, 0, 130, 127, EnumSilhouetteOrigin.Captured),
+            new(8, 0, 112, 108, EnumSilhouetteOrigin.Preview),
+            new(12, 0, 100, 100, EnumSilhouetteOrigin.Captured),
+            new(16, 0, 150, 170, EnumSilhouetteOrigin.Preview),
+            new(20, 0, 109, 110, EnumSilhouetteOrigin.Captured),
+        };
+        LodHeightComparison r = LodHeightComparison.Of(points, sea, new[] { 1.0, 2.0, 3.0 });
+        c.Eq(6, r.Count, "every point is compared");
+        c.Eq((4, 2), (r.Captured, r.Previewed), "points are counted by where their real height came from");
+        c.Eq((1, 20, 20, 20), (r.MedianAbs, r.P90Abs, r.P95Abs, r.MaxAbs),
+            "errors 0,1,1,3,4,20 give median 1 and 90%, 95% and max 20 by nearest rank");
+        c.Near(2.5, r.MeanSigned, 1e-9, "the bias is the mean signed error (+15 over 6)");
+        c.Eq(2, r.LandSeaDisagreements, "land read as sea and sea read as land both count");
+        c.Eq((2, 1, 2), (r.CoastCount, r.CoastMedianAbs, r.CoastLandSeaDisagreements),
+            "coast points are those within 4 blocks of sea level, with their own figures");
+        c.Eq((1, 0), (r.SampledAtSeaLevel, r.RealAtSeaLevel), "answers exactly at sea level are counted");
+        c.Eq((2.0, 3.0, 3.0), (r.MeanMs, r.P95Ms, r.MaxMs), "sample times give mean, 95% and max");
+        c.Eq(16, r.Worst[0].X, "the worst point comes first");
+        c.True(r.Describe("Test sampler").Contains("land/sea disagrees at 2 points (33.3%)", StringComparison.Ordinal),
+            "the report states the land/sea disagreement plainly");
+        c.Eq(0, LodHeightComparison.Of(new List<LodHeightPoint>(), sea, Array.Empty<double>()).Count,
+            "an empty comparison reports no points");
+    }
+
+    static void AcceleratorComparisonWiring(Check c)
+    {
+        string assist = Source("src", "Net", "LodAssistServerSystem.cs");
+        string run = Source("src", "Silhouette", "LodAcceleratorComparisonRun.cs");
+        string builder = Source("src", "Silhouette", "LodSilhouetteBuilder.cs");
+        c.True(Regex.IsMatch(assist,
+                @"Create\(""vhsilhouetteserver""\)[\s\S]*?RequiresPrivilege\(Privilege\.controlserver\)[\s\S]*?BeginSubCommand\(""compare""\)"),
+            "the accelerator comparison is an admin subcommand of the server's silhouette command");
+        c.True(run.Contains("IsBackground = true", StringComparison.Ordinal)
+                && run.Contains("accelerator.Sample(", StringComparison.Ordinal),
+            "accelerators are called on the comparison's own background thread");
+        c.False(builder.Contains("ILodHeightAccelerator", StringComparison.Ordinal),
+            "the builder uses no accelerator for tiles until the owner has judged the comparison (P0.3)");
     }
 
     /// <summary>
