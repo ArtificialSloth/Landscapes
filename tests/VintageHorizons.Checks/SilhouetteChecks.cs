@@ -29,6 +29,7 @@ public static class SilhouetteChecks
         FeatureGate(c);
         GeneratorStallWatch(c);
         TileMergeAndSnapshot(c);
+        WorldgenErrorBrake(c);
     }
 
     public static void RunWiring(Check c)
@@ -39,9 +40,56 @@ public static class SilhouetteChecks
         CapturedHeightsReachTiles(c);
         StoreKeepsTilesAcrossSessions(c);
         StoredTilesAreReadBeforePreviewing(c);
+        PreviewsStayFewPerRegion(c);
         UploadedUniformsAreDeclared(c);
         SamplerLayout(c);
         OffStateIsTheOldBehaviour(c);
+    }
+
+    /// <summary>
+    /// The error brake counts only errors logged while previews wait on the generator, never the
+    /// mod's own lines, and trips once at its threshold (Session 93: bodanboys logged 99 and 144
+    /// such errors before its stalls; test2 none).
+    /// </summary>
+    static void WorldgenErrorBrake(Check c)
+    {
+        var brake = new LodWorldgenErrorBrake("[vintagehorizons]");
+        brake.Observe(Vintagestory.API.Common.EnumLogType.Error, "Exception: {0}", "before any preview");
+        c.Eq(0, brake.ErrorsDuringPreviews, "an error with no previews outstanding does not count");
+
+        brake.SetPreviewsOutstanding(4);
+        brake.Observe(Vintagestory.API.Common.EnumLogType.Warning, "a warning");
+        brake.Observe(Vintagestory.API.Common.EnumLogType.Error, "[vintagehorizons] one of our own lines");
+        c.Eq(0, brake.ErrorsDuringPreviews, "warnings and the mod's own errors do not count");
+
+        brake.Observe(Vintagestory.API.Common.EnumLogType.Error, "Exception: {0}",
+            "System.IndexOutOfRangeException: Index was outside the bounds of the array.\n   at TerraPrety.Rivers.CoastMap.GenLayer");
+        brake.Observe(Vintagestory.API.Common.EnumLogType.Fatal, "a fatal line");
+        c.False(brake.Tick(), "below the threshold the brake holds off");
+        brake.Observe(Vintagestory.API.Common.EnumLogType.Error, "a third error");
+        c.True(brake.Tick(), "the brake trips on the tick the threshold is reached");
+        c.True(brake.Tripped && !brake.Tick(), "and stays tripped, reporting it once");
+        c.True(brake.FirstError != null
+                && brake.FirstError.StartsWith("Exception: System.IndexOutOfRangeException", StringComparison.Ordinal)
+                && !brake.FirstError.Contains('\n'),
+            "the first counted error is kept, formatted, on one line");
+    }
+
+    static void PreviewsStayFewPerRegion(Check c)
+    {
+        string builder = Source("src", "Silhouette", "LodSilhouetteBuilder.cs");
+        c.Eq(4, LodSilhouetteBuilder.MaxPeeksInFlight,
+            "at most four previews wait on the generator, so a stop leaves little behind");
+        c.True(builder.Contains("if (TileHasHeights(tileKey) || !claimedTiles.Add(tileKey)) continue;",
+                StringComparison.Ordinal),
+            "an unexplored region is previewed once: a tile with heights, or one already claimed, gets no more");
+        c.True(Regex.IsMatch(builder, @"void EnsureListening\(\)[\s\S]*?sapi\.Logger\.EntryAdded \+= logWatcher;"),
+            "the error brake reads the server log only once someone asks for silhouettes");
+        c.True(Regex.IsMatch(builder, @"void StopListening\(\)[\s\S]*?sapi\.Logger\.EntryAdded -= logWatcher;")
+                && Regex.IsMatch(builder, @"public void Dispose\(\)[\s\S]*?sapi\.Logger\.EntryAdded -= logWatcher;"),
+            "and stops reading it when nobody asks, and at shutdown");
+        c.True(builder.Contains("if (errorBrake.Tripped) return;", StringComparison.Ordinal),
+            "a tripped brake issues no more probes or previews");
     }
 
     /// <summary>
@@ -565,8 +613,8 @@ public static class SilhouetteChecks
             "the silhouette side subscribes to column loads in one place");
         c.True(builder.Contains("SetChunk(cx, cz, heights, EnumSilhouetteOrigin.Captured)", StringComparison.Ordinal),
             "captured heights enter tiles as captured, the best source");
-        c.True(builder.Contains("if (HoldsChunk(cx, cz)) continue;", StringComparison.Ordinal),
-            "the builder never previews a chunk whose heights it holds");
+        c.True(builder.Contains("TileHasHeights(tileKey)", StringComparison.Ordinal),
+            "the builder never previews in a tile whose heights it holds");
     }
 
     static void MeshSeaAndCoverage(Check c)

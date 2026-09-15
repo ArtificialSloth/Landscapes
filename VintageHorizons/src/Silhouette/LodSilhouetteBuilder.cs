@@ -13,9 +13,10 @@ namespace VintageHorizons.Silhouette;
 /// Heights come from two places. First, the worldgen heights of every column the server loads
 /// or previews for its own cache: they are free, and they outrank everything else. Second, for
 /// each player who asked, the builder walks the sampling lattice outward from them, nearest
-/// first, out to their reach plus one tile. It takes one chunk in every 8x8, skips any whose
-/// heights it already holds, probes the rest for existence and, where no terrain exists yet,
-/// previews it to the Terrain pass. Only the 32x32 height map of a preview is kept: nothing
+/// first, out to their reach plus one tile, and previews one chunk in each tile that holds no
+/// heights yet. A tile is exactly one map region, and a preview builds its region from scratch
+/// and throws it away (Session 93), so one preview per unexplored region is the most that pays.
+/// Existing terrain is never previewed. Only the 32x32 height map of a preview is kept: nothing
 /// reaches the capture pipeline, and a preview writes nothing to the savegame.
 ///
 /// Tiles persist in <see cref="LodSilhouetteStore"/>, so each area is paid for once per world.
@@ -28,9 +29,10 @@ namespace VintageHorizons.Silhouette;
 /// work while an explicit job holds that authority, or while the engine is generating real
 /// chunks for someone (settled decision 39). With no requesting player it registers no tick work.
 ///
-/// Every probe and preview is served by the engine's one world-generation thread. If that thread
-/// stops answering, the builder adds no more work for the rest of the session and says so in the
-/// log and in chat (<see cref="LodGenerationStallWatch"/>).
+/// Every probe and preview is served by the engine's one world-generation thread. Previews stop
+/// for the rest of the session if that thread stops answering (<see cref="LodGenerationStallWatch"/>)
+/// or if the server logs errors while previews are being generated
+/// (<see cref="LodWorldgenErrorBrake"/>); the log and chat say which.
 /// </summary>
 internal sealed class LodSilhouetteBuilder
 {
@@ -41,7 +43,13 @@ internal sealed class LodSilhouetteBuilder
     public const int MaxReachBlocks = 32768;
 
     public const int PreviewsPerSecond = 16;
-    public const int MaxPeeksInFlight = 16;
+
+    /// <summary>
+    /// Previews waiting on the generator at once. The engine works one at a time, so a short
+    /// queue costs no speed, and a stop leaves at most this many behind.
+    /// </summary>
+    public const int MaxPeeksInFlight = 4;
+
     public const int MaxProbesInFlight = 32;
     public const int MaxProbeIssuesPerTick = 4;
 
@@ -93,11 +101,14 @@ internal sealed class LodSilhouetteBuilder
     int nextDemand;
     readonly Dictionary<long, LodSilhouetteTile> tiles = new();
     readonly HashSet<long> attempted = new();
+    readonly HashSet<long> claimedTiles = new();
     readonly Queue<(int Cx, int Cz)> pendingPeeks = new();
     readonly Dictionary<long, PeekInFlight> peeksInFlight = new();
     readonly List<long> stale = new();
     readonly LodTickAllowance previewAllowance = new();
     readonly LodGenerationStallWatch generatorWatch = new();
+    readonly LodWorldgenErrorBrake errorBrake;
+    LogEntryDelegate? logWatcher;
     int probesInFlight;
     long listenerId;
     bool listening;
@@ -122,9 +133,10 @@ internal sealed class LodSilhouetteBuilder
 
     /// <param name="store">The world's tile store, when its file already exists.</param>
     /// <param name="openStore">Creates the store on the first request, for a world that has none.</param>
+    /// <param name="ownLogMarker">Marks the mod's own log lines, which never count as worldgen errors.</param>
     public LodSilhouetteBuilder(ICoreServerAPI sapi, ILogger logger, Func<bool> authorityBusy,
         Action<IServerPlayer, AssistSilhouetteTile> send, LodSilhouetteStore? store,
-        Func<LodSilhouetteStore?>? openStore)
+        Func<LodSilhouetteStore?>? openStore, string? ownLogMarker)
     {
         this.sapi = sapi;
         this.logger = logger;
@@ -132,6 +144,7 @@ internal sealed class LodSilhouetteBuilder
         this.send = send;
         this.store = store;
         this.openStore = store == null ? openStore : null;
+        errorBrake = new LodWorldgenErrorBrake(ownLogMarker);
     }
 
     public int TileCount => tiles.Count;
@@ -167,9 +180,9 @@ internal sealed class LodSilhouetteBuilder
         demand.ReachBlocks = reach;
         Recentre(demand, force: true);
         logger.Notification(
-            "Horizon silhouettes: {0} asked for a {1:N0}-block reach. Previewing one chunk in every "
-            + "8x8 around them where no heights are held yet, nearest first, heights only; nothing "
-            + "is written to the savegame.",
+            "Horizon silhouettes: {0} asked for a {1:N0}-block reach. Previewing one chunk in each "
+            + "512-block region around them that holds no heights yet, nearest first, heights only; "
+            + "nothing is written to the savegame.",
             player.PlayerName, reach);
         EnsureListening();
     }
@@ -186,7 +199,7 @@ internal sealed class LodSilhouetteBuilder
     /// <summary>
     /// Main thread. The worldgen heights of a column the server loaded, or previewed for its own
     /// cache (plan 4.4). They are kept whether or not anyone is asking yet, they outrank the
-    /// builder's own previews, and the builder never previews a chunk whose heights it holds.
+    /// builder's own previews, and the builder never previews in a tile that holds heights.
     /// </summary>
     public void OfferCapturedHeights(int cx, int cz, ReadOnlySpan<ushort> heights, bool rainHeights)
     {
@@ -235,6 +248,11 @@ internal sealed class LodSilhouetteBuilder
             sapi.Event.UnregisterGameTickListener(listenerId);
             listening = false;
         }
+        if (logWatcher != null)
+        {
+            sapi.Logger.EntryAdded -= logWatcher;
+            logWatcher = null;
+        }
         SaveDirty();
         store?.Dispose();
     }
@@ -245,6 +263,9 @@ internal sealed class LodSilhouetteBuilder
         listenerId = sapi.Event.RegisterGameTickListener(_ => Tick(), LodTickAllowance.TickMilliseconds);
         listening = true;
         nextStatusLogMs = sapi.World.ElapsedMilliseconds + StatusLogIntervalMs;
+        // The error brake reads the server log only while someone asks for silhouettes.
+        logWatcher ??= errorBrake.Observe;
+        sapi.Logger.EntryAdded += logWatcher;
     }
 
     void StopListening()
@@ -252,6 +273,7 @@ internal sealed class LodSilhouetteBuilder
         if (!listening) return;
         sapi.Event.UnregisterGameTickListener(listenerId);
         listening = false;
+        if (logWatcher != null) sapi.Logger.EntryAdded -= logWatcher;
         pendingPeeks.Clear();
         loadWanted.Clear();
         LogStatus("idle, no player is asking");
@@ -262,6 +284,7 @@ internal sealed class LodSilhouetteBuilder
         long now = sapi.World.ElapsedMilliseconds;
         PumpStore();
         WatchGenerator(now);
+        BrakeOnErrors();
         ExpireStuckPeeks(now);
         foreach (Demand demand in demands.Values) Recentre(demand, force: false);
         IssueWork(now);
@@ -273,11 +296,23 @@ internal sealed class LodSilhouetteBuilder
         }
     }
 
+    static long TileKeyOfChunk(int cx, int cz)
+    {
+        (int tileX, int tileZ) = LodSilhouetteTile.TileOfChunk(cx, cz);
+        return LodSilhouetteTile.KeyOf(tileX, tileZ);
+    }
+
     bool IsStored(long key) => storedBeforeSession?.Contains(key) == true || savedThisSession.Contains(key);
 
     /// <summary>RAM holds everything the store holds for this tile, so previewing in it is safe.</summary>
     bool TileReady(long key) =>
         store == null || storedBeforeSession != null && (!IsStored(key) || storeMerged.Contains(key));
+
+    /// <summary>The tile already has heights, captured, stored or previewed.</summary>
+    bool TileHasHeights(long key) => tiles.TryGetValue(key, out LodSilhouetteTile? tile) && tile.KnownCells > 0;
+
+    /// <summary>Main thread: the preview count the error brake watches follows the in-flight set.</summary>
+    void PeeksChanged() => errorBrake.SetPreviewsOutstanding(peeksInFlight.Count);
 
     void TakeStoredIndex()
     {
@@ -393,6 +428,30 @@ internal sealed class LodSilhouetteBuilder
         }
     }
 
+    /// <summary>
+    /// Stop previews for the session once the server has logged a few errors while they were
+    /// being generated (<see cref="LodWorldgenErrorBrake"/>). Tiles already built and captured
+    /// heights stay.
+    /// </summary>
+    void BrakeOnErrors()
+    {
+        if (!errorBrake.Tick()) return;
+        pendingPeeks.Clear();
+        logger.Warning(
+            "Horizon silhouettes: the server logged {0} errors while silhouette previews were being "
+            + "generated, so previews stop for the rest of this session; tiles already built and "
+            + "captured heights stay. On the owner's world such errors came just before the world "
+            + "generator stalled for minutes. The first: {1}",
+            errorBrake.ErrorsDuringPreviews, errorBrake.FirstError ?? "(no text)");
+        foreach (Demand demand in demands.Values)
+        {
+            demand.Player.SendMessage(GlobalConstants.GeneralChatGroup,
+                "[VintageHorizons] The world generator reported errors during horizon silhouette "
+                + "previews, so they are stopped for this session. Silhouettes already built stay; "
+                + "the server log has the details.", EnumChatType.Notification);
+        }
+    }
+
     /// <summary>Main thread: a probe or a preview came back from the world-generation thread.</summary>
     void GeneratorAnswered()
     {
@@ -451,18 +510,12 @@ internal sealed class LodSilhouetteBuilder
         return dx * dx + dz * dz <= limit * limit;
     }
 
-    /// <summary>The builder already holds heights for this chunk, captured or previewed.</summary>
-    bool HoldsChunk(int cx, int cz)
-    {
-        (int tileX, int tileZ) = LodSilhouetteTile.TileOfChunk(cx, cz);
-        return tiles.TryGetValue(LodSilhouetteTile.KeyOf(tileX, tileZ), out LodSilhouetteTile? tile)
-            && tile.HasChunk(cx - tileX * LodSilhouetteTile.ChunksPerEdge, cz - tileZ * LodSilhouetteTile.ChunksPerEdge);
-    }
-
     void IssueWork(long now)
     {
         // A generator that stopped answering gets nothing more this session (WatchGenerator).
         if (generatorWatch.Stalled) return;
+        // Nor does one that logged errors while previews ran (BrakeOnErrors).
+        if (errorBrake.Tripped) return;
         // Until the store has said what it holds, any preview might repeat one already paid for.
         if (store != null && storedBeforeSession == null) return;
         if (authorityBusy()
@@ -519,8 +572,7 @@ internal sealed class LodSilhouetteBuilder
             if (nx * nx + nz * nz > limit * limit) continue;
             int cx = LodSilhouetteField.LatticeChunkOfNode(i);
             int cz = LodSilhouetteField.LatticeChunkOfNode(j);
-            (int tileX, int tileZ) = LodSilhouetteTile.TileOfChunk(cx, cz);
-            long tileKey = LodSilhouetteTile.KeyOf(tileX, tileZ);
+            long tileKey = TileKeyOfChunk(cx, cz);
             if (!TileReady(tileKey))
             {
                 // Its stored copy may hold these heights already: read it before previewing.
@@ -529,8 +581,10 @@ internal sealed class LodSilhouetteBuilder
                 return EnumProbeStep.Paused;
             }
             if (!attempted.Add(LodColumnMap.Key(cx, cz))) continue;
-            // Heights the server captured anyway, or stored, make a preview pointless (plan 4.2).
-            if (HoldsChunk(cx, cz)) continue;
+            // One preview per unexplored region. A tile is exactly one map region, and a preview
+            // builds its region from scratch and throws it away (Session 93), so a tile with any
+            // heights, or one whose preview is already under way, gets no more.
+            if (TileHasHeights(tileKey) || !claimedTiles.Add(tileKey)) continue;
             Probe(cx, cz);
             return EnumProbeStep.Probed;
         }
@@ -548,6 +602,7 @@ internal sealed class LodSilhouetteBuilder
     {
         probesInFlight++;
         Probed++;
+        long tileKey = TileKeyOfChunk(cx, cz);
         sapi.WorldManager.TestMapChunkExists(cx, cz, exists =>
         {
             // The callback need not be on the main thread; every field here is main-thread state.
@@ -555,10 +610,18 @@ internal sealed class LodSilhouetteBuilder
             {
                 probesInFlight--;
                 GeneratorAnswered();
-                // Existing terrain is never previewed: its heights arrive when the server loads
-                // it, and the client draws its cached terrain there anyway.
-                if (exists) Existing++;
-                else if (!generatorWatch.Stalled) pendingPeeks.Enqueue((cx, cz));
+                if (exists)
+                {
+                    // Existing terrain is never previewed: its heights arrive when the server
+                    // loads it, and the client draws its cached terrain there anyway. Another
+                    // lattice chunk of the tile may still be previewed.
+                    Existing++;
+                    claimedTiles.Remove(tileKey);
+                }
+                else if (!generatorWatch.Stalled && !errorBrake.Tripped)
+                {
+                    pendingPeeks.Enqueue((cx, cz));
+                }
             }, "vh-silhouette-probe");
         });
     }
@@ -566,6 +629,7 @@ internal sealed class LodSilhouetteBuilder
     void IssuePeek(int cx, int cz, long now)
     {
         peeksInFlight[LodColumnMap.Key(cx, cz)] = new PeekInFlight(cx, cz, now);
+        PeeksChanged();
         Peeked++;
         sapi.WorldManager.PeekChunkColumn(cx, cz, new ChunkPeekOptions
         {
@@ -605,6 +669,11 @@ internal sealed class LodSilhouetteBuilder
         GeneratorAnswered();
         // A callback after its timeout has already been counted.
         if (!peeksInFlight.Remove(LodColumnMap.Key(cx, cz))) return;
+        PeeksChanged();
+        (int tileX, int tileZ) = LodSilhouetteTile.TileOfChunk(cx, cz);
+        long key = LodSilhouetteTile.KeyOf(tileX, tileZ);
+        // The tile's one preview is over. With heights it needs no other; without, another may try.
+        claimedTiles.Remove(key);
         lastLandedMs = sapi.World.ElapsedMilliseconds;
         lastLandedCx = cx;
         lastLandedCz = cz;
@@ -631,8 +700,6 @@ internal sealed class LodSilhouetteBuilder
                 cx, cz, zeros, forestMap ? "present" : "absent");
         }
 
-        (int tileX, int tileZ) = LodSilhouetteTile.TileOfChunk(cx, cz);
-        long key = LodSilhouetteTile.KeyOf(tileX, tileZ);
         if (!tiles.TryGetValue(key, out LodSilhouetteTile? tile))
             tiles[key] = tile = new LodSilhouetteTile(tileX, tileZ);
         if (!tile.SetChunk(cx, cz, heights, EnumSilhouetteOrigin.Preview)) return;
@@ -649,7 +716,12 @@ internal sealed class LodSilhouetteBuilder
         foreach (KeyValuePair<long, PeekInFlight> entry in peeksInFlight)
             if (now - entry.Value.IssuedMs > StuckPeekTimeoutMs) stale.Add(entry.Key);
         if (stale.Count == 0) return;
-        foreach (long key in stale) peeksInFlight.Remove(key);
+        foreach (long key in stale)
+        {
+            if (peeksInFlight.Remove(key, out PeekInFlight peek))
+                claimedTiles.Remove(TileKeyOfChunk(peek.Cx, peek.Cz));
+        }
+        PeeksChanged();
         TimedOut += stale.Count;
         logger.Warning("Horizon silhouettes: {0} previews never called back and were given up on "
             + "({1} total). Those positions stay without heights this session.", stale.Count, TimedOut);
@@ -748,6 +820,16 @@ internal sealed class LodSilhouetteBuilder
                 store.SaveErrors + store.ReadErrors + store.Undecodable == 0 ? ""
                     : string.Format(culture, ", {0} save errors, {1} read errors, {2} undecodable rows",
                         store.SaveErrors, store.ReadErrors, store.Undecodable));
+        }
+        if (errorBrake.Tripped)
+        {
+            text += string.Format(culture, "; previews STOPPED for this session: the server logged {0} "
+                + "errors while they were being generated", errorBrake.ErrorsDuringPreviews);
+        }
+        else if (errorBrake.ErrorsDuringPreviews > 0)
+        {
+            text += string.Format(culture, "; {0} server errors logged during previews so far",
+                errorBrake.ErrorsDuringPreviews);
         }
         if (!generatorWatch.Stalled) return text;
         return text + string.Format(culture,

@@ -947,7 +947,9 @@ public class LodAssistServerSystem : ModSystem
         silhouettes = new LodSilhouetteBuilder(sapi, Mod.Logger,
             () => sapi.ModLoader.GetModSystem<LodServerCaptureSystem>()?.GenerationAuthorityBusy == true,
             (player, tile) => channel.SendPacket(tile, player), store,
-            storePath == null ? null : () => OpenSilhouetteStore(storePath));
+            storePath == null ? null : () => OpenSilhouetteStore(storePath),
+            // ModLogger's prefix: the mod's own log lines never count as worldgen errors.
+            "[" + Mod.Info.ModID + "]");
         sapi.Event.ChunkColumnLoaded += OnColumnLoadedForSilhouettes;
         sapi.Event.GameWorldSave += OnSilhouettesWorldSave;
     }
