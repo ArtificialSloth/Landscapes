@@ -957,12 +957,25 @@ public class LodAssistServerSystem : ModSystem
         LodSilhouetteStore? store = storePath != null && File.Exists(storePath)
             ? OpenSilhouetteStore(storePath)
             : null;
+        ILodHeightAccelerator? accelerator = null;
+        if (config.SilhouetteUseAccelerators)
+        {
+            accelerator = LodHeightAccelerators.Preferred(LodHeightAccelerators.Find(sapi));
+            Mod.Logger.Notification(accelerator == null
+                ? "Horizon silhouettes: no supported height accelerator is installed; using engine previews."
+                : "Horizon silhouettes: selected {0}; Watersheds is preferred when both supported samplers are installed.",
+                accelerator?.Name ?? "");
+        }
+        else
+        {
+            Mod.Logger.Notification("Horizon silhouettes: optional height accelerators are disabled in the server config; using engine previews.");
+        }
         silhouettes = new LodSilhouetteBuilder(sapi, Mod.Logger,
             () => sapi.ModLoader.GetModSystem<LodServerCaptureSystem>()?.GenerationAuthorityBusy == true,
             (player, tile) => channel.SendPacket(tile, player), store,
             storePath == null ? null : () => OpenSilhouetteStore(storePath),
             // ModLogger's prefix: the mod's own log lines never count as worldgen errors.
-            "[" + Mod.Info.ModID + "]");
+            "[" + Mod.Info.ModID + "]", accelerator, sapi.World.SeaLevel);
         sapi.Event.ChunkColumnLoaded += OnColumnLoadedForSilhouettes;
         sapi.Event.GameWorldSave += OnSilhouettesWorldSave;
     }

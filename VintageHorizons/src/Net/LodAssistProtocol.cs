@@ -156,6 +156,7 @@ public class AssistServerSettings
     [ProtoMember(21)] public int WorldGenMaxInFlight;
     [ProtoMember(22)] public int WorldGenDirtySectionLimit;
     [ProtoMember(23)] public int WorldGenOldestDirtySeconds;
+    [ProtoMember(24)] public bool SilhouetteUseAccelerators;
 
     public static AssistServerSettings From(LodServerConfig config) => new()
     {
@@ -182,6 +183,7 @@ public class AssistServerSettings
         WorldGenMaxInFlight = config.WorldGenMaxInFlight,
         WorldGenDirtySectionLimit = config.WorldGenDirtySectionLimit,
         WorldGenOldestDirtySeconds = config.WorldGenOldestDirtySeconds,
+        SilhouetteUseAccelerators = config.SilhouetteUseAccelerators,
     };
 }
 

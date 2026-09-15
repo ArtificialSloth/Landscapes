@@ -87,6 +87,7 @@ public static class ConfigChecks
         // Silhouettes are automatic: on where one process is both client and server. Dedicated
         // servers wait for the dedicated-server test (silhouette plan P3).
         c.True(config.EnableSilhouettes == null, "silhouettes are automatic by default");
+        c.True(config.SilhouetteUseAccelerators, "accepted optional silhouette accelerators are on by default");
         c.True(config.SilhouettesEnabled(isDedicated: false), "automatic means on in singleplayer and LAN-hosted worlds");
         c.False(config.SilhouettesEnabled(isDedicated: true), "automatic means off on a dedicated server");
         c.False(new LodServerConfig { EnableSilhouettes = false }.SilhouettesEnabled(isDedicated: false),
@@ -102,6 +103,7 @@ public static class ConfigChecks
         c.True(config.SilhouetteHeightsKept(isDedicated: false, measuring: false),
             "singleplayer keeps heights wherever it offers silhouettes");
         c.True(config.Describe().Contains("silhouettes singleplayer and LAN only", StringComparison.Ordinal)
+                && config.Describe().Contains("silhouette accelerators on", StringComparison.Ordinal)
                 && new LodServerConfig { EnableSilhouettes = false }.Describe().Contains("silhouettes off",
                     StringComparison.Ordinal),
             "the config description states the silhouette setting");

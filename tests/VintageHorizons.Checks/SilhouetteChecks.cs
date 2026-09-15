@@ -32,6 +32,7 @@ public static class SilhouetteChecks
         WorldgenErrorBrake(c);
         HeightComparisonArithmetic(c);
         PresampleAndMapFiles(c);
+        AcceleratorSelectionAndSampling(c);
     }
 
     public static void RunWiring(Check c)
@@ -165,8 +166,70 @@ public static class SilhouetteChecks
         c.True(run.Contains("IsBackground = true", StringComparison.Ordinal)
                 && run.Contains("accelerator.Sample(", StringComparison.Ordinal),
             "accelerators are called on the comparison's own background thread");
-        c.False(builder.Contains("ILodHeightAccelerator", StringComparison.Ordinal),
-            "the builder uses no accelerator for tiles until the owner has judged the comparison (P0.3)");
+        c.True(builder.Contains("ILodHeightAccelerator? accelerator", StringComparison.Ordinal)
+                && builder.Contains("LodSilhouetteAcceleratorSampling.Apply", StringComparison.Ordinal)
+                && builder.Contains("engine previews take over", StringComparison.Ordinal),
+            "the accepted accelerator runs in the builder and a named failure falls back to previews");
+        c.True(assist.Contains("LodHeightAccelerators.Preferred(LodHeightAccelerators.Find(sapi))",
+                StringComparison.Ordinal),
+            "the live builder selects one accepted accelerator through the explicit preference rule");
+    }
+
+    sealed class FakeAccelerator(EnumLodHeightAccelerator kind, string name) : ILodHeightAccelerator
+    {
+        public EnumLodHeightAccelerator Kind => kind;
+        public string Name => name;
+        public int[] Sample(IReadOnlyList<(int X, int Z)> positions) => new int[positions.Count];
+    }
+
+    /// <summary>The owner's accepted P0.3 choice and the coarse tile geometry it unlocks.</summary>
+    static void AcceleratorSelectionAndSampling(Check c)
+    {
+        var algernon = new FakeAccelerator(EnumLodHeightAccelerator.AlgernonsTerrainSampler, "Algernon");
+        var watersheds = new FakeAccelerator(EnumLodHeightAccelerator.Watersheds, "Watersheds");
+        c.True(ReferenceEquals(watersheds, LodHeightAccelerators.Preferred(new[] { algernon, watersheds })),
+            "Watersheds is preferred when both accepted accelerators are installed");
+        c.True(ReferenceEquals(algernon, LodHeightAccelerators.Preferred(new[] { algernon })),
+            "Algernon's Terrain Sampler is accepted when Watersheds is absent");
+        c.True(LodHeightAccelerators.Preferred(Array.Empty<ILodHeightAccelerator>()) == null,
+            "no installed accelerator leaves the standalone preview path");
+
+        (int X, int Z)[] positions = LodSilhouetteAcceleratorSampling.Positions(TileX, TileZ);
+        c.Eq(64, positions.Length, "a tile gets one accepted sample every 64 blocks");
+        c.Eq((TileX * 512, TileZ * 512), positions[0], "the coarse grid starts at the tile's minimum corner");
+        c.Eq((TileX * 512 + 448, TileZ * 512 + 448), positions[^1],
+            "the coarse grid ends one spacing before the next tile");
+
+        var tile = new LodSilhouetteTile(TileX, TileZ);
+        c.True(LodSilhouetteAcceleratorSampling.NeedsSamples(tile), "an empty tile needs its coarse samples");
+        int[] heights = Enumerable.Repeat(120, positions.Length).ToArray();
+        c.True(LodSilhouetteAcceleratorSampling.Apply(tile, heights), "the coarse result changes the tile");
+        c.Eq(64, tile.KnownCells, "all coarse points are stored as sparse cells");
+        c.Eq(EnumSilhouetteOrigin.Accelerator, tile.OriginAt(0, 0), "coarse cells retain accelerator provenance");
+        c.False(LodSilhouetteAcceleratorSampling.NeedsSamples(tile), "a complete coarse tile is not sampled again");
+
+        tile.SetCell(0, 0, 111, EnumSilhouetteOrigin.Preview);
+        c.Eq((EnumSilhouetteOrigin.Preview, (ushort)111),
+            (tile.OriginAt(0, 0), tile.TryGetHeight(0, 0, out ushort refined) ? refined : (ushort)0),
+            "an engine preview replaces an accelerator answer at the same cell");
+        c.False(tile.SetCell(0, 0, 130, EnumSilhouetteOrigin.Accelerator),
+            "an accelerator never replaces the better preview");
+
+        int[] ocean = Enumerable.Repeat(82, 64).ToArray();
+        c.False(LodSilhouetteAcceleratorSampling.TryCoastPreview(TileX, TileZ, ocean, 82,
+                out _, out _),
+            "pure ocean does not spend a world-generator preview");
+        int[] inland = Enumerable.Repeat(120, 64).ToArray();
+        c.False(LodSilhouetteAcceleratorSampling.TryCoastPreview(TileX, TileZ, inland, 82,
+                out _, out _),
+            "confident inland terrain does not spend a preview");
+        int[] coast = Enumerable.Repeat(82, 64).ToArray();
+        coast[9] = 84;
+        c.True(LodSilhouetteAcceleratorSampling.TryCoastPreview(TileX, TileZ, coast, 82,
+                out int coastCx, out int coastCz)
+                && coastCx >= TileX * 16 && coastCx < TileX * 16 + 16
+                && coastCz >= TileZ * 16 && coastCz < TileZ * 16 + 16,
+            "a coast or low dry lake candidate receives one in-tile engine preview");
     }
 
     /// <summary>
@@ -203,16 +266,19 @@ public static class SilhouetteChecks
         string builder = Source("src", "Silhouette", "LodSilhouetteBuilder.cs");
         c.Eq(4, LodSilhouetteBuilder.MaxPeeksInFlight,
             "at most four previews wait on the generator, so a stop leaves little behind");
-        c.True(builder.Contains("if (TileHasHeights(tileKey) || !claimedTiles.Add(tileKey)) continue;",
-                StringComparison.Ordinal),
-            "an unexplored region is previewed once: a tile with heights, or one already claimed, gets no more");
+        c.True(builder.Contains("if (!useAccelerator && TileHasHeights(tileKey)) continue;",
+                StringComparison.Ordinal)
+                && builder.Contains("!claimedTiles.Add(tileKey)", StringComparison.Ordinal),
+            "the preview-only path keeps one preview per unexplored region and never duplicates claimed work");
         c.True(Regex.IsMatch(builder, @"void EnsureListening\(\)[\s\S]*?sapi\.Logger\.EntryAdded \+= logWatcher;"),
             "the error brake reads the server log only once someone asks for silhouettes");
         c.True(Regex.IsMatch(builder, @"void StopListening\(\)[\s\S]*?sapi\.Logger\.EntryAdded -= logWatcher;")
                 && Regex.IsMatch(builder, @"public void Dispose\(\)[\s\S]*?sapi\.Logger\.EntryAdded -= logWatcher;"),
             "and stops reading it when nobody asks, and at shutdown");
-        c.True(builder.Contains("if (errorBrake.Tripped) return;", StringComparison.Ordinal),
-            "a tripped brake issues no more probes or previews");
+        c.True(builder.Contains("bool previewsAvailable = !generatorWatch.Stalled && !errorBrake.Tripped;",
+                StringComparison.Ordinal)
+                && builder.Contains("while (previewsAvailable && peeks < allowance", StringComparison.Ordinal),
+            "a tripped brake stops probes and previews while the independent accelerator may continue");
     }
 
     /// <summary>
@@ -433,8 +499,10 @@ public static class SilhouetteChecks
         string builder = Source("src", "Silhouette", "LodSilhouetteBuilder.cs");
         c.Eq(2, Regex.Matches(builder, @"\bGeneratorAnswered\(\);").Count,
             "both the probe callback and the preview landing tell the watch the generator answered");
-        c.True(builder.Contains("if (generatorWatch.Stalled) return;", StringComparison.Ordinal),
-            "the builder issues no probes or previews once the generator is declared stuck");
+        c.True(builder.Contains("bool previewsAvailable = !generatorWatch.Stalled && !errorBrake.Tripped;",
+                StringComparison.Ordinal)
+                && builder.Contains("ProbeNext(demand, previewsAvailable)", StringComparison.Ordinal),
+            "a stuck generator stops probes and previews while the independent accelerator may continue");
         c.True(Regex.IsMatch(builder, @"void Tick\(\)\s*\{[^}]*WatchGenerator\(now\);"),
             "the builder watches the generator on every tick");
     }

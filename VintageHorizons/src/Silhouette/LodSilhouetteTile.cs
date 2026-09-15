@@ -98,6 +98,29 @@ public sealed class LodSilhouetteTile
         (cellZ % CellsPerChunk) * CellsPerChunk + cellX % CellsPerChunk;
 
     /// <summary>
+    /// Set one 4-block cell. Used by optional accelerators, whose sparse answers do not arrive as
+    /// a complete chunk height map. The same source-order rule as <see cref="SetChunk"/> applies.
+    /// </summary>
+    public bool SetCell(int cellX, int cellZ, ushort height, EnumSilhouetteOrigin origin)
+    {
+        if (origin == EnumSilhouetteOrigin.Unknown)
+            throw new ArgumentOutOfRangeException(nameof(origin));
+        if ((uint)cellX >= CellsPerEdge || (uint)cellZ >= CellsPerEdge)
+            throw new ArgumentOutOfRangeException(nameof(cellX), "The cell is outside this tile.");
+
+        int slot = (cellZ / CellsPerChunk) * ChunksPerEdge + cellX / CellsPerChunk;
+        ChunkData cells = chunks[slot] ??= new ChunkData();
+        int index = IndexInChunk(cellX, cellZ);
+        var held = (EnumSilhouetteOrigin)cells.Origins[index];
+        if (Rank(origin) > Rank(held) || held == origin && cells.Heights[index] == height) return false;
+        if (held == EnumSilhouetteOrigin.Unknown) KnownCells++;
+        cells.Origins[index] = (byte)origin;
+        cells.Heights[index] = height;
+        Revision++;
+        return true;
+    }
+
+    /// <summary>
     /// Copy one chunk column's 32x32 height map into its 8x8 cells, sampling each cell at its
     /// minimum corner, which is Farseer's sampling. A cell changes only when the new source is at
     /// least as good as the one it holds, and only a real change bumps the revision.

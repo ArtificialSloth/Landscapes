@@ -61,6 +61,7 @@ public static class WireFormatChecks
             "1:EnableCapture:Boolean",
             "20:WorldGenQueueTarget:Int32", "21:WorldGenMaxInFlight:Int32",
             "22:WorldGenDirtySectionLimit:Int32", "23:WorldGenOldestDirtySeconds:Int32",
+            "24:SilhouetteUseAccelerators:Boolean",
             "2:EnableServing:Boolean",
             "3:ServeRadiusBlocks:Int32", "4:MaxSectionsPerSecondPerPlayer:Int32",
             "5:MaxSectionsPerSecondTotal:Int32", "6:SweepSavegame:Boolean",
@@ -160,6 +161,7 @@ public static class WireFormatChecks
                 WorldGenMaxInFlight = 160,
                 WorldGenDirtySectionLimit = 512,
                 WorldGenOldestDirtySeconds = 120,
+                SilhouetteUseAccelerators = true,
             },
         });
         c.Eq(true, welcome.Enabled, "welcome enabled flag survives");
@@ -177,6 +179,8 @@ public static class WireFormatChecks
             "welcome world-generation permission survives");
         c.Eq(256, welcome.ServerSettings?.WorldGenMaxRadiusChunks ?? -1,
             "welcome real-world generation settings survive");
+        c.True(welcome.ServerSettings?.SilhouetteUseAccelerators == true,
+            "welcome silhouette accelerator setting survives");
 
         var worldGenRequest = Roundtrip(new AssistWorldGenRequest
         {

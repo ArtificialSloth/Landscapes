@@ -180,6 +180,13 @@ public class LodServerConfig
     public bool? EnableSilhouettes;
 
     /// <summary>
+    /// Use an installed, accepted height accelerator for the broad silhouette field. Watersheds'
+    /// native sampler is preferred when both supported mods are installed; Algernon's Terrain
+    /// Sampler is accepted when Watersheds is absent. False keeps the standalone preview path.
+    /// </summary>
+    public bool SilhouetteUseAccelerators = true;
+
+    /// <summary>
     /// Set to "1" in a dedicated test server's environment to keep silhouette heights there for
     /// the accelerator comparison (plan P0.3), before dedicated servers are offered silhouettes.
     /// Developer-only: players are offered nothing, and no config file can switch it on.
@@ -262,5 +269,6 @@ public class LodServerConfig
         + $"generate {(GenerateEnabled ? "on request up to " + GenerateMaxRadiusChunks + " chunks" : "off")}, "
         + $"world generation {(WorldGenerationEnabled ? "on request up to " + WorldGenMaxRadiusChunks
             + " chunks, queue " + WorldGenQueueTarget : "off")}, "
-        + $"silhouettes {(EnableSilhouettes == false ? "off" : "singleplayer and LAN only")}";
+        + $"silhouettes {(EnableSilhouettes == false ? "off" : "singleplayer and LAN only")}, "
+        + $"silhouette accelerators {(SilhouetteUseAccelerators ? "on" : "off")}";
 }

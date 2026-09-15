@@ -11,6 +11,7 @@ namespace VintageHorizons.Silhouette;
 /// </summary>
 internal interface ILodHeightAccelerator
 {
+    EnumLodHeightAccelerator Kind { get; }
     string Name { get; }
 
     /// <summary>
@@ -21,6 +22,12 @@ internal interface ILodHeightAccelerator
     int[] Sample(IReadOnlyList<(int X, int Z)> positions);
 }
 
+internal enum EnumLodHeightAccelerator
+{
+    AlgernonsTerrainSampler,
+    Watersheds,
+}
+
 /// <summary>Finds the accelerators this build knows how to call.</summary>
 internal static class LodHeightAccelerators
 {
@@ -28,10 +35,35 @@ internal static class LodHeightAccelerators
     public static List<ILodHeightAccelerator> Find(ICoreServerAPI sapi)
     {
         var found = new List<ILodHeightAccelerator>();
-        if (AlgernonsTerrainSampler.TryCreate(sapi) is { } algernon) found.Add(algernon);
-        if (WatershedsTerrainSampler.TryCreate(sapi) is { } watersheds) found.Add(watersheds);
+        try
+        {
+            if (AlgernonsTerrainSampler.TryCreate(sapi) is { } algernon) found.Add(algernon);
+        }
+        catch (Exception e)
+        {
+            sapi.Logger.Warning("Horizon silhouettes: Algernon's Terrain Sampler could not be inspected: {0}",
+                e.GetBaseException().Message);
+        }
+        try
+        {
+            if (WatershedsTerrainSampler.TryCreate(sapi) is { } watersheds) found.Add(watersheds);
+        }
+        catch (Exception e)
+        {
+            sapi.Logger.Warning("Horizon silhouettes: Watersheds' sampler could not be inspected: {0}",
+                e.GetBaseException().Message);
+        }
         return found;
     }
+
+    /// <summary>
+    /// The owner's accepted P0.3 order: use Watersheds' native sampler when both are installed,
+    /// otherwise use Algernon's Terrain Sampler. The comparison still returns both adapters so
+    /// its evidence remains explicit; only the live builder chooses one.
+    /// </summary>
+    public static ILodHeightAccelerator? Preferred(IEnumerable<ILodHeightAccelerator> found) =>
+        found.FirstOrDefault(a => a.Kind == EnumLodHeightAccelerator.Watersheds)
+        ?? found.FirstOrDefault(a => a.Kind == EnumLodHeightAccelerator.AlgernonsTerrainSampler);
 
     static string Version(ICoreServerAPI sapi, string modId) => sapi.ModLoader.GetMod(modId)?.Info?.Version ?? "?";
 
@@ -61,6 +93,7 @@ internal static class LodHeightAccelerators
         }
 
         public string Name { get; }
+        public EnumLodHeightAccelerator Kind => EnumLodHeightAccelerator.AlgernonsTerrainSampler;
 
         public static AlgernonsTerrainSampler? TryCreate(ICoreServerAPI sapi)
         {
@@ -106,6 +139,7 @@ internal static class LodHeightAccelerators
         }
 
         public string Name { get; }
+        public EnumLodHeightAccelerator Kind => EnumLodHeightAccelerator.Watersheds;
 
         public static WatershedsTerrainSampler? TryCreate(ICoreServerAPI sapi)
         {

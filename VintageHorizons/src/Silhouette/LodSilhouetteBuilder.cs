@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
 using Vintagestory.API.Config;
@@ -10,14 +11,12 @@ namespace VintageHorizons.Silhouette;
 /// <summary>
 /// Server half of horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P1-P2).
 ///
-/// Heights come from two places. First, the worldgen heights of every column the server loads
-/// or previews for its own cache: they are free, and they outrank everything else. Second, for
-/// each player who asked, the builder walks the sampling lattice outward from them, nearest
-/// first, out to their reach plus one tile, and previews one chunk in each tile that holds no
-/// heights yet. A tile is exactly one map region, and a preview builds its region from scratch
-/// and throws it away (Session 93), so one preview per unexplored region is the most that pays.
-/// Existing terrain is never previewed. Only the 32x32 height map of a preview is kept: nothing
-/// reaches the capture pipeline, and a preview writes nothing to the savegame.
+/// Heights come from three places, in quality order. Captured terrain and engine previews outrank
+/// an accepted optional accelerator. Watersheds is preferred when both supported accelerators are
+/// installed; Algernon's Terrain Sampler is used when it is the one present. An accelerator fills
+/// each tile every 64 blocks on a bounded worker pool, then one engine preview refines low or
+/// coastal ground. If the selected accelerator fails, it is disabled for the session and the
+/// same positions fall back to previews. A preview writes nothing to the savegame.
 ///
 /// Tiles persist in <see cref="LodSilhouetteStore"/>, so each area is paid for once per world.
 /// A world that has never used silhouettes gets its store with the first request. Changed tiles
@@ -50,6 +49,12 @@ internal sealed class LodSilhouetteBuilder
     /// </summary>
     public const int MaxPeeksInFlight = 4;
 
+    /// <summary>
+    /// Tiles queued off-thread at once. Calls themselves are serialized until sampling beside real
+    /// generation has been measured; one caller already answered 270,000 cells in about a second.
+    /// </summary>
+    public const int MaxAcceleratorJobsInFlight = 4;
+
     public const int MaxProbesInFlight = 32;
     public const int MaxProbeIssuesPerTick = 4;
 
@@ -76,6 +81,9 @@ internal sealed class LodSilhouetteBuilder
     readonly ILogger logger;
     readonly Func<bool> authorityBusy;
     readonly Action<IServerPlayer, AssistSilhouetteTile> send;
+    readonly ILodHeightAccelerator? accelerator;
+    readonly int seaLevel;
+    readonly SemaphoreSlim acceleratorCallGate = new(1, 1);
     LodSilhouetteStore? store;
     Func<LodSilhouetteStore?>? openStore;
 
@@ -95,6 +103,8 @@ internal sealed class LodSilhouetteBuilder
     enum EnumProbeStep { Probed, Exhausted, Paused }
 
     readonly record struct PeekInFlight(int Cx, int Cz, long IssuedMs);
+    readonly record struct AcceleratorResult(int TileX, int TileZ, int FallbackCx, int FallbackCz,
+        int[]? Heights, string? Error);
 
     readonly Dictionary<string, Demand> demands = new();
     readonly List<string> demandOrder = new();
@@ -104,6 +114,8 @@ internal sealed class LodSilhouetteBuilder
     readonly HashSet<long> claimedTiles = new();
     readonly Queue<(int Cx, int Cz)> pendingPeeks = new();
     readonly Dictionary<long, PeekInFlight> peeksInFlight = new();
+    readonly HashSet<long> acceleratorInFlight = new();
+    readonly ConcurrentQueue<AcceleratorResult> acceleratorResults = new();
     readonly List<long> stale = new();
     readonly LodTickAllowance previewAllowance = new();
     readonly LodGenerationStallWatch generatorWatch = new();
@@ -113,6 +125,7 @@ internal sealed class LodSilhouetteBuilder
     long listenerId;
     bool listening;
     bool firstPeekReported;
+    bool acceleratorFailed;
     long nextStatusLogMs;
     long lastLandedMs = -1;
     int lastLandedCx, lastLandedCz;
@@ -128,6 +141,8 @@ internal sealed class LodSilhouetteBuilder
     readonly List<long> evictable = new();
 
     public int Probed, Existing, Peeked, Landed, Empty, TimedOut, YieldTicks, TilesSent;
+    public int AcceleratorTilesIssued, AcceleratorTilesLanded, AcceleratorCells, AcceleratorFailures,
+        CoastPreviews;
     public int CapturedColumns, RainColumns, StoreReads, TilesSaved, Evicted;
     public long BytesSent;
 
@@ -136,12 +151,15 @@ internal sealed class LodSilhouetteBuilder
     /// <param name="ownLogMarker">Marks the mod's own log lines, which never count as worldgen errors.</param>
     public LodSilhouetteBuilder(ICoreServerAPI sapi, ILogger logger, Func<bool> authorityBusy,
         Action<IServerPlayer, AssistSilhouetteTile> send, LodSilhouetteStore? store,
-        Func<LodSilhouetteStore?>? openStore, string? ownLogMarker)
+        Func<LodSilhouetteStore?>? openStore, string? ownLogMarker,
+        ILodHeightAccelerator? accelerator = null, int? seaLevel = null)
     {
         this.sapi = sapi;
         this.logger = logger;
         this.authorityBusy = authorityBusy;
         this.send = send;
+        this.accelerator = accelerator;
+        this.seaLevel = seaLevel ?? sapi.World.SeaLevel;
         this.store = store;
         this.openStore = store == null ? openStore : null;
         errorBrake = new LodWorldgenErrorBrake(ownLogMarker);
@@ -179,11 +197,14 @@ internal sealed class LodSilhouetteBuilder
         demand.Player = player;
         demand.ReachBlocks = reach;
         Recentre(demand, force: true);
+        string source = accelerator == null
+            ? "using one engine preview in each 512-block region"
+            : $"sampling every {LodSilhouetteAcceleratorSampling.CoarseSpacingBlocks} blocks with "
+                + $"{accelerator.Name} on one background caller, with engine previews for low and coastal ground";
         logger.Notification(
-            "Horizon silhouettes: {0} asked for a {1:N0}-block reach. Previewing one chunk in each "
-            + "512-block region around them that holds no heights yet, nearest first, heights only; "
-            + "nothing is written to the savegame.",
-            player.PlayerName, reach);
+            "Horizon silhouettes: {0} asked for a {1:N0}-block reach, {2}, nearest first, heights "
+            + "only; nothing is written to the savegame.",
+            player.PlayerName, reach, source);
         EnsureListening();
     }
 
@@ -283,6 +304,7 @@ internal sealed class LodSilhouetteBuilder
     {
         long now = sapi.World.ElapsedMilliseconds;
         PumpStore();
+        PumpAccelerators();
         WatchGenerator(now);
         BrakeOnErrors();
         ExpireStuckPeeks(now);
@@ -464,6 +486,105 @@ internal sealed class LodSilhouetteBuilder
             (now - generatorWatch.StalledAtMs) / 1000);
     }
 
+    void IssueAccelerator(int tileX, int tileZ, int fallbackCx, int fallbackCz)
+    {
+        ILodHeightAccelerator selected = accelerator!;
+        long key = LodSilhouetteTile.KeyOf(tileX, tileZ);
+        acceleratorInFlight.Add(key);
+        AcceleratorTilesIssued++;
+        (int X, int Z)[] positions = LodSilhouetteAcceleratorSampling.Positions(tileX, tileZ);
+        Task.Run(() =>
+        {
+            acceleratorCallGate.Wait();
+            try
+            {
+                int[] heights = selected.Sample(positions);
+                if (heights.Length != positions.Length)
+                    throw new InvalidOperationException(
+                        $"it returned {heights.Length} heights for {positions.Length} positions");
+                acceleratorResults.Enqueue(new AcceleratorResult(
+                    tileX, tileZ, fallbackCx, fallbackCz, heights, null));
+            }
+            catch (Exception e)
+            {
+                acceleratorResults.Enqueue(new AcceleratorResult(
+                    tileX, tileZ, fallbackCx, fallbackCz, null, e.GetBaseException().Message));
+            }
+            finally
+            {
+                acceleratorCallGate.Release();
+            }
+        });
+    }
+
+    /// <summary>Main thread: publish bounded worker results and turn failures into previews.</summary>
+    void PumpAccelerators()
+    {
+        while (acceleratorResults.TryDequeue(out AcceleratorResult result))
+        {
+            long key = LodSilhouetteTile.KeyOf(result.TileX, result.TileZ);
+            if (!acceleratorInFlight.Remove(key)) continue;
+            claimedTiles.Remove(key);
+
+            if (acceleratorFailed || result.Error != null || result.Heights == null)
+            {
+                if (!acceleratorFailed)
+                {
+                    acceleratorFailed = true;
+                    AcceleratorFailures++;
+                    logger.Warning(
+                        "Horizon silhouettes: {0} failed ({1}), so it is disabled for this session; "
+                        + "engine previews take over.", accelerator?.Name ?? "the height accelerator",
+                        result.Error ?? "no heights returned");
+                }
+                QueuePreview(result.FallbackCx, result.FallbackCz, onlyIfEmpty: true);
+                continue;
+            }
+
+            if (!tiles.TryGetValue(key, out LodSilhouetteTile? tile))
+                tiles[key] = tile = new LodSilhouetteTile(result.TileX, result.TileZ);
+            try
+            {
+                if (LodSilhouetteAcceleratorSampling.Apply(tile, result.Heights))
+                {
+                    AcceleratorTilesLanded++;
+                    AcceleratorCells += result.Heights.Length;
+                    dirtyTiles.Add(key);
+                    foreach (Demand demand in demands.Values)
+                        if (Covers(demand, tile)) demand.Queued.Add(key);
+                }
+            }
+            catch (Exception e)
+            {
+                acceleratorFailed = true;
+                AcceleratorFailures++;
+                logger.Warning(
+                    "Horizon silhouettes: {0} returned unusable heights ({1}), so it is disabled "
+                    + "for this session; engine previews take over.", accelerator?.Name ?? "the height accelerator",
+                    e.GetBaseException().Message);
+                QueuePreview(result.FallbackCx, result.FallbackCz, onlyIfEmpty: true);
+                continue;
+            }
+
+            // The accepted accelerator is the broad cheap source. A real Terrain-pass preview
+            // remains the better source at a likely coastline or lake and replaces these cells.
+            if (LodSilhouetteAcceleratorSampling.TryCoastPreview(result.TileX, result.TileZ,
+                    result.Heights, seaLevel, out int cx, out int cz))
+            {
+                if (QueuePreview(cx, cz, onlyIfEmpty: false)) CoastPreviews++;
+            }
+        }
+    }
+
+    bool QueuePreview(int cx, int cz, bool onlyIfEmpty)
+    {
+        if (generatorWatch.Stalled || errorBrake.Tripped) return false;
+        long tileKey = TileKeyOfChunk(cx, cz);
+        if (onlyIfEmpty && TileHasHeights(tileKey) || !claimedTiles.Add(tileKey)) return false;
+        Probe(cx, cz);
+        return true;
+    }
+
     void Recentre(Demand demand, bool force)
     {
         EntityPos? pos = demand.Player.Entity?.Pos;
@@ -512,10 +633,6 @@ internal sealed class LodSilhouetteBuilder
 
     void IssueWork(long now)
     {
-        // A generator that stopped answering gets nothing more this session (WatchGenerator).
-        if (generatorWatch.Stalled) return;
-        // Nor does one that logged errors while previews ran (BrakeOnErrors).
-        if (errorBrake.Tripped) return;
         // Until the store has said what it holds, any preview might repeat one already paid for.
         if (store != null && storedBeforeSession == null) return;
         if (authorityBusy()
@@ -525,12 +642,14 @@ internal sealed class LodSilhouetteBuilder
             return;
         }
 
+        bool previewsAvailable = !generatorWatch.Stalled && !errorBrake.Tripped;
         // Only previews spend the rate: they are the worldgen cost. Probes are existence reads,
-        // bounded by their own in-flight cap and by the short queue of empty positions.
+        // bounded by their own in-flight cap and by the short queue of empty positions. A stopped
+        // generator does not stop the independent accelerator path.
         int allowance = previewAllowance.Available(now, PreviewsPerSecond);
         var budget = new LodWorkBudget(TickWorkBudgetMs);
         int peeks = 0;
-        while (peeks < allowance && pendingPeeks.Count > 0
+        while (previewsAvailable && peeks < allowance && pendingPeeks.Count > 0
             && peeksInFlight.Count < MaxPeeksInFlight && !budget.Expired)
         {
             (int cx, int cz) = pendingPeeks.Dequeue();
@@ -546,7 +665,7 @@ internal sealed class LodSilhouetteBuilder
             && !budget.Expired)
         {
             Demand demand = demands[demandOrder[nextDemand++ % demandOrder.Count]];
-            if (ProbeNext(demand) == EnumProbeStep.Probed)
+            if (ProbeNext(demand, previewsAvailable) == EnumProbeStep.Probed)
             {
                 probes++;
                 idle = 0;
@@ -558,7 +677,7 @@ internal sealed class LodSilhouetteBuilder
         }
     }
 
-    EnumProbeStep ProbeNext(Demand demand)
+    EnumProbeStep ProbeNext(Demand demand, bool previewsAvailable)
     {
         double limit = demand.ReachBlocks + LodSilhouetteTile.TileBlocks;
         int skipped = 0;
@@ -580,12 +699,22 @@ internal sealed class LodSilhouetteBuilder
                 demand.SpiralIndex--;
                 return EnumProbeStep.Paused;
             }
+            LodSilhouetteTile? tile = tiles.GetValueOrDefault(tileKey);
+            bool useAccelerator = accelerator != null && !acceleratorFailed
+                && LodSilhouetteAcceleratorSampling.NeedsSamples(tile);
+            // Without an accelerator this preserves P2's one-preview-per-region rule. With one,
+            // an older sparse stored tile is completed at the accepted 64-block spacing.
+            if (!useAccelerator && TileHasHeights(tileKey)) continue;
+            if (useAccelerator && acceleratorInFlight.Count >= MaxAcceleratorJobsInFlight
+                || !useAccelerator && !previewsAvailable)
+            {
+                demand.SpiralIndex--;
+                return EnumProbeStep.Paused;
+            }
             if (!attempted.Add(LodColumnMap.Key(cx, cz))) continue;
-            // One preview per unexplored region. A tile is exactly one map region, and a preview
-            // builds its region from scratch and throws it away (Session 93), so a tile with any
-            // heights, or one whose preview is already under way, gets no more.
-            if (TileHasHeights(tileKey) || !claimedTiles.Add(tileKey)) continue;
-            Probe(cx, cz);
+            if (!claimedTiles.Add(tileKey)) continue;
+            if (useAccelerator) IssueAccelerator(LodWorld.KeySx(tileKey), LodWorld.KeySz(tileKey), cx, cz);
+            else Probe(cx, cz);
             return EnumProbeStep.Probed;
         }
 
@@ -843,6 +972,14 @@ internal sealed class LodSilhouetteBuilder
             + "for other generation; {12} tile messages sent ({13:0.0} KB)",
             demands.Count, tiles.Count, CapturedColumns, RainColumns, Probed, Existing, Peeked, Landed,
             Empty, TimedOut, peeksInFlight.Count, YieldTicks, TilesSent, BytesSent / 1024.0);
+        if (accelerator != null)
+        {
+            text += string.Format(culture,
+                "; accelerator {0}: {1} tiles issued, {2} landed ({3:N0} cells), {4} in flight, "
+                + "{5} low/coastal previews, {6}", accelerator.Name, AcceleratorTilesIssued,
+                AcceleratorTilesLanded, AcceleratorCells, acceleratorInFlight.Count, CoastPreviews,
+                acceleratorFailed ? "FAILED, previews took over" : "active (one background caller)");
+        }
         if (store == null)
         {
             text += openStore != null
