@@ -30,10 +30,16 @@ public class LodAssistServerSystem : ModSystem
 
     /// <summary>
     /// Horizon silhouettes: created when the world runs, where the server config allows them
-    /// (singleplayer and LAN-hosted worlds in this build). The feature bit is advertised only
-    /// where this exists.
+    /// (singleplayer and LAN-hosted worlds in this build), or on a dedicated test server that
+    /// measures their heights (LodServerConfig.MeasureSilhouettesVariable).
     /// </summary>
     LodSilhouetteBuilder? silhouettes;
+
+    /// <summary>
+    /// Whether players are offered silhouettes. The feature bit is advertised, and requests are
+    /// answered, only when this is set: a server that only measures heights offers nothing.
+    /// </summary>
+    bool silhouettesOffered;
 
     // Per-call attribution is populated only while the owning-thread serve callback is
     // active. Send cost is nested inside publication/admission; the other three costs
@@ -166,7 +172,7 @@ public class LodAssistServerSystem : ModSystem
             ServerSettings = AssistServerSettings.From(config),
             Features = (capture != null && config.EnableCapture && config.WorldGenerationEnabled
                     ? LodAssist.FeatureWorldGeneration : 0)
-                | (silhouettes != null ? LodAssist.FeatureSilhouetteTiles : 0),
+                | (silhouettesOffered ? LodAssist.FeatureSilhouetteTiles : 0),
             CanControlWorldGeneration = player.HasPrivilege(Privilege.controlserver),
         }, player);
 
@@ -190,7 +196,7 @@ public class LodAssistServerSystem : ModSystem
         // Off the owner thread, like every network callback; the builder is owner-thread state.
         sapi.Event.EnqueueMainThreadTask(() =>
         {
-            if (silhouettes == null || !ledger.HasGreeted(fromPlayer.PlayerUID)) return;
+            if (silhouettes == null || !silhouettesOffered || !ledger.HasGreeted(fromPlayer.PlayerUID)) return;
             silhouettes.Request(fromPlayer, request);
         }, "vintagehorizons-silhouette-request");
     }
@@ -928,7 +934,9 @@ public class LodAssistServerSystem : ModSystem
         RegisterSilhouetteCommand();
         LodServerConfig config = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>()?.Config
             ?? new LodServerConfig();
-        if (!config.SilhouettesEnabled(sapi.Server.IsDedicated))
+        bool measuring = Environment.GetEnvironmentVariable(LodServerConfig.MeasureSilhouettesVariable) == "1";
+        silhouettesOffered = config.SilhouettesEnabled(sapi.Server.IsDedicated);
+        if (!config.SilhouetteHeightsKept(sapi.Server.IsDedicated, measuring))
         {
             if (!sapi.Server.IsDedicated)
             {
@@ -936,6 +944,11 @@ public class LodAssistServerSystem : ModSystem
                     + "ModConfig/vintagehorizons-server.json: this world offers none and keeps no heights for them.");
             }
             return;
+        }
+        if (!silhouettesOffered)
+        {
+            Mod.Logger.Notification("Horizon silhouettes: measuring heights only ({0}). Players are offered "
+                + "none; /vhsilhouetteserver compare can run.", LodServerConfig.MeasureSilhouettesVariable);
         }
         // A world that has never used silhouettes gets no file until a player asks for them: a
         // database opened in every singleplayer world "in case" is the cost the section cache's
@@ -997,9 +1010,11 @@ public class LodAssistServerSystem : ModSystem
     {
         TextCommandResult Status()
         {
-            string line = "[VintageHorizons] Horizon silhouettes: " + (silhouettes?.Describe()
-                ?? "off on this server (EnableSilhouettes in ModConfig/vintagehorizons-server.json; "
-                + "dedicated servers are not offered them yet)") + ".";
+            string line = "[VintageHorizons] Horizon silhouettes: " + (silhouettes == null
+                ? "off on this server (EnableSilhouettes in ModConfig/vintagehorizons-server.json; "
+                    + "dedicated servers are not offered them yet)"
+                : (silhouettesOffered ? "" : "measuring heights only, players are offered none; ")
+                    + silhouettes.Describe()) + ".";
             // Chat cannot be copied, so the same line always reaches the log.
             Mod.Logger.Notification("{0}", line);
             return TextCommandResult.Success(line);
@@ -1079,6 +1094,7 @@ public class LodAssistServerSystem : ModSystem
         if (!done) return;
         sapi.Event.UnregisterGameTickListener(comparisonListener);
         comparison = null;
+        Mod.Logger.Notification("[VintageHorizons] Accelerator comparison finished.");
     }
 
     /// <summary>Main thread: the engine raises this from a main-thread task.</summary>

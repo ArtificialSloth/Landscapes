@@ -658,8 +658,17 @@ public static class SilhouetteChecks
                 @"if \(Config\.SilhouettesEnabled\(sapi\.Server\.IsDedicated\)\)\s*\{[^}]*PreviewHeightsCaptured ="),
             "the pipeline's height hook is attached only while the server offers silhouettes");
         c.True(Regex.IsMatch(assist,
-                @"if \(!config\.SilhouettesEnabled\(sapi\.Server\.IsDedicated\)\)[\s\S]*?return;[\s\S]*?ChunkColumnLoaded \+= OnColumnLoadedForSilhouettes"),
-            "loaded columns' heights are read only while the server offers silhouettes");
+                @"if \(!config\.SilhouetteHeightsKept\(sapi\.Server\.IsDedicated, measuring\)\)[\s\S]*?return;[\s\S]*?ChunkColumnLoaded \+= OnColumnLoadedForSilhouettes"),
+            "loaded columns' heights are read only while the server keeps silhouette heights");
+        c.True(assist.Contains("silhouettesOffered = config.SilhouettesEnabled(sapi.Server.IsDedicated);", StringComparison.Ordinal)
+                && assist.Contains("(silhouettesOffered ? LodAssist.FeatureSilhouetteTiles : 0)", StringComparison.Ordinal)
+                && Regex.IsMatch(assist, @"if \(silhouettes == null \|\| !silhouettesOffered \|\|"),
+            "a server that only measures silhouette heights neither advertises silhouettes nor answers a request");
+        c.Eq(1, Regex.Matches(assist, @"GetEnvironmentVariable\(LodServerConfig\.MeasureSilhouettesVariable\)").Count,
+            "the measuring switch is read in one place");
+        string script = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "scripts", "silhouette-compare.ps1"));
+        c.True(script.Contains($"$psi.Environment['{LodServerConfig.MeasureSilhouettesVariable}'] = '1'", StringComparison.Ordinal),
+            "the comparison script starts its test server with the measuring switch the server reads");
         c.Eq(1, Regex.Matches(assist, @"ChunkColumnLoaded \+=").Count,
             "the silhouette side subscribes to column loads in one place");
         c.True(builder.Contains("SetChunk(cx, cz, heights, EnumSilhouetteOrigin.Captured)", StringComparison.Ordinal),

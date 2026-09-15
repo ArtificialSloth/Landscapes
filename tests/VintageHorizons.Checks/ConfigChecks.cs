@@ -93,6 +93,14 @@ public static class ConfigChecks
             "switching them off in the config switches them off in singleplayer too");
         c.False(new LodServerConfig { EnableSilhouettes = true }.SilhouettesEnabled(isDedicated: true),
             "dedicated servers are not offered silhouettes yet, whatever the config says");
+        c.True(config.SilhouetteHeightsKept(isDedicated: true, measuring: true),
+            "a dedicated test server measuring silhouettes keeps their heights");
+        c.False(config.SilhouetteHeightsKept(isDedicated: true, measuring: false),
+            "a dedicated server keeps no silhouette heights unless it is measuring them");
+        c.False(new LodServerConfig { EnableSilhouettes = false }.SilhouetteHeightsKept(isDedicated: true, measuring: true),
+            "measuring never overrides silhouettes switched off in the config");
+        c.True(config.SilhouetteHeightsKept(isDedicated: false, measuring: false),
+            "singleplayer keeps heights wherever it offers silhouettes");
         c.True(config.Describe().Contains("silhouettes singleplayer and LAN only", StringComparison.Ordinal)
                 && new LodServerConfig { EnableSilhouettes = false }.Describe().Contains("silhouettes off",
                     StringComparison.Ordinal),

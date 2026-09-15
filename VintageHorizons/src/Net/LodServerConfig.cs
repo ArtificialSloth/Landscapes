@@ -179,8 +179,23 @@ public class LodServerConfig
     /// </summary>
     public bool? EnableSilhouettes;
 
+    /// <summary>
+    /// Set to "1" in a dedicated test server's environment to keep silhouette heights there for
+    /// the accelerator comparison (plan P0.3), before dedicated servers are offered silhouettes.
+    /// Developer-only: players are offered nothing, and no config file can switch it on.
+    /// </summary>
+    public const string MeasureSilhouettesVariable = "VINTAGEHORIZONS_SILHOUETTE_MEASURE";
+
     /// <summary>Whether this server offers silhouettes and keeps their heights.</summary>
     public bool SilhouettesEnabled(bool isDedicated) => !isDedicated && EnableSilhouettes != false;
+
+    /// <summary>
+    /// Whether this server keeps silhouette heights: wherever it offers silhouettes, and on a
+    /// dedicated server measuring them (<see cref="MeasureSilhouettesVariable"/>) unless the
+    /// config switched silhouettes off.
+    /// </summary>
+    public bool SilhouetteHeightsKept(bool isDedicated, bool measuring) =>
+        SilhouettesEnabled(isDedicated) || isDedicated && measuring && EnableSilhouettes != false;
 
     /// <summary>Clamp to values that cannot wedge the server, whatever the file says.</summary>
     public void Sanitize()
