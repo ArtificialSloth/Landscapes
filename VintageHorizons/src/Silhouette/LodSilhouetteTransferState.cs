@@ -63,6 +63,14 @@ internal sealed class LodSilhouetteTransferState
 
     public int OfferedRevision(long key) => offered.GetValueOrDefault(key);
 
+    /// <summary>
+    /// Checks a reply before its compressed payload is handed to a worker. The slot remains
+    /// owned until publication on the main thread, so duplicate packets cannot start duplicate
+    /// inflate jobs or free capacity early.
+    /// </summary>
+    public bool ExpectsReply(long sessionId, long key) =>
+        sessionId == SessionId && inFlight.Contains(key);
+
     /// <summary>Select nearest missing revisions and retain their slots until a reply.</summary>
     public long[] Select(double playerX, double playerZ, Func<long, int> heldRevision, long now)
     {

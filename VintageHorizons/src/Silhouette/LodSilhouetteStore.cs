@@ -99,6 +99,16 @@ public sealed class LodSilhouetteStore : IDisposable
     /// one still waiting. False after shutdown began.
     /// </summary>
     public bool Save(LodSilhouetteTile snapshot)
+        => QueueSave(snapshot);
+
+    /// <summary>
+    /// Queue a client tile that is already immutable. This avoids copying up to 48 KiB on the
+    /// game thread for every received tile. Server builders must continue to pass snapshots.
+    /// </summary>
+    public bool SaveImmutable(LodSilhouetteTile tile)
+        => QueueSave(tile);
+
+    bool QueueSave(LodSilhouetteTile snapshot)
     {
         lock (saveGate)
         {

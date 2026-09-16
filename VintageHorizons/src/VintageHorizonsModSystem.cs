@@ -155,6 +155,7 @@ public class VintageHorizonsConfig
     public float SilhouetteFadeBias = 0.40f;
     public float SilhouetteGlobeEffect = 0.05f;
     public float SilhouetteOutlineDetail = Silhouette.LodSilhouetteField.DefaultOutlineDetail;
+    public float SilhouetteHillSoftness = Silhouette.LodSilhouetteField.DefaultHillSoftness;
 
     /// <summary>
     /// Choose L1-L6 from the field of view and render resolution instead of the fixed

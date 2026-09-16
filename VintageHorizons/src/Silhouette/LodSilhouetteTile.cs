@@ -77,6 +77,9 @@ public sealed class LodSilhouetteTile
     public int Revision { get; private set; }
 
     public int KnownCells { get; private set; }
+    public int CapturedCells { get; private set; }
+    public int PreviewCells { get; private set; }
+    public int AcceleratorCells { get; private set; }
 
     public int BlockX => TileX * TileBlocks;
     public int BlockZ => TileZ * TileBlocks;
@@ -114,6 +117,8 @@ public sealed class LodSilhouetteTile
         var held = (EnumSilhouetteOrigin)cells.Origins[index];
         if (Rank(origin) > Rank(held) || held == origin && cells.Heights[index] == height) return false;
         if (held == EnumSilhouetteOrigin.Unknown) KnownCells++;
+        ChangeOriginCount(held, -1);
+        ChangeOriginCount(origin, 1);
         cells.Origins[index] = (byte)origin;
         cells.Heights[index] = height;
         Revision++;
@@ -150,6 +155,8 @@ public sealed class LodSilhouetteTile
                 ushort height = heightMap[j * CellBlocks * ChunkBlocks + i * CellBlocks];
                 if (held == origin && cells.Heights[index] == height) continue;
                 if (held == EnumSilhouetteOrigin.Unknown) KnownCells++;
+                ChangeOriginCount(held, -1);
+                ChangeOriginCount(origin, 1);
                 cells.Origins[index] = (byte)origin;
                 cells.Heights[index] = height;
                 changed = true;
@@ -232,7 +239,13 @@ public sealed class LodSilhouetteTile
     /// <summary>A deep copy, for another thread to encode while this one keeps changing.</summary>
     public LodSilhouetteTile Snapshot()
     {
-        var copy = new LodSilhouetteTile(TileX, TileZ, Revision) { KnownCells = KnownCells };
+        var copy = new LodSilhouetteTile(TileX, TileZ, Revision)
+        {
+            KnownCells = KnownCells,
+            CapturedCells = CapturedCells,
+            PreviewCells = PreviewCells,
+            AcceleratorCells = AcceleratorCells,
+        };
         for (int slot = 0; slot < chunks.Length; slot++)
         {
             ChunkData? cells = chunks[slot];
@@ -268,6 +281,8 @@ public sealed class LodSilhouetteTile
                 var held = (EnumSilhouetteOrigin)target.Origins[i];
                 if (held != EnumSilhouetteOrigin.Unknown && Rank(from) >= Rank(held)) continue;
                 if (held == EnumSilhouetteOrigin.Unknown) KnownCells++;
+                ChangeOriginCount(held, -1);
+                ChangeOriginCount(from, 1);
                 target.Origins[i] = source.Origins[i];
                 target.Heights[i] = source.Heights[i];
                 changed = true;
@@ -364,9 +379,20 @@ public sealed class LodSilhouetteTile
             int index = IndexInChunk(cellX, cellZ);
             cells.Origins[index] = (byte)state;
             cells.Heights[index] = BinaryPrimitives.ReadUInt16LittleEndian(body.AsSpan(heightOffset));
+            tile.ChangeOriginCount((EnumSilhouetteOrigin)state, 1);
             heightOffset += 2;
         }
         tile.KnownCells = known;
         return tile;
+    }
+
+    void ChangeOriginCount(EnumSilhouetteOrigin origin, int direction)
+    {
+        switch (origin)
+        {
+            case EnumSilhouetteOrigin.Captured: CapturedCells += direction; break;
+            case EnumSilhouetteOrigin.Preview: PreviewCells += direction; break;
+            case EnumSilhouetteOrigin.Accelerator: AcceleratorCells += direction; break;
+        }
     }
 }

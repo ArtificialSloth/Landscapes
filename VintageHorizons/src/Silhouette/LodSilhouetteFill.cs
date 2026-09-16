@@ -41,8 +41,9 @@ public static class LodSilhouetteFill
     /// The render-only version of <see cref="FillCentre"/>. Sparse 64-block samples otherwise
     /// remain exact needles after the push-pull fill, which makes distant mountain ridges look
     /// unnaturally saw-toothed. A modest world-aligned box feather rounds those extrema without
-    /// changing stored heights. It runs on the full 3x3 field before cropping and fades back to
-    /// the exact push-pull answer at a tile edge, so neighbouring meshes cannot open a crack.
+    /// changing stored heights. It runs on the full 3x3 field before cropping. Because the
+    /// filter is world-aligned and reads the same overlap on both sides, neighbouring tiles use
+    /// the same smoothed value on their shared edge without hardening every 512-block boundary.
     /// </summary>
     public static float[] FillCentreFeathered(LodSilhouetteTile?[,] tiles,
         int featherRadiusCells, float featherStrength)
@@ -129,23 +130,32 @@ public static class LodSilhouetteFill
 
             int stride = Cells + 1;
             var result = new float[stride * stride];
-            for (int z = 0; z <= Cells; z++)
+            for (int x = 0; x <= Cells; x++)
             {
-                int sourceZ = Cells + z;
-                for (int x = 0; x <= Cells; x++)
+                int sourceX = Cells + x;
+                float sum = 0f;
+                int count = 0;
+                for (int initialZ = Cells - radius; initialZ <= Cells + radius; initialZ++)
+                    Add(horizontal[initialZ * GridCells + sourceX], ref sum, ref count);
+                for (int z = 0; z <= Cells; z++)
                 {
-                    int sourceX = Cells + x;
+                    int sourceZ = Cells + z;
                     float raw = cells[sourceZ * GridCells + sourceX];
-                    float sum = 0f;
-                    int count = 0;
-                    for (int dz = -radius; dz <= radius; dz++)
-                        Add(horizontal[(sourceZ + dz) * GridCells + sourceX], ref sum, ref count);
                     float blurred = count > 0 ? sum / count : float.NaN;
-                    int edgeDistance = Math.Min(Math.Min(x, Cells - x), Math.Min(z, Cells - z));
-                    float localStrength = strength * Math.Clamp(edgeDistance / (float)radius, 0f, 1f);
-                    result[z * stride + x] = float.IsNaN(raw) || float.IsNaN(blurred)
+                    // Push-pull owns only a 3x3 neighbourhood, so two adjacent jobs can have
+                    // different far context for their blur. Preserve their already-identical
+                    // shared lattice line. Unlike the old broad edge taper, only that one line
+                    // is pinned; the rolling profile remains softened right up to it.
+                    result[z * stride + x] = x == 0 || z == 0 || x == Cells || z == Cells
                         ? raw
-                        : raw + (blurred - raw) * localStrength;
+                        : float.IsNaN(raw) || float.IsNaN(blurred)
+                        ? raw
+                        : raw + (blurred - raw) * strength;
+                    int removeZ = sourceZ - radius;
+                    Remove(horizontal[removeZ * GridCells + sourceX], ref sum, ref count);
+                    int addZ = sourceZ + radius + 1;
+                    if (addZ < GridCells)
+                        Add(horizontal[addZ * GridCells + sourceX], ref sum, ref count);
                 }
             }
             return result;

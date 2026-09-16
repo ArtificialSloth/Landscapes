@@ -96,6 +96,9 @@ public static class SilhouetteChecks
             "one request batch fills but never exceeds the silhouette in-flight cap");
         c.Eq(LodAssist.MaxSilhouetteTilesInFlight, state.InFlight,
             "request slots remain held until replies arrive");
+        c.True(state.ExpectsReply(session, requested[0])
+                && !state.ExpectsReply(session - 1, requested[0]),
+            "worker decode accepts only an expected reply from the current session");
         c.Eq(0, state.Select(0, 0, _ => 0, now: 1000).Length,
             "a full in-flight set admits no more requests");
 
@@ -173,6 +176,21 @@ public static class SilhouetteChecks
                 && silhouette.Contains("message.SessionId", StringComparison.Ordinal)
                 && silhouette.Contains("message.Revision < wantedRevision", StringComparison.Ordinal),
             "the client caps requests and rejects old sessions and stale revisions");
+        c.True(Regex.IsMatch(silhouette,
+                @"void StartDecode[\s\S]*?Task\.Run\([\s\S]*?LodSilhouetteTile\.Decode")
+                && silhouette.Contains("MaxDecodedPublishesPerPump", StringComparison.Ordinal),
+            "tile inflation and decode run off-thread and publish through a bounded main-thread queue");
+        Match reach = Regex.Match(silhouette,
+            @"public void SetReachBlocks[\s\S]*?\n    }\r?\n\r?\n    public void SetHillSoftness");
+        c.True(reach.Success
+                && !reach.Value.Contains("Clear();", StringComparison.Ordinal)
+                && reach.Value.Contains("reachRequestDirty = enabled", StringComparison.Ordinal),
+            "changing reach retains the current horizon and requests additions instead of clearing every mesh");
+        c.True(silhouette.Contains("MaxMeshSnapshotsPerPump = 1", StringComparison.Ordinal)
+                && silhouette.Contains("MaxPrunesPerPump", StringComparison.Ordinal)
+                && silhouette.Contains("TryTakeDirty(out long key)", StringComparison.Ordinal)
+                && !silhouette.Contains("long NearestDirty()", StringComparison.Ordinal),
+            "mesh snapshots and pruning are bounded, and dirty work no longer scans the whole reach each tick");
         c.True(builder.Contains("TransportVersion < LodAssist.SilhouetteTransportVersion", StringComparison.Ordinal)
                 && silhouette.Contains("message.SessionId == 0", StringComparison.Ordinal),
             "the direct-push prototype remains usable only as a mixed-version fallback");
@@ -859,8 +877,12 @@ public static class SilhouetteChecks
         ushort[] low = HeightMap((_, _) => 70), mid = HeightMap((_, _) => 80), high = HeightMap((_, _) => 90);
         var tile = new LodSilhouetteTile(TileX, TileZ);
         tile.SetChunk(cx, cz, low, EnumSilhouetteOrigin.Accelerator);
+        c.Eq((0, 0, 64), (tile.CapturedCells, tile.PreviewCells, tile.AcceleratorCells),
+            "a tile caches accelerator source counts as cells arrive");
         c.True(tile.SetChunk(cx, cz, high, EnumSilhouetteOrigin.Preview),
             "a preview replaces an accelerator sample");
+        c.Eq((0, 64, 0), (tile.CapturedCells, tile.PreviewCells, tile.AcceleratorCells),
+            "source-count caches follow a better-source replacement");
         c.Eq(EnumSilhouetteOrigin.Preview, tile.OriginAt(0, 0), "the cell now holds the preview");
         int revision = tile.Revision;
         c.False(tile.SetChunk(cx, cz, low, EnumSilhouetteOrigin.Accelerator),
@@ -869,6 +891,8 @@ public static class SilhouetteChecks
             "the same preview again changes nothing");
         c.Eq(revision, tile.Revision, "no change, no new revision");
         c.True(tile.SetChunk(cx, cz, mid, EnumSilhouetteOrigin.Captured), "captured terrain replaces a preview");
+        c.Eq((64, 0, 0), (tile.CapturedCells, tile.PreviewCells, tile.AcceleratorCells),
+            "captured source-count caches replace preview counts in constant time");
         c.False(tile.SetChunk(cx, cz, high, EnumSilhouetteOrigin.Preview),
             "a preview never replaces captured terrain");
         c.True(tile.TryGetHeight(0, 0, out ushort h) && h == 80, "captured heights are kept");
@@ -887,6 +911,9 @@ public static class SilhouetteChecks
         c.True(back != null, "an encoded tile decodes");
         if (back == null) return;
         c.Eq(tile.KnownCells, back.KnownCells, "known cells survive the round trip");
+        c.Eq((tile.CapturedCells, tile.PreviewCells, tile.AcceleratorCells),
+            (back.CapturedCells, back.PreviewCells, back.AcceleratorCells),
+            "cached source counts survive the round trip without a client-thread rescan");
         c.Eq(7, back.Revision, "the decoded revision is the message's");
 
         bool same = true;
@@ -1055,9 +1082,12 @@ public static class SilhouetteChecks
         const int sea = 110;
         Dictionary<(int, int), LodSilhouetteTile> world = SparseWorld();
         LodSilhouetteTile? At(int x, int z) => world.GetValueOrDefault((x, z));
-        LodSilhouetteMeshArrays? left = LodSilhouetteField.BuildMesh(Neighbourhood(At, TileX, TileZ), 0, sea);
-        LodSilhouetteMeshArrays? right = LodSilhouetteField.BuildMesh(Neighbourhood(At, TileX + 1, TileZ), 0, sea);
-        LodSilhouetteMeshArrays? below = LodSilhouetteField.BuildMesh(Neighbourhood(At, TileX, TileZ + 1), 0, sea);
+        LodSilhouetteMeshArrays? left = LodSilhouetteField.BuildMesh(
+            Neighbourhood(At, TileX, TileZ), LodSilhouetteCoverage.Empty, sea);
+        LodSilhouetteMeshArrays? right = LodSilhouetteField.BuildMesh(
+            Neighbourhood(At, TileX + 1, TileZ), LodSilhouetteCoverage.Empty, sea);
+        LodSilhouetteMeshArrays? below = LodSilhouetteField.BuildMesh(
+            Neighbourhood(At, TileX, TileZ + 1), LodSilhouetteCoverage.Empty, sea);
         c.True(left != null && right != null && below != null, "tiles with known cells around them mesh");
         if (left == null || right == null || below == null) return;
 
@@ -1073,7 +1103,8 @@ public static class SilhouetteChecks
 
         float[] filled = LodSilhouetteFill.FillCentreFeathered(
             Neighbourhood(At, TileX, TileZ),
-            LodSilhouetteField.FeatherRadiusCells, LodSilhouetteField.FeatherStrength);
+            LodSilhouetteField.FeatherRadiusFor(LodSilhouetteField.DefaultHillSoftness),
+            LodSilhouetteField.FeatherStrengthFor(LodSilhouetteField.DefaultHillSoftness));
         int stride = LodSilhouetteTile.CellsPerEdge + 1;
         int step = LodSilhouetteTile.CellsPerEdge / LodSilhouetteField.DefaultQuadsPerEdge;
         bool direct = true;
@@ -1100,13 +1131,18 @@ public static class SilhouetteChecks
             (x, z) => world.GetValueOrDefault((x, z)), TileX, TileZ);
         float[] raw = LodSilhouetteFill.FillCentre(neighbourhood);
         float[] feathered = LodSilhouetteFill.FillCentreFeathered(neighbourhood,
-            LodSilhouetteField.FeatherRadiusCells, LodSilhouetteField.FeatherStrength);
+            LodSilhouetteField.FeatherRadiusFor(LodSilhouetteField.DefaultHillSoftness),
+            LodSilhouetteField.FeatherStrengthFor(LodSilhouetteField.DefaultHillSoftness));
+        float[] softest = LodSilhouetteFill.FillCentreFeathered(neighbourhood,
+            LodSilhouetteField.FeatherRadiusFor(1f), LodSilhouetteField.FeatherStrengthFor(1f));
         int stride = LodSilhouetteTile.CellsPerEdge + 1;
         int peak = 64 * stride + 64;
         c.True(feathered[peak] < raw[peak] && feathered[peak] > 100,
             "render-only feathering rounds an isolated hard peak without flattening it");
         c.True(feathered[peak + 1] > raw[peak + 1],
             "the removed peak height feathers into its immediate skyline instead of disappearing");
+        c.True(softest[peak] < feathered[peak],
+            "the hill-softness dial has a visibly stronger rolling-hill endpoint");
     }
 
     static void CapturedHeightsReachTiles(Check c)
@@ -1145,27 +1181,30 @@ public static class SilhouetteChecks
     {
         const int sea = 110;
         LodSilhouetteTile?[,] deep = Neighbourhood((x, z) => FullTile(x, z, sea - 20), TileX, TileZ);
-        LodSilhouetteMeshArrays? flat = LodSilhouetteField.BuildMesh(deep, 0, sea);
+        LodSilhouetteMeshArrays? flat = LodSilhouetteField.BuildMesh(
+            deep, LodSilhouetteCoverage.Empty, sea);
         c.True(flat != null && Enumerable.Range(0, flat.VertexCount).All(v => flat.Xyz[v * 3 + 1] == sea),
             "ground below sea level draws as a flat sea");
-        c.True(LodSilhouetteField.BuildMesh(deep, ulong.MaxValue, sea) == null,
+        c.True(LodSilhouetteField.BuildMesh(deep, LodSilhouetteCoverage.Full, sea) == null,
             "a tile cached terrain fully covers has no mesh");
-        c.True(LodSilhouetteField.BuildMesh(new LodSilhouetteTile?[3, 3], 0, sea) == null,
+        c.True(LodSilhouetteField.BuildMesh(new LodSilhouetteTile?[3, 3],
+                LodSilhouetteCoverage.Empty, sea) == null,
             "a tile with nothing known around it has no mesh");
 
-        ulong oneCell = 1UL << LodSilhouetteField.CoverageBit(0, 0);
-        LodSilhouetteMeshArrays? cut = LodSilhouetteField.BuildMesh(deep, oneCell, sea);
-        int quads = LodSilhouetteField.DefaultQuadsPerEdge * LodSilhouetteField.DefaultQuadsPerEdge;
-        int quadsPerCellEdge = LodSection.SectionBlocks
-            / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.DefaultQuadsPerEdge);
+        LodSilhouetteCoverage oneCell = LodSilhouetteCoverage.Empty.WithCovered(0, 0);
+        LodSilhouetteMeshArrays? cut = LodSilhouetteField.BuildMesh(deep, oneCell, sea,
+            quadsPerEdge: LodSilhouetteField.HighQuadsPerEdge);
+        int quads = LodSilhouetteField.HighQuadsPerEdge * LodSilhouetteField.HighQuadsPerEdge;
+        int quadsPerCellEdge = LodSilhouetteField.CoverageCellBlocks
+            / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge);
         c.Eq(quads * 6, cut?.IndexCount ?? -1,
             "partial coverage keeps a complete mesh for exact per-fragment ownership");
-        c.True(LodSilhouetteField.Covered(oneCell, 0, 0)
-                && !LodSilhouetteField.Covered(oneCell, 1, 0)
-                && !LodSilhouetteField.Covered(oneCell, 0, 1),
-            "the coverage predicate selects exactly its own 64-block cell");
+        c.True(oneCell.Covered(0, 0)
+                && !oneCell.Covered(1, 0)
+                && !oneCell.Covered(0, 1),
+            "the coverage predicate selects exactly its own 32-block chunk footprint");
         if (cut == null) return;
-        int verts = LodSilhouetteField.DefaultQuadsPerEdge + 1;
+        int verts = LodSilhouetteField.HighQuadsPerEdge + 1;
         c.Eq((float)sea, cut.Xyz[quadsPerCellEdge * 3 + 1],
             "a boundary without a live anchor no longer opens a lowered sky slit");
         c.Eq((float)sea, cut.Xyz[(quadsPerCellEdge + 1) * 3 + 1], "a vertex away from cached terrain does not");
@@ -1176,56 +1215,47 @@ public static class SilhouetteChecks
     {
         const int sea = 110;
         LodSilhouetteTile?[,] deep = Neighbourhood((x, z) => FullTile(x, z, sea - 20), TileX, TileZ);
-        ulong covered = 1UL << LodSilhouetteField.CoverageBit(0, 0);
+        LodSilhouetteCoverage covered = LodSilhouetteCoverage.Empty.WithCovered(0, 0);
         var anchors = new float[LodSilhouetteField.AnchorVerticesPerEdge
             * LodSilhouetteField.AnchorVerticesPerEdge];
         Array.Fill(anchors, float.NaN);
-        int highX = LodSection.SectionBlocks
+        int highX = LodSilhouetteField.CoverageCellBlocks
             / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge);
         anchors[highX] = 137;
 
         LodSilhouetteMeshSet? set = LodSilhouetteField.BuildMeshes(deep, covered, sea, anchors);
         c.True(set != null, "a partially covered tile publishes its three resolutions together");
         if (set == null) return;
-        c.Eq((64, 16, 8), (set.High.QuadsPerEdge, set.Medium.QuadsPerEdge, set.Low.QuadsPerEdge),
-            "the simplified mesh set contains 8-, 32- and 64-block quads");
+        c.Eq((16, 8, 4), (set.High.QuadsPerEdge, set.Medium.QuadsPerEdge, set.Low.QuadsPerEdge),
+            "the lightweight mesh set contains 32-, 64- and 128-block quads");
         c.True(set.ByteCount > set.High.ByteCount,
             "the upload budget accounts for all three arrays rather than only the selected one");
 
         foreach (LodSilhouetteMeshArrays mesh in new[] { set.High, set.Medium, set.Low })
-        {
-            int boundaryX = LodSection.SectionBlocks
-                / (LodSilhouetteTile.TileBlocks / mesh.QuadsPerEdge);
-            c.Eq(137f,
-                mesh.Xyz[boundaryX * 3 + 1],
-                $"the {mesh.QuadsPerEdge}-quad mesh meets the cached edge anchor exactly");
-
             c.Eq((float)(sea - 20), mesh.Xyz[1],
                 $"the covered interior of the {mesh.QuadsPerEdge}-quad mesh keeps raw seabed height");
-        }
+        c.Eq(137f, set.High.Xyz[highX * 3 + 1],
+            "the lightweight join mesh meets the real 32-block cached edge exactly");
+        c.True(set.HasAnchors, "an anchored tile is marked so rendering retains its join mesh");
 
-        // A whole anchor line is what CaptureAnchors supplies for an ordinary cached edge. The
-        // next vertex must ease toward the sampled field instead of forming a four-block cliff.
+        // A whole anchor line is what CaptureAnchors supplies for an ordinary cached edge.
         for (int z = 0; z < LodSilhouetteField.AnchorVerticesPerEdge; z++)
             anchors[z * LodSilhouetteField.AnchorVerticesPerEdge + highX] = 137;
         set = LodSilhouetteField.BuildMeshes(deep, covered, sea, anchors);
         if (set == null) return;
-        int highZ = 32 / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge);
-        int easedX = 80 / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge);
-        float smoothQuarter = 0.25f * 0.25f * (3f - 2f * 0.25f);
-        float expectedEase = sea + (137 - sea)
-            * (1f - smoothQuarter);
-        c.Eq(expectedEase,
-            set.High.Xyz[(highZ * (LodSilhouetteField.HighQuadsPerEdge + 1) + easedX) * 3 + 1],
-            "the high mesh eases away from a cached edge across the adjoining 64-block cell");
+        c.Eq(137f,
+            set.High.Xyz[((LodSilhouetteField.HighQuadsPerEdge / 2)
+                * LodSilhouetteField.AnchorVerticesPerEdge + highX) * 3 + 1],
+            "the full cached boundary line remains exact in the lightweight join mesh");
 
         // An anchor at x=0 came from a cached section in the neighbouring tile. It must still
-        // own this tile's outer edge even though this tile's 64-bit mask is entirely uncovered.
+        // own this tile's outer edge even though this tile's coverage mask is entirely uncovered.
         var outerAnchors = new float[anchors.Length];
         Array.Fill(outerAnchors, float.NaN);
         for (int z = 0; z < LodSilhouetteField.AnchorVerticesPerEdge; z++)
             outerAnchors[z * LodSilhouetteField.AnchorVerticesPerEdge] = 145;
-        LodSilhouetteMeshSet? outer = LodSilhouetteField.BuildMeshes(deep, 0, sea, outerAnchors);
+        LodSilhouetteMeshSet? outer = LodSilhouetteField.BuildMeshes(
+            deep, LodSilhouetteCoverage.Empty, sea, outerAnchors);
         c.Eq(145f, outer?.High.Xyz[1] ?? float.NaN,
             "a cached neighbour across a tile border anchors the tile's outer edge");
 
@@ -1233,10 +1263,10 @@ public static class SilhouetteChecks
             LodSilhouetteField.ResolutionFor(1000, 1000, 0.35f),
             "a large on-screen tile selects the high silhouette mesh");
         c.Eq(LodSilhouetteField.MediumQuadsPerEdge,
-            LodSilhouetteField.ResolutionFor(1000, 2500, 0.35f),
+            LodSilhouetteField.ResolutionFor(1000, 8000, 0.35f),
             "a medium on-screen tile selects the medium silhouette mesh");
         c.Eq(LodSilhouetteField.LowQuadsPerEdge,
-            LodSilhouetteField.ResolutionFor(1000, 8000, 0.35f),
+            LodSilhouetteField.ResolutionFor(1000, 16000, 0.35f),
             "a small on-screen tile selects the low silhouette mesh");
         c.Eq(LodSilhouetteField.HighQuadsPerEdge,
             LodSilhouetteField.ResolutionFor(1000, 8000, 1f),
@@ -1283,15 +1313,17 @@ public static class SilhouetteChecks
             FadeBias = 2,
             GlobeEffect = float.PositiveInfinity,
             OutlineDetail = float.PositiveInfinity,
+            HillSoftness = float.NaN,
         }).Normalize();
         c.Eq(32768, repaired.ReachBlocks, "a hand-edited reach is normalized");
         c.Near(defaults.SkyTint, repaired.SkyTint, 1e-6, "a non-finite dial returns to its default");
         c.Eq((0f, 1f), (repaired.TintRed, repaired.TintStrength),
             "colour settings stay inside their shader range");
-        c.Eq((0.51f, 0.95f, defaults.GlobeEffect, defaults.OutlineDetail),
+        c.Eq((0.51f, 0.95f, defaults.GlobeEffect, defaults.OutlineDetail,
+                defaults.HillSoftness),
             (repaired.LightLevelBias, repaired.FadeBias, repaired.GlobeEffect,
-                repaired.OutlineDetail),
-            "bias and globe settings avoid invalid pow inputs and non-finite curves");
+                repaired.OutlineDetail, repaired.HillSoftness),
+            "bias, geometry and softness settings avoid invalid pow inputs and non-finite curves");
     }
 
     static string Source(params string[] parts) => File.ReadAllText(
@@ -1419,36 +1451,39 @@ public static class SilhouetteChecks
             + Source("src", "VintageHorizonsModSystem.Silhouettes.cs");
 
         c.True(field.Contains("BuildMeshes", StringComparison.Ordinal)
-                && field.Contains("HighQuadsPerEdge = 64", StringComparison.Ordinal)
-                && field.Contains("MediumQuadsPerEdge = 16", StringComparison.Ordinal)
-                && field.Contains("LowQuadsPerEdge = 8", StringComparison.Ordinal),
-            "Farseer builds simplified 64, 16 and 8-quad tile meshes");
-        c.True(client.IndexOf("CaptureAnchors(world", StringComparison.Ordinal)
-                < client.IndexOf("Task.Run", StringComparison.Ordinal)
+                && field.Contains("HighQuadsPerEdge = 16", StringComparison.Ordinal)
+                && field.Contains("MediumQuadsPerEdge = 8", StringComparison.Ordinal)
+                && field.Contains("LowQuadsPerEdge = 4", StringComparison.Ordinal),
+            "Farseer builds lightweight 16, 8 and 4-quad tile meshes");
+        int anchorCopy = client.IndexOf("CaptureAnchors(world", StringComparison.Ordinal);
+        c.True(anchorCopy >= 0
+                && anchorCopy < client.IndexOf("Task.Run", anchorCopy, StringComparison.Ordinal)
                 && client.Contains("source.ColumnRuns(col)", StringComparison.Ordinal)
-                && client.Contains("baseSectionX", StringComparison.Ordinal)
                 && client.Contains("DirtyAnchorNeighbours", StringComparison.Ordinal)
-                && client.Contains("blockX % LodSection.SectionBlocks == 0 ? -1 : 0",
+                && client.Contains("CoverageCellBlocks) == 0 ? -1 : 0",
                     StringComparison.Ordinal),
-            "cached edge heights, including neighbours across tile borders, are copied on the owner thread and invalidate both sides before a worker starts");
+            "32-block cached edge heights, including neighbours across tile borders, are copied on the owner thread and invalidate both sides before a worker starts");
         c.True(pass.Contains("LodSilhouetteField.ResolutionFor(", StringComparison.Ordinal)
                 && pass.Contains("ScreenBlockScale", StringComparison.Ordinal)
                 && pass.Contains("SilhouetteOutlineDetail", StringComparison.Ordinal)
                 && pass.Contains("mesh.At(resolution)", StringComparison.Ordinal)
                 && pass.Contains("silhouetteFrustum.BoxInView", StringComparison.Ordinal),
-            "the draw pass frustum-culls and chooses one of three meshes from screen scale and the outline dial");
+            "the draw pass frustum-culls and chooses one of three meshes from screen scale and the geometry dial");
 
-        c.True(fragment.Contains("floor(tilePos / 64.0)", StringComparison.Ordinal)
-                && fragment.Contains("coveredCellsLow", StringComparison.Ordinal)
-                && fragment.Contains("coveredCellsHigh", StringComparison.Ordinal)
-                && fragment.Contains("length(worldPos.xz) < cacheFadeStart", StringComparison.Ordinal)
+        c.True(fragment.Contains("floor(tilePos / 32.0)", StringComparison.Ordinal)
+                && fragment.Contains("coveredCells0", StringComparison.Ordinal)
+                && fragment.Contains("coveredCells3", StringComparison.Ordinal)
+                && fragment.Contains("dot(worldPos.xz, worldPos.xz) < cacheFadeStart * cacheFadeStart",
+                    StringComparison.Ordinal)
                 && fragment.Contains("discard;", StringComparison.Ordinal),
-            "cached cells discard exactly inside the cached fade and resume beyond its far edge");
+            "cached 32-block chunk footprints discard exactly inside the cached fade and resume beyond its far edge");
         c.True(pass.Contains("SilhouetteUploadBytesPerFrame", StringComparison.Ordinal)
                 && pass.Contains("SilhouetteUploadMillisecondsPerFrame", StringComparison.Ordinal)
+                && pass.Contains("rapi.GlEnableCullFace();", StringComparison.Ordinal)
+                && !pass.Contains("rapi.GlDisableCullFace();", StringComparison.Ordinal)
                 && pass.IndexOf("silhouetteMeshes[result.Key] = next;", StringComparison.Ordinal)
                     < pass.IndexOf("old?.Dispose();", StringComparison.Ordinal),
-            "silhouette uploads have count, byte and time bounds and publish before disposal");
+            "silhouette uploads have count, byte and time bounds, cull hidden back faces, and publish before disposal");
         c.True(pass.Contains("if (silhouetteMeshes.Count > 0) ReleaseSilhouetteMeshes();",
                     StringComparison.Ordinal)
                 && client.Contains("Clear();", StringComparison.Ordinal),
@@ -1468,8 +1503,9 @@ public static class SilhouetteChecks
         c.True(dialog.Contains("Name = \"Farseer\"", StringComparison.Ordinal)
                 && dialog.Contains("ComposeSilhouettes", StringComparison.Ordinal)
                 && dialog.Contains("SilhouetteRows", StringComparison.Ordinal)
-                && dialog.Contains("Outline detail", StringComparison.Ordinal),
-            "the settings editor names the feature for Farseer and exposes its appearance and outline dials");
+                && dialog.Contains("Geometry detail", StringComparison.Ordinal)
+                && dialog.Contains("Hill softness", StringComparison.Ordinal),
+            "the settings editor names the feature for Farseer and separates geometry cost from hill softness");
         c.True(scale.Contains("DrawMarker", StringComparison.Ordinal)
                 && scale.Contains("SilhouetteMarker", StringComparison.Ordinal)
                 && scale.Contains("silhouettesEnabled", StringComparison.Ordinal)
@@ -1490,7 +1526,7 @@ public static class SilhouetteChecks
             "HorizonSilhouettes", "SilhouetteReachBlocks", "SilhouetteSkyTint",
             "SilhouetteTintRed", "SilhouetteTintGreen", "SilhouetteTintBlue",
             "SilhouetteTintStrength", "SilhouetteLightLevelBias", "SilhouetteFadeBias",
-            "SilhouetteGlobeEffect", "SilhouetteOutlineDetail",
+            "SilhouetteGlobeEffect", "SilhouetteOutlineDetail", "SilhouetteHillSoftness",
         })
             c.True(mod.Contains(name, StringComparison.Ordinal), name + " is persisted in client config");
     }

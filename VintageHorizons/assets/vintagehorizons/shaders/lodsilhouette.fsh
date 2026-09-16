@@ -26,8 +26,10 @@ uniform vec4 silhouetteColorTint;
 uniform float silhouetteLightLevelBias;
 uniform float silhouetteFadeBias;
 uniform int silhouetteSeaLevel;
-uniform int coveredCellsLow;
-uniform int coveredCellsHigh;
+uniform vec4 coveredCells0;
+uniform vec4 coveredCells1;
+uniform vec4 coveredCells2;
+uniform vec4 coveredCells3;
 uniform float cacheFadeStart;
 
 layout(location = 0) out vec4 outColor;
@@ -48,11 +50,16 @@ void main()
 {
     if (dist < 0.0 || dist > 1.0) discard;
 
-    ivec2 coveredCell = clamp(ivec2(floor(tilePos / 64.0)), ivec2(0), ivec2(7));
-    int coveredBit = coveredCell.y * 8 + coveredCell.x;
-    int coveredWord = coveredBit < 32 ? coveredCellsLow : coveredCellsHigh;
-    bool cachedCell = (coveredWord & (1 << (coveredBit & 31))) != 0;
-    if (cachedCell && length(worldPos.xz) < cacheFadeStart) discard;
+    ivec2 coveredCell = clamp(ivec2(floor(tilePos / 32.0)), ivec2(0), ivec2(15));
+    int coveredBit = coveredCell.y * 16 + coveredCell.x;
+    int wordIndex = coveredBit >> 4;
+    vec4 coveredGroup = wordIndex < 4 ? coveredCells0
+        : wordIndex < 8 ? coveredCells1
+        : wordIndex < 12 ? coveredCells2
+        : coveredCells3;
+    int coveredWord = int(coveredGroup[wordIndex & 3]);
+    bool cachedCell = (coveredWord & (1 << (coveredBit & 15))) != 0;
+    if (cachedCell && dot(worldPos.xz, worldPos.xz) < cacheFadeStart * cacheFadeStart) discard;
 
     // The sky with a height-dependent offset is the terrain's own colour.
     vec4 terraColor;

@@ -119,7 +119,8 @@ public partial class VintageHorizonsModSystem
             + $"{renderer.SilhouetteMediumDrawsLastFrame} medium, "
             + $"{renderer.SilhouetteLowDrawsLastFrame} low; "
             + $"{renderer.SilhouetteTrianglesLastFrame:N0} triangles at "
-            + $"{renderer.SilhouetteOutlineDetail * 100f:0}% outline detail). "
+            + $"{renderer.SilhouetteOutlineDetail * 100f:0}% geometry detail, "
+            + $"{s.HillSoftness * 100f:0}% hill softness). "
             + $"Shader: {renderer.SilhouetteShaderState}.";
     }
 
@@ -134,7 +135,8 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteLightLevelBias,
         config.SilhouetteFadeBias,
         config.SilhouetteGlobeEffect,
-        config.SilhouetteOutlineDetail).Normalize();
+        config.SilhouetteOutlineDetail,
+        config.SilhouetteHillSoftness).Normalize();
 
     LodSilhouetteSettings CurrentSilhouetteSettings()
     {
@@ -150,7 +152,8 @@ public partial class VintageHorizonsModSystem
             renderer.SilhouetteLightLevelBias,
             renderer.SilhouetteFadeBias,
             renderer.SilhouetteGlobeEffect,
-            renderer.SilhouetteOutlineDetail).Normalize();
+            renderer.SilhouetteOutlineDetail,
+            silhouettes.HillSoftness).Normalize();
     }
 
     void PreviewSilhouetteSettings(LodSilhouetteSettings value)
@@ -170,6 +173,7 @@ public partial class VintageHorizonsModSystem
         renderer.SilhouetteGlobeEffect = value.GlobeEffect;
         renderer.SilhouetteOutlineDetail = value.OutlineDetail;
         silhouettes.SetReachBlocks(value.ReachBlocks);
+        silhouettes.SetHillSoftness(value.HillSoftness);
         silhouettes.SetEnabled(value.Enabled);
         if (!value.Enabled) renderer.ReleaseSilhouetteMeshes();
     }
@@ -188,5 +192,6 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteFadeBias = value.FadeBias;
         config.SilhouetteGlobeEffect = value.GlobeEffect;
         config.SilhouetteOutlineDetail = value.OutlineDetail;
+        config.SilhouetteHillSoftness = value.HillSoftness;
     }
 }

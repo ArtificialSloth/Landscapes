@@ -344,18 +344,29 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("sil-globe", "Globe curve", "Gently lowers only far Farseer terrain to hide the finite horizon edge.",
             0, 200, 1, s => (int)MathF.Round(s.GlobeEffect * 1000),
             (s, v) => s with { GlobeEffect = v / 1000f }, v => (v / 1000f).ToString("0.000")),
-        new("sil-detail", "Outline detail", "Soft uses broader terrain samples for a calmer, faster horizon. Sharp preserves more small peaks.",
+        new("sil-detail", "Geometry detail", "Controls only how dense the drawn Farseer mesh is. Lower is lighter; hill softness controls the outline shape.",
             0, 100, 1, s => (int)MathF.Round(s.OutlineDetail * 100),
             (s, v) => s with { OutlineDetail = v / 100f }, OutlineDetailLabel),
+        new("sil-softness", "Hill softness", "Rounds and feathers the distant height profile. Higher produces broader rolling hills; regeneration is gradual and runs off-thread.",
+            0, 100, 1, s => (int)MathF.Round(s.HillSoftness * 100),
+            (s, v) => s with { HillSoftness = v / 100f }, HillSoftnessLabel),
     };
 
     static string OutlineDetailLabel(int value) => $"{value}% " + (value switch
     {
-        <= 20 => "Softest",
-        <= 40 => "Soft",
+        <= 20 => "Lightest",
+        <= 40 => "Light",
         <= 60 => "Balanced",
-        <= 80 => "Detailed",
-        _ => "Sharp",
+        <= 80 => "Fine",
+        _ => "Finest",
+    });
+
+    static string HillSoftnessLabel(int value) => $"{value}% " + (value switch
+    {
+        <= 20 => "Angular",
+        <= 45 => "Gentle",
+        <= 75 => "Rolling",
+        _ => "Very soft",
     });
 
     void ComposeDialog()

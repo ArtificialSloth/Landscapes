@@ -28,7 +28,11 @@ public partial class LodTerrainRenderer
         public required int TileZ;
         public required float MinY;
         public required float MaxY;
-        public required ulong CoveredCells;
+        public required Vec4f CoveredCells0;
+        public required Vec4f CoveredCells1;
+        public required Vec4f CoveredCells2;
+        public required Vec4f CoveredCells3;
+        public required bool HasAnchors;
 
         public MeshRef At(int quadsPerEdge) => quadsPerEdge switch
         {
@@ -172,9 +176,9 @@ public partial class LodTerrainRenderer
 
         IShaderProgram p = silhouetteProg;
         p.Use();
-        // The mesh is a height field seen from above and from below at steep slopes; its
-        // winding is not worth pinning for the first look.
-        rapi.GlDisableCullFace();
+        // These are consistently wound top surfaces. Back-face culling avoids shading the
+        // hidden side of distant hills and leaves the render state in its normal terrain mode.
+        rapi.GlEnableCullFace();
         p.UniformMatrix("viewMatrix", rapi.CameraMatrixOriginf);
         p.UniformMatrix("projectionMatrix", rapi.CurrentProjectionMatrix);
         p.Uniform("rgbaFogIn", capi.Ambient.BlendedFogColor);
@@ -209,11 +213,15 @@ public partial class LodTerrainRenderer
             if (!silhouetteFrustum.BoxInView(relX, mesh.MinY - drop - cam.Y, relZ,
                 relX + tileBlocks, mesh.MaxY - cam.Y, relZ + tileBlocks)) continue;
             p.Uniform("tileOrigin", new Vec3f((float)relX, (float)-cam.Y, (float)relZ));
-            p.Uniform("coveredCellsLow", unchecked((int)(uint)mesh.CoveredCells));
-            p.Uniform("coveredCellsHigh", unchecked((int)(uint)(mesh.CoveredCells >> 32)));
+            p.Uniform("coveredCells0", mesh.CoveredCells0);
+            p.Uniform("coveredCells1", mesh.CoveredCells1);
+            p.Uniform("coveredCells2", mesh.CoveredCells2);
+            p.Uniform("coveredCells3", mesh.CoveredCells3);
             int resolution = LodSilhouetteField.ResolutionFor(
                 ScreenBlockScale, Math.Max(1.0, Math.Sqrt(nearestDistanceSq)),
                 SilhouetteOutlineDetail);
+            if (mesh.HasAnchors && resolution == LodSilhouetteField.LowQuadsPerEdge)
+                resolution = LodSilhouetteField.MediumQuadsPerEdge;
             rapi.RenderMesh(mesh.At(resolution));
             SilhouetteTrianglesLastFrame += mesh.TrianglesAt(resolution);
             if (resolution == LodSilhouetteField.HighQuadsPerEdge) SilhouetteHighDrawsLastFrame++;
@@ -221,7 +229,6 @@ public partial class LodTerrainRenderer
             else SilhouetteLowDrawsLastFrame++;
             SilhouetteDrawsLastFrame++;
         }
-        rapi.GlEnableCullFace();
         p.Stop();
     }
 
@@ -268,7 +275,11 @@ public partial class LodTerrainRenderer
                     TileZ = result.TileZ,
                     MinY = result.Meshes.MinY,
                     MaxY = result.Meshes.MaxY,
-                    CoveredCells = result.Meshes.CoveredCells,
+                    CoveredCells0 = CoverageWords(result.Meshes.CoveredCells, 0),
+                    CoveredCells1 = CoverageWords(result.Meshes.CoveredCells, 4),
+                    CoveredCells2 = CoverageWords(result.Meshes.CoveredCells, 8),
+                    CoveredCells3 = CoverageWords(result.Meshes.CoveredCells, 12),
+                    HasAnchors = result.Meshes.HasAnchors,
                 };
             }
             catch (Exception e)
@@ -299,6 +310,12 @@ public partial class LodTerrainRenderer
         data.Indices = mesh.Indices;
         return capi.Render.UploadMesh(data);
     }
+
+    // GLSL integer-vector uniforms are unsafe through this engine API (G16). Four exact 16-bit
+    // values fit losslessly in one float vector, cutting 16 scalar uploads down to four calls.
+    static Vec4f CoverageWords(LodSilhouetteCoverage coverage, int first) => new(
+        coverage.ShortWord(first), coverage.ShortWord(first + 1),
+        coverage.ShortWord(first + 2), coverage.ShortWord(first + 3));
 
     /// <summary>Main thread. Frees every silhouette mesh on the GPU.</summary>
     internal void ReleaseSilhouetteMeshes()
