@@ -968,19 +968,19 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     bool OnSilhouetteReachSlider(int blocks)
     {
         OnSilhouetteReachChanged(blocks);
-        silhouettes.Preview(pendingSilhouettes);
-        if (activeComposer?.Composed == true && shownTab == SilhouettesTab)
-            activeComposer.GetDynamicText("silhouette-reach-label")
-                .SetNewText(SilhouetteReachLabel(), false, true, false);
-        RefreshSilhouetteStatus();
         return true;
     }
 
     void OnSilhouetteReachChanged(int blocks)
     {
-        int reach = Math.Max(pendingFarCap, LodSilhouetteSettings.ClampReach(blocks));
+        int reach = LodSilhouetteSettings.ClampReach(blocks);
         pendingSilhouettes = pendingSilhouettes with { ReachBlocks = reach };
         scale?.SetSilhouette(reach, pendingSilhouettes.Enabled);
+        silhouettes.Preview(pendingSilhouettes);
+        if (activeComposer?.Composed == true && shownTab == SilhouettesTab)
+            activeComposer.GetDynamicText("silhouette-reach-label")
+                .SetNewText(SilhouetteReachLabel(), false, true, false);
+        RefreshSilhouetteStatus();
     }
 
     bool OnSilhouetteDialChanged(SilhouetteRow row, int value)
@@ -1142,8 +1142,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     bool OnDrawDistanceChanged(int blocks)
     {
         pendingFarCap = Math.Clamp(blocks, MinDrawDistance, MaxDrawDistance);
-        if (pendingSilhouettes.ReachBlocks < pendingFarCap)
-            pendingSilhouettes = pendingSilhouettes with { ReachBlocks = pendingFarCap };
         scale?.SetDrawDistance(pendingFarCap);
         scale?.SetSilhouette(pendingSilhouettes.ReachBlocks, pendingSilhouettes.Enabled);
         if (activeComposer?.Composed == true && shownTab == GeneralTab)
@@ -1191,8 +1189,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (shownTab == SilhouettesTab)
         {
             pendingSilhouettes = LodSilhouetteSettings.Default;
-            if (pendingSilhouettes.ReachBlocks < pendingFarCap)
-                pendingSilhouettes = pendingSilhouettes with { ReachBlocks = pendingFarCap };
             silhouettes.Preview(pendingSilhouettes);
             if (activeComposer?.Composed != true) return true;
             SetSilhouetteValues();

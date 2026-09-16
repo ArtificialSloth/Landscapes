@@ -24,6 +24,7 @@ public static class SilhouetteChecks
         TileRoundTrip(c);
         TileRejectsBadPayloads(c);
         FillFromKnownCells(c);
+        FeatherSoftensPeaks(c);
         MeshMatchesAcrossTileBorders(c);
         MeshSeaAndCoverage(c);
         MeshResolutionsAndAnchoring(c);
@@ -1070,7 +1071,9 @@ public static class SilhouetteChecks
         c.True(eastWest, "neighbouring tiles agree on every vertex of their shared east-west border");
         c.True(northSouth, "neighbouring tiles agree on every vertex of their shared north-south border");
 
-        float[] filled = LodSilhouetteFill.FillCentre(Neighbourhood(At, TileX, TileZ));
+        float[] filled = LodSilhouetteFill.FillCentreFeathered(
+            Neighbourhood(At, TileX, TileZ),
+            LodSilhouetteField.FeatherRadiusCells, LodSilhouetteField.FeatherStrength);
         int stride = LodSilhouetteTile.CellsPerEdge + 1;
         int step = LodSilhouetteTile.CellsPerEdge / LodSilhouetteField.DefaultQuadsPerEdge;
         bool direct = true;
@@ -1083,7 +1086,27 @@ public static class SilhouetteChecks
                 direct &= left.Xyz[(b * verts + a) * 3 + 1] == expected;
             }
         }
-        c.True(direct, "an interior mesh vertex takes the filled height of its cell, clamped to sea level");
+        c.True(direct, "an interior mesh vertex takes the gently feathered height of its cell, clamped to sea level");
+    }
+
+    static void FeatherSoftensPeaks(Check c)
+    {
+        var world = new Dictionary<(int, int), LodSilhouetteTile>();
+        for (int tz = TileZ - 1; tz <= TileZ + 1; tz++)
+            for (int tx = TileX - 1; tx <= TileX + 1; tx++)
+                world[(tx, tz)] = FullTile(tx, tz, 100);
+        world[(TileX, TileZ)].SetCell(64, 64, 220, EnumSilhouetteOrigin.Captured);
+        LodSilhouetteTile?[,] neighbourhood = Neighbourhood(
+            (x, z) => world.GetValueOrDefault((x, z)), TileX, TileZ);
+        float[] raw = LodSilhouetteFill.FillCentre(neighbourhood);
+        float[] feathered = LodSilhouetteFill.FillCentreFeathered(neighbourhood,
+            LodSilhouetteField.FeatherRadiusCells, LodSilhouetteField.FeatherStrength);
+        int stride = LodSilhouetteTile.CellsPerEdge + 1;
+        int peak = 64 * stride + 64;
+        c.True(feathered[peak] < raw[peak] && feathered[peak] > 100,
+            "render-only feathering rounds an isolated hard peak without flattening it");
+        c.True(feathered[peak + 1] > raw[peak + 1],
+            "the removed peak height feathers into its immediate skyline instead of disappearing");
     }
 
     static void CapturedHeightsReachTiles(Check c)
@@ -1143,8 +1166,8 @@ public static class SilhouetteChecks
             "the coverage predicate selects exactly its own 64-block cell");
         if (cut == null) return;
         int verts = LodSilhouetteField.DefaultQuadsPerEdge + 1;
-        c.Eq(sea - LodSilhouetteField.DefaultSinkBlocks, cut.Xyz[quadsPerCellEdge * 3 + 1],
-            "a vertex on the covered cell's edge sinks under cached terrain");
+        c.Eq((float)sea, cut.Xyz[quadsPerCellEdge * 3 + 1],
+            "a boundary without a live anchor no longer opens a lowered sky slit");
         c.Eq((float)sea, cut.Xyz[(quadsPerCellEdge + 1) * 3 + 1], "a vertex away from cached terrain does not");
         c.Eq((float)sea, cut.Xyz[(verts * verts - 1) * 3 + 1], "the far corner is untouched");
     }
@@ -1173,9 +1196,9 @@ public static class SilhouetteChecks
         {
             int boundaryX = LodSection.SectionBlocks
                 / (LodSilhouetteTile.TileBlocks / mesh.QuadsPerEdge);
-            c.Eq(137 - LodSilhouetteField.DefaultSinkBlocks,
+            c.Eq(137f,
                 mesh.Xyz[boundaryX * 3 + 1],
-                $"the {mesh.QuadsPerEdge}-quad mesh shares the cached edge anchor and sink");
+                $"the {mesh.QuadsPerEdge}-quad mesh meets the cached edge anchor exactly");
 
             c.Eq((float)(sea - 20), mesh.Xyz[1],
                 $"the covered interior of the {mesh.QuadsPerEdge}-quad mesh keeps raw seabed height");
@@ -1190,7 +1213,7 @@ public static class SilhouetteChecks
         int highZ = 32 / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge);
         int easedX = 80 / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge);
         float smoothQuarter = 0.25f * 0.25f * (3f - 2f * 0.25f);
-        float expectedEase = sea + ((137 - LodSilhouetteField.DefaultSinkBlocks) - sea)
+        float expectedEase = sea + (137 - sea)
             * (1f - smoothQuarter);
         c.Eq(expectedEase,
             set.High.Xyz[(highZ * (LodSilhouetteField.HighQuadsPerEdge + 1) + easedX) * 3 + 1],
@@ -1203,7 +1226,7 @@ public static class SilhouetteChecks
         for (int z = 0; z < LodSilhouetteField.AnchorVerticesPerEdge; z++)
             outerAnchors[z * LodSilhouetteField.AnchorVerticesPerEdge] = 145;
         LodSilhouetteMeshSet? outer = LodSilhouetteField.BuildMeshes(deep, 0, sea, outerAnchors);
-        c.Eq(145 - LodSilhouetteField.DefaultSinkBlocks, outer?.High.Xyz[1] ?? float.NaN,
+        c.Eq(145f, outer?.High.Xyz[1] ?? float.NaN,
             "a cached neighbour across a tile border anchors the tile's outer edge");
 
         c.Eq(LodSilhouetteField.HighQuadsPerEdge,
@@ -1241,8 +1264,8 @@ public static class SilhouetteChecks
             "silhouette reach clamps to the shared 32,768-block scale endpoint");
         c.Eq(2560, LodSilhouetteSettings.ClampReach(2700),
             "silhouette reach snaps to 512-block increments");
-        c.Eq(8192, LodThresholdScaleLayout.SnapSilhouetteReach(4096, 8192),
-            "the silhouette handle cannot move inside the cached draw edge");
+        c.Eq(4096, LodThresholdScaleLayout.SnapSilhouetteReach(4096),
+            "Farseer reach remains independently adjustable inside the cached draw edge");
 
         LodSilhouetteSettings repaired = (defaults with
         {
@@ -1439,8 +1462,14 @@ public static class SilhouetteChecks
         c.True(scale.Contains("DrawMarker", StringComparison.Ordinal)
                 && scale.Contains("SilhouetteMarker", StringComparison.Ordinal)
                 && scale.Contains("silhouettesEnabled", StringComparison.Ordinal)
-                && scale.Contains("MarkerText(index)", StringComparison.Ordinal),
-            "General's taller distance scale owns cached draw and optional Farseer handles with distance-bearing LOD labels");
+                && scale.Contains("MarkerText(index)", StringComparison.Ordinal)
+                && scale.Contains("MarkerText(index), CairoFont.WhiteDetailText()", StringComparison.Ordinal)
+                && scale.Contains("$\"L{index + 1}\\n({values[index]})\"", StringComparison.Ordinal),
+            "General's taller distance scale uses the Vanilla label font and stacks each LOD distance below its short name");
+        c.True(dialog.Contains("int reach = LodSilhouetteSettings.ClampReach(blocks);",
+                    StringComparison.Ordinal)
+                && dialog.Contains("silhouettes.Preview(pendingSilhouettes);", StringComparison.Ordinal),
+            "both Reach controls apply an independent Farseer distance immediately");
         c.True(dialog.Contains("(\"Performance\", false)", StringComparison.Ordinal)
                 && dialog.Contains("(\"Balanced\", true)", StringComparison.Ordinal)
                 && dialog.Contains("(\"Quality\", true)", StringComparison.Ordinal),

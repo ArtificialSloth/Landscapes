@@ -56,8 +56,11 @@ internal static class LodThresholdScaleLayout
     internal static int SnapDrawDistance(double value) => LodSilhouetteSettings.ClampReach(
         (int)Math.Round(value));
 
-    internal static int SnapSilhouetteReach(double value, int drawDistance) => Math.Max(
-        SnapDrawDistance(drawDistance), LodSilhouetteSettings.ClampReach((int)Math.Round(value)));
+    // Reach is independent of the cached draw edge. A shorter value still has a useful meaning:
+    // Farseer fills otherwise-uncovered gaps inside that radius while the cache may continue
+    // farther. Coupling the two made an 8,192-block cache pin this control at 8,192 forever.
+    internal static int SnapSilhouetteReach(double value) =>
+        LodSilhouetteSettings.ClampReach((int)Math.Round(value));
 }
 
 /// <summary>
@@ -136,18 +139,17 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
             LodThresholdScaleLayout.MinVanillaDistance,
             LodThresholdScaleLayout.MaxVanillaDistance);
         this.drawDistance = LodThresholdScaleLayout.SnapDrawDistance(drawDistance);
-        this.silhouetteReach = LodThresholdScaleLayout.SnapSilhouetteReach(
-            silhouetteReach, this.drawDistance);
+        this.silhouetteReach = LodThresholdScaleLayout.SnapSilhouetteReach(silhouetteReach);
         this.silhouettesEnabled = silhouettesEnabled;
         SetValues(initialValues);
         MouseOverCursor = "move";
 
-        int markerWidth = scaledi(112);
-        int markerHeight = scaledi(24);
+        int markerWidth = scaledi(64);
+        int markerHeight = scaledi(38);
         for (int i = 0; i < markerLabels.Length; i++)
         {
             markerLabels[i] = api.Gui.TextTexture.GenTextTexture(
-                MarkerText(i), CairoFont.WhiteSmallText(), markerWidth, markerHeight,
+                MarkerText(i), CairoFont.WhiteDetailText(), markerWidth, markerHeight,
                 null!, EnumTextOrientation.Center, true);
         }
 
@@ -205,7 +207,7 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
 
     public void SetSilhouette(int reach, bool enabled)
     {
-        int next = LodThresholdScaleLayout.SnapSilhouetteReach(reach, drawDistance);
+        int next = LodThresholdScaleLayout.SnapSilhouetteReach(reach);
         silhouettesEnabled = enabled;
         if (silhouetteReach == next) return;
         silhouetteReach = next;
@@ -270,11 +272,12 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
         {
             float silhouetteX = left + width
                 * LodThresholdScaleLayout.FractionFor(silhouetteReach);
-            float silhouetteWidth = Math.Max(1, silhouetteX - drawX);
-            api.Render.Render2DTexture(solidTexture.TextureId, drawX, bandY,
+            float silhouetteStart = Math.Min(drawX, silhouetteX);
+            float silhouetteWidth = Math.Max(1, Math.Abs(silhouetteX - drawX));
+            api.Render.Render2DTexture(solidTexture.TextureId, silhouetteStart, bandY,
                 silhouetteWidth, bandHeight, z + 1.3f,
                 new Vec4f(0.22f, 0.34f, 0.58f, 0.30f));
-            RenderBandBorder(drawX, bandY, silhouetteWidth, bandHeight, z + 1.4f,
+            RenderBandBorder(silhouetteStart, bandY, silhouetteWidth, bandHeight, z + 1.4f,
                 ColorUtil.ToRgba(175, 112, 154, 218));
         }
 
@@ -451,7 +454,7 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
         }
         if (dragging == SilhouetteMarker)
         {
-            int next = LodThresholdScaleLayout.SnapSilhouetteReach(raw, drawDistance);
+            int next = LodThresholdScaleLayout.SnapSilhouetteReach(raw);
             if (next == silhouetteReach) return;
             SetSilhouette(next, silhouettesEnabled);
             onSilhouetteReachChanged(silhouetteReach);
@@ -495,13 +498,13 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
         $"{name} {value:N0}", CairoFont.WhiteDetailText(), scaledi(132), scaledi(20),
         null!, EnumTextOrientation.Center, true);
 
-    string MarkerText(int index) => $"L{index + 1} ({values[index]})";
+    string MarkerText(int index) => $"L{index + 1}\n({values[index]})";
 
     void RefreshMarkerLabel(int index)
     {
         markerLabels[index]?.Dispose();
         markerLabels[index] = api.Gui.TextTexture.GenTextTexture(
-            MarkerText(index), CairoFont.WhiteSmallText(), scaledi(112), scaledi(24),
+            MarkerText(index), CairoFont.WhiteDetailText(), scaledi(64), scaledi(38),
             null!, EnumTextOrientation.Center, true);
     }
 

@@ -2517,9 +2517,10 @@ public static class StaticAssetChecks
         c.True(scale.Contains("values[dragging - 1] + LodWorld.ThresholdStepBlocks", StringComparison.Ordinal)
             && scale.Contains("values[dragging + 1] - LodWorld.ThresholdStepBlocks", StringComparison.Ordinal),
             "each LOD marker remains constrained by both neighbours");
-        c.True(scale.Contains("$\"L{index + 1} ({values[index]})\"", StringComparison.Ordinal)
+        c.True(scale.Contains("$\"L{index + 1}\\n({values[index]})\"", StringComparison.Ordinal)
+            && scale.Contains("MarkerText(index), CairoFont.WhiteDetailText()", StringComparison.Ordinal)
             && scale.Contains("Render2DLoadedTexture(label, labelX", StringComparison.Ordinal),
-            "the moving LOD handles render their L1-L6 names and distances inside the boxes");
+            "the moving LOD handles use the Vanilla font and stack each distance under L1-L6");
         c.True(dialog.Contains("const int MaxDrawDistance = 32768", StringComparison.Ordinal)
             && dialog.Contains("const int DrawDistanceStep = 512", StringComparison.Ordinal),
             "the cached draw-distance slider stops at 32,768 in 512-block increments");

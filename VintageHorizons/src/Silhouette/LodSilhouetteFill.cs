@@ -35,6 +35,27 @@ public static class LodSilhouetteFill
     /// the centre tile in the middle, and null where no tile is held.
     /// </summary>
     public static float[] FillCentre(LodSilhouetteTile?[,] tiles)
+        => FillCentreCore(tiles, featherRadiusCells: 0, featherStrength: 0f);
+
+    /// <summary>
+    /// The render-only version of <see cref="FillCentre"/>. Sparse 64-block samples otherwise
+    /// remain exact needles after the push-pull fill, which makes distant mountain ridges look
+    /// unnaturally saw-toothed. A modest world-aligned box feather rounds those extrema without
+    /// changing stored heights. It runs on the full 3x3 field before cropping and fades back to
+    /// the exact push-pull answer at a tile edge, so neighbouring meshes cannot open a crack.
+    /// </summary>
+    public static float[] FillCentreFeathered(LodSilhouetteTile?[,] tiles,
+        int featherRadiusCells, float featherStrength)
+    {
+        if (featherRadiusCells < 0 || featherRadiusCells >= Cells)
+            throw new ArgumentOutOfRangeException(nameof(featherRadiusCells));
+        if (!float.IsFinite(featherStrength) || featherStrength < 0f || featherStrength > 1f)
+            throw new ArgumentOutOfRangeException(nameof(featherStrength));
+        return FillCentreCore(tiles, featherRadiusCells, featherStrength);
+    }
+
+    static float[] FillCentreCore(LodSilhouetteTile?[,] tiles,
+        int featherRadiusCells, float featherStrength)
     {
         if (tiles.GetLength(0) != NeighbourhoodTiles || tiles.GetLength(1) != NeighbourhoodTiles)
             throw new ArgumentException("A fill reads a 3x3 neighbourhood of tiles.", nameof(tiles));
@@ -62,14 +83,76 @@ public static class LodSilhouetteFill
             for (int level = Levels - 2; level >= 0; level--)
                 Pull(grids[level], sizes[level], grids[level + 1], sizes[level + 1]);
 
-            var result = new float[(Cells + 1) * (Cells + 1)];
-            for (int z = 0; z <= Cells; z++)
-                Array.Copy(cells, (Cells + z) * GridCells + Cells, result, z * (Cells + 1), Cells + 1);
-            return result;
+            return featherRadiusCells > 0 && featherStrength > 0f
+                ? FeatherCentre(cells, featherRadiusCells, featherStrength)
+                : CopyCentre(cells);
         }
         finally
         {
             foreach (float[] grid in grids) ArrayPool<float>.Shared.Return(grid);
+        }
+    }
+
+    static float[] CopyCentre(float[] cells)
+    {
+        var result = new float[(Cells + 1) * (Cells + 1)];
+        for (int z = 0; z <= Cells; z++)
+            Array.Copy(cells, (Cells + z) * GridCells + Cells,
+                result, z * (Cells + 1), Cells + 1);
+        return result;
+    }
+
+    static float[] FeatherCentre(float[] cells, int radius, float strength)
+    {
+        int total = GridCells * GridCells;
+        float[] horizontal = ArrayPool<float>.Shared.Rent(total);
+        try
+        {
+            // First half of a separable box filter. NaNs remain absence rather than becoming a
+            // false terrain height, and valid neighbours alone contribute near an unknown edge.
+            for (int z = 0; z < GridCells; z++)
+            {
+                float sum = 0f;
+                int count = 0;
+                int row = z * GridCells;
+                for (int initialX = 0; initialX <= radius; initialX++)
+                    Add(cells[row + initialX], ref sum, ref count);
+                for (int x = 0; x < GridCells; x++)
+                {
+                    horizontal[row + x] = count > 0 ? sum / count : float.NaN;
+                    int removeX = x - radius;
+                    if (removeX >= 0) Remove(cells[row + removeX], ref sum, ref count);
+                    int addX = x + radius + 1;
+                    if (addX < GridCells) Add(cells[row + addX], ref sum, ref count);
+                }
+            }
+
+            int stride = Cells + 1;
+            var result = new float[stride * stride];
+            for (int z = 0; z <= Cells; z++)
+            {
+                int sourceZ = Cells + z;
+                for (int x = 0; x <= Cells; x++)
+                {
+                    int sourceX = Cells + x;
+                    float raw = cells[sourceZ * GridCells + sourceX];
+                    float sum = 0f;
+                    int count = 0;
+                    for (int dz = -radius; dz <= radius; dz++)
+                        Add(horizontal[(sourceZ + dz) * GridCells + sourceX], ref sum, ref count);
+                    float blurred = count > 0 ? sum / count : float.NaN;
+                    int edgeDistance = Math.Min(Math.Min(x, Cells - x), Math.Min(z, Cells - z));
+                    float localStrength = strength * Math.Clamp(edgeDistance / (float)radius, 0f, 1f);
+                    result[z * stride + x] = float.IsNaN(raw) || float.IsNaN(blurred)
+                        ? raw
+                        : raw + (blurred - raw) * localStrength;
+                }
+            }
+            return result;
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(horizontal);
         }
     }
 
@@ -126,6 +209,13 @@ public static class LodSilhouetteFill
         if (float.IsNaN(value)) return;
         sum += value;
         count++;
+    }
+
+    static void Remove(float value, ref float sum, ref int count)
+    {
+        if (float.IsNaN(value)) return;
+        sum -= value;
+        count--;
     }
 
     static void Blend(float[] grid, int size, int x, int z, float w, ref float sum, ref float weight)

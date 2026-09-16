@@ -55,8 +55,13 @@ public static class LodSilhouetteField
     public const int MediumQuadsPerEdge = 32;
     public const int LowQuadsPerEdge = 8;
     public const int DefaultQuadsPerEdge = MediumQuadsPerEdge;
-    public const float DefaultSinkBlocks = 2f;
+    // A lowered boundary opened a visible sky slit because these meshes are height fields and
+    // have no vertical wall to bridge back up to cached terrain. Live anchors now meet the cache
+    // exactly; ordinary depth ownership still keeps cached pixels in front.
+    public const float DefaultSinkBlocks = 0f;
     public const float JoinBlendBlocks = LodSection.SectionBlocks;
+    public const int FeatherRadiusCells = 8;
+    public const float FeatherStrength = 0.35f;
     public const int AnchorVerticesPerEdge = HighQuadsPerEdge + 1;
 
     public static bool IsLatticeChunk(int cx, int cz) =>
@@ -114,7 +119,8 @@ public static class LodSilhouetteField
             throw new ArgumentException("Silhouette anchors must be a 129x129 high-resolution grid.",
                 nameof(anchors));
 
-        float[] filled = LodSilhouetteFill.FillCentre(neighbourhood);
+        float[] filled = LodSilhouetteFill.FillCentreFeathered(
+            neighbourhood, FeatherRadiusCells, FeatherStrength);
         LodSilhouetteMeshArrays? high = BuildMeshFromFilled(
             filled, coveredCells, seaLevel, HighQuadsPerEdge, anchors, sinkBlocks);
         LodSilhouetteMeshArrays? medium = BuildMeshFromFilled(
@@ -136,8 +142,9 @@ public static class LodSilhouetteField
         ulong coveredCells, int seaLevel, int quadsPerEdge = DefaultQuadsPerEdge,
         float sinkBlocks = DefaultSinkBlocks) => coveredCells == ulong.MaxValue
             ? null
-            : BuildMeshFromFilled(LodSilhouetteFill.FillCentre(neighbourhood), coveredCells,
-                seaLevel, quadsPerEdge, null, sinkBlocks);
+            : BuildMeshFromFilled(LodSilhouetteFill.FillCentreFeathered(
+                    neighbourhood, FeatherRadiusCells, FeatherStrength),
+                coveredCells, seaLevel, quadsPerEdge, null, sinkBlocks);
 
     static LodSilhouetteMeshArrays? BuildMeshFromFilled(float[] filled, ulong coveredCells,
         int seaLevel, int quadsPerEdge, float[]? anchors, float sinkBlocks)
@@ -203,8 +210,8 @@ public static class LodSilhouetteField
                 if (!float.IsNaN(exactAnchor))
                 {
                     // CaptureAnchors marks the real cached edge, including an edge on the next
-                    // tile. Honour that evidence even when this tile's own mask cannot describe
-                    // the neighbour on the other side.
+                    // tile. Meet that edge exactly: lowering a surface-only height field leaves
+                    // a visible slit because there is no vertical face between the two heights.
                     y = exactAnchor - Math.Max(0f, sinkBlocks);
                 }
                 else if (anchors != null && (!touchesCovered || touchesUncovered)
