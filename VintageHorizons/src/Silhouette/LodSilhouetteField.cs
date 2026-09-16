@@ -56,6 +56,7 @@ public static class LodSilhouetteField
     public const int LowQuadsPerEdge = 8;
     public const int DefaultQuadsPerEdge = MediumQuadsPerEdge;
     public const float DefaultSinkBlocks = 2f;
+    public const float JoinBlendBlocks = LodSection.SectionBlocks;
     public const int AnchorVerticesPerEdge = HighQuadsPerEdge + 1;
 
     public static bool IsLatticeChunk(int cx, int cz) =>
@@ -196,12 +197,29 @@ public static class LodSilhouetteField
                 // be seen uses Farseer's flat-sea rule.
                 if (!touchesCovered || touchesUncovered) y = Math.Max(y, seaLevel);
 
-                if (boundary)
+                int highX = blockX / (LodSilhouetteTile.TileBlocks / HighQuadsPerEdge);
+                int highZ = blockZ / (LodSilhouetteTile.TileBlocks / HighQuadsPerEdge);
+                float exactAnchor = anchors?[highZ * AnchorVerticesPerEdge + highX] ?? float.NaN;
+                if (!float.IsNaN(exactAnchor))
                 {
-                    int highX = blockX / (LodSilhouetteTile.TileBlocks / HighQuadsPerEdge);
-                    int highZ = blockZ / (LodSilhouetteTile.TileBlocks / HighQuadsPerEdge);
-                    float anchor = anchors?[highZ * AnchorVerticesPerEdge + highX] ?? float.NaN;
-                    if (!float.IsNaN(anchor)) y = anchor;
+                    // CaptureAnchors marks the real cached edge, including an edge on the next
+                    // tile. Honour that evidence even when this tile's own mask cannot describe
+                    // the neighbour on the other side.
+                    y = exactAnchor - Math.Max(0f, sinkBlocks);
+                }
+                else if (anchors != null && (!touchesCovered || touchesUncovered)
+                    && TryJoinAnchor(anchors, blockX, blockZ,
+                        out float joinAnchor, out float joinInfluence))
+                {
+                    // One anchored vertex followed by an unrelated sampled vertex made a four-
+                    // block cliff in the high mesh. Ease across the adjoining 64-block coverage
+                    // cell instead. The outermost vertex still sits just under cached terrain;
+                    // the field regains its sampled height smoothly by the opposite cell edge.
+                    float target = joinAnchor - Math.Max(0f, sinkBlocks);
+                    y += (target - y) * joinInfluence;
+                }
+                else if (boundary)
+                {
                     y -= Math.Max(0f, sinkBlocks);
                 }
 
@@ -243,6 +261,45 @@ public static class LodSilhouetteField
             MinY = minY,
             MaxY = maxY,
         };
+    }
+
+    static bool TryJoinAnchor(float[] anchors, int blockX, int blockZ,
+        out float height, out float influence)
+    {
+        int cellX = Math.Min(7, blockX / LodSection.SectionBlocks);
+        int cellZ = Math.Min(7, blockZ / LodSection.SectionBlocks);
+        int minX = cellX * LodSection.SectionBlocks;
+        int minZ = cellZ * LodSection.SectionBlocks;
+        int maxX = minX + LodSection.SectionBlocks;
+        int maxZ = minZ + LodSection.SectionBlocks;
+        int highSpacing = LodSilhouetteTile.TileBlocks / HighQuadsPerEdge;
+        float weightedHeight = 0f;
+        float totalWeight = 0f;
+
+        void Add(int anchorX, int anchorZ, int distance)
+        {
+            if (distance < 0 || distance >= JoinBlendBlocks) return;
+            int highX = anchorX / highSpacing;
+            int highZ = anchorZ / highSpacing;
+            float anchor = anchors[highZ * AnchorVerticesPerEdge + highX];
+            if (float.IsNaN(anchor)) return;
+            float t = Math.Clamp(distance / JoinBlendBlocks, 0f, 1f);
+            float smooth = t * t * (3f - 2f * t);
+            float weight = 1f - smooth;
+            weightedHeight += anchor * weight;
+            totalWeight += weight;
+        }
+
+        Add(minX, blockZ, blockX - minX);
+        Add(maxX, blockZ, maxX - blockX);
+        Add(blockX, minZ, blockZ - minZ);
+        Add(blockX, maxZ, maxZ - blockZ);
+
+        height = totalWeight > 0f ? weightedHeight / totalWeight : float.NaN;
+        // Two cached sides of a one-cell gap should bridge between both live edges instead of
+        // reintroducing the unrelated sampled height at the centre.
+        influence = Math.Min(1f, totalWeight);
+        return totalWeight > 0f;
     }
 
     static void VertexCoverage(ulong mask, int blockX, int blockZ,

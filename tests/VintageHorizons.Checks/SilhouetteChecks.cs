@@ -1181,6 +1181,31 @@ public static class SilhouetteChecks
                 $"the covered interior of the {mesh.QuadsPerEdge}-quad mesh keeps raw seabed height");
         }
 
+        // A whole anchor line is what CaptureAnchors supplies for an ordinary cached edge. The
+        // next vertex must ease toward the sampled field instead of forming a four-block cliff.
+        for (int z = 0; z < LodSilhouetteField.AnchorVerticesPerEdge; z++)
+            anchors[z * LodSilhouetteField.AnchorVerticesPerEdge + highX] = 137;
+        set = LodSilhouetteField.BuildMeshes(deep, covered, sea, anchors);
+        if (set == null) return;
+        int highZ = 32 / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge);
+        int easedX = 80 / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge);
+        float smoothQuarter = 0.25f * 0.25f * (3f - 2f * 0.25f);
+        float expectedEase = sea + ((137 - LodSilhouetteField.DefaultSinkBlocks) - sea)
+            * (1f - smoothQuarter);
+        c.Eq(expectedEase,
+            set.High.Xyz[(highZ * (LodSilhouetteField.HighQuadsPerEdge + 1) + easedX) * 3 + 1],
+            "the high mesh eases away from a cached edge across the adjoining 64-block cell");
+
+        // An anchor at x=0 came from a cached section in the neighbouring tile. It must still
+        // own this tile's outer edge even though this tile's 64-bit mask is entirely uncovered.
+        var outerAnchors = new float[anchors.Length];
+        Array.Fill(outerAnchors, float.NaN);
+        for (int z = 0; z < LodSilhouetteField.AnchorVerticesPerEdge; z++)
+            outerAnchors[z * LodSilhouetteField.AnchorVerticesPerEdge] = 145;
+        LodSilhouetteMeshSet? outer = LodSilhouetteField.BuildMeshes(deep, 0, sea, outerAnchors);
+        c.Eq(145 - LodSilhouetteField.DefaultSinkBlocks, outer?.High.Xyz[1] ?? float.NaN,
+            "a cached neighbour across a tile border anchors the tile's outer edge");
+
         c.Eq(LodSilhouetteField.HighQuadsPerEdge,
             LodSilhouetteField.ResolutionFor(1000, 1000),
             "a large on-screen tile selects the high silhouette mesh");
@@ -1369,8 +1394,12 @@ public static class SilhouetteChecks
             "P4 builds the planned 128, 32 and 8-quad tile meshes");
         c.True(client.IndexOf("CaptureAnchors(world", StringComparison.Ordinal)
                 < client.IndexOf("Task.Run", StringComparison.Ordinal)
-                && client.Contains("source.ColumnRuns(col)", StringComparison.Ordinal),
-            "cached edge heights are copied on the owner thread before a worker starts");
+                && client.Contains("source.ColumnRuns(col)", StringComparison.Ordinal)
+                && client.Contains("baseSectionX", StringComparison.Ordinal)
+                && client.Contains("DirtyAnchorNeighbours", StringComparison.Ordinal)
+                && client.Contains("blockX % LodSection.SectionBlocks == 0 ? -1 : 0",
+                    StringComparison.Ordinal),
+            "cached edge heights, including neighbours across tile borders, are copied on the owner thread and invalidate both sides before a worker starts");
         c.True(pass.Contains("LodSilhouetteField.ResolutionFor(", StringComparison.Ordinal)
                 && pass.Contains("ScreenBlockScale", StringComparison.Ordinal)
                 && pass.Contains("mesh.At(resolution)", StringComparison.Ordinal),
@@ -1403,14 +1432,15 @@ public static class SilhouetteChecks
                 < pass.IndexOf("silhouetteShaderWanted = true;", StringComparison.Ordinal),
             "an unavailable server never causes even the lazy silhouette shader compile");
 
-        c.True(dialog.Contains("Name = \"Silhouettes\"", StringComparison.Ordinal)
+        c.True(dialog.Contains("Name = \"Farseer\"", StringComparison.Ordinal)
                 && dialog.Contains("ComposeSilhouettes", StringComparison.Ordinal)
                 && dialog.Contains("SilhouetteRows", StringComparison.Ordinal),
-            "the settings editor has the P4 Silhouettes tab and appearance dials");
+            "the settings editor names the feature for Farseer while retaining its appearance dials");
         c.True(scale.Contains("DrawMarker", StringComparison.Ordinal)
                 && scale.Contains("SilhouetteMarker", StringComparison.Ordinal)
-                && scale.Contains("silhouettesEnabled", StringComparison.Ordinal),
-            "General's shared distance scale owns cached draw and optional silhouette handles");
+                && scale.Contains("silhouettesEnabled", StringComparison.Ordinal)
+                && scale.Contains("MarkerText(index)", StringComparison.Ordinal),
+            "General's taller distance scale owns cached draw and optional Farseer handles with distance-bearing LOD labels");
         c.True(dialog.Contains("(\"Performance\", false)", StringComparison.Ordinal)
                 && dialog.Contains("(\"Balanced\", true)", StringComparison.Ordinal)
                 && dialog.Contains("(\"Quality\", true)", StringComparison.Ordinal),

@@ -2517,9 +2517,9 @@ public static class StaticAssetChecks
         c.True(scale.Contains("values[dragging - 1] + LodWorld.ThresholdStepBlocks", StringComparison.Ordinal)
             && scale.Contains("values[dragging + 1] - LodWorld.ThresholdStepBlocks", StringComparison.Ordinal),
             "each LOD marker remains constrained by both neighbours");
-        c.True(scale.Contains("$\"L{i + 1}\"", StringComparison.Ordinal)
-            && scale.Contains("Render2DLoadedTexture(markerLabels[i]", StringComparison.Ordinal),
-            "the moving LOD handles render their L1-L6 names inside the boxes");
+        c.True(scale.Contains("$\"L{index + 1} ({values[index]})\"", StringComparison.Ordinal)
+            && scale.Contains("Render2DLoadedTexture(label, labelX", StringComparison.Ordinal),
+            "the moving LOD handles render their L1-L6 names and distances inside the boxes");
         c.True(dialog.Contains("const int MaxDrawDistance = 32768", StringComparison.Ordinal)
             && dialog.Contains("const int DrawDistanceStep = 512", StringComparison.Ordinal),
             "the cached draw-distance slider stops at 32,768 in 512-block increments");
@@ -2632,6 +2632,10 @@ public static class StaticAssetChecks
         c.True(VintageHorizonsConfigLayout.ShowTaaY + 32
                 < VintageHorizonsConfigLayout.ButtonY,
             "the anti-aliasing footer finishes above the action buttons");
+        c.True(VintageHorizonsConfigLayout.ScaleHeight >= 200
+                && VintageHorizonsConfigLayout.ScaleY + VintageHorizonsConfigLayout.ScaleHeight
+                    < VintageHorizonsConfigLayout.DrawHeadingY,
+            "the distance map has four clear marker lanes and finishes above the next heading");
         c.True(VintageHorizonsConfigLayout.DialSliderX
                 - VintageHorizonsConfigLayout.Margin - 12 >= 280
             && dialog.Contains("row.Title, CairoFont.WhiteSmallishText()", StringComparison.Ordinal),
@@ -2666,7 +2670,7 @@ public static class StaticAssetChecks
             "the editor tabs sit below vanilla's header and above their page title");
         c.True(VintageHorizonsConfigLayout.TabsWidth
                 / VintageHorizonsConfigLayout.PlannedTabCount >= 150,
-            "the tab strip reserves at least 150 pixels each after the planned Silhouettes tab lands");
+            "the tab strip reserves at least 150 pixels each with the Farseer tab present");
 
         c.True(dialog.Contains("\"load-while-paused\"", StringComparison.Ordinal)
                 && mod.Contains("public bool LoadWhilePaused = true;", StringComparison.Ordinal)

@@ -491,7 +491,24 @@ internal sealed class LodSilhouetteClient : IDisposable
             ulong mask = CoverageOf(world, tile.TileX, tile.TileZ);
             if (coverage.TryGetValue(key, out ulong held) && held == mask) continue;
             coverage[key] = mask;
-            dirty.Add(key);
+            DirtyAnchorNeighbours(tile.TileX, tile.TileZ);
+        }
+    }
+
+    /// <summary>
+    /// A changed edge also changes the live anchors of the tile on its other side. Rebuild the
+    /// small 3x3 neighbourhood so a newly cached section cannot leave a stale cliff on an
+    /// otherwise unchanged Farseer tile.
+    /// </summary>
+    void DirtyAnchorNeighbours(int tileX, int tileZ)
+    {
+        for (int dz = -1; dz <= 1; dz++)
+        {
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                long neighbour = LodSilhouetteTile.KeyOf(tileX + dx, tileZ + dz);
+                if (tiles.ContainsKey(neighbour)) dirty.Add(neighbour);
+            }
         }
     }
 
@@ -535,7 +552,7 @@ internal sealed class LodSilhouetteClient : IDisposable
 
             // Live LodSections are owner-thread objects. Copy only the visible top heights that
             // boundary vertices may need; the worker never observes a mutable section.
-            float[] anchors = CaptureAnchors(world, tile.TileX, tile.TileZ, mask);
+            float[] anchors = CaptureAnchors(world, tile.TileX, tile.TileZ);
             int tileX = tile.TileX, tileZ = tile.TileZ, epoch = Epoch, sea = seaLevel;
             Interlocked.Increment(ref jobsInFlight);
             Task.Run(() =>
@@ -559,58 +576,56 @@ internal sealed class LodSilhouetteClient : IDisposable
         }
     }
 
-    static float[] CaptureAnchors(LodWorld world, int tileX, int tileZ, ulong mask)
+    static float[] CaptureAnchors(LodWorld world, int tileX, int tileZ)
     {
         int edge = LodSilhouetteField.AnchorVerticesPerEdge;
         int spacing = LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge;
         int cells = LodSilhouetteTile.TileBlocks / LodSection.SectionBlocks;
+        int baseSectionX = tileX * cells;
+        int baseSectionZ = tileZ * cells;
         var result = new float[edge * edge];
         Array.Fill(result, float.NaN);
 
         for (int vz = 0; vz < edge; vz++)
         {
             int blockZ = vz * spacing;
-            int cellZ = Math.Min(cells - 1, blockZ / LodSection.SectionBlocks);
-            int minDz = blockZ > 0 && blockZ < LodSilhouetteTile.TileBlocks
-                && blockZ % LodSection.SectionBlocks == 0 ? -1 : 0;
+            int sectionZ = baseSectionZ + blockZ / LodSection.SectionBlocks;
+            int minDz = blockZ % LodSection.SectionBlocks == 0 ? -1 : 0;
             for (int vx = 0; vx < edge; vx++)
             {
                 int blockX = vx * spacing;
-                int cellX = Math.Min(cells - 1, blockX / LodSection.SectionBlocks);
-                int minDx = blockX > 0 && blockX < LodSilhouetteTile.TileBlocks
-                    && blockX % LodSection.SectionBlocks == 0 ? -1 : 0;
+                int sectionX = baseSectionX + blockX / LodSection.SectionBlocks;
+                int minDx = blockX % LodSection.SectionBlocks == 0 ? -1 : 0;
                 bool covered = false, uncovered = false;
-                LodSection? source = null;
-                int sourceCellX = 0, sourceCellZ = 0;
+                float anchor = float.NaN;
                 for (int dz = minDz; dz <= 0; dz++)
                 {
                     for (int dx = minDx; dx <= 0; dx++)
                     {
-                        int cx = cellX + dx, cz = cellZ + dz;
-                        if (cx < 0 || cx >= cells || cz < 0 || cz >= cells) continue;
-                        bool cellCovered = LodSilhouetteField.Covered(mask, cx, cz);
+                        int sx = sectionX + dx, sz = sectionZ + dz;
+                        long key = LodWorld.SectionKey(0, sx, sz);
+                        bool cellCovered = world.HasDataSet.Contains(key);
                         covered |= cellCovered;
                         uncovered |= !cellCovered;
-                        if (!cellCovered || source != null) continue;
-                        long key = LodWorld.SectionKey(0, tileX * cells + cx, tileZ * cells + cz);
-                        if (world.Sections.TryGetValue(key, out LodSection? section))
-                        {
-                            source = section;
-                            sourceCellX = cx;
-                            sourceCellZ = cz;
-                        }
+                        if (!cellCovered || !world.Sections.TryGetValue(key, out LodSection? source))
+                            continue;
+
+                        int worldX = tileX * LodSilhouetteTile.TileBlocks + blockX;
+                        int worldZ = tileZ * LodSilhouetteTile.TileBlocks + blockZ;
+                        int localX = Math.Clamp(worldX - sx * LodSection.SectionBlocks,
+                            0, LodSection.GridSize - 1);
+                        int localZ = Math.Clamp(worldZ - sz * LodSection.SectionBlocks,
+                            0, LodSection.GridSize - 1);
+                        int col = LodSection.ColumnIndex(localX, localZ);
+                        if (!source.Captured[col]) continue;
+                        Span<ulong> runs = source.ColumnRuns(col);
+                        if (runs.Length == 0) continue;
+                        float top = LodSection.RunYTop(runs[0]);
+                        anchor = float.IsNaN(anchor) ? top : Math.Max(anchor, top);
                     }
                 }
-                if (!covered || !uncovered || source == null) continue;
-
-                int localX = Math.Clamp(blockX - sourceCellX * LodSection.SectionBlocks,
-                    0, LodSection.GridSize - 1);
-                int localZ = Math.Clamp(blockZ - sourceCellZ * LodSection.SectionBlocks,
-                    0, LodSection.GridSize - 1);
-                int col = LodSection.ColumnIndex(localX, localZ);
-                if (!source.Captured[col]) continue;
-                Span<ulong> runs = source.ColumnRuns(col);
-                if (runs.Length > 0) result[vz * edge + vx] = LodSection.RunYTop(runs[0]);
+                if (covered && uncovered && !float.IsNaN(anchor))
+                    result[vz * edge + vx] = anchor;
             }
         }
         return result;

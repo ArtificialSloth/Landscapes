@@ -26,7 +26,7 @@ internal sealed record VanillaDistanceTuning(int Initial, Func<int, int[]> Apply
 internal static class VintageHorizonsConfigLayout
 {
     internal const double Width = 900;
-    internal const double Height = 740;
+    internal const double Height = 820;
     internal const double Margin = 32;
     internal const double SwitchX = 824;
     internal const double ButtonY = Height - 58;
@@ -34,11 +34,10 @@ internal static class VintageHorizonsConfigLayout
     internal const int PlannedTabCount = 4;
 
     internal const double ScaleY = 96;
-    internal const double ScaleHeight = 150;
-    internal const double ThresholdLabelsY = 248;
-    internal const double DrawHeadingY = 280;
-    internal const double VisualHeadingY = 362;
-    internal const double VisualRowsY = 400;
+    internal const double ScaleHeight = 210;
+    internal const double DrawHeadingY = 326;
+    internal const double VisualHeadingY = 394;
+    internal const double VisualRowsY = 432;
     internal const double VisualRowHeight = 36;
     internal const int VisualRowCount = 7;
 
@@ -324,13 +323,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("sil-sky", "Sky-height tint", "How strongly height above or below sea level changes the sampled sky colour.",
             0, 100, 1, s => (int)MathF.Round(s.SkyTint * 10),
             (s, v) => s with { SkyTint = v / 10f }, v => (v / 10f).ToString("0.0")),
-        new("sil-red", "Tint red", "Red channel of the silhouette's colour tint.",
+        new("sil-red", "Tint red", "Red channel of Farseer's colour tint.",
             0, 100, 1, s => (int)MathF.Round(s.TintRed * 100),
             (s, v) => s with { TintRed = v / 100f }, v => (v / 100f).ToString("0.00")),
-        new("sil-green", "Tint green", "Green channel of the silhouette's colour tint.",
+        new("sil-green", "Tint green", "Green channel of Farseer's colour tint.",
             0, 100, 1, s => (int)MathF.Round(s.TintGreen * 100),
             (s, v) => s with { TintGreen = v / 100f }, v => (v / 100f).ToString("0.00")),
-        new("sil-blue", "Tint blue", "Blue channel of the silhouette's colour tint.",
+        new("sil-blue", "Tint blue", "Blue channel of Farseer's colour tint.",
             0, 100, 1, s => (int)MathF.Round(s.TintBlue * 100),
             (s, v) => s with { TintBlue = v / 100f }, v => (v / 100f).ToString("0.00")),
         new("sil-strength", "Tint strength", "How far the sampled sky colour is mixed toward the tint.",
@@ -339,10 +338,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("sil-light", "Light bias", "Shapes daylight response. Higher values retain more low light.",
             51, 99, 1, s => (int)MathF.Round(s.LightLevelBias * 100),
             (s, v) => s with { LightLevelBias = v / 100f }, v => (v / 100f).ToString("0.00")),
-        new("sil-fade", "Far fade bias", "Shapes how the silhouette fades back into the real sky at its reach.",
+        new("sil-fade", "Far fade bias", "Shapes how Farseer terrain fades back into the real sky at its reach.",
             5, 95, 1, s => (int)MathF.Round(s.FadeBias * 100),
             (s, v) => s with { FadeBias = v / 100f }, v => (v / 100f).ToString("0.00")),
-        new("sil-globe", "Globe curve", "Gently lowers only the far silhouette to hide the finite horizon edge.",
+        new("sil-globe", "Globe curve", "Gently lowers only far Farseer terrain to hide the finite horizon edge.",
             0, 200, 1, s => (int)MathF.Round(s.GlobeEffect * 1000),
             (s, v) => s with { GlobeEffect = v / 1000f }, v => (v / 1000f).ToString("0.000")),
     };
@@ -419,7 +418,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             {
                 new GuiTab { Name = "General", DataInt = GeneralTab },
                 new GuiTab { Name = "Anti-Aliasing", DataInt = AntiAliasingTab },
-                new GuiTab { Name = "Silhouettes", DataInt = SilhouettesTab },
+                new GuiTab { Name = "Farseer", DataInt = SilhouettesTab },
                 new GuiTab { Name = "Generate", DataInt = GenerateTab },
             },
             bounds, OnTabClicked,
@@ -465,16 +464,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             ReadOnly = pendingAutomatic,
         };
         composer.AddInteractiveElement(scale, "lod-threshold-scale");
-
-        double thresholdWidth = (Width - 2 * Margin) / LodWorld.MaxLevel;
-        for (int i = 0; i < LodWorld.MaxLevel; i++)
-        {
-            composer.AddDynamicText(ThresholdLabel(i),
-                CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Center),
-                ElementBounds.Fixed(Margin + i * thresholdWidth,
-                    Y(VintageHorizonsConfigLayout.ThresholdLabelsY), thresholdWidth, 22),
-                $"threshold-{i}");
-        }
 
         composer.AddStaticText("Cached terrain draw distance", CairoFont.WhiteMediumText(),
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.DrawHeadingY), 500, 30));
@@ -595,7 +584,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void ComposeSilhouettes(GuiComposer composer)
     {
-        composer.AddStaticText("Horizon silhouettes", CairoFont.WhiteMediumText(),
+        composer.AddStaticText("Farseer horizon terrain", CairoFont.WhiteMediumText(),
             ElementBounds.Fixed(Margin, Y(42), 500, 30));
         composer.AddStaticText("Enabled", CairoFont.WhiteSmallishText(),
             EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 150, Y(48), 140, 24));
@@ -632,7 +621,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         }
 
         composer.AddStaticText(
-            "Changes on this tab show immediately. Off releases received tiles and all silhouette GPU meshes.",
+            "Changes on this tab show immediately. Off releases received tiles and all Farseer GPU meshes.",
             CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(626), Width - 2 * Margin, 28));
     }
 
@@ -1098,8 +1087,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     string ThresholdHelp() => pendingAutomatic
         ? "Drag Vanilla in 32-block steps (applies immediately). Grey is vanilla; colour starts at L0. "
-            + "L1-L6 are automatic; Cache and Sil set the two far edges."
-        : "Drag Vanilla (applies immediately), L1-L6, Cache or Sil. Blue is silhouette reach.";
+            + "L1-L6 are automatic; Cache and Farseer set the two far edges."
+        : "Drag Vanilla (applies immediately), L1-L6, Cache or Farseer. Blue is Farseer reach.";
 
     void OnAutomaticChanged(bool on)
     {
@@ -1115,11 +1104,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             scale.ReadOnly = pendingAutomatic;
             scale.SetValues(DisplayedThresholds());
         }
-        for (int i = 0; i < pendingThresholds.Length; i++)
-        {
-            activeComposer.GetDynamicText($"threshold-{i}")
-                .SetNewText(ThresholdLabel(i), false, true, false);
-        }
         activeComposer.GetDynamicText("threshold-help")
             .SetNewText(ThresholdHelp(), false, true, false);
         GuiElementSwitch automatic = activeComposer.GetSwitch("auto-thresholds");
@@ -1131,11 +1115,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         // The scale is read-only while automatic is on, so a drag can only be the player's own.
         if (pendingAutomatic) return;
         pendingThresholds[index] = value;
-        if (activeComposer?.Composed == true && shownTab == GeneralTab)
-        {
-            activeComposer.GetDynamicText($"threshold-{index}")
-                .SetNewText(ThresholdLabel(index), false, true, false);
-        }
     }
 
     void OnVanillaDistanceChanged(int value)
@@ -1154,11 +1133,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         scale?.SetVanillaDistance(vanillaViewDistance);
         if (pendingAutomatic) scale?.SetValues(automaticThresholds);
         if (activeComposer?.Composed != true || shownTab != GeneralTab) return;
-        for (int i = 0; i < pendingThresholds.Length; i++)
-        {
-            activeComposer.GetDynamicText($"threshold-{i}")
-                .SetNewText(ThresholdLabel(i), false, true, false);
-        }
         activeComposer.GetDynamicText("threshold-help")
             .SetNewText(ThresholdHelp(), false, true, false);
     }
@@ -1313,9 +1287,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (!saved) taa.Preview(taa.Initial, taa.ShowInitial);
         if (!saved) silhouettes.Preview(silhouettes.Initial);
     }
-
-    string ThresholdLabel(int index) =>
-        $"L{index + 1}: {FormatBlocks(DisplayedThresholds()[index])}";
 
     string DrawDistanceLabel() => $"{FormatBlocks(pendingFarCap)} blocks";
 
