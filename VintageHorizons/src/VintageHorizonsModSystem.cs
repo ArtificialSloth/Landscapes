@@ -1752,6 +1752,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         ResolveWaterSurfaceTexture();
         renderer.ApplyZFar();
         pipeline.Open("ModData/vintagehorizons");
+        SetSilhouetteWorldStore();
 
         // AFTER Open, which is what creates the writer. Taking this at startup instead read a
         // null - the pipeline builds its storage thread when a world opens, not in its
@@ -4715,6 +4716,10 @@ public partial class VintageHorizonsModSystem : ModSystem
         // Editors restore any unsaved live AA preview while the renderer still exists.
         Quietly(() => settingsIntegration?.Dispose());
         Quietly(() => configDialog?.Dispose());
+
+        // Stop the client silhouette store even if the engine skipped LeaveWorld. It owns a
+        // background SQLite connection just like the sibling-cache reader above.
+        Quietly(() => silhouettes?.Dispose());
 
         // Stops the storage writer before the connection it writes through.
         Quietly(() => horizonEffects?.Dispose());

@@ -73,7 +73,10 @@ internal sealed class LodSilhouetteTransferState
         foreach (KeyValuePair<long, int> entry in offered)
         {
             if (refused.Contains(entry.Key) || inFlight.Contains(entry.Key)
-                || heldRevision(entry.Key) >= entry.Value
+                // Equality means this exact server revision is already held. A greater local
+                // revision can be a persisted copy from before the server rebuilt its store;
+                // request the offered revision so the server can replace that stale authority.
+                || heldRevision(entry.Key) == entry.Value
                 || retryNotBefore.TryGetValue(entry.Key, out long notBefore) && now < notBefore)
                 continue;
             double x = (LodWorld.KeySx(entry.Key) + 0.5) * LodSilhouetteTile.TileBlocks - playerX;

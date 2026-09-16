@@ -46,6 +46,7 @@ public static class SilhouetteChecks
         GeneratorSilenceStopsTheBuilder(c);
         CapturedHeightsReachTiles(c);
         StoreKeepsTilesAcrossSessions(c);
+        ClientTilesPersistAcrossRejoin(c);
         StoredTilesAreReadBeforePreviewing(c);
         PreviewsStayFewPerRegion(c);
         AcceleratorComparisonWiring(c);
@@ -543,6 +544,136 @@ public static class SilhouetteChecks
                 c.True(WaitForIndex(store, out HashSet<long> keys) && keys.Count == 0,
                     "a store written in another format is emptied when opened");
                 c.False(store.OpenFailed, "and still opens");
+            }
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
+    /// <summary>
+    /// P5's client cache is lazy, supplies a drawable tile before a network answer, and yields to
+    /// the exact server reply even if the server rebuilt its store and restarted at revision one.
+    /// Closing the switch flushes and closes the cache; merely configuring an off client creates
+    /// no file.
+    /// </summary>
+    static void ClientTilesPersistAcrossRejoin(Check c)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "vh-silhouette-client-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        string coldPath = Path.Combine(dir, "off-silhouette.db");
+        string path = Path.Combine(dir, "world-silhouette.db");
+        int cx = TileX * 16, cz = TileZ * 16;
+        long key = LodSilhouetteTile.KeyOf(TileX, TileZ);
+        var logger = new CaptureLogger();
+        try
+        {
+            var oldTile = new LodSilhouetteTile(TileX, TileZ);
+            oldTile.SetChunk(cx, cz, HeightMap((_, _) => 140), EnumSilhouetteOrigin.Preview);
+            oldTile = LodSilhouetteTile.Decode(TileX, TileZ, 7, oldTile.Encode())!;
+            using (var seed = new LodSilhouetteStore(path, logger, mergeStoredRows: false))
+            {
+                WaitForIndex(seed, out _);
+                c.True(seed.Save(oldTile.Snapshot()), "the earlier client's tile is queued for persistence");
+            }
+
+            bool available = true;
+            long session = 0;
+            var requested = new List<long>();
+            using (var client = new LodSilhouetteClient(logger, () => available,
+                (on, _, id) =>
+                {
+                    if (on) session = id;
+                    return true;
+                },
+                (keys, _) =>
+                {
+                    requested.AddRange(keys);
+                    return true;
+                }))
+            {
+                client.SetStorePath(coldPath);
+                client.Pump(new LodWorld(), TileX * LodSilhouetteTile.TileBlocks,
+                    TileZ * LodSilhouetteTile.TileBlocks, 110);
+                c.False(File.Exists(coldPath),
+                    "an off client does not create or open its configured silhouette store");
+
+                client.SetStorePath(path);
+                client.SetEnabled(true);
+                var world = new LodWorld();
+                long deadline = Environment.TickCount64 + 5000;
+                while (client.TileCount == 0 && Environment.TickCount64 < deadline)
+                {
+                    client.Pump(world, TileX * LodSilhouetteTile.TileBlocks,
+                        TileZ * LodSilhouetteTile.TileBlocks, 110);
+                    Thread.Sleep(2);
+                }
+                c.Eq(1, client.TileCount, "a persisted client tile is held before the server sends it again");
+                c.Eq(1, client.TilesLoadedFromStore, "the instant-rejoin tile is identified as a local read");
+                c.True(client.StoreOpen, "the enabled, advertised feature owns an open client store");
+
+                client.OnManifestArrived(new AssistSilhouetteManifest
+                {
+                    Sequence = 0,
+                    Last = true,
+                    SessionId = session,
+                    Keys = new[] { key },
+                    Revisions = new[] { 1 },
+                });
+                deadline = Environment.TickCount64 + 5000;
+                while (!requested.Contains(key) && Environment.TickCount64 < deadline)
+                {
+                    client.Pump(world, TileX * LodSilhouetteTile.TileBlocks,
+                        TileZ * LodSilhouetteTile.TileBlocks, 110);
+                    Thread.Sleep(2);
+                }
+                c.True(requested.Contains(key),
+                    "a higher persisted revision does not hide a server whose revision sequence restarted");
+
+                var current = new LodSilhouetteTile(TileX, TileZ);
+                current.SetChunk(cx, cz, HeightMap((_, _) => 80), EnumSilhouetteOrigin.Captured);
+                client.OnTileArrived(new AssistSilhouetteTile
+                {
+                    TileX = TileX,
+                    TileZ = TileZ,
+                    Key = key,
+                    Revision = 1,
+                    Payload = current.Encode(),
+                    SessionId = session,
+                });
+                deadline = Environment.TickCount64 + 5000;
+                while (client.TilesReceived == 0 && Environment.TickCount64 < deadline)
+                {
+                    client.Pump(world, TileX * LodSilhouetteTile.TileBlocks,
+                        TileZ * LodSilhouetteTile.TileBlocks, 110);
+                    Thread.Sleep(2);
+                }
+                c.Eq(1, client.TilesReceived, "the current server answer replaces the persisted copy");
+
+                client.SetEnabled(false);
+                c.False(client.StoreOpen, "switching silhouettes off closes the client store");
+                c.Eq(0, client.TileCount, "switching silhouettes off drops persisted tiles from RAM too");
+            }
+
+            using (var reopened = new LodSilhouetteStore(path, logger, mergeStoredRows: false))
+            {
+                c.True(WaitForIndex(reopened, out HashSet<long> keys) && keys.Contains(key),
+                    "the server replacement remains indexed after the client closes");
+                c.True(reopened.TryRequestLoad(TileX, TileZ), "the replaced client tile can be read back");
+                LodSilhouetteTile? stored = WaitForLoad(reopened)?.Tile;
+                c.True(stored != null && stored.Revision == 1
+                        && stored.TryGetHeight(0, 0, out ushort height) && height == 80,
+                    "client persistence keeps the server's exact lower-revision answer, not a merge");
             }
         }
         finally

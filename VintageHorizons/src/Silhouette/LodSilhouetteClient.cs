@@ -5,19 +5,20 @@ using VintageHorizons.Net;
 namespace VintageHorizons.Silhouette;
 
 /// <summary>
-/// Client half of horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P1-P3).
+/// Client half of horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P1-P5).
 ///
 /// It takes tile manifests, requests only missing revisions, decides which tiles need a new mesh,
 /// and builds meshes
 /// on worker threads from each tile's neighbourhood (<see cref="LodSilhouetteFill"/>). The
 /// renderer uploads and draws the results. Everything here runs on the client main thread except
-/// the network intake queue and the mesh jobs. A held tile is never changed: a newer revision
-/// replaces it whole, which is what lets a mesh job read its neighbourhood without a copy.
+/// the network intake queue, store and mesh jobs. A held tile is never mutated: another immutable
+/// tile replaces it whole, which is what lets a mesh job read its neighbourhood without a copy.
 ///
-/// The saved P4 client switch owns whether this object does any work. Off drops all CPU state and
-/// advances the epoch, which also makes every already-running worker result stale.
+/// The saved client switch owns whether this object does any work. P5's local store opens only
+/// after an enabled client reaches a server that offers silhouettes. Off closes it, drops all CPU
+/// state and advances the epoch, which also makes every already-running worker result stale.
 /// </summary>
-internal sealed class LodSilhouetteClient
+internal sealed class LodSilhouetteClient : IDisposable
 {
     const int MaxDecodesPerPump = 16;
     const int MaxJobsInFlight = 4;
@@ -35,7 +36,14 @@ internal sealed class LodSilhouetteClient
     readonly Dictionary<long, ulong> coverage = new();
     readonly Dictionary<long, int> meshVersion = new();
     readonly HashSet<long> dirty = new();
+    readonly HashSet<long> networkConfirmed = new();
+    readonly HashSet<long> storeReads = new();
+    readonly HashSet<long> storeLoads = new();
     readonly LodSilhouetteTransferState transfer = new();
+    LodSilhouetteStore? store;
+    string? storePath;
+    HashSet<long>? storedKeys;
+    bool storeIndexTaken;
     static long nextSessionId;
     int coverageCursor;
     int lastPruneTileX = int.MinValue, lastPruneTileZ = int.MinValue;
@@ -72,6 +80,9 @@ internal sealed class LodSilhouetteClient
     public int OfferedTiles => transfer.Offered;
     public int TilesInFlight => transfer.InFlight;
     public int TilesRefused => transfer.Refused;
+    public bool StoreOpen => store != null;
+    public int StoredTiles => store?.StoredTiles ?? storedKeys?.Count ?? 0;
+    public int StorePendingSaves => store?.PendingSaves ?? 0;
 
     /// <summary>Cells with a height, across every tile held.</summary>
     public long KnownCells => knownCells;
@@ -80,17 +91,22 @@ internal sealed class LodSilhouetteClient
     public long AcceleratorCells => acceleratorCells;
 
     public int PendingMeshes => dirty.Count + Volatile.Read(ref jobsInFlight);
-    public int TilesReceived, TilesRejected, MeshesBuilt, EmptyMeshes, MeshFailures;
+    public int TilesReceived, TilesLoadedFromStore, TilesRejected, MeshesBuilt, EmptyMeshes, MeshFailures;
 
     public void SetEnabled(bool on)
     {
         if (enabled == on) return;
         enabled = on;
-        if (on) return;
+        if (on)
+        {
+            EnsureStore();
+            return;
+        }
 
         // Off is the last silhouette message until the player switches it back on (plan 4.10).
         if (requestSent && available()) sendRequest(false, ReachBlocks, transfer.SessionId);
         Clear();
+        CloseStore(clearPath: false);
     }
 
     public void SetReachBlocks(int blocks)
@@ -115,8 +131,24 @@ internal sealed class LodSilhouetteClient
         if (Volatile.Read(ref enabled)) arrivals.Enqueue(tile);
     }
 
+    /// <summary>
+    /// Supplies the current world's client-store path. Merely naming it never opens the file;
+    /// enabled state and an advertised server feature are both required.
+    /// </summary>
+    public void SetStorePath(string? path)
+    {
+        if (string.Equals(storePath, path, StringComparison.OrdinalIgnoreCase)) return;
+        CloseStore(clearPath: true);
+        storePath = path;
+        EnsureStore();
+    }
+
     /// <summary>World leave. The session switch survives; the next join asks again.</summary>
-    public void Reset() => Clear();
+    public void Reset()
+    {
+        Clear();
+        CloseStore(clearPath: true);
+    }
 
     void Clear()
     {
@@ -128,6 +160,9 @@ internal sealed class LodSilhouetteClient
         coverage.Clear();
         meshVersion.Clear();
         dirty.Clear();
+        networkConfirmed.Clear();
+        storeReads.Clear();
+        storeReads.UnionWith(storeLoads);
         coverageCursor = 0;
         lastPruneTileX = lastPruneTileZ = int.MinValue;
         knownCells = 0;
@@ -135,6 +170,35 @@ internal sealed class LodSilhouetteClient
         while (manifests.TryDequeue(out _)) { }
         while (arrivals.TryDequeue(out _)) { }
         while (finished.TryDequeue(out _)) { }
+    }
+
+    void EnsureStore()
+    {
+        if (store != null || storePath == null || !enabled || !available()) return;
+        try
+        {
+            // Unlike the server store, this is an exact cache of authoritative replies. A
+            // server-side rebuild may restart its revisions, so merging an older client row
+            // would preserve stale heights under a newly authoritative answer.
+            store = new LodSilhouetteStore(storePath, logger, mergeStoredRows: false);
+        }
+        catch (Exception e)
+        {
+            logger.Warning("Horizon silhouettes: no client tile store this session, so rejoining "
+                + "must fetch the tiles again: {0}", e.Message);
+        }
+    }
+
+    void CloseStore(bool clearPath)
+    {
+        LodSilhouetteStore? closing = store;
+        store = null;
+        storedKeys = null;
+        storeIndexTaken = false;
+        storeReads.Clear();
+        storeLoads.Clear();
+        if (clearPath) storePath = null;
+        closing?.Dispose();
     }
 
     /// <summary>Main thread, once per client tick.</summary>
@@ -145,23 +209,94 @@ internal sealed class LodSilhouetteClient
         lastZ = playerZ;
         seaLevel = worldSeaLevel;
         PruneOutsideReach(playerX, playerZ);
+        EnsureStore();
+        PumpStore(playerX, playerZ);
         if (!requestSent)
         {
-            if (!available()) return;
-            requestSent = sendRequest(true, ReachBlocks, transfer.SessionId);
-            if (!requestSent) return;
-            logger.Notification("Horizon silhouettes: asked the server for a {0:N0}-block reach.", ReachBlocks);
+            if (available())
+            {
+                requestSent = sendRequest(true, ReachBlocks, transfer.SessionId);
+                if (requestSent)
+                    logger.Notification("Horizon silhouettes: asked the server for a {0:N0}-block reach.",
+                        ReachBlocks);
+            }
         }
 
-        // One bounded manifest chunk per tick, mirroring the ordinary section path.
-        if (manifests.TryDequeue(out AssistSilhouetteManifest? manifest))
-            transfer.Apply(manifest);
+        if (requestSent)
+        {
+            // One bounded manifest chunk per tick, mirroring the ordinary section path.
+            if (manifests.TryDequeue(out AssistSilhouetteManifest? manifest))
+                transfer.Apply(manifest);
 
-        for (int n = 0; n < MaxDecodesPerPump && arrivals.TryDequeue(out AssistSilhouetteTile? message); n++)
-            AcceptReply(message);
-        RequestMissing(playerX, playerZ);
+            for (int n = 0; n < MaxDecodesPerPump
+                && arrivals.TryDequeue(out AssistSilhouetteTile? message); n++)
+                AcceptReply(message);
+            RequestMissing(playerX, playerZ);
+        }
         CheckCoverage(world);
         Schedule(world);
+    }
+
+    /// <summary>
+    /// Take completed local reads, then keep the store's bounded read allowance full with the
+    /// nearest not-yet-read tiles inside the moving reach. Store decode happens on its owning
+    /// thread; only immutable tiles arrive here.
+    /// </summary>
+    void PumpStore(double playerX, double playerZ)
+    {
+        LodSilhouetteStore? active = store;
+        if (active == null) return;
+        if (!storeIndexTaken && active.TryTakeIndex(out HashSet<long> keys))
+        {
+            storeIndexTaken = true;
+            (storedKeys ??= new HashSet<long>()).UnionWith(keys);
+            logger.Notification("Horizon silhouettes: the client tile store holds {0} tiles from "
+                + "earlier sessions ({1}).", keys.Count, System.IO.Path.GetFileName(active.Path));
+        }
+
+        while (active.TryTakeLoaded(out LodSilhouetteStoredTile result))
+        {
+            long key = LodSilhouetteTile.KeyOf(result.TileX, result.TileZ);
+            storeLoads.Remove(key);
+            if (result.Tile == null)
+            {
+                storedKeys?.Remove(key);
+                storeReads.Remove(key);
+                continue;
+            }
+            if (!WithinReach(key, playerX, playerZ, ReachBlocks + LodSilhouetteTile.TileBlocks))
+            {
+                storeReads.Remove(key);
+                continue;
+            }
+            if (networkConfirmed.Contains(key)) continue;
+            if (InstallTile(result.Tile, key, force: false, persist: false)
+                && ReferenceEquals(tiles.GetValueOrDefault(key), result.Tile))
+                TilesLoadedFromStore++;
+        }
+
+        if (storedKeys == null) return;
+        while (storeLoads.Count < LodSilhouetteStore.MaxLoadsOutstanding)
+        {
+            long best = 0;
+            double bestDistance = double.MaxValue;
+            foreach (long key in storedKeys)
+            {
+                if (storeReads.Contains(key)
+                    || !WithinReach(key, playerX, playerZ, ReachBlocks + LodSilhouetteTile.TileBlocks))
+                    continue;
+                double x = (LodWorld.KeySx(key) + 0.5) * LodSilhouetteTile.TileBlocks - playerX;
+                double z = (LodWorld.KeySz(key) + 0.5) * LodSilhouetteTile.TileBlocks - playerZ;
+                double distance = x * x + z * z;
+                if (distance >= bestDistance) continue;
+                best = key;
+                bestDistance = distance;
+            }
+            if (bestDistance == double.MaxValue
+                || !active.TryRequestLoad(LodWorld.KeySx(best), LodWorld.KeySz(best))) break;
+            storeReads.Add(best);
+            storeLoads.Add(best);
+        }
     }
 
     void RequestMissing(double playerX, double playerZ)
@@ -235,6 +370,8 @@ internal sealed class LodSilhouetteClient
             CountSources(entry.Value, -1);
             coverage.Remove(entry.Key);
             dirty.Remove(entry.Key);
+            networkConfirmed.Remove(entry.Key);
+            if (storedKeys?.Contains(entry.Key) == true) storeReads.Remove(entry.Key);
             int version = meshVersion.GetValueOrDefault(entry.Key) + 1;
             meshVersion[entry.Key] = version;
             finished.Enqueue(new MeshResult(entry.Key, entry.Value.TileX, entry.Value.TileZ,
@@ -268,7 +405,12 @@ internal sealed class LodSilhouetteClient
 
     bool Accept(AssistSilhouetteTile message, long key)
     {
-        if (tiles.TryGetValue(key, out LodSilhouetteTile? held) && held.Revision >= message.Revision) return true;
+        // Once this session has installed a server answer, repeats cannot move it backwards. A
+        // persisted tile has no such authority: the server may have rebuilt its store and
+        // restarted at a lower revision, so its first valid answer replaces the local copy.
+        if (networkConfirmed.Contains(key)
+            && tiles.TryGetValue(key, out LodSilhouetteTile? confirmed)
+            && confirmed.Revision >= message.Revision) return true;
         LodSilhouetteTile? tile = LodSilhouetteTile.Decode(message.TileX, message.TileZ,
             message.Revision, message.Payload);
         if (tile == null)
@@ -280,11 +422,25 @@ internal sealed class LodSilhouetteClient
         }
 
         TilesReceived++;
+        networkConfirmed.Add(key);
+        return InstallTile(tile, key, force: true, persist: true);
+    }
+
+    bool InstallTile(LodSilhouetteTile tile, long key, bool force, bool persist)
+    {
+        tiles.TryGetValue(key, out LodSilhouetteTile? held);
+        if (!force && held != null && held.Revision >= tile.Revision) return true;
         if (held == null) tileOrder.Add(key);
         knownCells += tile.KnownCells - (held?.KnownCells ?? 0);
         if (held != null) CountSources(held, -1);
         CountSources(tile, 1);
         tiles[key] = tile;
+
+        if (persist && store?.Save(tile.Snapshot()) == true)
+        {
+            (storedKeys ??= new HashSet<long>()).Add(key);
+            storeReads.Add(key);
+        }
 
         // A tile's heights reach into its neighbours' fills, so they re-mesh with it.
         foreach ((int tx, int tz) in LodSilhouetteField.TilesReading(tile.TileX, tile.TileZ))
@@ -484,5 +640,11 @@ internal sealed class LodSilhouetteClient
             return true;
         }
         return false;
+    }
+
+    public void Dispose()
+    {
+        enabled = false;
+        Reset();
     }
 }

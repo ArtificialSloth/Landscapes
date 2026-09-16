@@ -33,6 +33,22 @@ public partial class VintageHorizonsModSystem
         silhouettes.Pump(pipeline.World, player.Pos.X, player.Pos.Z, capi.World.SeaLevel);
     }
 
+    /// <summary>
+    /// The ordinary client cache has already resolved the current savegame into a safe file name.
+    /// Derive P5's sibling path from it without touching a second database while silhouettes are
+    /// off. <see cref="LodSilhouetteClient.SetStorePath"/> only records the name until an enabled
+    /// client reaches a server that actually advertises the feature.
+    /// </summary>
+    void SetSilhouetteWorldStore()
+    {
+        string? cachePath = pipeline.DbPath;
+        string? path = cachePath == null
+            ? null
+            : Path.Combine(Path.GetDirectoryName(cachePath)!,
+                Path.GetFileNameWithoutExtension(cachePath) + "-silhouette.db");
+        silhouettes?.SetStorePath(path);
+    }
+
     void ResetSilhouettes()
     {
         silhouettes?.Reset();
@@ -89,10 +105,14 @@ public partial class VintageHorizonsModSystem
         string fill = cells > 0 ? $"{100.0 * s.KnownCells / cells:0.0}%" : "0.0%";
         string sources = $"sources real {s.CapturedCells:N0}, preview {s.PreviewCells:N0}, "
             + $"accelerator {s.AcceleratorCells:N0}";
+        string store = s.StoreOpen
+            ? $"client store {s.StoredTiles:N0} tiles ({s.TilesLoadedFromStore:N0} loaded this session, "
+                + $"{s.StorePendingSaves:N0} saves waiting)"
+            : "client store closed";
         return $"horizon silhouettes {(s.Enabled ? "on" : "off")} (the command is session-only). "
             + $"The server {server}. {s.TileCount} tiles held of {s.OfferedTiles} offered "
             + $"({s.TilesInFlight} requested, {s.TilesRefused} refused, {s.TilesRejected} corrupt), "
-            + $"{s.KnownCells:N0} cells with heights ({fill} fill; {sources}), "
+            + $"{s.KnownCells:N0} cells with heights ({fill} fill; {sources}); {store}. "
             + $"{renderer.SilhouetteMeshCount} meshes ({s.PendingMeshes} waiting, {s.EmptyMeshes} "
             + $"with nothing to draw), {renderer.SilhouetteDrawsLastFrame} drawn last frame "
             + $"({renderer.SilhouetteHighDrawsLastFrame} high, "

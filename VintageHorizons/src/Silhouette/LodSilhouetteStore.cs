@@ -8,15 +8,17 @@ namespace VintageHorizons.Silhouette;
 public readonly record struct LodSilhouetteStoredTile(int TileX, int TileZ, LodSilhouetteTile? Tile);
 
 /// <summary>
-/// The server's silhouette tiles on disk (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER 4.3):
-/// <c>ModData/vintagehorizons/&lt;savegame&gt;-silhouette-server.db</c>, one row per tile, sharing
-/// nothing with the section cache.
+/// Silhouette tiles on disk (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER 4.3 and P5), one row per tile,
+/// sharing nothing with the section cache. The server uses
+/// <c>ModData/vintagehorizons/&lt;savegame&gt;-silhouette-server.db</c>; the client uses the same
+/// schema in <c>&lt;savegame&gt;-silhouette.db</c>.
 ///
 /// One dedicated thread owns the only connection (G9), unpooled so a world reloaded in the same
 /// process can open the file again (G13). It publishes the stored tile keys once, answers every
-/// load (a tile, or null for none), and writes saves in batches. A save merges into the row
-/// already stored, so a tile the server rebuilt this session without reading its stored copy
-/// first can only ever add to what the disk holds.
+/// load (a tile, or null for none), and writes saves in batches. Server saves merge into the row
+/// already stored, so a tile rebuilt without reading its stored copy first can only add to what
+/// the disk holds. Client saves replace exactly: the connected server remains authoritative even
+/// if its store was rebuilt and its revision sequence restarted.
 ///
 /// If the file cannot be opened, the store says so once and carries on answering: loads find
 /// nothing and saves are counted as lost. Silhouettes then work for the session only.
@@ -31,6 +33,7 @@ public sealed class LodSilhouetteStore : IDisposable
 
     readonly string path;
     readonly ILogger logger;
+    readonly bool mergeStoredRows;
     readonly ConcurrentQueue<(int TileX, int TileZ)> loads = new();
     readonly ConcurrentQueue<LodSilhouetteStoredTile> loaded = new();
     readonly object saveGate = new();
@@ -46,10 +49,11 @@ public sealed class LodSilhouetteStore : IDisposable
     public int Saved, SaveErrors, ReadErrors, Undecodable, StoredTiles;
     public volatile bool OpenFailed;
 
-    public LodSilhouetteStore(string path, ILogger logger)
+    public LodSilhouetteStore(string path, ILogger logger, bool mergeStoredRows = true)
     {
         this.path = path;
         this.logger = logger;
+        this.mergeStoredRows = mergeStoredRows;
         thread = new Thread(Loop)
         {
             Name = "vintagehorizons-silhouette-store",
@@ -282,8 +286,9 @@ public sealed class LodSilhouetteStore : IDisposable
     }
 
     /// <summary>
-    /// Write everything waiting, in one transaction. Each tile first takes the cells its stored
-    /// row has and it lacks (<see cref="LodSilhouetteTile.MergeFrom"/>).
+    /// Write everything waiting in one transaction. A server tile first takes the cells its
+    /// stored row has and it lacks (<see cref="LodSilhouetteTile.MergeFrom"/>). A client tile is
+    /// an exact replacement from the authoritative server.
     /// </summary>
     bool WriteSaves(SqliteConnection? connection)
     {
@@ -311,7 +316,10 @@ public sealed class LodSilhouetteStore : IDisposable
             foreach (LodSilhouetteTile snapshot in batch)
             {
                 LodSilhouetteTile? stored = Read(connection, transaction, snapshot.TileX, snapshot.TileZ);
-                if (stored != null) snapshot.MergeFrom(stored);
+                if (stored != null)
+                {
+                    if (mergeStoredRows) snapshot.MergeFrom(stored);
+                }
                 else added++;
                 using SqliteCommand command = connection.CreateCommand();
                 command.Transaction = transaction;
