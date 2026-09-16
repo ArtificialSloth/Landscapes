@@ -344,6 +344,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("sil-globe", "Globe curve", "Gently lowers only far Farseer terrain to hide the finite horizon edge.",
             0, 200, 1, s => (int)MathF.Round(s.GlobeEffect * 1000),
             (s, v) => s with { GlobeEffect = v / 1000f }, v => (v / 1000f).ToString("0.000")),
+        new("sil-underlay", "LOD edge depth", "How far the short Farseer apron slopes below the cached-terrain edge. Zero keeps only Farseer's small original transition; higher hides larger sky gaps.",
+            (int)Silhouette.LodSilhouetteField.MinUnderlayDepthBlocks,
+            (int)Silhouette.LodSilhouetteField.MaxUnderlayDepthBlocks, 4,
+            s => (int)MathF.Round(s.UnderlayDepthBlocks),
+            (s, v) => s with { UnderlayDepthBlocks = v }, v => $"{v} blocks"),
         new("sil-detail", "Geometry detail", "Controls only how dense the drawn Farseer mesh is. Lower is lighter; hill softness controls the outline shape.",
             0, 100, 1, s => (int)MathF.Round(s.OutlineDetail * 100),
             (s, v) => s with { OutlineDetail = v / 100f }, OutlineDetailLabel),
@@ -631,7 +636,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             int column = i & 1;
             int line = i / 2;
             double x = Margin + column * (columnWidth + 28);
-            double y = 172 + line * 112;
+            double y = 172 + line * 94;
             composer.AddStaticText(row.Title, CairoFont.WhiteSmallishText(),
                 ElementBounds.Fixed(x, Y(y), columnWidth, 26));
             composer.AddHoverText(row.Tip, CairoFont.WhiteSmallText(), 330,

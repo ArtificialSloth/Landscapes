@@ -4,6 +4,7 @@ namespace VintageHorizons.Silhouette;
 public sealed class LodSilhouetteMeshArrays
 {
     public required float[] Xyz;
+    public required float[] UnderlayUv;
     public required int[] Indices;
     public required int VertexCount;
     public required int IndexCount;
@@ -11,7 +12,8 @@ public sealed class LodSilhouetteMeshArrays
     public required float MinY;
     public required float MaxY;
 
-    public long ByteCount => (long)Xyz.Length * sizeof(float) + (long)Indices.Length * sizeof(int);
+    public long ByteCount => ((long)Xyz.Length + UnderlayUv.Length) * sizeof(float)
+        + (long)Indices.Length * sizeof(int);
 }
 
 /// <summary>
@@ -95,8 +97,8 @@ public sealed class LodSilhouetteMeshSet
 
 /// <summary>
 /// Where the server samples, and how the client turns a tile into the three meshes P4 draws.
-/// Everything below is engine-free. Farseer keeps its own broad sampled shape; the renderer buries
-/// partial tiles beneath nearby cached terrain instead of trying to reproduce its exact edge.
+/// Everything below is engine-free. Farseer keeps its own broad sampled shape; a short apron at
+/// the cached-terrain frontier slopes underneath it instead of trying to reproduce its exact edge.
 /// </summary>
 public static class LodSilhouetteField
 {
@@ -123,9 +125,13 @@ public static class LodSilhouetteField
     public const float MaxHillSoftness = 1f;
     public const float DefaultHillSoftness = 0.75f;
     public const int MaxFeatherRadiusCells = 32;
-    // Near partial tiles are only a hole-filling underlay. This is deliberately much deeper than
-    // ordinary sampling error, and the vertex shader removes it before the distant fade begins.
-    public const float UnderlaySinkBlocks = 96f;
+    // Near partial tiles are only a hole-filling underlay. The player can trade gap coverage for
+    // a less sunken transition without rebuilding a mesh; the vertex shader removes the chosen
+    // depth before the distant fade begins.
+    public const float MinUnderlayDepthBlocks = 0f;
+    public const float MaxUnderlayDepthBlocks = 128f;
+    public const float DefaultUnderlayDepthBlocks = 64f;
+    public const float UnderlaySlopeWidthBlocks = 384f;
 
     public static bool IsLatticeChunk(int cx, int cz) =>
         Mod(cx, LatticeChunks) == LatticeOffsetChunks && Mod(cz, LatticeChunks) == LatticeOffsetChunks;
@@ -183,23 +189,34 @@ public static class LodSilhouetteField
 
     /// <summary>
     /// Builds all three meshes from the same filled field. A fully covered tile needs no GPU
-    /// object. A partial tile stays complete so its buried surface can fill any raster gap behind
+    /// object. A partial tile stays complete so its sloped apron can fill any raster gap behind
     /// cached terrain without needing a height-perfect join.
     /// </summary>
     public static LodSilhouetteMeshSet? BuildMeshes(LodSilhouetteTile?[,] neighbourhood,
         LodSilhouetteCoverage coveredCells, int seaLevel,
+        float hillSoftness = DefaultHillSoftness) => BuildMeshes(neighbourhood,
+            CentreCoverageNeighbourhood(coveredCells), seaLevel, hillSoftness);
+
+    /// <summary>
+    /// Builds a tile with the surrounding cached-terrain masks that shape its edge apron. One
+    /// neighbouring tile is enough because the apron is narrower than a silhouette tile.
+    /// </summary>
+    public static LodSilhouetteMeshSet? BuildMeshes(LodSilhouetteTile?[,] neighbourhood,
+        LodSilhouetteCoverage[,] coverageNeighbourhood, int seaLevel,
         float hillSoftness = DefaultHillSoftness)
     {
+        ValidateCoverageNeighbourhood(coverageNeighbourhood);
+        LodSilhouetteCoverage coveredCells = coverageNeighbourhood[1, 1];
         if (coveredCells.IsFull) return null;
 
         float[] filled = LodSilhouetteFill.FillCentreFeathered(neighbourhood,
             FeatherRadiusFor(hillSoftness), FeatherStrengthFor(hillSoftness));
         LodSilhouetteMeshArrays? high = BuildMeshFromFilled(
-            filled, coveredCells, seaLevel, HighQuadsPerEdge);
+            filled, coveredCells, coverageNeighbourhood, seaLevel, HighQuadsPerEdge);
         LodSilhouetteMeshArrays? medium = BuildMeshFromFilled(
-            filled, coveredCells, seaLevel, MediumQuadsPerEdge);
+            filled, coveredCells, coverageNeighbourhood, seaLevel, MediumQuadsPerEdge);
         LodSilhouetteMeshArrays? low = BuildMeshFromFilled(
-            filled, coveredCells, seaLevel, LowQuadsPerEdge);
+            filled, coveredCells, coverageNeighbourhood, seaLevel, LowQuadsPerEdge);
         if (high == null || medium == null || low == null) return null;
         return new LodSilhouetteMeshSet
         {
@@ -218,10 +235,10 @@ public static class LodSilhouetteField
             : BuildMeshFromFilled(LodSilhouetteFill.FillCentreFeathered(
                     neighbourhood, FeatherRadiusFor(hillSoftness),
                     FeatherStrengthFor(hillSoftness)),
-                coveredCells, seaLevel, quadsPerEdge);
+                coveredCells, CentreCoverageNeighbourhood(coveredCells), seaLevel, quadsPerEdge);
 
     static LodSilhouetteMeshArrays? BuildMeshFromFilled(float[] filled,
-        LodSilhouetteCoverage coveredCells,
+        LodSilhouetteCoverage coveredCells, LodSilhouetteCoverage[,] coverageNeighbourhood,
         int seaLevel, int quadsPerEdge)
     {
         if (quadsPerEdge < 1 || LodSilhouetteTile.CellsPerEdge % quadsPerEdge != 0)
@@ -232,6 +249,7 @@ public static class LodSilhouetteField
         int spacing = cellStep * LodSilhouetteTile.CellBlocks;
         int verts = quadsPerEdge + 1;
         var xyz = new float[verts * verts * 3];
+        var underlayUv = new float[verts * verts * 2];
         var valid = new bool[verts * verts];
 
         float RawHeight(int a, int b)
@@ -281,6 +299,8 @@ public static class LodSilhouetteField
                 xyz[v * 3] = blockX;
                 xyz[v * 3 + 1] = y;
                 xyz[v * 3 + 2] = blockZ;
+                underlayUv[v * 2] = UnderlayWeight(
+                    coverageNeighbourhood, blockX, blockZ);
                 minY = Math.Min(minY, y);
                 maxY = Math.Max(maxY, y);
             }
@@ -309,6 +329,7 @@ public static class LodSilhouetteField
         return new LodSilhouetteMeshArrays
         {
             Xyz = xyz,
+            UnderlayUv = underlayUv,
             Indices = indices,
             VertexCount = verts * verts,
             IndexCount = indices.Length,
@@ -316,6 +337,61 @@ public static class LodSilhouetteField
             MinY = minY,
             MaxY = maxY,
         };
+    }
+
+    static LodSilhouetteCoverage[,] CentreCoverageNeighbourhood(
+        LodSilhouetteCoverage coveredCells)
+    {
+        var result = new LodSilhouetteCoverage[3, 3];
+        result[1, 1] = coveredCells;
+        return result;
+    }
+
+    static void ValidateCoverageNeighbourhood(LodSilhouetteCoverage[,] masks)
+    {
+        if (masks.GetLength(0) != 3 || masks.GetLength(1) != 3)
+            throw new ArgumentException("Coverage neighbourhood must be [3,3].", nameof(masks));
+    }
+
+    /// <summary>
+    /// One at the cached frontier and zero outside its short apron. The shader multiplies this
+    /// stable per-vertex shape by the player's live depth dial, so adjusting it does not remesh.
+    /// </summary>
+    static float UnderlayWeight(LodSilhouetteCoverage[,] masks, int blockX, int blockZ)
+    {
+        float nearestSquared = float.MaxValue;
+        for (int tileZ = 0; tileZ < 3; tileZ++)
+        {
+            for (int tileX = 0; tileX < 3; tileX++)
+            {
+                LodSilhouetteCoverage mask = masks[tileZ, tileX];
+                if (mask.IsEmpty) continue;
+                int tileMinX = (tileX - 1) * LodSilhouetteTile.TileBlocks;
+                int tileMinZ = (tileZ - 1) * LodSilhouetteTile.TileBlocks;
+                for (int cellZ = 0; cellZ < CoverageCellsPerEdge; cellZ++)
+                {
+                    for (int cellX = 0; cellX < CoverageCellsPerEdge; cellX++)
+                    {
+                        if (!mask.Covered(cellX, cellZ)) continue;
+                        int minX = tileMinX + cellX * CoverageCellBlocks;
+                        int minZ = tileMinZ + cellZ * CoverageCellBlocks;
+                        int maxX = minX + CoverageCellBlocks;
+                        int maxZ = minZ + CoverageCellBlocks;
+                        int dx = blockX < minX ? minX - blockX
+                            : blockX > maxX ? blockX - maxX : 0;
+                        int dz = blockZ < minZ ? minZ - blockZ
+                            : blockZ > maxZ ? blockZ - maxZ : 0;
+                        float squared = (float)dx * dx + (float)dz * dz;
+                        if (squared < nearestSquared) nearestSquared = squared;
+                    }
+                }
+            }
+        }
+
+        if (nearestSquared == float.MaxValue) return 0f;
+        float t = Math.Clamp(MathF.Sqrt(nearestSquared) / UnderlaySlopeWidthBlocks, 0f, 1f);
+        float smooth = t * t * (3f - 2f * t);
+        return 1f - smooth;
     }
 
     static void VertexCoverage(LodSilhouetteCoverage mask, int blockX, int blockZ,

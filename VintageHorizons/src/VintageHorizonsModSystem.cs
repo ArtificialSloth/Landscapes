@@ -154,6 +154,8 @@ public class VintageHorizonsConfig
     public float SilhouetteLightLevelBias = 0.70f;
     public float SilhouetteFadeBias = 0.40f;
     public float SilhouetteGlobeEffect = 0.05f;
+    public float SilhouetteUnderlayDepthBlocks =
+        Silhouette.LodSilhouetteField.DefaultUnderlayDepthBlocks;
     public float SilhouetteOutlineDetail = Silhouette.LodSilhouetteField.DefaultOutlineDetail;
     public float SilhouetteHillSoftness = Silhouette.LodSilhouetteField.DefaultHillSoftness;
 

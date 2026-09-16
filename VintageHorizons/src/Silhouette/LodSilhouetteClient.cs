@@ -650,7 +650,9 @@ internal sealed class LodSilhouetteClient : IDisposable
             LodSilhouetteCoverage mask = CoverageOf(world, tile.TileX, tile.TileZ);
             if (coverage.TryGetValue(key, out LodSilhouetteCoverage held) && held == mask) continue;
             coverage[key] = mask;
-            MarkDirty(key);
+            // This frontier shapes a short apron in neighbouring Farseer tiles too.
+            foreach ((int tx, int tz) in LodSilhouetteField.TilesReading(tile.TileX, tile.TileZ))
+                MarkDirty(LodSilhouetteTile.KeyOf(tx, tz));
         }
     }
 
@@ -714,18 +716,31 @@ internal sealed class LodSilhouetteClient : IDisposable
             if (!tiles.TryGetValue(key, out LodSilhouetteTile? tile)) continue;
             snapshots++;
 
-            if (!coverage.TryGetValue(key, out LodSilhouetteCoverage mask))
-                coverage[key] = mask = CoverageOf(world, tile.TileX, tile.TileZ);
+            if (!coverage.ContainsKey(key))
+                coverage[key] = CoverageOf(world, tile.TileX, tile.TileZ);
             int version = meshVersion.TryGetValue(key, out int v) ? v + 1 : 1;
             meshVersion[key] = version;
 
             // References, not copies: held tiles never change (see the class summary).
             var neighbourhood = new LodSilhouetteTile?[LodSilhouetteFill.NeighbourhoodTiles,
                 LodSilhouetteFill.NeighbourhoodTiles];
+            var coverageNeighbourhood = new LodSilhouetteCoverage[
+                LodSilhouetteFill.NeighbourhoodTiles, LodSilhouetteFill.NeighbourhoodTiles];
             for (int dz = -radius; dz <= radius; dz++)
+            {
                 for (int dx = -radius; dx <= radius; dx++)
-                    neighbourhood[dz + radius, dx + radius] = tiles.GetValueOrDefault(
-                        LodSilhouetteTile.KeyOf(tile.TileX + dx, tile.TileZ + dz));
+                {
+                    int neighbourX = tile.TileX + dx, neighbourZ = tile.TileZ + dz;
+                    long neighbourKey = LodSilhouetteTile.KeyOf(neighbourX, neighbourZ);
+                    neighbourhood[dz + radius, dx + radius] = tiles.GetValueOrDefault(neighbourKey);
+                    if (!coverage.TryGetValue(neighbourKey, out LodSilhouetteCoverage neighbourMask))
+                    {
+                        neighbourMask = CoverageOf(world, neighbourX, neighbourZ);
+                        if (tiles.ContainsKey(neighbourKey)) coverage[neighbourKey] = neighbourMask;
+                    }
+                    coverageNeighbourhood[dz + radius, dx + radius] = neighbourMask;
+                }
+            }
 
             int tileX = tile.TileX, tileZ = tile.TileZ, epoch = Epoch, sea = seaLevel;
             float softness = hillSoftness;
@@ -735,7 +750,8 @@ internal sealed class LodSilhouetteClient : IDisposable
                 LodSilhouetteMeshSet? meshes = null;
                 try
                 {
-                    meshes = LodSilhouetteField.BuildMeshes(neighbourhood, mask, sea,
+                    meshes = LodSilhouetteField.BuildMeshes(neighbourhood,
+                        coverageNeighbourhood, sea,
                         hillSoftness: softness);
                 }
                 catch (Exception e)

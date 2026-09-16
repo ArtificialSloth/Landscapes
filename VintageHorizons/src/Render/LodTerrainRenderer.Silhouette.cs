@@ -68,6 +68,7 @@ public partial class LodTerrainRenderer
     internal float SilhouetteLightLevelBias = 0.70f;
     internal float SilhouetteFadeBias = 0.4f;
     internal float SilhouetteGlobeEffect = 0.05f;
+    internal float SilhouetteUnderlayDepthBlocks = LodSilhouetteField.DefaultUnderlayDepthBlocks;
     internal float SilhouetteOutlineDetail = LodSilhouetteField.DefaultOutlineDetail;
 
     internal int SilhouetteDrawsLastFrame { get; private set; }
@@ -167,7 +168,7 @@ public partial class LodTerrainRenderer
         float reach = silhouettes.ReachBlocks;
         // The buried near underlay, original near sink and globe curve only lower vertices.
         float drop = SilhouetteGlobeEffect * reach + 5f
-            + LodSilhouetteField.UnderlaySinkBlocks;
+            + SilhouetteUnderlayDepthBlocks;
         const int tileBlocks = LodSilhouetteTile.TileBlocks;
 
         IShaderProgram p = silhouetteProg;
@@ -188,15 +189,12 @@ public partial class LodTerrainRenderer
         p.Uniform("farViewDistance", reach);
         p.Uniform("globeStart", EffectiveFarDistance);
         p.Uniform("globeEffect", SilhouetteGlobeEffect);
-        p.Uniform("underlaySinkBlocks", LodSilhouetteField.UnderlaySinkBlocks);
+        p.Uniform("underlaySinkBlocks", SilhouetteUnderlayDepthBlocks);
         p.Uniform("silhouetteSkyTint", SilhouetteSkyTint);
         p.Uniform("silhouetteColorTint", SilhouetteColorTint);
         p.Uniform("silhouetteLightLevelBias", SilhouetteLightLevelBias);
         p.Uniform("silhouetteFadeBias", SilhouetteFadeBias);
         p.Uniform("silhouetteSeaLevel", capi.World.SeaLevel);
-        float cacheDistStart = ApprovedViewDistance() * 0.785f;
-        p.Uniform("cacheFadeStart", cacheDistStart
-            + 0.75f * Math.Max(0f, EffectiveFarDistance - cacheDistStart - 512f));
 
         double reachSq = (double)reach * reach;
         foreach (SilhouetteGpuMesh mesh in silhouetteMeshes.Values)
@@ -293,6 +291,7 @@ public partial class LodTerrainRenderer
         data.SetVerticesCount(mesh.VertexCount);
         data.SetIndicesCount(mesh.IndexCount);
         data.xyz = mesh.Xyz;
+        data.Uv = mesh.UnderlayUv;
         data.Indices = mesh.Indices;
         return capi.Render.UploadMesh(data);
     }

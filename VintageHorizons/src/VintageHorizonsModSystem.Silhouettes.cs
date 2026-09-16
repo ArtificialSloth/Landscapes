@@ -120,7 +120,8 @@ public partial class VintageHorizonsModSystem
             + $"{renderer.SilhouetteLowDrawsLastFrame} low; "
             + $"{renderer.SilhouetteTrianglesLastFrame:N0} triangles at "
             + $"{renderer.SilhouetteOutlineDetail * 100f:0}% geometry detail, "
-            + $"{s.HillSoftness * 100f:0}% hill softness). "
+            + $"{s.HillSoftness * 100f:0}% hill softness, "
+            + $"{renderer.SilhouetteUnderlayDepthBlocks:0} blocks underlay depth). "
             + $"Shader: {renderer.SilhouetteShaderState}.";
     }
 
@@ -135,6 +136,7 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteLightLevelBias,
         config.SilhouetteFadeBias,
         config.SilhouetteGlobeEffect,
+        config.SilhouetteUnderlayDepthBlocks,
         config.SilhouetteOutlineDetail,
         config.SilhouetteHillSoftness).Normalize();
 
@@ -152,6 +154,7 @@ public partial class VintageHorizonsModSystem
             renderer.SilhouetteLightLevelBias,
             renderer.SilhouetteFadeBias,
             renderer.SilhouetteGlobeEffect,
+            renderer.SilhouetteUnderlayDepthBlocks,
             renderer.SilhouetteOutlineDetail,
             silhouettes.HillSoftness).Normalize();
     }
@@ -171,6 +174,7 @@ public partial class VintageHorizonsModSystem
         renderer.SilhouetteLightLevelBias = value.LightLevelBias;
         renderer.SilhouetteFadeBias = value.FadeBias;
         renderer.SilhouetteGlobeEffect = value.GlobeEffect;
+        renderer.SilhouetteUnderlayDepthBlocks = value.UnderlayDepthBlocks;
         renderer.SilhouetteOutlineDetail = value.OutlineDetail;
         silhouettes.SetReachBlocks(value.ReachBlocks);
         silhouettes.SetHillSoftness(value.HillSoftness);
@@ -191,6 +195,7 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteLightLevelBias = value.LightLevelBias;
         config.SilhouetteFadeBias = value.FadeBias;
         config.SilhouetteGlobeEffect = value.GlobeEffect;
+        config.SilhouetteUnderlayDepthBlocks = value.UnderlayDepthBlocks;
         config.SilhouetteOutlineDetail = value.OutlineDetail;
         config.SilhouetteHillSoftness = value.HillSoftness;
     }
