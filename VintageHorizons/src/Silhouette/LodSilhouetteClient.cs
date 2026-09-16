@@ -14,7 +14,8 @@ namespace VintageHorizons.Silhouette;
 /// the network intake queue and the mesh jobs. A held tile is never changed: a newer revision
 /// replaces it whole, which is what lets a mesh job read its neighbourhood without a copy.
 ///
-/// Session-only and off by default until the Silhouettes tab exists (P4).
+/// The saved P4 client switch owns whether this object does any work. Off drops all CPU state and
+/// advances the epoch, which also makes every already-running worker result stale.
 /// </summary>
 internal sealed class LodSilhouetteClient
 {
@@ -44,9 +45,10 @@ internal sealed class LodSilhouetteClient
     int seaLevel;
     double lastX, lastZ;
     long knownCells;
+    long capturedCells, previewCells, acceleratorCells;
 
     public readonly record struct MeshResult(long Key, int TileX, int TileZ, int Version, int Epoch,
-        LodSilhouetteMeshArrays? Mesh, bool Removal = false);
+        LodSilhouetteMeshSet? Meshes, bool Removal = false);
 
     public LodSilhouetteClient(ILogger logger, Func<bool> available,
         System.Func<bool, int, long, bool> sendRequest,
@@ -73,6 +75,9 @@ internal sealed class LodSilhouetteClient
 
     /// <summary>Cells with a height, across every tile held.</summary>
     public long KnownCells => knownCells;
+    public long CapturedCells => capturedCells;
+    public long PreviewCells => previewCells;
+    public long AcceleratorCells => acceleratorCells;
 
     public int PendingMeshes => dirty.Count + Volatile.Read(ref jobsInFlight);
     public int TilesReceived, TilesRejected, MeshesBuilt, EmptyMeshes, MeshFailures;
@@ -85,6 +90,16 @@ internal sealed class LodSilhouetteClient
 
         // Off is the last silhouette message until the player switches it back on (plan 4.10).
         if (requestSent && available()) sendRequest(false, ReachBlocks, transfer.SessionId);
+        Clear();
+    }
+
+    public void SetReachBlocks(int blocks)
+    {
+        int clamped = LodSilhouetteSettings.ClampReach(blocks);
+        if (ReachBlocks == clamped) return;
+        if (enabled && requestSent && available())
+            sendRequest(false, ReachBlocks, transfer.SessionId);
+        ReachBlocks = clamped;
         Clear();
     }
 
@@ -116,6 +131,7 @@ internal sealed class LodSilhouetteClient
         coverageCursor = 0;
         lastPruneTileX = lastPruneTileZ = int.MinValue;
         knownCells = 0;
+        capturedCells = previewCells = acceleratorCells = 0;
         while (manifests.TryDequeue(out _)) { }
         while (arrivals.TryDequeue(out _)) { }
         while (finished.TryDequeue(out _)) { }
@@ -216,6 +232,7 @@ internal sealed class LodSilhouetteClient
             if (Keep(entry.Key)) continue;
             (removed ??= new List<long>()).Add(entry.Key);
             knownCells -= entry.Value.KnownCells;
+            CountSources(entry.Value, -1);
             coverage.Remove(entry.Key);
             dirty.Remove(entry.Key);
             int version = meshVersion.GetValueOrDefault(entry.Key) + 1;
@@ -265,12 +282,30 @@ internal sealed class LodSilhouetteClient
         TilesReceived++;
         if (held == null) tileOrder.Add(key);
         knownCells += tile.KnownCells - (held?.KnownCells ?? 0);
+        if (held != null) CountSources(held, -1);
+        CountSources(tile, 1);
         tiles[key] = tile;
 
         // A tile's heights reach into its neighbours' fills, so they re-mesh with it.
         foreach ((int tx, int tz) in LodSilhouetteField.TilesReading(tile.TileX, tile.TileZ))
             dirty.Add(LodSilhouetteTile.KeyOf(tx, tz));
         return true;
+    }
+
+    void CountSources(LodSilhouetteTile tile, int direction)
+    {
+        for (int z = 0; z < LodSilhouetteTile.CellsPerEdge; z++)
+        {
+            for (int x = 0; x < LodSilhouetteTile.CellsPerEdge; x++)
+            {
+                switch (tile.OriginAt(x, z))
+                {
+                    case EnumSilhouetteOrigin.Captured: capturedCells += direction; break;
+                    case EnumSilhouetteOrigin.Preview: previewCells += direction; break;
+                    case EnumSilhouetteOrigin.Accelerator: acceleratorCells += direction; break;
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -330,14 +365,17 @@ internal sealed class LodSilhouetteClient
                     neighbourhood[dz + radius, dx + radius] = tiles.GetValueOrDefault(
                         LodSilhouetteTile.KeyOf(tile.TileX + dx, tile.TileZ + dz));
 
+            // Live LodSections are owner-thread objects. Copy only the visible top heights that
+            // boundary vertices may need; the worker never observes a mutable section.
+            float[] anchors = CaptureAnchors(world, tile.TileX, tile.TileZ, mask);
             int tileX = tile.TileX, tileZ = tile.TileZ, epoch = Epoch, sea = seaLevel;
             Interlocked.Increment(ref jobsInFlight);
             Task.Run(() =>
             {
-                LodSilhouetteMeshArrays? mesh = null;
+                LodSilhouetteMeshSet? meshes = null;
                 try
                 {
-                    mesh = LodSilhouetteField.BuildMesh(neighbourhood, mask, sea);
+                    meshes = LodSilhouetteField.BuildMeshes(neighbourhood, mask, sea, anchors);
                 }
                 catch (Exception e)
                 {
@@ -346,11 +384,68 @@ internal sealed class LodSilhouetteClient
                 }
                 finally
                 {
-                    finished.Enqueue(new MeshResult(key, tileX, tileZ, version, epoch, mesh));
+                    finished.Enqueue(new MeshResult(key, tileX, tileZ, version, epoch, meshes));
                     Interlocked.Decrement(ref jobsInFlight);
                 }
             });
         }
+    }
+
+    static float[] CaptureAnchors(LodWorld world, int tileX, int tileZ, ulong mask)
+    {
+        int edge = LodSilhouetteField.AnchorVerticesPerEdge;
+        int spacing = LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge;
+        int cells = LodSilhouetteTile.TileBlocks / LodSection.SectionBlocks;
+        var result = new float[edge * edge];
+        Array.Fill(result, float.NaN);
+
+        for (int vz = 0; vz < edge; vz++)
+        {
+            int blockZ = vz * spacing;
+            int cellZ = Math.Min(cells - 1, blockZ / LodSection.SectionBlocks);
+            int minDz = blockZ > 0 && blockZ < LodSilhouetteTile.TileBlocks
+                && blockZ % LodSection.SectionBlocks == 0 ? -1 : 0;
+            for (int vx = 0; vx < edge; vx++)
+            {
+                int blockX = vx * spacing;
+                int cellX = Math.Min(cells - 1, blockX / LodSection.SectionBlocks);
+                int minDx = blockX > 0 && blockX < LodSilhouetteTile.TileBlocks
+                    && blockX % LodSection.SectionBlocks == 0 ? -1 : 0;
+                bool covered = false, uncovered = false;
+                LodSection? source = null;
+                int sourceCellX = 0, sourceCellZ = 0;
+                for (int dz = minDz; dz <= 0; dz++)
+                {
+                    for (int dx = minDx; dx <= 0; dx++)
+                    {
+                        int cx = cellX + dx, cz = cellZ + dz;
+                        if (cx < 0 || cx >= cells || cz < 0 || cz >= cells) continue;
+                        bool cellCovered = LodSilhouetteField.Covered(mask, cx, cz);
+                        covered |= cellCovered;
+                        uncovered |= !cellCovered;
+                        if (!cellCovered || source != null) continue;
+                        long key = LodWorld.SectionKey(0, tileX * cells + cx, tileZ * cells + cz);
+                        if (world.Sections.TryGetValue(key, out LodSection? section))
+                        {
+                            source = section;
+                            sourceCellX = cx;
+                            sourceCellZ = cz;
+                        }
+                    }
+                }
+                if (!covered || !uncovered || source == null) continue;
+
+                int localX = Math.Clamp(blockX - sourceCellX * LodSection.SectionBlocks,
+                    0, LodSection.GridSize - 1);
+                int localZ = Math.Clamp(blockZ - sourceCellZ * LodSection.SectionBlocks,
+                    0, LodSection.GridSize - 1);
+                int col = LodSection.ColumnIndex(localX, localZ);
+                if (!source.Captured[col]) continue;
+                Span<ulong> runs = source.ColumnRuns(col);
+                if (runs.Length > 0) result[vz * edge + vx] = LodSection.RunYTop(runs[0]);
+            }
+        }
+        return result;
     }
 
     long NearestDirty()
@@ -384,7 +479,7 @@ internal sealed class LodSilhouetteClient
                 meshVersion.Remove(result.Key);
                 return true;
             }
-            if (result.Mesh == null && !result.Removal) EmptyMeshes++;
+            if (result.Meshes == null && !result.Removal) EmptyMeshes++;
             else MeshesBuilt++;
             return true;
         }

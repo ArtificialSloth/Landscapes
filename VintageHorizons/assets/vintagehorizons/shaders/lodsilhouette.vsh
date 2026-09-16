@@ -31,6 +31,7 @@ out vec4 rgbaFog;
 out float dist;
 out float fogAmount;
 out float nightVisionStrengthv;
+out vec2 tilePos;
 
 #include vertexflagbits.ash
 #include colorutil.ash
@@ -41,6 +42,7 @@ out float nightVisionStrengthv;
 void main()
 {
     yLevel = vertexPositionIn.y;
+    tilePos = vertexPositionIn.xz;
     worldPos = vec4(vertexPositionIn + tileOrigin, 1.0);
     worldPos = applyGlobalWarping(worldPos);
 

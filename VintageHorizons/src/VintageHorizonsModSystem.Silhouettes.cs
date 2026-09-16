@@ -4,9 +4,8 @@ using VintageHorizons.Silhouette;
 namespace VintageHorizons;
 
 /// <summary>
-/// Horizon silhouettes, first look (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P1): session-only,
-/// off until `.vhsilhouette on`, and available only where the server advertises the feature,
-/// which means singleplayer/LAN by default and dedicated servers whose admin opts in.
+/// Horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P4), available only where the
+/// server advertises the feature. The client preference and appearance are persisted.
 /// </summary>
 public partial class VintageHorizonsModSystem
 {
@@ -43,8 +42,8 @@ public partial class VintageHorizonsModSystem
     void RegisterSilhouetteCommand()
     {
         capi.ChatCommands.Create("vhsilhouette")
-            .WithDescription("Horizon silhouettes, first look: on, off, log or stats. This session "
-                + "only, and only where the server offers them.")
+            .WithDescription("Horizon silhouettes: on, off, log or stats. The command is "
+                + "session-only; the settings tab saves the switch.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("action"))
             .HandleWith(args =>
             {
@@ -54,10 +53,12 @@ public partial class VintageHorizonsModSystem
                 switch (action)
                 {
                     case "on":
-                        silhouettes?.SetEnabled(true);
+                        LodSilhouetteSettings on = CurrentSilhouetteSettings() with { Enabled = true };
+                        ApplySilhouetteSettings(on);
                         break;
                     case "off":
-                        silhouettes?.SetEnabled(false);
+                        LodSilhouetteSettings off = CurrentSilhouetteSettings() with { Enabled = false };
+                        ApplySilhouetteSettings(off);
                         break;
                     case "log":
                     case "stats":
@@ -84,12 +85,82 @@ public partial class VintageHorizonsModSystem
             : s.RequestSent
                 ? $"was asked for a {s.ReachBlocks:N0}-block reach"
                 : "offers them";
-        return $"horizon silhouettes {(s.Enabled ? "on" : "off")} (first look, this session only). "
+        long cells = (long)s.TileCount * LodSilhouetteTile.CellCount;
+        string fill = cells > 0 ? $"{100.0 * s.KnownCells / cells:0.0}%" : "0.0%";
+        string sources = $"sources real {s.CapturedCells:N0}, preview {s.PreviewCells:N0}, "
+            + $"accelerator {s.AcceleratorCells:N0}";
+        return $"horizon silhouettes {(s.Enabled ? "on" : "off")} (the command is session-only). "
             + $"The server {server}. {s.TileCount} tiles held of {s.OfferedTiles} offered "
             + $"({s.TilesInFlight} requested, {s.TilesRefused} refused, {s.TilesRejected} corrupt), "
-            + $"{s.KnownCells:N0} cells with heights, "
+            + $"{s.KnownCells:N0} cells with heights ({fill} fill; {sources}), "
             + $"{renderer.SilhouetteMeshCount} meshes ({s.PendingMeshes} waiting, {s.EmptyMeshes} "
-            + $"with nothing to draw), {renderer.SilhouetteDrawsLastFrame} drawn last frame. "
+            + $"with nothing to draw), {renderer.SilhouetteDrawsLastFrame} drawn last frame "
+            + $"({renderer.SilhouetteHighDrawsLastFrame} high, "
+            + $"{renderer.SilhouetteMediumDrawsLastFrame} medium, "
+            + $"{renderer.SilhouetteLowDrawsLastFrame} low). "
             + $"Shader: {renderer.SilhouetteShaderState}.";
+    }
+
+    LodSilhouetteSettings ConfiguredSilhouetteSettings() => new LodSilhouetteSettings(
+        config.HorizonSilhouettes,
+        config.SilhouetteReachBlocks,
+        config.SilhouetteSkyTint,
+        config.SilhouetteTintRed,
+        config.SilhouetteTintGreen,
+        config.SilhouetteTintBlue,
+        config.SilhouetteTintStrength,
+        config.SilhouetteLightLevelBias,
+        config.SilhouetteFadeBias,
+        config.SilhouetteGlobeEffect).Normalize();
+
+    LodSilhouetteSettings CurrentSilhouetteSettings()
+    {
+        if (deferringTo != null || silhouettes == null) return ConfiguredSilhouetteSettings();
+        return new LodSilhouetteSettings(
+            silhouettes.Enabled,
+            silhouettes.ReachBlocks,
+            renderer.SilhouetteSkyTint,
+            renderer.SilhouetteColorTint.R,
+            renderer.SilhouetteColorTint.G,
+            renderer.SilhouetteColorTint.B,
+            renderer.SilhouetteColorTint.A,
+            renderer.SilhouetteLightLevelBias,
+            renderer.SilhouetteFadeBias,
+            renderer.SilhouetteGlobeEffect).Normalize();
+    }
+
+    void PreviewSilhouetteSettings(LodSilhouetteSettings value)
+    {
+        if (deferringTo == null) ApplySilhouetteSettings(value);
+    }
+
+    void ApplySilhouetteSettings(LodSilhouetteSettings value)
+    {
+        value = value.Normalize();
+        if (deferringTo != null || silhouettes == null) return;
+        renderer.SilhouetteSkyTint = value.SkyTint;
+        renderer.SilhouetteColorTint = new Vintagestory.API.MathTools.Vec4f(
+            value.TintRed, value.TintGreen, value.TintBlue, value.TintStrength);
+        renderer.SilhouetteLightLevelBias = value.LightLevelBias;
+        renderer.SilhouetteFadeBias = value.FadeBias;
+        renderer.SilhouetteGlobeEffect = value.GlobeEffect;
+        silhouettes.SetReachBlocks(value.ReachBlocks);
+        silhouettes.SetEnabled(value.Enabled);
+        if (!value.Enabled) renderer.ReleaseSilhouetteMeshes();
+    }
+
+    void WriteSilhouetteSettings(LodSilhouetteSettings value)
+    {
+        value = value.Normalize();
+        config.HorizonSilhouettes = value.Enabled;
+        config.SilhouetteReachBlocks = value.ReachBlocks;
+        config.SilhouetteSkyTint = value.SkyTint;
+        config.SilhouetteTintRed = value.TintRed;
+        config.SilhouetteTintGreen = value.TintGreen;
+        config.SilhouetteTintBlue = value.TintBlue;
+        config.SilhouetteTintStrength = value.TintStrength;
+        config.SilhouetteLightLevelBias = value.LightLevelBias;
+        config.SilhouetteFadeBias = value.FadeBias;
+        config.SilhouetteGlobeEffect = value.GlobeEffect;
     }
 }

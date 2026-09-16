@@ -52,12 +52,17 @@ internal static class LodThresholdScaleLayout
         int snapped = (int)Math.Round(value / VanillaDistanceStep) * VanillaDistanceStep;
         return Math.Clamp(snapped, MinVanillaDistance, MaxVanillaDistance);
     }
+
+    internal static int SnapDrawDistance(double value) => LodSilhouetteSettings.ClampReach(
+        (int)Math.Round(value));
+
+    internal static int SnapSilhouetteReach(double value, int drawDistance) => Math.Max(
+        SnapDrawDistance(drawDistance), LodSilhouetteSettings.ClampReach((int)Math.Round(value)));
 }
 
 /// <summary>
-/// One logarithmic distance map with six draggable LOD boundaries. The coloured spans answer the
-/// question the old bare line did not: which LOD is used between any two markers. A separate white
-/// handle adjusts the player's vanilla render distance on the same scale.
+/// One logarithmic distance map with six draggable LOD boundaries plus the real Vanilla, cached
+/// draw, and silhouette-reach handles. The faint blue span is the silhouette's territory.
 /// </summary>
 internal sealed class LodThresholdScaleElement : GuiElementControl
 {
@@ -82,18 +87,27 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
 
     readonly Action<int, int> onChanged;
     readonly Action<int> onVanillaChanged;
+    readonly Action<int> onDrawDistanceChanged;
+    readonly Action<int> onSilhouetteReachChanged;
     readonly int[] values = new int[LodWorld.MaxLevel];
     readonly LoadedTexture[] markerLabels = new LoadedTexture[LodWorld.MaxLevel];
     readonly LoadedTexture[] bandLabels = new LoadedTexture[LodWorld.MaxLevel + 1];
     readonly LoadedTexture vanillaBandLabel;
     LoadedTexture vanillaLabel;
+    LoadedTexture drawLabel;
+    LoadedTexture silhouetteLabel;
     LoadedTexture solidTexture;
     int vanillaViewDistance;
+    int drawDistance;
+    int silhouetteReach;
+    bool silhouettesEnabled;
     int vanillaAtDragStart;
     int dragging = NoMarker;
 
     const int NoMarker = -1;
     const int VanillaMarker = LodWorld.MaxLevel;
+    const int DrawMarker = LodWorld.MaxLevel + 1;
+    const int SilhouetteMarker = LodWorld.MaxLevel + 2;
 
     public override bool Focusable => true;
 
@@ -104,14 +118,22 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
     public bool ReadOnly { get; set; }
 
     public LodThresholdScaleElement(ICoreClientAPI api, IReadOnlyList<int> initialValues,
-        int vanillaViewDistance, Action<int, int> onChanged, Action<int> onVanillaChanged,
+        int vanillaViewDistance, int drawDistance, int silhouetteReach, bool silhouettesEnabled,
+        Action<int, int> onChanged, Action<int> onVanillaChanged,
+        Action<int> onDrawDistanceChanged, Action<int> onSilhouetteReachChanged,
         ElementBounds bounds) : base(api, bounds)
     {
         this.onChanged = onChanged;
         this.onVanillaChanged = onVanillaChanged;
+        this.onDrawDistanceChanged = onDrawDistanceChanged;
+        this.onSilhouetteReachChanged = onSilhouetteReachChanged;
         this.vanillaViewDistance = Math.Clamp(vanillaViewDistance,
             LodThresholdScaleLayout.MinVanillaDistance,
             LodThresholdScaleLayout.MaxVanillaDistance);
+        this.drawDistance = LodThresholdScaleLayout.SnapDrawDistance(drawDistance);
+        this.silhouetteReach = LodThresholdScaleLayout.SnapSilhouetteReach(
+            silhouetteReach, this.drawDistance);
+        this.silhouettesEnabled = silhouettesEnabled;
         SetValues(initialValues);
         MouseOverCursor = "move";
 
@@ -137,6 +159,8 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
             "Vanilla", CairoFont.WhiteDetailText(), scaledi(54), scaledi(20),
             null!, EnumTextOrientation.Center, true);
         vanillaLabel = NewVanillaLabel();
+        drawLabel = NewDistanceLabel("Cache", this.drawDistance);
+        silhouetteLabel = NewDistanceLabel("Sil", this.silhouetteReach);
 
         solidTexture = new LoadedTexture(api, 0, 1, 1);
         api.Render.LoadOrUpdateTextureFromRgba(
@@ -160,6 +184,26 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
         vanillaViewDistance = clamped;
         vanillaLabel.Dispose();
         vanillaLabel = NewVanillaLabel();
+    }
+
+    public void SetDrawDistance(int value)
+    {
+        int next = LodThresholdScaleLayout.SnapDrawDistance(value);
+        if (drawDistance == next) return;
+        drawDistance = next;
+        drawLabel.Dispose();
+        drawLabel = NewDistanceLabel("Cache", drawDistance);
+        SetSilhouette(silhouetteReach, silhouettesEnabled);
+    }
+
+    public void SetSilhouette(int reach, bool enabled)
+    {
+        int next = LodThresholdScaleLayout.SnapSilhouetteReach(reach, drawDistance);
+        silhouettesEnabled = enabled;
+        if (silhouetteReach == next) return;
+        silhouetteReach = next;
+        silhouetteLabel.Dispose();
+        silhouetteLabel = NewDistanceLabel("Sil", silhouetteReach);
     }
 
     public override void RenderInteractiveElements(float deltaTime)
@@ -204,6 +248,27 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
                     x + (segmentWidth - label.Width) / 2f,
                     bandY + (bandHeight - label.Height) / 2f, z + 1);
             }
+        }
+
+        // Cached terrain stops at its handle. Keep its LOD bands visible beyond that point as a
+        // planning reference, but dim them so the map does not claim they are drawn. When the
+        // silhouette switch is on, its translucent span begins at exactly the same edge.
+        float drawFraction = LodThresholdScaleLayout.FractionFor(drawDistance);
+        float drawX = left + width * drawFraction;
+        if (drawX < left + width)
+            api.Render.Render2DTexture(solidTexture.TextureId, drawX, bandY,
+                left + width - drawX, bandHeight, z + 1.2f,
+                new Vec4f(0.02f, 0.02f, 0.03f, 0.34f));
+        if (silhouettesEnabled)
+        {
+            float silhouetteX = left + width
+                * LodThresholdScaleLayout.FractionFor(silhouetteReach);
+            float silhouetteWidth = Math.Max(1, silhouetteX - drawX);
+            api.Render.Render2DTexture(solidTexture.TextureId, drawX, bandY,
+                silhouetteWidth, bandHeight, z + 1.3f,
+                new Vec4f(0.22f, 0.34f, 0.58f, 0.30f));
+            RenderBandBorder(drawX, bandY, silhouetteWidth, bandHeight, z + 1.4f,
+                ColorUtil.ToRgba(175, 112, 154, 218));
         }
 
         // Powers of two remain useful landmarks, but are deliberately quieter than the LOD
@@ -257,13 +322,20 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
                     (float)scaled(38), (float)scaled(28), color);
             }
         }
+
+
+        RenderDistanceMarker(drawDistance, drawLabel, false,
+            ColorUtil.ToRgba(255, 238, 178, 72), left, width, bandY, bandHeight, z);
+        if (silhouettesEnabled)
+            RenderDistanceMarker(silhouetteReach, silhouetteLabel, true,
+                ColorUtil.ToRgba(255, 126, 177, 242), left, width, bandY, bandHeight, z);
     }
 
     public override void OnMouseDownOnElement(ICoreClientAPI api, MouseEvent args)
     {
         if (args.Button != EnumMouseButton.Left) return;
         dragging = NearestMarker(args.X, args.Y);
-        if (ReadOnly && dragging != VanillaMarker)
+        if (ReadOnly && dragging >= 0 && dragging < LodWorld.MaxLevel)
         {
             dragging = NoMarker;
             return;
@@ -306,6 +378,20 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
         double vanillaDy = mouseY - vanillaY;
         nearestDistance = vanillaDx * vanillaDx + vanillaDy * vanillaDy;
 
+        void Consider(int marker, int value, bool below)
+        {
+            double x = left + width * LodThresholdScaleLayout.FractionFor(value);
+            double y = bandY + (below ? scaled(58) : -scaled(18));
+            double dx = mouseX - x, dy = mouseY - y;
+            double distance = dx * dx + dy * dy;
+            if (distance >= nearestDistance) return;
+            nearestDistance = distance;
+            nearest = marker;
+        }
+
+        Consider(DrawMarker, drawDistance, false);
+        if (silhouettesEnabled) Consider(SilhouetteMarker, silhouetteReach, true);
+
         for (int i = 0; i < values.Length; i++)
         {
             double x = left + width * LodThresholdScaleLayout.FractionFor(values[i]);
@@ -335,6 +421,25 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
             SetVanillaDistance(LodThresholdScaleLayout.SnapVanillaDistance(raw));
             return;
         }
+        if (dragging == DrawMarker)
+        {
+            int next = LodThresholdScaleLayout.SnapDrawDistance(raw);
+            if (next == drawDistance) return;
+            int oldSilhouetteReach = silhouetteReach;
+            SetDrawDistance(next);
+            onDrawDistanceChanged(drawDistance);
+            if (silhouetteReach != oldSilhouetteReach)
+                onSilhouetteReachChanged(silhouetteReach);
+            return;
+        }
+        if (dragging == SilhouetteMarker)
+        {
+            int next = LodThresholdScaleLayout.SnapSilhouetteReach(raw, drawDistance);
+            if (next == silhouetteReach) return;
+            SetSilhouette(next, silhouettesEnabled);
+            onSilhouetteReachChanged(silhouetteReach);
+            return;
+        }
 
         int value = (int)Math.Round(raw / LodWorld.ThresholdStepBlocks)
             * LodWorld.ThresholdStepBlocks;
@@ -358,6 +463,8 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
         foreach (LoadedTexture label in bandLabels) label?.Dispose();
         vanillaBandLabel.Dispose();
         vanillaLabel.Dispose();
+        drawLabel.Dispose();
+        silhouetteLabel.Dispose();
         solidTexture?.Dispose();
         base.Dispose();
     }
@@ -365,6 +472,27 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
     LoadedTexture NewVanillaLabel() => api.Gui.TextTexture.GenTextTexture(
         $"Vanilla {vanillaViewDistance:N0}", CairoFont.WhiteDetailText(),
         scaledi(112), scaledi(20), null!, EnumTextOrientation.Center, true);
+
+    LoadedTexture NewDistanceLabel(string name, int value) => api.Gui.TextTexture.GenTextTexture(
+        $"{name} {value:N0}", CairoFont.WhiteDetailText(), scaledi(112), scaledi(20),
+        null!, EnumTextOrientation.Center, true);
+
+    void RenderDistanceMarker(int value, LoadedTexture label, bool below, int color,
+        float left, float width, float bandY, float bandHeight, float z)
+    {
+        float x = left + width * LodThresholdScaleLayout.FractionFor(value);
+        float handleY = bandY + (below ? (float)scaled(46) : -(float)scaled(30));
+        float connectorY = below ? bandY + bandHeight : handleY + (float)scaled(24);
+        api.Render.RenderRectangle(x, Math.Min(connectorY, bandY), z + 2,
+            2, Math.Abs(bandY - connectorY) + (float)scaled(1), color);
+        float labelX = Math.Clamp(x - label.Width / 2f, left, left + width - label.Width);
+        api.Render.RenderRectangle(labelX - (float)scaled(3), handleY, z + 2,
+            label.Width + (float)scaled(6), label.Height + (float)scaled(2), color);
+        api.Render.Render2DTexture(solidTexture.TextureId, labelX - (float)scaled(2),
+            handleY + (float)scaled(1), label.Width + (float)scaled(4), label.Height, z + 2.1f,
+            new Vec4f(0.08f, 0.08f, 0.08f, 0.94f));
+        api.Render.Render2DLoadedTexture(label, labelX, handleY, z + 3);
+    }
 
     void RenderBandBorder(float x, float y, float width, float height, float z, int color)
     {

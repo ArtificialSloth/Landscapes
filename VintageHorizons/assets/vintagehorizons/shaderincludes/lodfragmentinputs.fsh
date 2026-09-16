@@ -336,6 +336,14 @@ uniform float sunLightLevel;
 uniform int lightSkyDayLight;
 uniform float skyDayLight;
 
+// P4 horizon handoff. Zero preserves the established sky fade byte-for-byte; one changes only
+// its target to the exact colour function used by the silhouette pass.
+uniform int silhouetteEnabled;
+uniform float silhouetteSkyTint;
+uniform vec4 silhouetteColorTint;
+uniform float silhouetteLightLevelBias;
+uniform int silhouetteSeaLevel;
+
 // ---- Per-section facts ------------------------------------------------------
 //
 // The two values below describe the section rather than the fragment. The established
@@ -414,6 +422,7 @@ layout(location = 3) out vec4 outGPosition;
 #include fogandlight.fsh
 #include skycolor.fsh
 #include underwatereffects.fsh
+#include lodsilhouettecolor.fsh
 
 // Immutable vanilla-only depth, never the attached liquid-depth destination. The depth
 // and OIT surface passes both read the same snapshot so a clear boundary pixel cannot get

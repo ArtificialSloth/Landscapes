@@ -12,6 +12,7 @@ in vec4 rgbaFog;
 in float dist;
 in float fogAmount;
 in float nightVisionStrengthv;
+in vec2 tilePos;
 
 uniform float fogDensityIn;
 uniform float fogMinIn;
@@ -20,11 +21,14 @@ uniform vec3 sunPosition;
 uniform vec3 sunColor;
 uniform float dayLight;
 
-uniform float skyTint;
-uniform vec4 colorTint;
-uniform float lightLevelBias;
-uniform float fadeBias;
-uniform int seaLevel;
+uniform float silhouetteSkyTint;
+uniform vec4 silhouetteColorTint;
+uniform float silhouetteLightLevelBias;
+uniform float silhouetteFadeBias;
+uniform int silhouetteSeaLevel;
+uniform int coveredCellsLow;
+uniform int coveredCellsHigh;
+uniform float cacheFadeStart;
 
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outGlow;
@@ -38,29 +42,24 @@ layout(location = 3) out vec4 outGPosition;
 #include fogandlight.fsh
 #include skycolor.fsh
 #include underwatereffects.fsh
-
-float silhouetteBias(float value, float b)
-{
-    return pow(value, log(0.5) / log(b));
-}
-
-vec3 silhouetteBias(vec3 value, float b)
-{
-    return pow(value, vec3(log(0.5) / log(b)));
-}
+#include lodsilhouettecolor.fsh
 
 void main()
 {
     if (dist < 0.0 || dist > 1.0) discard;
 
+    ivec2 coveredCell = clamp(ivec2(floor(tilePos / 64.0)), ivec2(0), ivec2(7));
+    int coveredBit = coveredCell.y * 8 + coveredCell.x;
+    int coveredWord = coveredBit < 32 ? coveredCellsLow : coveredCellsHigh;
+    bool cachedCell = (coveredWord & (1 << (coveredBit & 31))) != 0;
+    if (cachedCell && length(worldPos.xz) < cacheFadeStart) discard;
+
     // The sky with a height-dependent offset is the terrain's own colour.
-    vec4 terraColor = vec4(1.0);
-    vec4 terraGlow = vec4(1.0);
-    float a = float(seaLevel) + 2.0;
-    float b = float(seaLevel) - 1.0;
-    float sealevelOffsetFactor = skyTint + ((yLevel - a) / (b - a)) * (-skyTint);
-    getSkyColorAt(worldPos.xyz, sunPosition, sealevelOffsetFactor, clamp(dayLight, 0.0, 1.0),
-        horizonFog, terraColor, terraGlow);
+    vec4 terraColor;
+    vec4 terraGlow;
+    vhSilhouetteTerrainColor(worldPos.xyz, yLevel, sunPosition, sunColor, dayLight,
+        horizonFog, fogAmount, silhouetteSkyTint, silhouetteColorTint,
+        silhouetteLightLevelBias, terraColor, terraGlow);
 
     // The real sky, for the fade.
     vec4 skyColor = vec4(1.0);
@@ -72,13 +71,9 @@ void main()
     skyColor.rgb = applyUnderwaterEffects(skyColor.rgb, murkiness);
     skyGlow.y *= clamp((dayLight - 0.05) * 2.0 - 50.0 * murkiness, 0.0, 1.0);
 
-    terraColor.rgb = mix(terraColor.rgb, colorTint.rgb, colorTint.a);
-    terraColor.rgb *= silhouetteBias(clamp(sunColor * dayLight, 0.0, 1.0), lightLevelBias);
-    terraColor = applyFog(terraColor, fogAmount);
-    terraColor = applySpheresFog(terraColor, fogAmount, worldPos.xyz);
     terraGlow *= dist;
 
-    float fade = min(1.0, silhouetteBias(dist, fadeBias));
+    float fade = min(1.0, vhSilhouetteBias(dist, silhouetteFadeBias));
     outColor = mix(terraColor, skyColor, fade);
     outGlow = mix(terraGlow, skyGlow, fade);
 

@@ -141,6 +141,21 @@ public class VintageHorizonsConfig
     public bool DistantAntiAliasing = true;
 
     /// <summary>
+    /// Coarse terrain beyond the cached world. The client owns the switch, reach and appearance;
+    /// a server may refuse to supply tiles, but cannot silently turn the saved preference off.
+    /// </summary>
+    public bool HorizonSilhouettes = true;
+    public int SilhouetteReachBlocks = 8192;
+    public float SilhouetteSkyTint = 5f;
+    public float SilhouetteTintRed = 0.26f;
+    public float SilhouetteTintGreen = 0.29f;
+    public float SilhouetteTintBlue = 0.45f;
+    public float SilhouetteTintStrength = 0.40f;
+    public float SilhouetteLightLevelBias = 0.70f;
+    public float SilhouetteFadeBias = 0.40f;
+    public float SilhouetteGlobeEffect = 0.05f;
+
+    /// <summary>
     /// Choose L1-L6 from the field of view and render resolution instead of the fixed
     /// LodThresholds above, so every level hands over at the same size on screen and follows
     /// those settings when they change. The fixed list is kept untouched for when this is off.
@@ -360,6 +375,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         renderer.ContinueLoadingWhilePaused = config.LoadWhilePaused;
         renderer.PausedLoadingPump = PumpPausedLoading;
         CreateSilhouettes();
+        ApplySilhouetteSettings(ConfiguredSilhouetteSettings());
 
         // Install only after the competing-LOD return above. The adapter changes no
         // atmosphere, client setting, culling or streaming state: it moves only vanilla
@@ -2481,6 +2497,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             deferringTo == null && renderer.TaaShowWeight,
             PreviewTaaTuning,
             () => deferringTo == null ? renderer.ScreenBlockScale : 0f);
+        var silhouetteTuning = new SilhouetteTuning(
+            CurrentSilhouetteSettings(), PreviewSilhouetteSettings, DescribeSilhouettes);
         var vanilla = new VanillaDistanceTuning(
             Math.Max(1, ClientSettings.ViewDistance), ApplyVanillaViewDistance);
         bool loadWhilePaused = deferringTo == null
@@ -2506,11 +2524,11 @@ public partial class VintageHorizonsModSystem : ModSystem
         return requestRecompose != null && requestClose != null
             ? new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
-                loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, worldGen,
+                loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, silhouetteTuning, worldGen,
                 requestRecompose, requestClose, ApplyGuiConfig)
             : new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
-                loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, worldGen,
+                loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, silhouetteTuning, worldGen,
                 ApplyGuiConfig);
     }
 
@@ -4461,7 +4479,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             System.Globalization.CultureInfo.CurrentCulture, out value);
 
     void ApplyGuiConfig(int[] thresholds, bool autoThresholds, int farViewDistanceCap,
-        bool loadWhilePaused, LodVisualSettings visuals, LodTaaDials taaDials)
+        bool loadWhilePaused, LodVisualSettings visuals, LodTaaDials taaDials,
+        LodSilhouetteSettings silhouetteSettings)
     {
         // The fixed list is the player's own and is kept whichever mode is chosen; automatic mode
         // only stops it being the one in force.
@@ -4471,6 +4490,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.AutoLodThresholds = autoThresholds;
         config.FarViewDistanceCap = farViewDistanceCap;
         config.LoadWhilePaused = loadWhilePaused;
+        WriteSilhouetteSettings(silhouetteSettings);
 
         if (deferringTo == null)
         {
@@ -4480,6 +4500,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             renderer.ContinueLoadingWhilePaused = loadWhilePaused;
             ApplyVisualSettings(visuals);
             renderer.TaaDials = taaDials;
+            ApplySilhouetteSettings(silhouetteSettings);
         }
         else
         {

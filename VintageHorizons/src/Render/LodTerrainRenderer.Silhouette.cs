@@ -5,12 +5,11 @@ using VintageHorizons.Silhouette;
 namespace VintageHorizons;
 
 /// <summary>
-/// The silhouette pass (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER 4.8), first-look slice.
+/// The silhouette pass (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P4).
 ///
 /// Drawn by this renderer rather than a second one, so the far plane keeps one owner (G5). It
 /// runs as its own step after the cached draw, because that draw returns early whenever no
-/// cached terrain is in view, and a view out to sea is exactly that case. No join blending yet:
-/// the cached terrain's edge still fades to sky (P4 changes the fade target).
+/// cached terrain is in view, and a view out to sea is exactly that case.
 /// </summary>
 public partial class LodTerrainRenderer
 {
@@ -19,11 +18,28 @@ public partial class LodTerrainRenderer
 
     sealed class SilhouetteGpuMesh
     {
-        public required MeshRef Mesh;
+        public required MeshRef High;
+        public required MeshRef Medium;
+        public required MeshRef Low;
         public required int TileX;
         public required int TileZ;
         public required float MinY;
         public required float MaxY;
+        public required ulong CoveredCells;
+
+        public MeshRef At(int quadsPerEdge) => quadsPerEdge switch
+        {
+            LodSilhouetteField.HighQuadsPerEdge => High,
+            LodSilhouetteField.MediumQuadsPerEdge => Medium,
+            _ => Low,
+        };
+
+        public void Dispose()
+        {
+            High.Dispose();
+            Medium.Dispose();
+            Low.Dispose();
+        }
     }
 
     readonly Dictionary<long, SilhouetteGpuMesh> silhouetteMeshes = new();
@@ -34,6 +50,8 @@ public partial class LodTerrainRenderer
     int silhouetteMeshEpoch = -1;
 
     const int SilhouetteUploadsPerFrame = 4;
+    const long SilhouetteUploadBytesPerFrame = 2 * 1024 * 1024;
+    const double SilhouetteUploadMillisecondsPerFrame = 2.0;
 
     // Farseer 1.4.0's client defaults: the classic look (owner decision D11) until they are tuned.
     internal float SilhouetteSkyTint = 5.0f;
@@ -43,7 +61,15 @@ public partial class LodTerrainRenderer
     internal float SilhouetteGlobeEffect = 0.05f;
 
     internal int SilhouetteDrawsLastFrame { get; private set; }
+    internal int SilhouetteHighDrawsLastFrame { get; private set; }
+    internal int SilhouetteMediumDrawsLastFrame { get; private set; }
+    internal int SilhouetteLowDrawsLastFrame { get; private set; }
     internal int SilhouetteMeshCount => silhouetteMeshes.Count;
+    int silhouetteUploadFailures;
+
+    /// <summary>Cached terrain changes its fade target only when a silhouette can actually draw.</summary>
+    bool SilhouetteFadeTargetActive => Silhouettes is { Enabled: true }
+        && silhouetteShaderOk && silhouetteMeshes.Count > 0;
 
     internal string SilhouetteShaderState => !silhouetteShaderWanted
         ? "not compiled (never switched on)"
@@ -87,18 +113,11 @@ public partial class LodTerrainRenderer
     void DrawSilhouettes()
     {
         SilhouetteDrawsLastFrame = 0;
+        SilhouetteHighDrawsLastFrame = 0;
+        SilhouetteMediumDrawsLastFrame = 0;
+        SilhouetteLowDrawsLastFrame = 0;
         LodSilhouetteClient? silhouettes = Silhouettes;
         if (silhouettes == null || !silhouettes.Enabled)
-        {
-            if (silhouetteMeshes.Count > 0) ReleaseSilhouetteMeshes();
-            return;
-        }
-        if (!silhouetteShaderWanted)
-        {
-            silhouetteShaderWanted = true;
-            LoadSilhouetteShader();
-        }
-        if (!silhouetteShaderOk || silhouetteProg == null || silhouetteProg.LoadError)
         {
             if (silhouetteMeshes.Count > 0) ReleaseSilhouetteMeshes();
             return;
@@ -109,9 +128,25 @@ public partial class LodTerrainRenderer
             silhouetteMeshEpoch = silhouettes.Epoch;
         }
         UploadSilhouetteMeshes(silhouettes);
+        // No offered/decoded tile means no compile either. This keeps a server that does not
+        // offer silhouettes at the exact old render cost even when the saved client switch is on.
+        if (silhouetteMeshes.Count == 0) return;
+        if (!silhouetteShaderWanted)
+        {
+            silhouetteShaderWanted = true;
+            LoadSilhouetteShader();
+        }
+        if (!silhouetteShaderOk || silhouetteProg == null || silhouetteProg.LoadError)
+        {
+            ReleaseSilhouetteMeshes();
+            // A compile/load failure is a session failure, not a per-frame retry. Shutting the
+            // client feature down also stops offers, decoding, meshing and future uploads.
+            silhouettes.SetEnabled(false);
+            return;
+        }
 
         var rapi = capi.Render;
-        if (silhouetteMeshes.Count == 0 || rapi.FrameWidth == 0) return;
+        if (rapi.FrameWidth == 0) return;
 
         // A no-op unless the needed distance changed; a change applies from the next frame.
         ApplyZFar();
@@ -140,11 +175,14 @@ public partial class LodTerrainRenderer
         p.Uniform("farViewDistance", reach);
         p.Uniform("globeStart", EffectiveFarDistance);
         p.Uniform("globeEffect", SilhouetteGlobeEffect);
-        p.Uniform("skyTint", SilhouetteSkyTint);
-        p.Uniform("colorTint", SilhouetteColorTint);
-        p.Uniform("lightLevelBias", SilhouetteLightLevelBias);
-        p.Uniform("fadeBias", SilhouetteFadeBias);
-        p.Uniform("seaLevel", capi.World.SeaLevel);
+        p.Uniform("silhouetteSkyTint", SilhouetteSkyTint);
+        p.Uniform("silhouetteColorTint", SilhouetteColorTint);
+        p.Uniform("silhouetteLightLevelBias", SilhouetteLightLevelBias);
+        p.Uniform("silhouetteFadeBias", SilhouetteFadeBias);
+        p.Uniform("silhouetteSeaLevel", capi.World.SeaLevel);
+        float cacheDistStart = ApprovedViewDistance() * 0.785f;
+        p.Uniform("cacheFadeStart", cacheDistStart
+            + 0.75f * Math.Max(0f, EffectiveFarDistance - cacheDistStart - 512f));
 
         double reachSq = (double)reach * reach;
         foreach (SilhouetteGpuMesh mesh in silhouetteMeshes.Values)
@@ -153,11 +191,19 @@ public partial class LodTerrainRenderer
             double relZ = mesh.TileZ * (double)tileBlocks - cam.Z;
             double nearX = Math.Clamp(0, relX, relX + tileBlocks);
             double nearZ = Math.Clamp(0, relZ, relZ + tileBlocks);
-            if (nearX * nearX + nearZ * nearZ > reachSq) continue;
+            double nearestDistanceSq = nearX * nearX + nearZ * nearZ;
+            if (nearestDistanceSq > reachSq) continue;
             if (!silhouetteFrustum.BoxInView(relX, mesh.MinY - drop - cam.Y, relZ,
                 relX + tileBlocks, mesh.MaxY - cam.Y, relZ + tileBlocks)) continue;
             p.Uniform("tileOrigin", new Vec3f((float)relX, (float)-cam.Y, (float)relZ));
-            rapi.RenderMesh(mesh.Mesh);
+            p.Uniform("coveredCellsLow", unchecked((int)(uint)mesh.CoveredCells));
+            p.Uniform("coveredCellsHigh", unchecked((int)(uint)(mesh.CoveredCells >> 32)));
+            int resolution = LodSilhouetteField.ResolutionFor(
+                ScreenBlockScale, Math.Max(1.0, Math.Sqrt(nearestDistanceSq)), LodTargetPixels);
+            rapi.RenderMesh(mesh.At(resolution));
+            if (resolution == LodSilhouetteField.HighQuadsPerEdge) SilhouetteHighDrawsLastFrame++;
+            else if (resolution == LodSilhouetteField.MediumQuadsPerEdge) SilhouetteMediumDrawsLastFrame++;
+            else SilhouetteLowDrawsLastFrame++;
             SilhouetteDrawsLastFrame++;
         }
         rapi.GlEnableCullFace();
@@ -166,32 +212,80 @@ public partial class LodTerrainRenderer
 
     void UploadSilhouetteMeshes(LodSilhouetteClient silhouettes)
     {
+        long start = System.Diagnostics.Stopwatch.GetTimestamp();
+        long bytes = 0;
         for (int n = 0; n < SilhouetteUploadsPerFrame
              && silhouettes.TryTakeFinished(out LodSilhouetteClient.MeshResult result); n++)
         {
-            if (silhouetteMeshes.Remove(result.Key, out SilhouetteGpuMesh? old)) old.Mesh.Dispose();
-            if (result.Mesh == null) continue;
-
-            var data = new MeshData(false);
-            data.SetVerticesCount(result.Mesh.VertexCount);
-            data.SetIndicesCount(result.Mesh.IndexCount);
-            data.xyz = result.Mesh.Xyz;
-            data.Indices = result.Mesh.Indices;
-            silhouetteMeshes[result.Key] = new SilhouetteGpuMesh
+            if (result.Removal || result.Meshes == null)
             {
-                Mesh = capi.Render.UploadMesh(data),
-                TileX = result.TileX,
-                TileZ = result.TileZ,
-                MinY = result.Mesh.MinY,
-                MaxY = result.Mesh.MaxY,
-            };
+                if (silhouetteMeshes.Remove(result.Key, out SilhouetteGpuMesh? removed))
+                    removed.Dispose();
+                continue;
+            }
+
+            silhouetteMeshes.TryGetValue(result.Key, out SilhouetteGpuMesh? old);
+            SilhouetteGpuMesh? next = null;
+            try
+            {
+                // All three uploads finish before the dictionary changes. A failed replacement
+                // keeps the last complete tile rather than turning a transient upload error into
+                // a visible horizon hole.
+                MeshRef high = UploadSilhouetteMesh(result.Meshes.High);
+                MeshRef medium;
+                MeshRef low;
+                try
+                {
+                    medium = UploadSilhouetteMesh(result.Meshes.Medium);
+                    try { low = UploadSilhouetteMesh(result.Meshes.Low); }
+                    catch { medium.Dispose(); throw; }
+                }
+                catch { high.Dispose(); throw; }
+                next = new SilhouetteGpuMesh
+                {
+                    High = high,
+                    Medium = medium,
+                    Low = low,
+                    TileX = result.TileX,
+                    TileZ = result.TileZ,
+                    MinY = result.Meshes.MinY,
+                    MaxY = result.Meshes.MaxY,
+                    CoveredCells = result.Meshes.CoveredCells,
+                };
+            }
+            catch (Exception e)
+            {
+                next?.Dispose();
+                if (++silhouetteUploadFailures == 1)
+                    capi.Logger.Error("[VintageHorizons] a horizon silhouette upload failed; "
+                        + "the previous complete tile remains: {0}", e);
+                continue;
+            }
+
+            // Publish the complete replacement before retiring the prior GPU objects.
+            silhouetteMeshes[result.Key] = next;
+            old?.Dispose();
+            bytes += result.Meshes.ByteCount;
+            double elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            if (bytes >= SilhouetteUploadBytesPerFrame
+                || elapsed >= SilhouetteUploadMillisecondsPerFrame) break;
         }
+    }
+
+    MeshRef UploadSilhouetteMesh(LodSilhouetteMeshArrays mesh)
+    {
+        var data = new MeshData(false);
+        data.SetVerticesCount(mesh.VertexCount);
+        data.SetIndicesCount(mesh.IndexCount);
+        data.xyz = mesh.Xyz;
+        data.Indices = mesh.Indices;
+        return capi.Render.UploadMesh(data);
     }
 
     /// <summary>Main thread. Frees every silhouette mesh on the GPU.</summary>
     internal void ReleaseSilhouetteMeshes()
     {
-        foreach (SilhouetteGpuMesh mesh in silhouetteMeshes.Values) mesh.Mesh.Dispose();
+        foreach (SilhouetteGpuMesh mesh in silhouetteMeshes.Values) mesh.Dispose();
         silhouetteMeshes.Clear();
     }
 }

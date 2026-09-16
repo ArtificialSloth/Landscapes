@@ -143,8 +143,18 @@
         skyColor.rgb = applyUnderwaterEffects(skyColor.rgb, murkiness);
         skyGlow.y *= clamp((dayLight - 0.05) * 2.0 - 50.0 * murkiness, 0.0, 1.0);
 
-        outColor = mix(terraColor, skyColor, fade);
-        outGlow = mix(vec4(0.0), skyGlow, fade);
+        vec4 fadeColor = skyColor;
+        vec4 fadeGlow = skyGlow;
+        if (silhouetteEnabled == 1)
+        {
+            vhSilhouetteTerrainColor(worldPos.xyz, yLevel, sunPosition, sunColor, dayLight,
+                horizonFog, fogAmount, silhouetteSkyTint, silhouetteColorTint,
+                silhouetteLightLevelBias, fadeColor, fadeGlow);
+            fadeGlow *= dist;
+        }
+
+        outColor = mix(terraColor, fadeColor, fade);
+        outGlow = mix(vec4(0.0), fadeGlow, fade);
     } else {
         outColor = terraColor;
         outGlow = vec4(0.0);

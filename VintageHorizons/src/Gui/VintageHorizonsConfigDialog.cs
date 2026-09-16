@@ -59,7 +59,7 @@ internal static class VintageHorizonsConfigLayout
 /// Client-only settings editor shared by the in-game Settings page and .vhconfig window.
 ///
 /// <para>
-/// Three tabs. General is how far and how finely cached terrain is drawn, and which of the
+/// Four tabs. General is how far and how finely cached terrain is drawn, and which of the
 /// optional passes are drawn at all - the settings a machine that cannot afford them needs to
 /// be able to give up, each one measured rather than guessed. Anti-Aliasing holds distant
 /// anti-aliasing's tuning dials as sliders, added at the owner's request in 0.4.60 so it can be
@@ -109,7 +109,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     const int GeneralTab = 0;
     const int AntiAliasingTab = 1;
-    const int GenerateTab = 2;
+    const int SilhouettesTab = 2;
+    const int GenerateTab = 3;
 
     // The anti-aliasing rows: where each slider starts, how wide it is, and the row pitch.
     const double DialSliderX = VintageHorizonsConfigLayout.DialSliderX;
@@ -129,10 +130,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         "Tints anti-aliased terrain magenta, stronger where it is fully applied, to show what the "
         + "sliders reach. For this session only; it is never saved. (.vhtaa show)";
 
-    readonly Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials> save;
+    readonly Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
+        LodSilhouetteSettings> save;
     readonly TaaTuning taa;
     readonly VanillaDistanceTuning vanilla;
     readonly WorldGenTuning worldGen;
+    readonly SilhouetteTuning silhouettes;
     readonly bool embedded;
     readonly Action? requestEmbeddedRecompose;
     readonly Action? requestEmbeddedClose;
@@ -144,6 +147,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     int vanillaViewDistance;
     LodVisualSettings pendingVisuals;
     LodTaaDials pendingTaa;
+    LodSilhouetteSettings pendingSilhouettes;
     bool pendingShowTaa;
     LodWorldGenPreferences pendingWorldGen;
     LodThresholdScaleElement? scale;
@@ -166,10 +170,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     public VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
-        TaaTuning taa, WorldGenTuning worldGen,
-        Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials> save)
+        TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
+        Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
+            LodSilhouetteSettings> save)
         : this(capi, thresholds, automaticThresholds, automatic, farCap, loadWhilePaused,
-            visuals, vanilla, taa, worldGen, false, null, null, save)
+            visuals, vanilla, taa, silhouettes, worldGen, false, null, null, save)
     {
         ComposeDialog();
     }
@@ -181,23 +186,26 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     internal VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
-        TaaTuning taa, WorldGenTuning worldGen,
+        TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
         Action requestRecompose, Action requestClose,
-        Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials> save)
+        Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
+            LodSilhouetteSettings> save)
         : this(capi, thresholds, automaticThresholds, automatic, farCap, loadWhilePaused,
-            visuals, vanilla, taa, worldGen, true, requestRecompose, requestClose, save)
+            visuals, vanilla, taa, silhouettes, worldGen, true, requestRecompose, requestClose, save)
     {
     }
 
     VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
-        TaaTuning taa, WorldGenTuning worldGen, bool embedded,
+        TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen, bool embedded,
         Action? requestRecompose, Action? requestClose,
-        Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials> save) : base(capi)
+        Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
+            LodSilhouetteSettings> save) : base(capi)
     {
         this.save = save;
         this.taa = taa;
+        this.silhouettes = silhouettes;
         this.vanilla = vanilla;
         this.worldGen = worldGen;
         vanillaViewDistance = Math.Clamp(vanilla.Initial,
@@ -216,6 +224,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         pendingLoadWhilePaused = loadWhilePaused;
         pendingVisuals = visuals;
         pendingTaa = taa.Initial;
+        pendingSilhouettes = silhouettes.Initial.Normalize();
         pendingShowTaa = taa.ShowInitial;
         pendingWorldGen = worldGen.Initial.Normalize(ServerWorldGenMaxRadius());
         if (worldGen.Client != null)
@@ -304,6 +313,40 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     static readonly string[] PresetCodes = { "performance", "balanced", "quality", "custom" };
     static readonly string[] PresetNames = { "Performance", "Balanced", "Quality", "Custom" };
 
+    readonly record struct SilhouetteRow(
+        string Key, string Title, string Tip, int Min, int Max, int Step,
+        Func<LodSilhouetteSettings, int> Read,
+        Func<LodSilhouetteSettings, int, LodSilhouetteSettings> Write,
+        Func<int, string> Label);
+
+    static readonly SilhouetteRow[] SilhouetteRows =
+    {
+        new("sil-sky", "Sky-height tint", "How strongly height above or below sea level changes the sampled sky colour.",
+            0, 100, 1, s => (int)MathF.Round(s.SkyTint * 10),
+            (s, v) => s with { SkyTint = v / 10f }, v => (v / 10f).ToString("0.0")),
+        new("sil-red", "Tint red", "Red channel of the silhouette's colour tint.",
+            0, 100, 1, s => (int)MathF.Round(s.TintRed * 100),
+            (s, v) => s with { TintRed = v / 100f }, v => (v / 100f).ToString("0.00")),
+        new("sil-green", "Tint green", "Green channel of the silhouette's colour tint.",
+            0, 100, 1, s => (int)MathF.Round(s.TintGreen * 100),
+            (s, v) => s with { TintGreen = v / 100f }, v => (v / 100f).ToString("0.00")),
+        new("sil-blue", "Tint blue", "Blue channel of the silhouette's colour tint.",
+            0, 100, 1, s => (int)MathF.Round(s.TintBlue * 100),
+            (s, v) => s with { TintBlue = v / 100f }, v => (v / 100f).ToString("0.00")),
+        new("sil-strength", "Tint strength", "How far the sampled sky colour is mixed toward the tint.",
+            0, 100, 1, s => (int)MathF.Round(s.TintStrength * 100),
+            (s, v) => s with { TintStrength = v / 100f }, v => (v / 100f).ToString("0.00")),
+        new("sil-light", "Light bias", "Shapes daylight response. Higher values retain more low light.",
+            51, 99, 1, s => (int)MathF.Round(s.LightLevelBias * 100),
+            (s, v) => s with { LightLevelBias = v / 100f }, v => (v / 100f).ToString("0.00")),
+        new("sil-fade", "Far fade bias", "Shapes how the silhouette fades back into the real sky at its reach.",
+            5, 95, 1, s => (int)MathF.Round(s.FadeBias * 100),
+            (s, v) => s with { FadeBias = v / 100f }, v => (v / 100f).ToString("0.00")),
+        new("sil-globe", "Globe curve", "Gently lowers only the far silhouette to hide the finite horizon edge.",
+            0, 200, 1, s => (int)MathF.Round(s.GlobeEffect * 1000),
+            (s, v) => s with { GlobeEffect = v / 1000f }, v => (v / 1000f).ToString("0.000")),
+    };
+
     void ComposeDialog()
     {
         if (sessionClosed) return;
@@ -354,6 +397,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         contentTop = top;
         scale = null;
         if (shownTab == AntiAliasingTab) ComposeAntiAliasing(composer);
+        else if (shownTab == SilhouettesTab) ComposeSilhouettes(composer);
         else if (shownTab == GenerateTab) ComposeGenerate(composer);
         else ComposeGeneral(composer);
 
@@ -375,6 +419,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             {
                 new GuiTab { Name = "General", DataInt = GeneralTab },
                 new GuiTab { Name = "Anti-Aliasing", DataInt = AntiAliasingTab },
+                new GuiTab { Name = "Silhouettes", DataInt = SilhouettesTab },
                 new GuiTab { Name = "Generate", DataInt = GenerateTab },
             },
             bounds, OnTabClicked,
@@ -388,6 +433,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         activeComposer.GetHorizontalTabs("tabs").activeElement = shownTab;
 
         if (shownTab == AntiAliasingTab) SetAntiAliasingValues();
+        else if (shownTab == SilhouettesTab) SetSilhouetteValues();
         else if (shownTab == GenerateTab) SetGenerateValues();
         else SetGeneralValues();
     }
@@ -410,7 +456,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             ElementBounds.Fixed(Margin, Y(72), Width - 2 * Margin, 22), "threshold-help");
 
         scale = new LodThresholdScaleElement(capi, DisplayedThresholds(),
-            vanillaViewDistance, OnThresholdChanged, OnVanillaDistanceChanged,
+            vanillaViewDistance, pendingFarCap, pendingSilhouettes.ReachBlocks,
+            pendingSilhouettes.Enabled, OnThresholdChanged, OnVanillaDistanceChanged,
+            blocks => OnDrawDistanceChanged(blocks), OnSilhouetteReachChanged,
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ScaleY),
                 Width - 2 * Margin, VintageHorizonsConfigLayout.ScaleHeight))
         {
@@ -439,13 +487,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddHoverText(PausedLoadingTip, CairoFont.WhiteSmallText(), 380,
             ElementBounds.Fixed(552, Y(VintageHorizonsConfigLayout.DrawHeadingY),
                 SwitchX + 32 - 552, 34), "tip-load-while-paused");
-        composer.AddSlider(OnDrawDistanceChanged,
-            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.DrawHeadingY + 34), 680, 30),
-            "draw-distance");
         composer.AddDynamicText(DrawDistanceLabel(),
             CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Right),
             ElementBounds.Fixed(Width - Margin - 120,
-                Y(VintageHorizonsConfigLayout.DrawHeadingY + 38), 120, 22),
+                Y(VintageHorizonsConfigLayout.DrawHeadingY + 8), 120, 22),
             "draw-distance-label");
 
         composer.AddStaticText("Visual features", CairoFont.WhiteMediumText(),
@@ -489,10 +534,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     void SetGeneralValues()
     {
         if (activeComposer?.Composed != true) return;
-        GuiElementSlider drawSlider = activeComposer.GetSlider("draw-distance");
-        drawSlider.SetValues(pendingFarCap, MinDrawDistance, MaxDrawDistance, DrawDistanceStep,
-            " blocks");
-        drawSlider.ShowTextWhenResting = false;
         activeComposer.GetSwitch("auto-thresholds").On = pendingAutomatic;
         activeComposer.GetSwitch("load-while-paused").On = pendingLoadWhilePaused;
         foreach (VisualRow row in Rows)
@@ -550,6 +591,66 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             slider.OnSliderTooltip = value => row.Label(row.FromSlider(value));
         }
         activeComposer.GetSwitch("taa-show").On = pendingShowTaa;
+    }
+
+    void ComposeSilhouettes(GuiComposer composer)
+    {
+        composer.AddStaticText("Horizon silhouettes", CairoFont.WhiteMediumText(),
+            ElementBounds.Fixed(Margin, Y(42), 500, 30));
+        composer.AddStaticText("Enabled", CairoFont.WhiteSmallishText(),
+            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 150, Y(48), 140, 24));
+        composer.AddSwitch(OnSilhouetteEnabledChanged,
+            ElementBounds.Fixed(SwitchX, Y(42), 32, 32), "silhouette-enabled");
+        composer.AddDynamicText(silhouettes.Status(), CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(Margin, Y(78), Width - 2 * Margin, 36), "silhouette-status");
+
+        composer.AddStaticText("Reach", CairoFont.WhiteSmallishText(),
+            ElementBounds.Fixed(Margin, Y(122), 100, 26));
+        composer.AddSlider(OnSilhouetteReachSlider,
+            ElementBounds.Fixed(135, Y(116), 545, 30), "silhouette-reach");
+        composer.AddDynamicText(SilhouetteReachLabel(), CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(700, Y(122), 160, 24), "silhouette-reach-label");
+
+        const double columnWidth = 400;
+        const double sliderWidth = 280;
+        for (int i = 0; i < SilhouetteRows.Length; i++)
+        {
+            SilhouetteRow row = SilhouetteRows[i];
+            int column = i & 1;
+            int line = i / 2;
+            double x = Margin + column * (columnWidth + 28);
+            double y = 172 + line * 112;
+            composer.AddStaticText(row.Title, CairoFont.WhiteSmallishText(),
+                ElementBounds.Fixed(x, Y(y), columnWidth, 26));
+            composer.AddHoverText(row.Tip, CairoFont.WhiteSmallText(), 330,
+                ElementBounds.Fixed(x, Y(y - 2), columnWidth, 28), $"tip-{row.Key}");
+            composer.AddSlider(value => OnSilhouetteDialChanged(row, value),
+                ElementBounds.Fixed(x, Y(y + 30), sliderWidth, 30), row.Key);
+            int shown = row.Read(pendingSilhouettes);
+            composer.AddDynamicText(row.Label(shown), CairoFont.WhiteSmallText(),
+                ElementBounds.Fixed(x + sliderWidth + 12, Y(y + 35), 92, 22), $"{row.Key}-label");
+        }
+
+        composer.AddStaticText(
+            "Changes on this tab show immediately. Off releases received tiles and all silhouette GPU meshes.",
+            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(626), Width - 2 * Margin, 28));
+    }
+
+    void SetSilhouetteValues()
+    {
+        if (activeComposer?.Composed != true) return;
+        activeComposer.GetSwitch("silhouette-enabled").On = pendingSilhouettes.Enabled;
+        GuiElementSlider reach = activeComposer.GetSlider("silhouette-reach");
+        reach.SetValues(pendingSilhouettes.ReachBlocks, LodSilhouetteSettings.MinReachBlocks,
+            LodSilhouetteSettings.MaxReachBlocks, LodSilhouetteSettings.ReachStepBlocks, " blocks");
+        reach.ShowTextWhenResting = false;
+        foreach (SilhouetteRow row in SilhouetteRows)
+        {
+            GuiElementSlider slider = activeComposer.GetSlider(row.Key);
+            slider.SetValues(row.Read(pendingSilhouettes), row.Min, row.Max, row.Step);
+            slider.ShowTextWhenResting = false;
+            slider.OnSliderTooltip = value => row.Label(value);
+        }
     }
 
     static readonly string[] WorldGenCentreCodes = { "here", "spawn", "coordinates" };
@@ -867,6 +968,49 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         taa.Preview(pendingTaa, pendingShowTaa);
     }
 
+    void OnSilhouetteEnabledChanged(bool on)
+    {
+        pendingSilhouettes = pendingSilhouettes with { Enabled = on };
+        silhouettes.Preview(pendingSilhouettes);
+        scale?.SetSilhouette(pendingSilhouettes.ReachBlocks, on);
+        RefreshSilhouetteStatus();
+    }
+
+    bool OnSilhouetteReachSlider(int blocks)
+    {
+        OnSilhouetteReachChanged(blocks);
+        silhouettes.Preview(pendingSilhouettes);
+        if (activeComposer?.Composed == true && shownTab == SilhouettesTab)
+            activeComposer.GetDynamicText("silhouette-reach-label")
+                .SetNewText(SilhouetteReachLabel(), false, true, false);
+        RefreshSilhouetteStatus();
+        return true;
+    }
+
+    void OnSilhouetteReachChanged(int blocks)
+    {
+        int reach = Math.Max(pendingFarCap, LodSilhouetteSettings.ClampReach(blocks));
+        pendingSilhouettes = pendingSilhouettes with { ReachBlocks = reach };
+        scale?.SetSilhouette(reach, pendingSilhouettes.Enabled);
+    }
+
+    bool OnSilhouetteDialChanged(SilhouetteRow row, int value)
+    {
+        pendingSilhouettes = row.Write(pendingSilhouettes, value).Normalize();
+        silhouettes.Preview(pendingSilhouettes);
+        if (activeComposer?.Composed == true && shownTab == SilhouettesTab)
+            activeComposer.GetDynamicText($"{row.Key}-label")
+                .SetNewText(row.Label(row.Read(pendingSilhouettes)), false, true, false);
+        return true;
+    }
+
+    void RefreshSilhouetteStatus()
+    {
+        if (activeComposer?.Composed != true || shownTab != SilhouettesTab) return;
+        activeComposer.GetDynamicText("silhouette-status")
+            .SetNewText(silhouettes.Status(), false, true, false);
+    }
+
     /// <summary>Every slider and label on the Anti-Aliasing tab rewritten from the pending dials.</summary>
     void RefreshDials()
     {
@@ -895,11 +1039,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     }
 
     /// <summary>Which preset the current combination is, or the trailing "Custom" entry.</summary>
-    int PresetIndex() => pendingVisuals.PresetName switch
+    int PresetIndex() => (pendingVisuals.PresetName, pendingSilhouettes.Enabled) switch
     {
-        "Performance" => 0,
-        "Balanced" => 1,
-        "Quality" => 2,
+        ("Performance", false) => 0,
+        ("Balanced", true) => 1,
+        ("Quality", true) => 2,
         _ => 3,
     };
 
@@ -908,9 +1052,18 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (!selected) return;
         switch (code)
         {
-            case "performance": pendingVisuals = LodVisualSettings.Performance; break;
-            case "balanced": pendingVisuals = LodVisualSettings.Balanced; break;
-            case "quality": pendingVisuals = LodVisualSettings.Quality; break;
+            case "performance":
+                pendingVisuals = LodVisualSettings.Performance;
+                pendingSilhouettes = pendingSilhouettes with { Enabled = false };
+                break;
+            case "balanced":
+                pendingVisuals = LodVisualSettings.Balanced;
+                pendingSilhouettes = pendingSilhouettes with { Enabled = true };
+                break;
+            case "quality":
+                pendingVisuals = LodVisualSettings.Quality;
+                pendingSilhouettes = pendingSilhouettes with { Enabled = true };
+                break;
             default: return;   // "Custom" is a readout, not a choice.
         }
         RefreshVisuals();
@@ -937,6 +1090,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             if (element.On != wanted) element.On = wanted;
         }
         activeComposer.GetDropDown("preset").SetSelectedIndex(PresetIndex());
+        scale?.SetSilhouette(pendingSilhouettes.ReachBlocks, pendingSilhouettes.Enabled);
     }
 
     /// <summary>What the scale shows: automatic's live values, or the player's own.</summary>
@@ -944,8 +1098,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     string ThresholdHelp() => pendingAutomatic
         ? "Drag Vanilla in 32-block steps (applies immediately). Grey is vanilla; colour starts at L0. "
-            + "L1-L6 are automatic."
-        : "Drag Vanilla (applies immediately) or L1-L6. Grey is vanilla; colour starts at L0.";
+            + "L1-L6 are automatic; Cache and Sil set the two far edges."
+        : "Drag Vanilla (applies immediately), L1-L6, Cache or Sil. Blue is silhouette reach.";
 
     void OnAutomaticChanged(bool on)
     {
@@ -1014,6 +1168,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     bool OnDrawDistanceChanged(int blocks)
     {
         pendingFarCap = Math.Clamp(blocks, MinDrawDistance, MaxDrawDistance);
+        if (pendingSilhouettes.ReachBlocks < pendingFarCap)
+            pendingSilhouettes = pendingSilhouettes with { ReachBlocks = pendingFarCap };
+        scale?.SetDrawDistance(pendingFarCap);
+        scale?.SetSilhouette(pendingSilhouettes.ReachBlocks, pendingSilhouettes.Enabled);
         if (activeComposer?.Composed == true && shownTab == GeneralTab)
         {
             activeComposer.GetDynamicText("draw-distance-label")
@@ -1056,17 +1214,35 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             return true;
         }
 
+        if (shownTab == SilhouettesTab)
+        {
+            pendingSilhouettes = LodSilhouetteSettings.Default;
+            if (pendingSilhouettes.ReachBlocks < pendingFarCap)
+                pendingSilhouettes = pendingSilhouettes with { ReachBlocks = pendingFarCap };
+            silhouettes.Preview(pendingSilhouettes);
+            if (activeComposer?.Composed != true) return true;
+            SetSilhouetteValues();
+            activeComposer.GetDynamicText("silhouette-reach-label")
+                .SetNewText(SilhouetteReachLabel(), false, true, false);
+            foreach (SilhouetteRow row in SilhouetteRows)
+                activeComposer.GetDynamicText($"{row.Key}-label")
+                    .SetNewText(row.Label(row.Read(pendingSilhouettes)), false, true, false);
+            RefreshSilhouetteStatus();
+            return true;
+        }
+
         Array.Copy(LodWorld.DefaultLevelThresholds, pendingThresholds,
             pendingThresholds.Length);
         pendingAutomatic = true;
         pendingFarCap = DefaultDrawDistance;
         pendingLoadWhilePaused = true;
         pendingVisuals = LodVisualSettings.Default;
+        pendingSilhouettes = pendingSilhouettes with { Enabled = true };
 
         RefreshThresholds();
         if (activeComposer?.Composed != true) return true;
-        activeComposer.GetSlider("draw-distance").SetValues(
-            pendingFarCap, MinDrawDistance, MaxDrawDistance, DrawDistanceStep, " blocks");
+        scale?.SetDrawDistance(pendingFarCap);
+        scale?.SetSilhouette(pendingSilhouettes.ReachBlocks, pendingSilhouettes.Enabled);
         activeComposer.GetDynamicText("draw-distance-label")
             .SetNewText(DrawDistanceLabel(), false, true, false);
         activeComposer.GetSwitch("load-while-paused").On = pendingLoadWhilePaused;
@@ -1080,7 +1256,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         saved = true;
         worldGen.Save(pendingWorldGen.Normalize(ServerWorldGenMaxRadius()));
         save(pendingThresholds, pendingAutomatic, pendingFarCap, pendingLoadWhilePaused,
-            pendingVisuals, pendingTaa);
+            pendingVisuals, pendingTaa, pendingSilhouettes.Normalize());
         if (embedded)
         {
             CloseSession();
@@ -1135,12 +1311,15 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             worldGen.Client.WorldGenStatusChanged -= OnWorldGenStatus;
         activeComposer = null;
         if (!saved) taa.Preview(taa.Initial, taa.ShowInitial);
+        if (!saved) silhouettes.Preview(silhouettes.Initial);
     }
 
     string ThresholdLabel(int index) =>
         $"L{index + 1}: {FormatBlocks(DisplayedThresholds()[index])}";
 
     string DrawDistanceLabel() => $"{FormatBlocks(pendingFarCap)} blocks";
+
+    string SilhouetteReachLabel() => $"{FormatBlocks(pendingSilhouettes.ReachBlocks)} blocks";
 
     static string FormatBlocks(int blocks) => blocks.ToString("N0", CultureInfo.InvariantCulture);
 }

@@ -5981,6 +5981,11 @@ public partial class LodTerrainRenderer : IRenderer
         prog.Uniform("sunLightLevel", LightSunLevel ? SunLightLevel() : 1f);
         prog.Uniform("lightSkyDayLight", LightSkyDayLight ? 1 : 0);
         prog.Uniform("skyDayLight", SkyDayLight());
+        prog.Uniform("silhouetteEnabled", SilhouetteFadeTargetActive ? 1 : 0);
+        prog.Uniform("silhouetteSkyTint", SilhouetteSkyTint);
+        prog.Uniform("silhouetteColorTint", SilhouetteColorTint);
+        prog.Uniform("silhouetteLightLevelBias", SilhouetteLightLevelBias);
+        prog.Uniform("silhouetteSeaLevel", capi.World.SeaLevel);
         if (maskOwnsPixels && readiness != null && readinessMaskTexture != null)
         {
             prog.Uniform("maskMinX", readiness.ActiveMinChunkX);

@@ -26,6 +26,8 @@ public static class SilhouetteChecks
         FillFromKnownCells(c);
         MeshMatchesAcrossTileBorders(c);
         MeshSeaAndCoverage(c);
+        MeshResolutionsAndAnchoring(c);
+        ClientSettingsArithmetic(c);
         FeatureGate(c);
         GeneratorStallWatch(c);
         TileMergeAndSnapshot(c);
@@ -51,6 +53,7 @@ public static class SilhouetteChecks
         UploadedUniformsAreDeclared(c);
         SamplerLayout(c);
         OffStateIsTheOldBehaviour(c);
+        P4RenderingAndSettingsWiring(c);
     }
 
     /// <summary>The bounded manifest/request lifecycle, without a live network channel.</summary>
@@ -896,16 +899,16 @@ public static class SilhouetteChecks
         int stride = LodSilhouetteTile.CellsPerEdge + 1;
         int step = LodSilhouetteTile.CellsPerEdge / LodSilhouetteField.DefaultQuadsPerEdge;
         bool direct = true;
-        for (int b = 0; b < verts; b++)
+        for (int b = 1; b < verts - 1; b++)
         {
-            for (int a = 0; a < verts; a++)
+            for (int a = 1; a < verts - 1; a++)
             {
                 float h = filled[b * step * stride + a * step];
                 float expected = float.IsNaN(h) ? sea : Math.Max(h, sea);
                 direct &= left.Xyz[(b * verts + a) * 3 + 1] == expected;
             }
         }
-        c.True(direct, "a mesh vertex takes the filled height of its cell, clamped to sea level");
+        c.True(direct, "an interior mesh vertex takes the filled height of its cell, clamped to sea level");
     }
 
     static void CapturedHeightsReachTiles(Check c)
@@ -957,14 +960,64 @@ public static class SilhouetteChecks
         int quads = LodSilhouetteField.DefaultQuadsPerEdge * LodSilhouetteField.DefaultQuadsPerEdge;
         int quadsPerCellEdge = LodSection.SectionBlocks
             / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.DefaultQuadsPerEdge);
-        c.Eq((quads - quadsPerCellEdge * quadsPerCellEdge) * 6, cut?.IndexCount ?? -1,
-            "a covered level-0 cell drops exactly its own quads");
+        c.Eq(quads * 6, cut?.IndexCount ?? -1,
+            "partial coverage keeps a complete mesh for exact per-fragment ownership");
+        c.True(LodSilhouetteField.Covered(oneCell, 0, 0)
+                && !LodSilhouetteField.Covered(oneCell, 1, 0)
+                && !LodSilhouetteField.Covered(oneCell, 0, 1),
+            "the coverage predicate selects exactly its own 64-block cell");
         if (cut == null) return;
         int verts = LodSilhouetteField.DefaultQuadsPerEdge + 1;
         c.Eq(sea - LodSilhouetteField.DefaultSinkBlocks, cut.Xyz[quadsPerCellEdge * 3 + 1],
             "a vertex on the covered cell's edge sinks under cached terrain");
         c.Eq((float)sea, cut.Xyz[(quadsPerCellEdge + 1) * 3 + 1], "a vertex away from cached terrain does not");
         c.Eq((float)sea, cut.Xyz[(verts * verts - 1) * 3 + 1], "the far corner is untouched");
+    }
+
+    static void MeshResolutionsAndAnchoring(Check c)
+    {
+        const int sea = 110;
+        LodSilhouetteTile?[,] deep = Neighbourhood((x, z) => FullTile(x, z, sea - 20), TileX, TileZ);
+        ulong covered = 1UL << LodSilhouetteField.CoverageBit(0, 0);
+        var anchors = new float[LodSilhouetteField.AnchorVerticesPerEdge
+            * LodSilhouetteField.AnchorVerticesPerEdge];
+        Array.Fill(anchors, float.NaN);
+        int highX = LodSection.SectionBlocks
+            / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge);
+        anchors[highX] = 137;
+
+        LodSilhouetteMeshSet? set = LodSilhouetteField.BuildMeshes(deep, covered, sea, anchors);
+        c.True(set != null, "a partially covered tile publishes its three resolutions together");
+        if (set == null) return;
+        c.Eq((128, 32, 8), (set.High.QuadsPerEdge, set.Medium.QuadsPerEdge, set.Low.QuadsPerEdge),
+            "the P4 mesh set contains 4-, 16- and 64-block quads");
+        c.True(set.ByteCount > set.High.ByteCount,
+            "the upload budget accounts for all three arrays rather than only the selected one");
+
+        foreach (LodSilhouetteMeshArrays mesh in new[] { set.High, set.Medium, set.Low })
+        {
+            int boundaryX = LodSection.SectionBlocks
+                / (LodSilhouetteTile.TileBlocks / mesh.QuadsPerEdge);
+            c.Eq(137 - LodSilhouetteField.DefaultSinkBlocks,
+                mesh.Xyz[boundaryX * 3 + 1],
+                $"the {mesh.QuadsPerEdge}-quad mesh shares the cached edge anchor and sink");
+
+            c.Eq((float)(sea - 20), mesh.Xyz[1],
+                $"the covered interior of the {mesh.QuadsPerEdge}-quad mesh keeps raw seabed height");
+        }
+
+        c.Eq(LodSilhouetteField.HighQuadsPerEdge,
+            LodSilhouetteField.ResolutionFor(1000, 1000),
+            "a large on-screen tile selects the high silhouette mesh");
+        c.Eq(LodSilhouetteField.MediumQuadsPerEdge,
+            LodSilhouetteField.ResolutionFor(1000, 20000),
+            "a medium on-screen tile selects the medium silhouette mesh");
+        c.Eq(LodSilhouetteField.LowQuadsPerEdge,
+            LodSilhouetteField.ResolutionFor(1000, 50000),
+            "a small on-screen tile selects the low silhouette mesh");
+        c.Eq(LodSilhouetteField.LowQuadsPerEdge,
+            LodSilhouetteField.ResolutionFor(0, 1),
+            "an unavailable screen scale fails to the cheapest mesh");
     }
 
     static void FeatureGate(Check c)
@@ -975,6 +1028,39 @@ public static class SilhouetteChecks
             "without a usable protocol there are no silhouettes");
         c.False(LodAssist.SilhouettesAvailable(1, LodAssist.FeatureWorldGeneration),
             "a server without the bit is never sent a silhouette request");
+    }
+
+    static void ClientSettingsArithmetic(Check c)
+    {
+        LodSilhouetteSettings defaults = LodSilhouetteSettings.Default;
+        c.True(defaults.Enabled && defaults.ReachBlocks == 8192,
+            "a fresh client asks for the accepted 8,192-block silhouette reach");
+        c.Eq(1024, LodSilhouetteSettings.ClampReach(-1),
+            "silhouette reach clamps to the 1,024-block floor");
+        c.Eq(32768, LodSilhouetteSettings.ClampReach(int.MaxValue),
+            "silhouette reach clamps to the shared 32,768-block scale endpoint");
+        c.Eq(2560, LodSilhouetteSettings.ClampReach(2700),
+            "silhouette reach snaps to 512-block increments");
+        c.Eq(8192, LodThresholdScaleLayout.SnapSilhouetteReach(4096, 8192),
+            "the silhouette handle cannot move inside the cached draw edge");
+
+        LodSilhouetteSettings repaired = (defaults with
+        {
+            ReachBlocks = int.MaxValue,
+            SkyTint = float.NaN,
+            TintRed = -1,
+            TintStrength = 2,
+            LightLevelBias = 0,
+            FadeBias = 2,
+            GlobeEffect = float.PositiveInfinity,
+        }).Normalize();
+        c.Eq(32768, repaired.ReachBlocks, "a hand-edited reach is normalized");
+        c.Near(defaults.SkyTint, repaired.SkyTint, 1e-6, "a non-finite dial returns to its default");
+        c.Eq((0f, 1f), (repaired.TintRed, repaired.TintStrength),
+            "colour settings stay inside their shader range");
+        c.Eq((0.51f, 0.95f, defaults.GlobeEffect),
+            (repaired.LightLevelBias, repaired.FadeBias, repaired.GlobeEffect),
+            "bias and globe settings avoid invalid pow inputs and non-finite curves");
     }
 
     static string Source(params string[] parts) => File.ReadAllText(
@@ -1084,5 +1170,83 @@ public static class SilhouetteChecks
             "the silhouette extent is zero unless silhouettes are on and drawing");
         c.True(pass.Contains("if (!silhouetteShaderWanted) return;", StringComparison.Ordinal),
             "the silhouette program is never compiled until silhouettes are first switched on");
+    }
+
+    static void P4RenderingAndSettingsWiring(Check c)
+    {
+        string client = Source("src", "Silhouette", "LodSilhouetteClient.cs");
+        string field = Source("src", "Silhouette", "LodSilhouetteField.cs");
+        string pass = Source("src", "Render", "LodTerrainRenderer.Silhouette.cs");
+        string renderer = Source("src", "Render", "LodTerrainRenderer.cs");
+        string fragment = Source("assets", "vintagehorizons", "shaders", "lodsilhouette.fsh");
+        string inputs = Source("assets", "vintagehorizons", "shaderincludes", "lodfragmentinputs.fsh");
+        string finish = Source("assets", "vintagehorizons", "shaderincludes", "lodsurfacefinish.fsh");
+        string color = Source("assets", "vintagehorizons", "shaderincludes", "lodsilhouettecolor.fsh");
+        string dialog = Source("src", "Gui", "VintageHorizonsConfigDialog.cs");
+        string scale = Source("src", "Gui", "LodThresholdScaleElement.cs");
+        string mod = Source("src", "VintageHorizonsModSystem.cs")
+            + Source("src", "VintageHorizonsModSystem.Silhouettes.cs");
+
+        c.True(field.Contains("BuildMeshes", StringComparison.Ordinal)
+                && field.Contains("HighQuadsPerEdge = 128", StringComparison.Ordinal)
+                && field.Contains("MediumQuadsPerEdge = 32", StringComparison.Ordinal)
+                && field.Contains("LowQuadsPerEdge = 8", StringComparison.Ordinal),
+            "P4 builds the planned 128, 32 and 8-quad tile meshes");
+        c.True(client.IndexOf("CaptureAnchors(world", StringComparison.Ordinal)
+                < client.IndexOf("Task.Run", StringComparison.Ordinal)
+                && client.Contains("source.ColumnRuns(col)", StringComparison.Ordinal),
+            "cached edge heights are copied on the owner thread before a worker starts");
+        c.True(pass.Contains("LodSilhouetteField.ResolutionFor(", StringComparison.Ordinal)
+                && pass.Contains("ScreenBlockScale", StringComparison.Ordinal)
+                && pass.Contains("mesh.At(resolution)", StringComparison.Ordinal),
+            "the draw pass chooses one of the three meshes from the live screen scale");
+
+        c.True(fragment.Contains("floor(tilePos / 64.0)", StringComparison.Ordinal)
+                && fragment.Contains("coveredCellsLow", StringComparison.Ordinal)
+                && fragment.Contains("coveredCellsHigh", StringComparison.Ordinal)
+                && fragment.Contains("length(worldPos.xz) < cacheFadeStart", StringComparison.Ordinal)
+                && fragment.Contains("discard;", StringComparison.Ordinal),
+            "cached cells discard exactly inside the cached fade and resume beyond its far edge");
+        c.True(pass.Contains("SilhouetteUploadBytesPerFrame", StringComparison.Ordinal)
+                && pass.Contains("SilhouetteUploadMillisecondsPerFrame", StringComparison.Ordinal)
+                && pass.IndexOf("silhouetteMeshes[result.Key] = next;", StringComparison.Ordinal)
+                    < pass.IndexOf("old?.Dispose();", StringComparison.Ordinal),
+            "silhouette uploads have count, byte and time bounds and publish before disposal");
+        c.True(pass.Contains("if (silhouetteMeshes.Count > 0) ReleaseSilhouetteMeshes();",
+                    StringComparison.Ordinal)
+                && client.Contains("Clear();", StringComparison.Ordinal),
+            "switching silhouettes off releases GPU meshes and drops client tile state");
+
+        c.True(color.Contains("vhSilhouetteTerrainColor", StringComparison.Ordinal)
+                && fragment.Contains("#include lodsilhouettecolor.fsh", StringComparison.Ordinal)
+                && inputs.Contains("#include lodsilhouettecolor.fsh", StringComparison.Ordinal),
+            "the pass and cached fade use one shared silhouette colour function");
+        c.True(finish.Contains("if (silhouetteEnabled == 1)", StringComparison.Ordinal)
+                && renderer.Contains("SilhouetteFadeTargetActive ? 1 : 0", StringComparison.Ordinal),
+            "cached terrain changes fade target only while complete silhouette GPU tiles can draw");
+        c.True(pass.IndexOf("if (silhouetteMeshes.Count == 0) return;", StringComparison.Ordinal)
+                < pass.IndexOf("silhouetteShaderWanted = true;", StringComparison.Ordinal),
+            "an unavailable server never causes even the lazy silhouette shader compile");
+
+        c.True(dialog.Contains("Name = \"Silhouettes\"", StringComparison.Ordinal)
+                && dialog.Contains("ComposeSilhouettes", StringComparison.Ordinal)
+                && dialog.Contains("SilhouetteRows", StringComparison.Ordinal),
+            "the settings editor has the P4 Silhouettes tab and appearance dials");
+        c.True(scale.Contains("DrawMarker", StringComparison.Ordinal)
+                && scale.Contains("SilhouetteMarker", StringComparison.Ordinal)
+                && scale.Contains("silhouettesEnabled", StringComparison.Ordinal),
+            "General's shared distance scale owns cached draw and optional silhouette handles");
+        c.True(dialog.Contains("(\"Performance\", false)", StringComparison.Ordinal)
+                && dialog.Contains("(\"Balanced\", true)", StringComparison.Ordinal)
+                && dialog.Contains("(\"Quality\", true)", StringComparison.Ordinal),
+            "Performance disables silhouettes while Balanced and Quality enable them");
+        foreach (string name in new[]
+        {
+            "HorizonSilhouettes", "SilhouetteReachBlocks", "SilhouetteSkyTint",
+            "SilhouetteTintRed", "SilhouetteTintGreen", "SilhouetteTintBlue",
+            "SilhouetteTintStrength", "SilhouetteLightLevelBias", "SilhouetteFadeBias",
+            "SilhouetteGlobeEffect",
+        })
+            c.True(mod.Contains(name, StringComparison.Ordinal), name + " is persisted in client config");
     }
 }
