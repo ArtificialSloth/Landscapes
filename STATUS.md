@@ -4,49 +4,44 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-15`
-**Mod version:** `0.4.84` — current private test build (the P0.3 side-by-side and unexplored-land test), verified, copy-installed and checkpointed; players see 0.4.82's behaviour, and 0.4.81–0.4.84 are not yet tested in game
+**Mod version:** `0.4.87` — current private test build (silhouette P3/P4 source complete), verified, copy-installed and checkpointed; 0.4.85–0.4.87 have not been run in game
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; current checkpoints 0.4.77 `4c7720c`, 0.4.78 `3664aa2`, 0.4.79 `612770f`, 0.4.80 `f93bbbf`, 0.4.81 `3db5e3e`, 0.4.82 `96f8e06`, 0.4.83 `dd1692b`, 0.4.84 `8cd445f`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.84 `8cd445f`, 0.4.85 `65990f1`, 0.4.86 `069f0b1`, 0.4.87 `2111ee9`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `127` C# files under `VintageHorizons/src`
+**Source files:** `130` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
 
 ## Current result
 
-**Horizon silhouettes: P1 and P2 built, P3 begun (0.4.77–0.4.83).** Sessions 92–94.
-- **Scope.** Singleplayer and LAN-hosted worlds, behind the session command `.vhsilhouette on`.
-  `EnableSilhouettes` in the server config turns the feature off. Dedicated servers stay off until
-  P3's test. Since 0.4.83 a developer switch lets a dedicated test server keep heights for the
-  comparison, offering players nothing (G206).
-- **Heights.** The server keeps the worldgen heights of every column it loads or previews for its
-  cache.
-  - For each asking player it previews one chunk in each unexplored 512-block region, nearest first,
-    out to 8,192 blocks, keeping heights only.
-  - It yields to explicit generation and to real chunk loads.
-  - It stops previews for the session if the generator goes 20 s without answering, or logs three
-    errors while previews are being generated.
-- **Store.** Tiles are saved to `<savegame>-silhouette-server.db` at each world save and on quit.
-  They are read back before anything in them is previewed. A world gets the file on its first
-  silhouette request.
-- **Client.** A deterministic fill over each tile and its eight neighbours, meeting neighbouring
-  tiles exactly. It is drawn in Farseer's classic colour where cached terrain is missing, in its own
-  step (G200).
-- **Comparison (P0.3).**
-  - `/vhsilhouetteserver compare [radiusChunks]` measures Algernon's Terrain Sampler and Watersheds'
-    own sampler at every cell the server holds in a square.
-  - `presample` asks them about land before it is generated (0.4.84).
-  - `scripts/silhouette-compare.ps1` runs both across two isolated server sessions and draws the
-    side-by-side.
-  - With Watersheds installed the two are one height function (G205).
-  - Silhouettes use neither until the owner's verdict.
-- **Not built yet:**
-  - P3: coast refinement, accelerator use, the manifest/tile-request transport and dedicated
-    support;
-  - P4: the handoff, settings and scale handles;
-  - P5: client persistence;
-  - P6: Terrain Ahead.
+**Horizon silhouettes: P1-P4 built in source (0.4.77–0.4.87).** Sessions 92–96.
+- **Availability and switches.** The saved client choice defaults on. Integrated/LAN servers offer
+  silhouettes automatically unless `EnableSilhouettes = false`; dedicated servers default off and
+  require `EnableSilhouettes = true`. Their requested reach is clamped by
+  `SilhouetteReachBlocks` (8,192 by default). `.vhsilhouette` is a session-only override.
+- **Height sources, best first:** captured terrain, the engine's Terrain-pass preview, then an
+  accepted optional accelerator. Watersheds is preferred when both supported samplers are present;
+  Algernon's Terrain Sampler is accepted alone; neither is required. The accelerator supplies a
+  64-block coarse grid off the main thread, and one engine preview refines likely low/coastal
+  ground. A named failure disables it for the session and previews take over.
+- **Builder and store.** Work is nearest-first through a reach-plus-one-tile disc, yields to every
+  shared automatic-generation gate, and stops preview work on generator silence or worldgen errors.
+  Tiles persist in `<savegame>-silhouette-server.db` (its own schema 1) and merge better origins.
+- **Transport.** Current peers exchange bounded revision manifests and nearest-first tile requests;
+  16 may be in flight. Every accepted request ends in success, explicit refusal or bounded retry.
+  World-session identity rejects stale packets, and tiles/offers outside the moving reach are
+  pruned. The old direct-push form remains for 0.4.77-0.4.85 peers.
+- **Client and rendering.** Worker meshes exist at 128/32/8 quads per tile edge and are selected by
+  projected cell size. Mixed edges stitch, cached edges anchor, uncovered ground clamps to sea
+  level, and exact 64-block cache coverage controls the shader. The pass follows cached opaque
+  terrain and contributes through the existing far-plane policy. Cached terrain and silhouettes
+  share the classic-colour fade target at their join.
+- **Settings and off state.** The Silhouettes tab persists enable, reach and classic-look dials;
+  cached draw distance and silhouette reach are General-scale handles. Performance turns it off;
+  Balanced/Quality turn it on. Off sends one final demand and clears network, RAM, workers, GPU
+  meshes and projection extent. The shader is compiled only after a drawable tile arrives.
+- **Not built:** P5 client tile persistence and owner tuning; P6 Terrain Ahead; P7 canopy.
 
 | Silhouette evidence | Result | Level |
 |---|---|---|
@@ -59,8 +54,10 @@
 | P0.3 comparison, 0.4.83, two fresh worlds (1,680 and 4,096 chunk corners) | Median error 1 and 2 blocks, 95% within 5, worst 21 and 11; lean +1.5 and +1.9; land/sea disagreement 11.6% and 5.9%, almost all at the waterline; 0.01–0.02 ms per sample; both accelerators identical. The worst points were most likely shallow water and low land, not the sea floor first recorded (G208) | Integration-tested on isolated dedicated servers (Session 94) |
 | P0.3, 0.4.84, `p03-cold` (270,336 cells, every 4 blocks) | Median error 1, 95% within 4, max 63; lean +1.4; land/sea disagreement 3.7%; 0.16% of cells 8+ blocks off, almost all on land or at the coast. Answers taken before the land existed matched later ones at every cell, and a new region's first sample took under 1 ms. Sea level 82 | Integration-tested over two server sessions (Session 95) |
 | Accelerators with Watersheds installed | Algernon's sampler answers Watersheds' height function. Both include river valleys, neither applies the channel carve, and both return the top solid block, as the stored map does | Source-traced (decompiled) |
-| Checks | 24,936 pass | Harness-tested |
-| Joins, restart read-back, error brake, GPU cost, off-state A/B, a dedicated server with players, the comparison on mountains or beside real generation, the owner's side-by-side verdict | Not observed or measured | — |
+| Owner's accelerator decision | Accuracy accepted; use Watersheds when both supported samplers exist and Algernon alone otherwise | Human decision; implementation source/harness-tested |
+| P3/P4 checks | 25,076 assertions pass; Release build has zero warnings/errors | Harness-/build-tested at 0.4.87 |
+| 0.4.87 artifact | 41 entries, exact assembled content, no PDB, matching installed copy; SHA-256 `0BEEBE9B8B8CC8561CBDB90F08B86063B7C181F92F68035A99D456B8E0E330AA` | Artifact-verified |
+| Joins, weather look, shader compilation, scale handles, restart read-back, error brake, GPU/off A/B, complete disc, dedicated players and mixed versions | Not observed or measured | — |
 
 **The core world-generation/LOD-coverage plan is complete.**
 - P1–P5 and P7 landed in 0.4.66–0.4.76.
@@ -241,17 +238,20 @@ In an active world, the vanilla Settings header has a dedicated **Horizons** tab
 - **One editor.** Both entries compose one stateful editor (settled decision 37), so behaviour
   cannot drift between two implementations.
 
-- **The pages.** **General** holds automatic/manual LOD distances, the far draw cap, the saved
-  **Load terrain while paused** switch, and visual features with presets. **Anti-Aliasing** holds a
-  slider for every dial.
+- **The pages.** **General** holds automatic/manual LOD distances, the far draw cap, silhouette
+  reach, the saved **Load terrain while paused** switch, and visual features with presets.
+  **Anti-Aliasing** holds every TAA dial; **Silhouettes** holds its saved switch, reach, status and
+  classic-look dials; **Generate** holds permanent world-generation controls.
   - Descriptions appear on hover.
   - Secondary tabs sit below the vanilla header.
   - Compact rows and independently placed actions keep text and controls inside the page.
   - Defaults resets the current page. Save keeps mod changes; Cancel or closing restores live
-    anti-aliasing previews.
+    anti-aliasing and silhouette previews.
 - **Distance map.** A logarithmic map begins at 32 blocks.
   - Vanilla's range is neutral grey. The coloured and labelled L0-L6 spans begin at its edge, and
     each L1-L6 marker frame matches the region it introduces.
+  - Cached draw distance and silhouette reach are handles; the silhouette band runs between them,
+    levels beyond cached draw distance dim, and the silhouette parts hide when the feature is off.
   - This picture is explanatory, and does not remove the renderer's internal seam overlap.
 - **Vanilla render distance.** The white Vanilla marker is a second control for
   `ClientSettings.ViewDistance`, not mod configuration.
@@ -263,11 +263,13 @@ In an active world, the vanilla Settings header has a dedicated **Horizons** tab
     LOD work at 50 ms cadence. It neither unpauses nor advances simulation.
   - Source and harness verification are complete; a direct runtime progress observation remains
     open.
-- **Presets.** Quality now equals the deliberate default visual set, and leaves costly Far Biome
-  Colors off. Players may enable the feature individually, producing a Custom configuration.
+- **Presets.** Quality equals the deliberate default visual set and leaves costly Far Biome Colors
+  off. Performance disables silhouettes; Balanced and Quality enable them. Players may change a
+  feature individually, producing a Custom configuration.
 
 The owner's first 0.4.63 screenshots exposed the remaining tab, colour and Vanilla/L0 separation
-defects. He reviewed the corrected 0.4.64 window and said, "This looked good."
+defects. He reviewed the corrected 0.4.64 window and said, "This looked good." The new 0.4.87
+Silhouettes tab and scale handles have only source/harness evidence.
 
 ## Tree and glacier corrections: accepted
 
@@ -336,8 +338,11 @@ No cache purge or schema-meaning change is required.
 - in 0.4.74–0.4.75: `AssistWelcome.Features` field 7 and `CanControlWorldGeneration` field 8,
   server-settings fields 17–23, the `AssistWorldGenRequest`/`AssistWorldGenStatus` message types,
   and status `Action` field 28;
-- in 0.4.77: four silhouette message types. The server pushes tiles; the manifest and tile-request
-  types are still unused.
+- in 0.4.77: four silhouette message types, initially used as a direct-push prototype;
+- in 0.4.85: `AssistServerSettings` field 24 reports accelerator use;
+- in 0.4.86: settings fields 25-26 report the dedicated reach and preview rate; append-only
+  transport-generation and world-session fields activate the registered manifest/request path
+  between current peers while retaining direct push for an older peer.
 
 Older protobuf peers ignore the new fields. Feature bits reserve 0 for Generate, 1 for frontier and
 2 for silhouettes.
@@ -364,6 +369,8 @@ so neither the blob format nor the schema meaning moved; `dev/WIRE_HISTORY.md` c
   - It shares nothing with the section cache.
 - Session 94 changed no stored or transmitted meaning. Features bit 2 now marks a server that
   offers silhouettes, not every server holding a builder (`dev/WIRE_HISTORY.md`).
+- Sessions 95-96 changed no section blob or section database meaning. Silhouette transport
+  generation 1 is append-compatible protocol 1; the tile payload and tile-store schema remain 1.
 
 The numbers stay `1 / 4 / 6`.
 
@@ -388,9 +395,10 @@ to the server log.
 - `.vhwater capture` stores a frame's colour and depth stages with the projection. Session 86
   measured the shimmer from one.
 - `.vhsilhouette on|off|log|stats` switches silhouettes for the session. It reports tiles, cells
-  with heights, meshes and the shader.
+  by source, offered/in-flight/refused transport, pending and resident meshes, per-resolution draws
+  and the shader. It does not rewrite the saved Settings choice.
 - `/vhsilhouetteserver [status]` (controlserver) reports the builder, heights, previews, the store
-  and any stop.
+  and any stop, plus accelerator and delivery counters.
 - `/vhsilhouetteserver compare [radiusChunks]` compares every cell the server holds in a square
   around the caller (the world centre from the console), and writes a map for the side-by-side.
 - `/vhsilhouetteserver presample [radiusChunks]` asks the accelerators about that square before it
@@ -404,11 +412,14 @@ to the server log.
   sessions with the owner's enabled mods. `scripts/silhouette-compare-render.py` then draws the
   side-by-side. `-PlanOnly` lists the mods and launches nothing.
 - The builder logs a status line every 30 s while a player asks for silhouettes.
+- `ModConfig/vintagehorizons-server.json` owns `EnableSilhouettes`,
+  `SilhouetteUseAccelerators`, `SilhouetteReachBlocks` and `SilhouettePreviewsPerSecond`. On a
+  dedicated server only explicit `EnableSilhouettes = true` offers the feature.
 
 ## Performance and artifact evidence
 
-**Checks and builds.** The final fast tier passed **24,936 assertions with zero failures** at 0.4.84,
-and the Release build completed with zero errors.
+**Checks and builds.** The final fast tier passed **25,076 assertions with zero failures** at 0.4.87,
+and the Release build completed with zero warnings and zero errors.
 
 Measured costs, and what is not measured:
 - **Sibling-cache scanner.** Its cost is in the current-result table. Merging into held sections
@@ -426,15 +437,18 @@ Measured costs, and what is not measured:
 - **Silhouettes:**
   - GPU cost and the off-state A/B are not measured.
   - Captured heights cost one 2 KB copy per column the server loads.
-  - The fill runs on worker threads with pooled arrays.
+  - Accelerator calls and the fill/three-resolution mesh build run off the main thread. Up to four
+    accelerator tile jobs may wait, but calls are serialized until concurrency beside real
+    generation is measured.
+  - Render upload is bounded to four tiles, 2 MiB and 2 ms per frame; live GPU time is unmeasured.
   - An accelerator height took 0.01–0.02 ms in freshly generated land (Session 94). On land nobody
     had generated it took under 0.01 ms, and under 1 ms for a new region's first sample (Session 95).
     Sampling beside real generation is not measured.
 
-**The 0.4.84 artifact.** The verified `dist/vintagehorizons_0.4.84.zip` is 624,243 bytes and has
-SHA-256 `135187F8F94863172C60E26EBB064C764A3DDBAF0305B580E0489A4473408A31`. Its `modinfo.json`
-reports 0.4.84, and it was copy-installed during its build workflow. Older test zips remain in that
-folder.
+**The 0.4.87 artifact.** The verified `dist/vintagehorizons_0.4.87.zip` is 643,980 bytes and has
+SHA-256 `0BEEBE9B8B8CC8561CBDB90F08B86063B7C181F92F68035A99D456B8E0E330AA`. Its 41 entries match the
+assembled mod folder, its `modinfo.json` reports 0.4.87, it contains no PDB, and it was copy-installed
+with a matching hash. Older test zips remain in that folder.
 
 **Checkpoints.** Every incremented private test build receives an exact Git checkpoint after
 verification and installation. This does not authorize a push, tag, publication or public release.
@@ -442,10 +456,11 @@ verification and installation. This does not authorize a push, tag, publication 
 **Launches.**
 - Sessions 94 and 95 launched headless, isolated dedicated test servers under the owner's standing
   permission for needed tests: two runs in Session 94, and one two-session run in Session 95.
-- They launched no game client, and the owner ran no in-game test.
+- Session 96 launched no server or game client; the owner was unavailable to test and no other
+  players were available.
 - Session 91's controlled servers ran only after the owner's approval.
 
-**Documentation.** Validation passed **10,653 checks** with no failures at the Session 95 doc pass.
+**Documentation.** Validation passed **10,659 checks** with no failures at the Session 96 doc pass.
 It covers:
 - current version and changelog coverage;
 - source count;
@@ -488,36 +503,33 @@ It covers:
 ## Next work
 
 Begin with [the silhouette handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
-[Session 95](dev/sessions/SESSION_95.md), the top of [TODO](dev/TODO.md), and
+[Session 96](dev/sessions/SESSION_96.md), the top of [TODO](dev/TODO.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. **P0.3, the owner's verdict (D8).** The owner has the side-by-side from Session 95's run.
-   - If accepted: silhouettes use Watersheds' sampler where Watersheds is installed, keeping
-     previews for coasts and lakes. Also decide whether to correct the +1.4 lean.
-   - Still uncovered: mountains, sampling beside real generation, and why sea level is 82 (G208).
-2. **P3, remaining:**
-   - coast refinement and the land/sea hint;
-   - accelerator use after the verdict;
-   - the manifest and tile-request transport;
-   - the dedicated-server opt-in with the reach clamp;
-   - yields to `LodWorldGenGates`.
-3. **Observe in game:** silhouette joins, tile read-back after a restart, and the error brake. The
-   `bodanboys` stall is set aside (G204).
-4. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
+1. **Run P4's human gate on 0.4.87 when the owner is available:** shader compilation; sea and
+   inland visibility; cached joins; night/rain/fog/winter; scale handles; GPU cost and a true off/on
+   A/B. If the join fails, the plan's beyond-draw-distance fallback is an owner decision.
+2. **Close P3's deferred integration debt** when another player is available: a complete
+   singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
+   disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
+3. **P5 after P4 acceptance:** tune islands/inlets and the look with the owner, then add client tile
+   persistence. Optimize colour, grids or coverage only if P4 measures a need.
+4. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
+5. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
    offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
-5. **Older TODO debt:** runtime-check the 0.4.69 sweep pacing and drop line, and keep the debt
+6. **Older TODO debt:** runtime-check the 0.4.69 sweep pacing and drop line, and keep the debt
    including:
    - P3's after-comparison;
    - winter convergence;
    - pause loading;
    - Session 84 diagnostic cleanup.
 
-[Session 95](dev/sessions/SESSION_95.md) is the authoritative continuation point, and
+[Session 96](dev/sessions/SESSION_96.md) is the authoritative continuation point, and
 [the silhouette handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md) orients a new agent.
-- Sessions 94-82 retain the silhouette comparison, P2 and the first look, and the Generate,
+- Sessions 95-82 retain the silhouette comparison, P2 and the first look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G208 in `dev/GOTCHAS.md` preserve the recent traps.
+- G166-G208 in `dev/GOTCHAS.md` preserve the recent proven traps; Session 96 added no new one.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work

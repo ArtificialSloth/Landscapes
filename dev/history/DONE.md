@@ -2,6 +2,26 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-15 - Horizon silhouette P3/P4 source complete (0.4.85-0.4.87)
+
+- **0.4.85:** both optional accelerators accepted; Watersheds preferred when both exist, Algernon's
+  Terrain Sampler accepted alone; 64-block coarse grid, low/coastal preview refinement and named
+  preview fallback.
+- **0.4.86:** revision manifest/request transport, bounded replies/retries, world-session identity,
+  reach pruning, all automatic-generation gates, dedicated opt-in and reach/rate clamps.
+- **0.4.87:** adaptive 128/32/8 meshes, exact coverage mask, cached/silhouette shared-colour handoff,
+  existing far-plane integration, persistent Silhouettes settings, General scale handles, presets
+  and complete client off-state cleanup.
+
+These TODO items closed in source and harness evidence:
+- the owner's P0.3 verdict and accelerator selection;
+- P3 accelerator use, manifest/tile-request transport, dedicated opt-in/reach clamp and shared
+  generation gates;
+- P4's renderer, handoff, settings and off-state implementation.
+
+P3's singleplayer/dedicated integration gate and all P4 human visual/performance gates remain open
+in TODO. P5 tuning and client tile persistence are not built.
+
 ## 2026-09-15 - P0.3 side-by-side and unexplored-land test (0.4.84)
 
 0.4.84:

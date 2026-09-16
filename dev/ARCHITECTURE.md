@@ -540,6 +540,30 @@ live until the exact replacement persistence revision is acknowledged.
     may borrow otherwise idle generation capacity but never holds the exclusive authority merely
     because it is enabled. It yields immediately to `/vhworldgen` and `/vhgen`; simultaneous
     producers cannot make each other's provenance, completion or absence diagnostics ambiguous.
+40. **Silhouette height truth is ordered, and accelerators are optional.** Captured terrain wins,
+    then the engine's own Terrain-pass preview, then an accepted accelerator. Horizons prefers
+    Watersheds' native sampler when both supported samplers are installed and accepts Algernon's
+    Terrain Sampler when Watersheds is absent; neither is a dependency. Accelerator work stays off
+    the main thread, and one named failure disables that adapter for the session and returns to
+    previews. Representative shape is the product requirement; it is not voxel-LOD truth.
+41. **Silhouette delivery is demand- and session-owned.** A current peer offers tile revisions and
+    answers bounded nearest-first requests; every accepted key ends as success, explicit refusal or
+    bounded retry. Transport generation and world-session identity are append-only protocol-1
+    fields, so a stale world cannot release a current request slot. An older peer's direct-push
+    packets remain a deliberate compatibility path. Dedicated servers offer the feature only after
+    explicit admin opt-in and clamp reach; integrated/LAN servers retain the automatic default.
+42. **Real cached terrain owns the silhouette join.** Silhouettes are a separate height-field layer,
+    never section-cache data and never terrain ownership. Exact 64-block cache coverage suppresses
+    them inside the cached fade, while they may draw beyond cached terrain's far edge. The cached
+    fade and silhouette pass evaluate the same colour function at their join. One renderer and the
+    existing stepped far-plane policy own both extents; silhouette meshes choose resolution from
+    on-screen cell size, not fixed distance.
+43. **A silhouette off switch removes the feature's live cost.** It sends one final off demand,
+    then clears client offers, requests, tile data, worker obligations and GPU meshes; its render
+    pass returns without GL work, its shader is not compiled merely because the saved switch is on,
+    and its extent contributes nothing to projection. The server drops that player's demand and is
+    idle when nobody asks. Stored server tiles remain reusable. Terrain Ahead is an independent,
+    later feature with a separate switch and acceptance.
 
 ## Concurrency invariants
 

@@ -104,6 +104,32 @@ gzip CSV files under `ModData/vintagehorizons/silhouette-compare/`:
 `compare` reads a presample only when its magic line matches. Nothing else reads these files, and
 they share nothing with the section cache or the tile store.
 
+**Accepted accelerators and final silhouette transport (0.4.85-0.4.86, no protocol bump).**
+
+0.4.85 appends `AssistServerSettings.SilhouetteUseAccelerators` at field 24. It reports whether the
+server permits an installed accepted sampler; it does not require either sampler on a peer.
+
+0.4.86 appends:
+- `AssistServerSettings.SilhouetteReachBlocks` field 25 and `SilhouettePreviewsPerSecond` field 26;
+- `AssistSilhouetteRequest.TransportVersion` field 4 and `SessionId` field 5;
+- `AssistSilhouetteManifest.SessionId` field 5;
+- `AssistSilhouetteTileRequest.SessionId` field 2;
+- `AssistSilhouetteTile.SessionId` field 6 and exact requested `Key` field 7.
+
+Silhouette transport generation `0` is the 0.4.77-0.4.85 direct-push prototype. Generation `1`
+uses the already registered manifest and tile-request messages: the server offers tile revisions,
+and the client asks for missing revisions. The server echoes the request's world-session id on
+every manifest and tile answer. A current client ignores stale-session replies. Every requested key
+receives a success, explicit refusal or retryable response; the exact `Key` lets malformed requests
+receive a terminal answer even when tile coordinates cannot reproduce them.
+
+An old server reads the new request fields as their protobuf defaults and continues pushing tiles.
+A current client recognises `SessionId == 0` as that legacy reply. An old client sends transport
+generation 0, so a current server retains direct push for it and does not require a manifest/request
+sequence it cannot perform. Unknown server-setting fields keep their ordinary defaults. No existing
+message, field, payload or required old-peer sequence changed meaning, so assist protocol, section
+blob and database schema remain `1 / 4 / 6`; the silhouette payload and tile-store schema remain 1.
+
 ## Section blob-format ledger
 
 | Blob format | Current schema | Meaning |

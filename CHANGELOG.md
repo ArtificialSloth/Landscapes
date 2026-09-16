@@ -23,9 +23,69 @@ presets.
 across a real server restart; check dedicated-server permissions and long-run memory/disk behavior;
 make the fixed 15-second shutdown-save deadline configurable; runtime-check 0.4.69's sweep pacing
 line and the P3 after-comparison; winter temporal convergence. The owner deferred overlap/speed
-optimization on 2026-09-14 and chose the Farseer silhouette plan next. The last accepted baseline
-remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and fresh-start recovery received the
-owner's “Success” report, but not the full completion/restart matrix.
+optimization on 2026-09-14. Silhouette P3/P4 runtime gates remain open: the cached join and weather
+look, scale controls, shader compilation, GPU/off A/B, restart read-back and dedicated multiplayer.
+The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
+fresh-start recovery received the owner's “Success” report, but not the full completion/restart
+matrix.
+
+## [0.4.87] - 2026-09-15
+
+**Horizon silhouettes: adaptive drawing, handoff and settings (P4).**
+- Each client tile is worker-meshed at 128, 32 and 8 cells per edge. The renderer selects by the
+  cell's on-screen size, stitches mixed resolutions at tile edges, anchors against live cached edge
+  heights, clamps uncovered sea and sinks the cached join.
+- Exact 64-block cached coverage reaches the shader as a tile mask. Covered silhouette fragments
+  yield inside the cached fade but may draw beyond cached terrain's far edge.
+- Cached terrain and silhouettes share one classic-colour function at their fade, while the
+  existing sky path remains the off result. The silhouette extent uses the existing stepped far
+  projection; it owns no second camera policy.
+- Shader compilation waits for the first drawable tile. A compile/load failure disables the
+  feature for the session. Turning it off clears requests, tile data, worker obligations, GPU
+  meshes and projection reach.
+- `.vhconfig` gains a persistent **Silhouettes** tab with reach, classic-look dials, live preview,
+  status and defaults. Cached draw distance and silhouette reach are handles on the General scale.
+  Performance turns silhouettes off; Balanced and Quality turn them on. `.vhsilhouette` remains a
+  session-only override.
+
+No game was launched. Appearance, GLSL compilation, UI layout, GPU cost and the off-state A/B await
+human testing. Protocol/blob/schema remain `1 / 4 / 6`; the tile-store schema remains `1`. Release
+build: zero warnings/errors; fast tier: 25,076 assertions. The verified 41-entry package has
+SHA-256 `0BEEBE9B8B8CC8561CBDB90F08B86063B7C181F92F68035A99D456B8E0E330AA`.
+
+## [0.4.86] - 2026-09-15
+
+**Horizon silhouettes: bounded P3 tile delivery and dedicated opt-in.**
+- Current peers exchange revision manifests and nearest-first tile requests instead of pushing
+  every tile. Sixteen requests may be in flight; replies are capped at 20/s per player and 80/s in
+  all. Every accepted key gets a tile, explicit refusal or bounded retryable answer.
+- Append-only transport generation and world-session fields reject stale worlds and preserve the
+  0.4.77-0.4.85 direct-push path for older servers. Tiles/offers outside the moving reach are
+  pruned.
+- A dedicated admin can opt in with `EnableSilhouettes = true`; requested reach is clamped by
+  `SilhouetteReachBlocks` (8,192 by default), and `SilhouettePreviewsPerSecond` is bounded. The
+  automatic default remains integrated/LAN on and dedicated off.
+- The builder yields to the shared automatic-generation gates as well as explicit generation
+  authority.
+
+These are append-compatible protocol-1 additions; compatibility numbers remain `1 / 4 / 6`. The
+verified package has SHA-256
+`E2C1935080C6DCDAB4CA54BD5DB0801D0EBBD73295F492786F7D099319D0F66D`.
+
+## [0.4.85] - 2026-09-15
+
+**Accepted optional silhouette accelerators.** The owner accepted the P0.3 accuracy and both
+supported choices. The live builder prefers Watersheds' native sampler when both are installed,
+accepts Algernon's Terrain Sampler when Watersheds is absent, and requires neither.
+- The selected sampler supplies a 64-block coarse grid on a background caller.
+- Captured heights and engine previews remain authoritative. One real preview refines likely low or
+  coastal ground.
+- A named sampler failure disables it for the session and the standalone preview path takes over.
+- `SilhouetteUseAccelerators = false` keeps previews only. No correction is applied to the accepted
+  measured +1.4-block lean.
+
+Compatibility numbers remain `1 / 4 / 6`. The verified package has SHA-256
+`6A4D3DD7B950DADC58E16E89F7A207B387A86DAF9A5FACFDF732EC665F997D76`.
 
 ## [0.4.84] - 2026-09-15
 

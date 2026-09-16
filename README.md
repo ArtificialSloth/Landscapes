@@ -9,8 +9,9 @@ client already receives as you play. It then draws that cache far past the norma
 distance. Coverage grows as you explore, and it persists across sessions.
 
 You can also install it on your server. Then it shares its own cache with players and an
-admin can build the horizon on request. Neither is necessary, and players without the mod
-are unaffected.
+admin can build the horizon on request. It can also prepare a lightweight land silhouette far
+beyond cached terrain. Neither server installation nor that feature is necessary for ordinary
+client capture, and players without the mod are unaffected.
 
 ## What it does
 
@@ -28,6 +29,9 @@ are unaffected.
   snow-block geometry.
 - **Persistent per-world cache** that grows as you play. Join time and memory use do not
   depend on the size of the explored area.
+- **Optional horizon silhouettes** when the server also runs Vintage Horizons. A sparse height
+  field shows the broad shape of land beyond cached terrain and across unexplored gaps. It is
+  independent of the real 3D cache and can be switched off completely.
 
 ## What it cannot do
 
@@ -36,7 +40,9 @@ came near never reached your client. It is not in the cache, so the mod cannot d
 A new world therefore shows nothing past the vanilla view distance until you travel.
 
 Server-side generators (Farseer, ChunkLOD) ask the world generator directly and do not
-have this limit. In exchange, those mods must be on the server.
+have this limit. In exchange, those mods must be on the server. Vintage Horizons' optional
+silhouette feature makes the same broad server-side trade for heights only; without the server
+mod, ordinary cached terrain still grows solely from land the client receives.
 
 In this mod, the edge of the explored area fades into the horizon. It does not end in a
 cliff. The picture fills in the more you play. If you run the server, `/vhgen` builds it
@@ -48,10 +54,11 @@ in advance.
 | --- | --- |
 | `.vhinfo` | Status: cached/resident sections, meshes, current far edge, settings |
 | `.vhdiag [on\|off]` | Show or hide the diagnostics side panel for this session. Off by default. |
-| `.vhconfig` | Open the settings window. **General** holds distance and visual settings; **Anti-Aliasing** holds every `.vhtaa` dial; **Generate** prepares and controls permanent world generation. Changes preview live where applicable, Save keeps them and Cancel restores the previous values. If ordinary in-game Settings has paused an integrated server, Generate offers **Open live controls** and hands off to this standalone window before sending server actions. |
+| `.vhconfig` | Open the settings window. **General** holds distance and visual settings; **Anti-Aliasing** holds every `.vhtaa` dial; **Silhouettes** holds reach and classic-look controls; **Generate** prepares and controls permanent world generation. Changes preview live where applicable, Save keeps them and Cancel restores the previous values. If ordinary in-game Settings has paused an integrated server, Generate offers **Open live controls** and hands off to this standalone window before sending server actions. |
 | `.vhdetail [auto\|manual\|target <px>\|<blocks>]` | Without an argument, report the six transition distances and where they come from. `auto` (the default) chooses them from your field of view and render resolution so every level hands over at the same size on screen, and `target <px>` sets that size (1.5 by default); `manual` returns to your own distances; a number sets a doubling sequence beginning there and switches automatic off. Saved; `.vhconfig` edits them individually. |
 | `.vhfar <blocks>` | Cap the LOD render distance. `0` means unlimited, which is the default. |
 | `.vhtaa [on\|off\|show\|reach\|nudge\|sharpen\|blend\|still\|clip\|reset]` | Distant anti-aliasing: stops distant terrain shimmering as you move by nudging it a fraction of a pixel each frame and blending frames together, on cached terrain only. On by default and saved; also a switch in `.vhconfig`. `reach <px>` sets where it begins as the on-screen width of one block; `nudge`, `sharpen`, `blend` (memory while turning), `still` (memory when still) and `clip` (how strictly old frames must match) tune it. All are saved and all are sliders on the `.vhconfig` Anti-Aliasing tab; `reset` restores the defaults, `show` tints what it touches for the session. With no argument it reports its settings and GPU cost to chat and the client log. |
+| `.vhsilhouette [on\|off\|log\|stats]` | Session-only silhouette override and status. The saved enable switch, 1,024–32,768-block reach and colour/look dials are on `.vhconfig`'s Silhouettes tab. `off` drops the server demand and releases client tile, worker and GPU state; it does not rewrite the saved choice. |
 | `.vhmask [on\|off]` | Hand each loaded vanilla chunk its own ground instead of using one distance, and skip cached terrain that is entirely replaced. On by default since 0.3.17; the setting is saved. Turn it off to fall back to a single measured distance. |
 | `.vhpaint [on\|off]` | Diagnostic. Paints the terrain the mask is hiding magenta instead of hiding it. A gap that turns magenta is the mask's doing; a gap that stays empty is not. Magenta can also show where distant terrain stands in front of the game's own, which is harmless. |
 | `.vhskip [on\|off]` | Only matters with `.vhmask on`. On (the default) lets the mod drop a whole cached piece when the game covers all of it. Off keeps the per-pixel masking but never drops a whole piece. |
@@ -144,12 +151,27 @@ privilege, which every singleplayer host has:
 | `/vhserver` | Server assist status: settings in force, cache size, transfer counters |
 | `/vhgen start [radius] [x z]` | Build the LOD cache around you (or around `x z`). It generates terrain that nobody visited yet. Also `stop` and `status`. See below. |
 | `/vhrefresh [radius]` | Reload and recapture existing vanilla terrain around you so cached snow and edits catch up. Default 32 chunks, maximum 128. Missing terrain is never generated. Also `stop` and `status`. |
+| `/vhsilhouetteserver [status\|compare\|presample]` | Silhouette builder/store/transport status, plus developer accelerator comparisons. `compare` and `presample` write measurement files; ordinary players need only `status`. |
 
 The client settings persist in `VintagestoryData/ModConfig/vintagehorizons.json`.
 The per-world cache lives in `VintagestoryData/ModData/vintagehorizons/<savegame-id>.db`.
 When an incompatible update changes what the stored data means, the mod discards that cache.
 Compatible additions are read conservatively—for example, old rows without an observed-snow
 answer keep their terrain and use the climate fallback until recaptured.
+
+### Horizon silhouettes
+
+Silhouettes need Vintage Horizons on both the client and server; integrated singleplayer counts as
+both. They are automatic in integrated/LAN play. A dedicated server stays off unless its admin sets
+`EnableSilhouettes` to `true` in `ModConfig/vintagehorizons-server.json`. The same file controls
+`SilhouetteReachBlocks` (the dedicated reach ceiling), `SilhouetteUseAccelerators`, and
+`SilhouettePreviewsPerSecond`.
+
+The server keeps heights only and writes no terrain to the savegame. Real captured heights are best;
+selective engine previews refine them. If installed, Watersheds' sampler supplies the broad field;
+Algernon's Terrain Sampler is accepted when Watersheds is absent. Neither mod is required, and a
+sampler failure falls back to the standalone engine-preview path for that session. Silhouette tiles
+have their own server store; client persistence is planned but not present in 0.4.87.
 
 ## Building
 
@@ -460,6 +482,9 @@ record. See [CHANGELOG.md](CHANGELOG.md) for released changes and
   Voxy (Minecraft) - architectural inspiration. No code is used from either.
 - [Farseer](https://github.com/ViciousBadger/VSMod-Farseer) (MIT, © Badgerson) -
   Vintage Story rendering techniques. Adapted code is credited where it is used.
+- [Algernon's Terrain Sampler](https://github.com/Algernon733/AlgernonsTerrainSampler) and
+  Watersheds - optional server-side height accelerators called through their installed APIs; no
+  code is copied and neither is required.
 
 ## License
 

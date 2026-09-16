@@ -1,108 +1,143 @@
-# Handoff - horizon silhouettes at 0.4.84, waiting on the owner's P0.3 verdict
+# Handoff - horizon silhouettes at 0.4.87, P4 runtime gate next
 
-**Updated:** `2026-09-15`, Session 95
-**Branch/source checkpoint:** `codex/water-depth-light`, 0.4.84 at `8cd445f`; nothing pushed
-**Installed:** `0.4.84` private test build, copy-installed. It is not tested in game; players see 0.4.82's behaviour.
+**Updated:** `2026-09-15`, Session 96
+**Branch/source checkpoint:** `codex/water-depth-light`, 0.4.87 at `2111ee9`; nothing pushed
+**Installed:** verified 0.4.87 private test build, copy-installed; 0.4.85-0.4.87 have not run in game
 **Last accepted baseline:** `0.4.64`
-**Compatibility:** assist protocol / blob / schema `1 / 4 / 6`, unchanged. The silhouette tile store has its own schema `1`.
+**Compatibility:** assist protocol / blob / schema `1 / 4 / 6`, unchanged. The silhouette tile
+store has schema `1`; current silhouette transport generation is `1`.
 
 Read, in this order:
 1. this page;
-2. [Session 95](../sessions/SESSION_95.md), then [Session 94](../sessions/SESSION_94.md);
-3. [the silhouette plan](PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md), its "How the build differs" note
-   first;
-4. [the gotchas](../GOTCHAS.md) G199–G208;
+2. [Session 96](../sessions/SESSION_96.md);
+3. [the silhouette plan](PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md), especially phases P4-P5;
+4. [the gotchas](../GOTCHAS.md) G199-G208 plus shader/render G5, G10, G130, G158, G160-G161 and
+   G174;
 5. [TODO](../TODO.md).
 
-`CLAUDE.md` holds the working rules; follow them.
+`CLAUDE.md` holds the working rules; follow them. Ask before any game launch.
 
 ## Where things stand
 
-- **Built.** P1 (the first look) and P2 (captured heights, the fill and the tile store). P3 has
-  begun.
-- **Where silhouettes run.** Singleplayer and LAN-hosted worlds, behind `.vhsilhouette on`.
-  Dedicated servers stay off, except for a developer switch used for measurement (below).
-- **Height sources.** Captured columns and engine previews. No accelerator is used yet.
-- **P0.3.** The accelerator comparison is built and measured. **The owner's verdict (D8) is
-  pending.** They have the side-by-side page from run `p03-cold`.
+- **P1-P4 are built in source.** The current artifact is 0.4.87.
+- **No 0.4.85-0.4.87 runtime evidence exists.** The owner was away and no other players were
+  available. Do not describe source/harness evidence as a passed visual, shader, performance,
+  restart or multiplayer gate.
+- **Next gate:** P4's small in-game visual/UI/performance checklist below.
+- **After acceptance:** P5 tuning and client tile persistence. Terrain Ahead remains the separate
+  P6 feature.
 
-## The P0.3 evidence
+## Owner decisions now implemented
 
-| Run | Build | Cells compared | Error median / 95% / max | Lean | Land/sea wrong |
-|---|---|---|---|---|---|
-| `p03-first` | 0.4.83 | 1,680 chunk corners | 1 / 5 / 21 | +1.5 | 11.6% |
-| `p03-wide` | 0.4.83 | 4,096 chunk corners | 2 / 5 / 11 | +1.9 | 5.9% |
-| `p03-cold` | 0.4.84 | 270,336 cells, every 4 blocks | 1 / 4 / 63 | +1.4 | 3.7% |
+- The P0.3 accelerator accuracy is accepted. Representative shape is enough; no +1.4-block lean
+  correction is applied.
+- Support both optional accelerators. Prefer Watersheds' native sampler when both are installed;
+  accept Algernon's Terrain Sampler when Watersheds is absent. Horizons requires neither.
+- Continue without multiplayer evidence, but retain that evidence as an open gate.
+- The P3 accelerator and P4 design were accepted for implementation.
 
-- **Before the land existed.** In `p03-cold`, answers taken in an earlier session matched the later
-  answers at all 270,336 cells. Each sampler answered 270,400 cells in about 1 s, and the first sample
-  in a new region cost under 1 ms.
-- **One function.** With Watersheds installed, Algernon's Terrain Sampler and Watersheds' sampler are
-  one height function, so they give identical figures (G205).
-- **Sea level.** 82 on these test worlds (G208); why is not traced.
-- **By the picture (not traced).** River valleys read high, because real generation carves channels
-  last. Some lakes become low land.
-- **Big errors are rare and on land.** 0.16% of cells are 8 or more blocks off, and almost all of
-  those are on land or at the coast.
+## What 0.4.85-0.4.87 contain
 
-## How to run the comparison
+### 0.4.85 - accepted accelerator path
 
-- **Permission.** The owner allows the headless test servers the work needs, but not their client or
-  their worlds. Check that no Vintage Story is running; the script also refuses to start.
-- **Build first.** Package a new version first, following the version rule in `CLAUDE.md`. The script
-  installs `dist/vintagehorizons_<version>.zip` for the project's current version.
-- **PowerShell 7.** The scripts need it. On the owner's machine it is installed but not on the path,
-  so call `pwsh` by its full path.
-- **Preview.** `pwsh scripts/silhouette-compare.ps1 -PlanOnly` lists the mods it would copy: the
-  owner's enabled mods, matched by `modid@version`.
-- **Run.** `pwsh scripts/silhouette-compare.ps1 -Profile <new name> -Range 32` runs:
-  1. the presample session, then a stop;
-  2. pregen and compare in a second session, then a stop;
-  3. the renderer, which writes the HTML page.
+- One selected sampler fills each tile at 64-block spacing (64 cells per tile) on a background
+  caller. Up to four tile jobs may wait; calls themselves are serialized until concurrency beside
+  real generation is measured.
+- Captured terrain and engine previews remain better origins and replace accelerator cells.
+- One engine preview refines a tile that looks low or coastal.
+- A named sampler failure disables it for the session and previews take over.
+- `SilhouetteUseAccelerators = false` retains the standalone preview path.
 
-  Range 32 takes about 10 minutes.
-- **Outputs.** Report lines go to `compare-report.txt` in the profile. The page and panels are written
-  under `.testdata/silhouette-compare/<profile>/ModData/vintagehorizons/silhouette-compare/`.
-- **Server commands** (controlserver): `/vhsilhouetteserver [status|compare|presample]`.
-- **The measuring switch.** `VINTAGEHORIZONS_SILHOUETTE_MEASURE=1` keeps heights on a dedicated
-  server without offering silhouettes (G206).
+### 0.4.86 - final P3 transport and dedicated opt-in
 
-## Next work
+- Current peers exchange chunked key/revision manifests and nearest-first requests; the older
+  direct-push path remains for 0.4.77-0.4.85 peers.
+- Sixteen client requests may be in flight. Server replies are capped at 20/s per player and 80/s
+  total. Every accepted key gets success, refusal or bounded retryable state.
+- A world-session id rejects late packets from an old world. Moving reach prunes offers, tiles and
+  meshes outside its margin.
+- Dedicated servers offer silhouettes only with explicit `EnableSilhouettes = true`; `null` remains
+  integrated/LAN automatic and dedicated off. `SilhouetteReachBlocks` clamps dedicated reach;
+  `SilhouettePreviewsPerSecond` is bounded.
+- The builder yields to the complete shared generation gate, `/vhworldgen`, `/vhgen` and real loads.
 
-1. **Get the owner's D8 verdict.** Ask plainly; they judge the page by eye.
-2. **If accepted, P3 continues:**
-   - use Watersheds' sampler for silhouette heights where Watersheds is installed. The origin order
-     stays captured, then preview, then accelerator (plan 4.2), and a failure falls back to
-     previews;
-   - keep previews for coasts and lakes (coast refinement, plan 4.5);
-   - decide whether to subtract the lean;
-   - use Algernon's Terrain Sampler only where Watersheds is absent, after measuring it on such a
-     world;
-   - measure sampling beside real generation (thread safety, plan 3.2).
-3. **If not accepted:** previews stay the only far source, and P3 continues with the transport and
-   the dedicated opt-in.
-4. **Everything else in P3** is listed in TODO.
+### 0.4.87 - P4 rendering and settings
 
-## Before touching this
+- Each tile has 128/32/8-quad meshes. Projected cell size chooses one; no fixed LOD distances.
+- Covered interiors keep raw heights, uncovered terrain clamps to sea, live cached edge heights
+  anchor the join, outer edges stitch at a common 64-block boundary, and the near join sinks.
+- Exact 64-block cached coverage is a per-tile shader mask. It suppresses silhouette fragments
+  inside cached terrain's fade but permits them beyond cached terrain's far edge.
+- Cached terrain and the silhouette share one classic-colour include at the fade target.
+- The silhouette pass draws after cached opaque terrain and contributes through the existing
+  stepped projection policy.
+- Shader compilation waits for a drawable tile; failure disables the feature for the session.
+- `.vhconfig` has a persistent Silhouettes tab: enable, reach, status and classic-look dials. The
+  General scale has cached-draw and silhouette-reach handles. Performance disables silhouettes;
+  Balanced/Quality enable them. `.vhsilhouette` remains session-only.
+- Off sends the final demand and clears manifests, requests, tiles, coverage, mesh work, GPU meshes
+  and projection extent.
 
-- **Traps.** G199: previews are invisible to the engine's generating count. G203: a preview rebuilds
-  its map region. G204: a busy world-generation thread delays pausing and quitting. G205–G208: the
-  sampler, dedicated-server, rain-count and sea-level traps.
-- **Docs are the owner's record.** Do not edit them until asked. Commit only versioned test builds
-  without asking. Never push.
-- **Talking to the owner.** They are not a developer: use plain language and short, specific
-  questions.
+## Exact continuation
+
+### First: P4 human gate
+
+Use 0.4.87 when the owner is present. Ask before launching. Keep the observations small:
+
+1. **Shader and sea:** at sea with no cached land inside draw distance, confirm silhouettes appear
+   toward known land and no compile failure is logged.
+2. **Inland gap:** find one unexplored gap between cached areas and confirm it fills.
+3. **Join:** look for a line, hole or double surface at an explored edge and at cached draw distance.
+4. **Weather:** one check each at night, rain/fog and winter.
+5. **Controls:** move cached draw distance and silhouette reach on the General scale; check the
+   haze band, dimming and hidden state when off. Check the Silhouettes tab fits and previews dials.
+6. **Cost:** capture silhouette GPU time if available and a same-scene on/off frame-time A/B.
+
+If the join cannot be made clean, stop for the owner. The plan's fallback—silhouettes only beyond
+cached draw distance—is a product decision, not an implementation detail.
+
+### Then: P3 integration debt
+
+- Let one singleplayer reach complete and read the source/fill/transport counts.
+- Restart and observe server tile read-back.
+- When another player is available, test a dedicated server with explicit opt-in: reach clamp,
+  fairness, off/disconnect cleanup and current/older-peer behavior.
+- P2 still needs one `/vhworldgen` area's captured columns observed in silhouette tiles.
+- Do not deliberately reproduce the `bodanboys` stall merely to test its brakes. If generator
+  silence or errors occur naturally, confirm the named stop line.
+
+### After P4 acceptance: P5
+
+- Compare islands and inlets against dense real terrain and adjust low/coastal refinement only if
+  the picture needs it.
+- Tune reach and classic-look dials with the owner.
+- Add client tile persistence for instant rejoin; it must not open or cost anything while off.
+- Colour-per-vertex, shared grid/height textures and finer coverage are measurement-triggered only.
+
+## Verification and artifact
+
+- Release build: zero warnings/errors.
+- Fast tier: 25,076 assertions, zero failures.
+- `dist/vintagehorizons_0.4.87.zip`: 643,980 bytes, 41 entries, exact assembled content, no PDB.
+- SHA-256: `0BEEBE9B8B8CC8561CBDB90F08B86063B7C181F92F68035A99D456B8E0E330AA`.
+- Copy-installed with older rollback archives retained.
+- Source checkpoint: `2111ee9a5ae1d0bf277fc41a8b6ec51c162db666`.
 
 ## Open, not established
 
-- Why lakes and river beds differ.
-- Why sea level is 82, and whether the owner's own worlds share it.
-- Mountains are thin in the evidence: both measured areas lie at the world centre.
-- The `bodanboys` preview stall (G204), which the owner has set aside.
-- Not yet observed:
-  - the joins;
-  - stored-tile read-back after a restart;
-  - the error brake;
-  - P2's integration gate;
-  - GPU cost and the off-state A/B;
-  - a dedicated server with players.
+- P4's actual GLSL compile and picture.
+- GPU cost and zero-cost off A/B.
+- Stored-tile restart read-back, complete-disc convergence and error-brake behavior.
+- Dedicated multiplayer and mixed-version behavior.
+- Accelerator sampling beside real generation; mountains were thin in P0.3.
+- Why the test worlds' sea level is 82 and whether the owner's worlds share it.
+- The set-aside `bodanboys` preview stall (G204).
+
+## Working cautions
+
+- Docs are current through Session 96. Do not edit them again until asked.
+- Never launch a game or test server without the authority required by `CLAUDE.md`.
+- Versioned playable source receives its exact checkpoint; documentation-only commits still require
+  owner approval. Never push without approval.
+- Preserve the source hierarchy: captured > preview > accelerator. Do not let a fast answer replace
+  terrain the engine actually generated.

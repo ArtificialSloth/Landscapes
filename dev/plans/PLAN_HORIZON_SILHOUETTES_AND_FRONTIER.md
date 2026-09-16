@@ -1,21 +1,20 @@
 # Plan - Horizon silhouettes and terrain ahead
 
-**Status:** Active. Revised 2026-09-14 with the owner's decisions D8-D15, against 0.4.76
-(`9ea75c5`; documentation `229c04b`).
+**Status:** Active. Reconciled 2026-09-15 through 0.4.87 (`2111ee9`), Session 96.
 - P1, the first look, landed in 0.4.77 (`4c7720c`). The owner accepted the classic look apart from
   the joins.
 - P2 landed in 0.4.79-0.4.80, with a stall guard and an error brake in 0.4.78 and 0.4.81 (Session
   93).
-- P3 began in 0.4.82 with the P0.3 comparison command.
-  - It ran on isolated test servers in 0.4.83 (Session 94).
-  - In 0.4.84 it compared every cell, sampled land before it existed, and produced the side-by-side
-    (Session 95).
-  - The owner's verdict is pending, and [the silhouette handoff](HANDOFF_HORIZON_SILHOUETTES.md)
-    describes where to pick up.
+- P3 source is complete through 0.4.86: the owner accepted both accelerators, 0.4.85 added live
+  sampling/refinement, and 0.4.86 added bounded manifest/request transport and dedicated opt-in.
+  Its singleplayer/dedicated integration gate remains open.
+- P4 source and harness work landed in 0.4.87: adaptive meshes, draw/handoff, settings, scale and
+  off states. Its in-game visual/UI/performance gate is next.
+- [The silhouette handoff](HANDOFF_HORIZON_SILHOUETTES.md) is the exact continuation point.
 - Silhouettes come first (D14).
 - Terrain Ahead is a separate, later feature (D15).
 
-**How the build differs from this text (Sessions 93–94),** until a revision folds it in:
+**How the build differs from the original design text (Sessions 93–96):**
 - **A dedicated test server can measure heights** with the developer switch
   `VINTAGEHORIZONS_SILHOUETTE_MEASURE` (0.4.83). It keeps heights and runs `compare`, and offers
   players nothing (G206).
@@ -32,12 +31,21 @@
 - **Previews stop for the session** after 20 s of generator silence or three logged errors (G204).
 - **The server command** is `/vhsilhouetteserver [status|compare|presample]`, not `/vhsilhouette`;
   the client owns that name.
-- **`EnableSilhouettes`** is `null` (automatic) as planned, but dedicated servers stay off whatever it
-  says until P3's test.
+- **`EnableSilhouettes`** is `null` (automatic) as planned: integrated/LAN on, dedicated off.
+  `true` explicitly opts a dedicated server in, and its reach is clamped.
+- **Accepted accelerator refinement** is one 64-block coarse grid plus one engine preview for a
+  likely low/coastal tile. Recursive coast refinement and the ocean-map island hint remain P5
+  tuning options, not P3 requirements.
+- **Transport generation 1** adds session identity to the registered manifest/request path. The
+  original direct-push behavior remains only for an older peer.
+- **Coverage is an exact per-tile 64-bit shader mask,** not a per-vertex covered flag. That avoids
+  ambiguity at vertices shared by covered and uncovered cells.
+- **The Silhouettes tab and General scale are built.** The tab strip currently has General,
+  Anti-Aliasing, Silhouettes and Generate; Terrain Ahead will make the planned fifth tab.
 
 The first version was written from a report-only investigation on 2026-09-12 against 0.4.64
 (`dd0394c`).
-**Created:** 2026-09-12. **Revised:** 2026-09-14.
+**Created:** 2026-09-12. **Revised:** 2026-09-15.
 **Scope:** Two independent features that share server generation capacity. Each has its own
 switch and settings tab, and turning it off removes its cost.
 
@@ -59,10 +67,10 @@ Two features, each with its own switch.
 **Silhouettes.** As soon as you are in a world, the server works out ground heights sparsely in
 every direction out to the silhouette reach (8,192 blocks by default, adjustable on the distance
 scale). It keeps them, so the outline of distant land is already there when you look. Heights come
-from the cheapest source available, in this order:
+from tiered sources, in quality order:
 1. terrain the server captures anyway;
-2. an optional accelerator mod, when one is installed;
-3. the engine's own world-generator preview.
+2. the engine's own world-generator preview where its higher fidelity is worth the cost;
+3. an optional accelerator mod for the broad field, when one is installed.
 
 Your client draws them as a Farseer-style silhouette wherever real cached terrain is missing, so
 from a boat you can see which way the land is. Real cached terrain always wins, and the two blend
@@ -108,6 +116,7 @@ is hidden.
 | D13 | 2026-09-14 | Horizons stays **standalone with no required dependency**. Other mods may be used as **optional accelerators** when installed (for example Algernon's Terrain Sampler or Watersheds' own sampler), never required. |
 | D14 | 2026-09-14 | **Silhouettes come first and are built far in advance** for the whole reach, so distant terrain already tells the player where to travel. They do not wait on travel. |
 | D15 | 2026-09-14 | **Terrain Ahead is a separate feature** with its own switch in a different settings tab from Silhouettes, so a player can use either without the other. Supersedes the single master switch (former A1). |
+| D16 | 2026-09-15 | The P0.3 accuracy is accepted. Support both optional accelerators: **prefer Watersheds when both are installed; accept Algernon's Terrain Sampler when Watersheds is absent**. Apply no lean correction. Lower fidelity may remain acceptable when it buys a useful saving; measure that trade before changing the shipped grid. |
 
 Standing rules that apply throughout:
 - No hard-coded rendering distances: key rendering to on-screen size, pixel ownership, or the
@@ -253,13 +262,14 @@ against 0.4.64 and re-checked against 0.4.76 on 2026-09-14. Engine facts come fr
   - It is logarithmic from 32 to 32,768 blocks (`LodWorld.MaxLevelThreshold`).
   - It has a neutral Vanilla band and handle (settled decision 37, G185), and six L1-L6 handles
     that alternate above and below the band.
+  - Since 0.4.87 it also has cached-draw and silhouette-reach handles, plus the haze band between
+    them. Levels beyond cached draw distance are dimmed; silhouette parts hide when off.
   - A boundary marker takes the colour of the region it introduces (G184).
-  - It does not show the draw distance. That is a separate slider (`FarViewDistanceCap`),
-    1,024-32,768 in 512-block steps, default 4,096; the owner uses 8,192.
-  - Levels beyond the draw distance are drawn on the scale although they never render.
-- **Settings tabs** today are General, Anti-Aliasing and Generate. Tab switching re-composes
-  through the main-thread queue (G178). Session 77's first window clipped a crowded tab strip, so
-  five tabs need a width check.
+  - `FarViewDistanceCap` remains 1,024-32,768 in 512-block steps, default 4,096; the owner uses
+    8,192. Its old slider row is a readout; the scale handle owns the change.
+- **Settings tabs** today are General, Anti-Aliasing, Silhouettes and Generate. Tab switching
+  re-composes through the main-thread queue (G178). Session 77's first window clipped a crowded tab
+  strip, so Terrain Ahead's future fifth tab still needs a width check.
 - **Master-switch precedent.** `.vhconfig` already has a saved master switch: `BlendPipeline`
   controls several passes and releases their resources when off.
 
@@ -662,13 +672,15 @@ scale:
 | `TerrainAheadSectorDegrees` | 90 | Corridor width as an angle around the heading, so it scales with the band. |
 | `TerrainAheadDenseReachBlocks` | 0 | 0 = corridor only. Larger values also densify all round (disk cost, section 5). |
 
-**Server commands** (`controlserver` privilege): `/vhsilhouette [status|pause|resume]` and
-`/vhterrainahead [status|pause|resume]`. Status reports, in chat and the log:
-- tiles and fill ratio;
-- sources;
-- disk used;
-- rates and yields;
-- verifier verdicts.
+**Server command today** (`controlserver` privilege):
+`/vhsilhouetteserver [status|compare|presample]`. Status reports, in chat and the log:
+- players, tiles, captured/rain columns and preview/probe results;
+- generation holds, in-flight work and any stall/error stop;
+- manifests, tile requests, refusals/retries and bytes;
+- accelerator/coastal-preview state;
+- store reads, saves, dirty tiles and evictions.
+
+Terrain Ahead later adds its own `/vhterrainahead [status|pause|resume]` command.
 
 ### 4.10 Switching off (D7, per feature)
 
@@ -794,11 +806,12 @@ Dev-only logging; no player-visible change.
     `WorldGenTerrainHeightMap` on the same points: coast, river, mountain, TerraPrety coast.
   - Time per 1,024 samples on 1.22.7.
   - The owner judges the tolerance by eye on a side-by-side (D8).
-  - Status (Sessions 94-95): run on isolated test servers against captured heights with
+  - Status (Sessions 94-96): run on isolated test servers against captured heights with
     `scripts/silhouette-compare.ps1`, at 10-20 ms or less per 1,024 samples.
     - 0.4.84 added the side-by-side and sampling before the land exists. Those early answers
       matched later ones at every cell.
-    - Still to do: the owner's verdict, mountains, and sampling beside real generation.
+    - The owner accepted the accuracy and the Watersheds-first/Algernon-fallback policy (D16).
+    - Still useful but non-blocking: mountains and sampling beside real generation.
 - **0.4** Dedicated server: time from a section's persistence to the client's install at the 30 s
   cadence (Terrain Ahead input).
 
@@ -842,8 +855,12 @@ look are decided here, before the rest is built around it.
 
 ### P3 - The builder and tile transport
 
+**Source/harness status:** complete through 0.4.86. The singleplayer and dedicated runtime gate
+below remains open because no other player was available (Session 96).
+
 **Deliver:**
-- the far-in-advance builder (4.5), with previews, the coast refinement and the land/sea hint;
+- the far-in-advance builder (4.5), with the accepted 64-block accelerator grid and one low/coastal
+  engine preview per candidate tile; recursive refinement and the land/sea hint moved to P5;
 - accelerator adapters, behind P0.3's verdict;
 - Features bit 2;
 - the manifest, tile-request and tile messages;
@@ -857,7 +874,8 @@ look are decided here, before the rest is built around it.
 - reach clamping only on dedicated servers;
 - manifest chunking;
 - nearest-first order and the margin ring;
-- refinement terminates and stays within its spacing floor on fixture coastlines;
+- the low/coastal selector stays in-tile and spends no preview on pure ocean or confident inland
+  fixtures;
 - an accelerator exception falls back to previews;
 - "Silhouettes" off clears the set and sends no tile requests;
 - the builder yields to each authority value and gate.
@@ -866,6 +884,9 @@ look are decided here, before the rest is built around it.
 reach arrives complete, and the log reports counts, sources and fill ratio.
 
 ### P4 - Drawing, the handoff and settings
+
+**Source/harness status:** complete in 0.4.87. No game was launched; every human gate below remains
+open (Session 96).
 
 **Deliver:**
 - the mesher: three resolutions, coverage, sea rule, stitching, sink, anchoring;

@@ -2,66 +2,51 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.84 and horizon silhouettes
+## Start here: 0.4.87 and the P4 runtime gate
 
 Read [the silhouette handoff](plans/HANDOFF_HORIZON_SILHOUETTES.md) and
-[Session 95](sessions/SESSION_95.md), then
+[Session 96](sessions/SESSION_96.md), then
 [the horizon-silhouette and Terrain Ahead plan](plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
-- P1 and P2 are built. P3 began in 0.4.82.
-- The P0.3 comparison is built and measured (0.4.83–0.4.84), and waits for the owner's verdict.
-- The plan's "How the build differs" note lists where the code has moved from its text.
+P1-P4 are built in source through 0.4.87. No game was launched for 0.4.85-0.4.87, and the absence
+of another player deferred rather than passed the dedicated/multiplayer gate.
 
 Open, in the order they block further work:
 
-- **P0.3: the owner's verdict (D8).** The owner has the side-by-side from `p03-cold` (Session 95).
-  - **Accuracy.** Every 4-block cell of about 2 km was measured: median error 1 block, 95% within 4,
-    a lean of +1.4, land/sea disagreement 3.7%, and 0.16% of cells 8+ blocks off.
-  - **Before the land existed.** Answers taken in an earlier session matched the later ones at every
-    cell. A new region's first sample cost under 1 ms.
-  - **One function.** With Watersheds installed, the two accelerators are one function (G205).
-  - **By the picture (not traced).** River valleys read high, and some lakes become low land.
-  - **Until then,** silhouettes use no accelerator.
-- **After an accepted verdict (P3):**
-  - use Watersheds' sampler for silhouette heights where Watersheds is installed, keeping previews
-    for coasts and lakes;
-  - decide whether to correct the lean;
-  - use Algernon's Terrain Sampler only where Watersheds is absent.
-- **Not yet covered:**
-  - mountains: both measured areas lie at the world centre, which was coastal;
-  - sampling beside real generation;
-  - why sea level is 82 on these worlds, and whether the owner's own worlds share it (G208).
-- **P3, remaining.**
-  - Coast refinement and the land/sea hint (`GenMaps.oceanGen`). Use an accepted accelerator or,
-    failing that, extra previews near coasts only.
-  - Accelerator use in the builder, after P0.3.
-  - The manifest and tile-request transport.
-  - Dedicated-server opt-in with the reach clamp (`SilhouetteReachBlocks`).
-  - Yields to `LodWorldGenGates`, and a per-player share.
-  - Gate: integration-tested in singleplayer and a dedicated sandbox.
-- **Not yet observed in game (0.4.79–0.4.81).**
-  - Whether silhouettes now join explored terrain better, with captured heights and the fill. The
-    cached edge still fades to sky until P4.
-  - Whether stored tiles come back after a restart. 96 tiles were saved at exit on `bodanboys`;
-    none has been read back yet.
-  - The error brake and the one-preview-per-region rule.
-- **`bodanboys` preview stall** (set aside by the owner, 2026-09-14). Previews there stall the
-  world-generation thread for minutes after Watersheds/TerraPrety coast-map errors, and leaving
-  waits for it (G204).
-  - Unknown: the cause, which needs a dump of the stalled process.
-  - Unknown: whether new land there stalls without silhouettes.
-- **P2 integration gate.** No `/vhworldgen` run has been checked for its columns appearing in tiles.
-- **Then:**
-  - P4: drawing, the handoff and settings (the reach and draw distance on the scale, the
-    Silhouettes tab);
-  - P5: tuning and client persistence;
-  - P6: Terrain Ahead, a separate feature;
-  - P7: canopy.
-- **Not yet measured:** silhouette GPU cost, the off-state A/B, and a dedicated server.
-- **Later, not now: the sampler's other values** (owner, 2026-09-14). Besides height, Algernon's
-  Terrain Sampler returns rainfall, temperature, geologic activity, forest density and shrub density
-  for a position without generating chunks. These could help other parts of the mod, for example
-  the planned canopy (P7), which otherwise takes forest density from previews. Look into it later;
-  nothing is planned yet.
+- **P4 human gate, when the owner is available.** Use 0.4.87 and make only the plan's small,
+  specific observations:
+  - confirm the silhouette shader compiles and the pass draws at sea with no cached land nearby;
+  - fill an inland unexplored gap;
+  - inspect the cached join at explored edges and at cached draw distance for a line or hole;
+  - look once at night, in rain/fog and in winter;
+  - check that the cached draw and silhouette reach handles read and move correctly;
+  - take an on/off A/B and record silhouette GPU time. No GPU budget has been accepted yet.
+  - If the join cannot be made clean, do not quietly narrow the feature. The plan's fallback—draw
+    only beyond cached draw distance—is an owner decision.
+- **P3 integration debt.** Source and harness work is complete; live evidence is not.
+  - In singleplayer, let the requested disc complete and confirm counts, sources and fill ratio.
+  - Restart and observe stored-tile read-back; provoke neither the stall nor error brake merely for
+    testing, but verify their lines if they occur.
+  - With other players available, exercise a dedicated server explicitly opted in, its reach clamp,
+    per-player fairness, disconnect/off cleanup and a current/older peer combination.
+  - No `/vhworldgen` run has yet been checked for its captured columns appearing in silhouette
+    tiles (the P2 integration gate).
+- **P5 after P4 acceptance:**
+  - compare islands and inlets with dense real terrain and tune the one-preview low/coastal
+    refinement only if the picture needs it;
+  - tune reach and classic-look dials with the owner;
+  - add client tile persistence for instant rejoin, unopened while silhouettes are off;
+  - pursue colour-per-vertex, shared grids/height textures or finer coverage only if P4 measures a
+    need.
+- **Then P6:** Terrain Ahead remains a separate feature with its own switch; P7 canopy follows only
+  after P6 acceptance.
+- **Useful but non-blocking silhouette measurements:** mountains (the P0.3 areas were coastal),
+  accelerator sampling beside real generation, and why the test worlds' sea level is 82 (G208).
+- **`bodanboys` preview stall** remains set aside by the owner. Previews there stalled the
+  world-generation thread after Watersheds/TerraPrety coast-map errors (G204). Its cause requires a
+  dump of a stalled process; whether the world stalls without silhouettes is unknown.
+- **Later, not now: the sampler's other values** (owner, 2026-09-14). Algernon's Terrain Sampler
+  also returns rainfall, temperature, geologic activity, forest and shrub density. These may help
+  later work such as P7 canopy; nothing is planned yet.
 
 The world-generation/LOD-coverage plan's core is complete (Session 91). Its verification debt,
 not a gate for silhouette work:
