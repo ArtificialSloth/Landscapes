@@ -27,7 +27,7 @@ public static class SilhouetteChecks
         FeatherSoftensPeaks(c);
         MeshMatchesAcrossTileBorders(c);
         MeshSeaAndCoverage(c);
-        MeshResolutionsAndAnchoring(c);
+        MeshResolutionsAndUnderlay(c);
         ClientSettingsArithmetic(c);
         FeatureGate(c);
         GeneratorStallWatch(c);
@@ -1198,7 +1198,7 @@ public static class SilhouetteChecks
         int quadsPerCellEdge = LodSilhouetteField.CoverageCellBlocks
             / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge);
         c.Eq(quads * 6, cut?.IndexCount ?? -1,
-            "partial coverage keeps a complete mesh for exact per-fragment ownership");
+            "partial coverage keeps a complete mesh as the cached-terrain underlay");
         c.True(oneCell.Covered(0, 0)
                 && !oneCell.Covered(1, 0)
                 && !oneCell.Covered(0, 1),
@@ -1206,24 +1206,18 @@ public static class SilhouetteChecks
         if (cut == null) return;
         int verts = LodSilhouetteField.HighQuadsPerEdge + 1;
         c.Eq((float)sea, cut.Xyz[quadsPerCellEdge * 3 + 1],
-            "a boundary without a live anchor no longer opens a lowered sky slit");
+            "the underlay keeps Farseer's own broad sampled boundary before the GPU sink");
         c.Eq((float)sea, cut.Xyz[(quadsPerCellEdge + 1) * 3 + 1], "a vertex away from cached terrain does not");
         c.Eq((float)sea, cut.Xyz[(verts * verts - 1) * 3 + 1], "the far corner is untouched");
     }
 
-    static void MeshResolutionsAndAnchoring(Check c)
+    static void MeshResolutionsAndUnderlay(Check c)
     {
         const int sea = 110;
         LodSilhouetteTile?[,] deep = Neighbourhood((x, z) => FullTile(x, z, sea - 20), TileX, TileZ);
         LodSilhouetteCoverage covered = LodSilhouetteCoverage.Empty.WithCovered(0, 0);
-        var anchors = new float[LodSilhouetteField.AnchorVerticesPerEdge
-            * LodSilhouetteField.AnchorVerticesPerEdge];
-        Array.Fill(anchors, float.NaN);
-        int highX = LodSilhouetteField.CoverageCellBlocks
-            / (LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge);
-        anchors[highX] = 137;
 
-        LodSilhouetteMeshSet? set = LodSilhouetteField.BuildMeshes(deep, covered, sea, anchors);
+        LodSilhouetteMeshSet? set = LodSilhouetteField.BuildMeshes(deep, covered, sea);
         c.True(set != null, "a partially covered tile publishes its three resolutions together");
         if (set == null) return;
         c.Eq((16, 8, 4), (set.High.QuadsPerEdge, set.Medium.QuadsPerEdge, set.Low.QuadsPerEdge),
@@ -1234,30 +1228,8 @@ public static class SilhouetteChecks
         foreach (LodSilhouetteMeshArrays mesh in new[] { set.High, set.Medium, set.Low })
             c.Eq((float)(sea - 20), mesh.Xyz[1],
                 $"the covered interior of the {mesh.QuadsPerEdge}-quad mesh keeps raw seabed height");
-        c.Eq(137f, set.High.Xyz[highX * 3 + 1],
-            "the lightweight join mesh meets the real 32-block cached edge exactly");
-        c.True(set.HasAnchors, "an anchored tile is marked so rendering retains its join mesh");
-
-        // A whole anchor line is what CaptureAnchors supplies for an ordinary cached edge.
-        for (int z = 0; z < LodSilhouetteField.AnchorVerticesPerEdge; z++)
-            anchors[z * LodSilhouetteField.AnchorVerticesPerEdge + highX] = 137;
-        set = LodSilhouetteField.BuildMeshes(deep, covered, sea, anchors);
-        if (set == null) return;
-        c.Eq(137f,
-            set.High.Xyz[((LodSilhouetteField.HighQuadsPerEdge / 2)
-                * LodSilhouetteField.AnchorVerticesPerEdge + highX) * 3 + 1],
-            "the full cached boundary line remains exact in the lightweight join mesh");
-
-        // An anchor at x=0 came from a cached section in the neighbouring tile. It must still
-        // own this tile's outer edge even though this tile's coverage mask is entirely uncovered.
-        var outerAnchors = new float[anchors.Length];
-        Array.Fill(outerAnchors, float.NaN);
-        for (int z = 0; z < LodSilhouetteField.AnchorVerticesPerEdge; z++)
-            outerAnchors[z * LodSilhouetteField.AnchorVerticesPerEdge] = 145;
-        LodSilhouetteMeshSet? outer = LodSilhouetteField.BuildMeshes(
-            deep, LodSilhouetteCoverage.Empty, sea, outerAnchors);
-        c.Eq(145f, outer?.High.Xyz[1] ?? float.NaN,
-            "a cached neighbour across a tile border anchors the tile's outer edge");
+        c.True(LodSilhouetteField.UnderlaySinkBlocks >= 64f,
+            "near Farseer terrain is buried well beyond ordinary height-sampling error");
 
         c.Eq(LodSilhouetteField.HighQuadsPerEdge,
             LodSilhouetteField.ResolutionFor(1000, 1000, 0.35f),
@@ -1441,6 +1413,7 @@ public static class SilhouetteChecks
         string field = Source("src", "Silhouette", "LodSilhouetteField.cs");
         string pass = Source("src", "Render", "LodTerrainRenderer.Silhouette.cs");
         string renderer = Source("src", "Render", "LodTerrainRenderer.cs");
+        string vertex = Source("assets", "vintagehorizons", "shaders", "lodsilhouette.vsh");
         string fragment = Source("assets", "vintagehorizons", "shaders", "lodsilhouette.fsh");
         string inputs = Source("assets", "vintagehorizons", "shaderincludes", "lodfragmentinputs.fsh");
         string finish = Source("assets", "vintagehorizons", "shaderincludes", "lodsurfacefinish.fsh");
@@ -1455,14 +1428,10 @@ public static class SilhouetteChecks
                 && field.Contains("MediumQuadsPerEdge = 8", StringComparison.Ordinal)
                 && field.Contains("LowQuadsPerEdge = 4", StringComparison.Ordinal),
             "Farseer builds lightweight 16, 8 and 4-quad tile meshes");
-        int anchorCopy = client.IndexOf("CaptureAnchors(world", StringComparison.Ordinal);
-        c.True(anchorCopy >= 0
-                && anchorCopy < client.IndexOf("Task.Run", anchorCopy, StringComparison.Ordinal)
-                && client.Contains("source.ColumnRuns(col)", StringComparison.Ordinal)
-                && client.Contains("DirtyAnchorNeighbours", StringComparison.Ordinal)
-                && client.Contains("CoverageCellBlocks) == 0 ? -1 : 0",
-                    StringComparison.Ordinal),
-            "32-block cached edge heights, including neighbours across tile borders, are copied on the owner thread and invalidate both sides before a worker starts");
+        c.True(!client.Contains("CaptureAnchors", StringComparison.Ordinal)
+                && !client.Contains("DirtyAnchorNeighbours", StringComparison.Ordinal)
+                && !field.Contains("TryJoinAnchor", StringComparison.Ordinal),
+            "Farseer no longer copies or chases exact cached-terrain edge heights");
         c.True(pass.Contains("LodSilhouetteField.ResolutionFor(", StringComparison.Ordinal)
                 && pass.Contains("ScreenBlockScale", StringComparison.Ordinal)
                 && pass.Contains("SilhouetteOutlineDetail", StringComparison.Ordinal)
@@ -1470,13 +1439,16 @@ public static class SilhouetteChecks
                 && pass.Contains("silhouetteFrustum.BoxInView", StringComparison.Ordinal),
             "the draw pass frustum-culls and chooses one of three meshes from screen scale and the geometry dial");
 
-        c.True(fragment.Contains("floor(tilePos / 32.0)", StringComparison.Ordinal)
-                && fragment.Contains("coveredCells0", StringComparison.Ordinal)
-                && fragment.Contains("coveredCells3", StringComparison.Ordinal)
-                && fragment.Contains("dot(worldPos.xz, worldPos.xz) < cacheFadeStart * cacheFadeStart",
-                    StringComparison.Ordinal)
-                && fragment.Contains("discard;", StringComparison.Ordinal),
-            "cached 32-block chunk footprints discard exactly inside the cached fade and resume beyond its far edge");
+        c.True(!fragment.Contains("coveredCells", StringComparison.Ordinal)
+                && !fragment.Contains("tilePos", StringComparison.Ordinal)
+                && !pass.Contains("CoveredCells", StringComparison.Ordinal),
+            "partial Farseer tiles continue behind cached terrain instead of ending at its mask");
+        c.True(field.Contains("UnderlaySinkBlocks = 96f", StringComparison.Ordinal)
+                && vertex.Contains("uniform float underlaySinkBlocks", StringComparison.Ordinal)
+                && vertex.Contains("uniform float cacheFadeStart", StringComparison.Ordinal)
+                && vertex.Contains("smoothstep(", StringComparison.Ordinal)
+                && pass.Contains("p.Uniform(\"underlaySinkBlocks\"", StringComparison.Ordinal),
+            "near Farseer is deeply buried and smoothly returns to its real height before the cached fade");
         c.True(pass.Contains("SilhouetteUploadBytesPerFrame", StringComparison.Ordinal)
                 && pass.Contains("SilhouetteUploadMillisecondsPerFrame", StringComparison.Ordinal)
                 && pass.Contains("rapi.GlEnableCullFace();", StringComparison.Ordinal)

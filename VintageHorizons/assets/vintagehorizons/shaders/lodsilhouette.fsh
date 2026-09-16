@@ -12,7 +12,6 @@ in vec4 rgbaFog;
 in float dist;
 in float fogAmount;
 in float nightVisionStrengthv;
-in vec2 tilePos;
 
 uniform float fogDensityIn;
 uniform float fogMinIn;
@@ -26,11 +25,6 @@ uniform vec4 silhouetteColorTint;
 uniform float silhouetteLightLevelBias;
 uniform float silhouetteFadeBias;
 uniform int silhouetteSeaLevel;
-uniform vec4 coveredCells0;
-uniform vec4 coveredCells1;
-uniform vec4 coveredCells2;
-uniform vec4 coveredCells3;
-uniform float cacheFadeStart;
 
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outGlow;
@@ -49,17 +43,6 @@ layout(location = 3) out vec4 outGPosition;
 void main()
 {
     if (dist < 0.0 || dist > 1.0) discard;
-
-    ivec2 coveredCell = clamp(ivec2(floor(tilePos / 32.0)), ivec2(0), ivec2(15));
-    int coveredBit = coveredCell.y * 16 + coveredCell.x;
-    int wordIndex = coveredBit >> 4;
-    vec4 coveredGroup = wordIndex < 4 ? coveredCells0
-        : wordIndex < 8 ? coveredCells1
-        : wordIndex < 12 ? coveredCells2
-        : coveredCells3;
-    int coveredWord = int(coveredGroup[wordIndex & 3]);
-    bool cachedCell = (coveredWord & (1 << (coveredBit & 15))) != 0;
-    if (cachedCell && dot(worldPos.xz, worldPos.xz) < cacheFadeStart * cacheFadeStart) discard;
 
     // The sky with a height-dependent offset is the terrain's own colour.
     vec4 terraColor;

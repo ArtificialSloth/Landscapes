@@ -79,8 +79,6 @@ public sealed class LodSilhouetteMeshSet
     public required LodSilhouetteMeshArrays High;
     public required LodSilhouetteMeshArrays Medium;
     public required LodSilhouetteMeshArrays Low;
-    public required LodSilhouetteCoverage CoveredCells;
-    public required bool HasAnchors;
 
     public long ByteCount => High.ByteCount + Medium.ByteCount + Low.ByteCount;
     public float MinY => Math.Min(High.MinY, Math.Min(Medium.MinY, Low.MinY));
@@ -97,8 +95,8 @@ public sealed class LodSilhouetteMeshSet
 
 /// <summary>
 /// Where the server samples, and how the client turns a tile into the three meshes P4 draws.
-/// Everything below is engine-free: live cached terrain is copied into the optional anchor
-/// array on the main thread before a worker enters this code.
+/// Everything below is engine-free. Farseer keeps its own broad sampled shape; the renderer buries
+/// partial tiles beneath nearby cached terrain instead of trying to reproduce its exact edge.
 /// </summary>
 public static class LodSilhouetteField
 {
@@ -109,8 +107,7 @@ public static class LodSilhouetteField
         LatticeOffsetChunks * LodSilhouetteTile.ChunkBlocks + LodSilhouetteTile.ChunkBlocks / 2.0;
 
     // Thirty-two-, sixty-four- and 128-block quads. Farseer is a broad horizon, not voxel
-    // terrain: this is one quarter of 0.4.92's already reduced triangle count. Join tiles use
-    // the 32-block tier so every real chunk boundary still has an exact cached-terrain vertex.
+    // terrain: this is one quarter of 0.4.92's already reduced triangle count.
     public const int HighQuadsPerEdge = 16;
     public const int MediumQuadsPerEdge = 8;
     public const int LowQuadsPerEdge = 4;
@@ -126,12 +123,9 @@ public static class LodSilhouetteField
     public const float MaxHillSoftness = 1f;
     public const float DefaultHillSoftness = 0.75f;
     public const int MaxFeatherRadiusCells = 32;
-    // A lowered boundary opened a visible sky slit because these meshes are height fields and
-    // have no vertical wall to bridge back up to cached terrain. Live anchors now meet the cache
-    // exactly; ordinary depth ownership still keeps cached pixels in front.
-    public const float DefaultSinkBlocks = 0f;
-    public const float JoinBlendBlocks = CoverageCellBlocks;
-    public const int AnchorVerticesPerEdge = HighQuadsPerEdge + 1;
+    // Near partial tiles are only a hole-filling underlay. This is deliberately much deeper than
+    // ordinary sampling error, and the vertex shader removes it before the distant fade begins.
+    public const float UnderlaySinkBlocks = 96f;
 
     public static bool IsLatticeChunk(int cx, int cz) =>
         Mod(cx, LatticeChunks) == LatticeOffsetChunks && Mod(cz, LatticeChunks) == LatticeOffsetChunks;
@@ -189,53 +183,46 @@ public static class LodSilhouetteField
 
     /// <summary>
     /// Builds all three meshes from the same filled field. A fully covered tile needs no GPU
-    /// object. Partial coverage stays in the mesh and is discarded exactly per 32-block chunk by
-    /// the fragment shader; boundary vertices are pulled to copied cached heights and sunk a
-    /// little so real terrain owns the depth test.
+    /// object. A partial tile stays complete so its buried surface can fill any raster gap behind
+    /// cached terrain without needing a height-perfect join.
     /// </summary>
     public static LodSilhouetteMeshSet? BuildMeshes(LodSilhouetteTile?[,] neighbourhood,
-        LodSilhouetteCoverage coveredCells, int seaLevel, float[]? anchors = null,
-        float sinkBlocks = DefaultSinkBlocks, float hillSoftness = DefaultHillSoftness)
+        LodSilhouetteCoverage coveredCells, int seaLevel,
+        float hillSoftness = DefaultHillSoftness)
     {
         if (coveredCells.IsFull) return null;
-        if (anchors != null && anchors.Length != AnchorVerticesPerEdge * AnchorVerticesPerEdge)
-            throw new ArgumentException(
-                $"Silhouette anchors must be a {AnchorVerticesPerEdge}x{AnchorVerticesPerEdge} high-resolution grid.",
-                nameof(anchors));
 
         float[] filled = LodSilhouetteFill.FillCentreFeathered(neighbourhood,
             FeatherRadiusFor(hillSoftness), FeatherStrengthFor(hillSoftness));
         LodSilhouetteMeshArrays? high = BuildMeshFromFilled(
-            filled, coveredCells, seaLevel, HighQuadsPerEdge, anchors, sinkBlocks);
+            filled, coveredCells, seaLevel, HighQuadsPerEdge);
         LodSilhouetteMeshArrays? medium = BuildMeshFromFilled(
-            filled, coveredCells, seaLevel, MediumQuadsPerEdge, anchors, sinkBlocks);
+            filled, coveredCells, seaLevel, MediumQuadsPerEdge);
         LodSilhouetteMeshArrays? low = BuildMeshFromFilled(
-            filled, coveredCells, seaLevel, LowQuadsPerEdge, anchors, sinkBlocks);
+            filled, coveredCells, seaLevel, LowQuadsPerEdge);
         if (high == null || medium == null || low == null) return null;
         return new LodSilhouetteMeshSet
         {
             High = high,
             Medium = medium,
             Low = low,
-            CoveredCells = coveredCells,
-            HasAnchors = anchors?.Any(value => !float.IsNaN(value)) == true,
         };
     }
 
     /// <summary>Compatibility helper retained for focused checks and diagnostics.</summary>
     public static LodSilhouetteMeshArrays? BuildMesh(LodSilhouetteTile?[,] neighbourhood,
         LodSilhouetteCoverage coveredCells, int seaLevel,
-        int quadsPerEdge = DefaultQuadsPerEdge, float sinkBlocks = DefaultSinkBlocks,
+        int quadsPerEdge = DefaultQuadsPerEdge,
         float hillSoftness = DefaultHillSoftness) => coveredCells.IsFull
             ? null
             : BuildMeshFromFilled(LodSilhouetteFill.FillCentreFeathered(
                     neighbourhood, FeatherRadiusFor(hillSoftness),
                     FeatherStrengthFor(hillSoftness)),
-                coveredCells, seaLevel, quadsPerEdge, null, sinkBlocks);
+                coveredCells, seaLevel, quadsPerEdge);
 
     static LodSilhouetteMeshArrays? BuildMeshFromFilled(float[] filled,
         LodSilhouetteCoverage coveredCells,
-        int seaLevel, int quadsPerEdge, float[]? anchors, float sinkBlocks)
+        int seaLevel, int quadsPerEdge)
     {
         if (quadsPerEdge < 1 || LodSilhouetteTile.CellsPerEdge % quadsPerEdge != 0)
             throw new ArgumentOutOfRangeException(nameof(quadsPerEdge));
@@ -285,38 +272,11 @@ public static class LodSilhouetteField
                 int blockZ = b * spacing;
                 VertexCoverage(coveredCells, blockX, blockZ,
                     out bool touchesCovered, out bool touchesUncovered);
-                bool boundary = touchesCovered && touchesUncovered;
                 float y = raw;
                 if (float.IsNaN(y)) y = seaLevel;
                 // Covered interiors retain raw land/seabed height. Everywhere the silhouette can
                 // be seen uses Farseer's flat-sea rule.
                 if (!touchesCovered || touchesUncovered) y = Math.Max(y, seaLevel);
-
-                int highX = blockX / (LodSilhouetteTile.TileBlocks / HighQuadsPerEdge);
-                int highZ = blockZ / (LodSilhouetteTile.TileBlocks / HighQuadsPerEdge);
-                float exactAnchor = anchors?[highZ * AnchorVerticesPerEdge + highX] ?? float.NaN;
-                if (!float.IsNaN(exactAnchor))
-                {
-                    // CaptureAnchors marks the real cached edge, including an edge on the next
-                    // tile. Meet that edge exactly: lowering a surface-only height field leaves
-                    // a visible slit because there is no vertical face between the two heights.
-                    y = exactAnchor - Math.Max(0f, sinkBlocks);
-                }
-                else if (anchors != null && (!touchesCovered || touchesUncovered)
-                    && TryJoinAnchor(anchors, blockX, blockZ,
-                        out float joinAnchor, out float joinInfluence))
-                {
-                    // One anchored vertex followed by an unrelated sampled vertex made a hard
-                    // cliff in the high mesh. Ease across the adjoining 32-block coverage
-                    // cell instead. The outermost vertex still sits just under cached terrain;
-                    // the field regains its sampled height smoothly by the opposite cell edge.
-                    float target = joinAnchor - Math.Max(0f, sinkBlocks);
-                    y += (target - y) * joinInfluence;
-                }
-                else if (boundary)
-                {
-                    y -= Math.Max(0f, sinkBlocks);
-                }
 
                 xyz[v * 3] = blockX;
                 xyz[v * 3 + 1] = y;
@@ -356,45 +316,6 @@ public static class LodSilhouetteField
             MinY = minY,
             MaxY = maxY,
         };
-    }
-
-    static bool TryJoinAnchor(float[] anchors, int blockX, int blockZ,
-        out float height, out float influence)
-    {
-        int cellX = Math.Min(CoverageCellsPerEdge - 1, blockX / CoverageCellBlocks);
-        int cellZ = Math.Min(CoverageCellsPerEdge - 1, blockZ / CoverageCellBlocks);
-        int minX = cellX * CoverageCellBlocks;
-        int minZ = cellZ * CoverageCellBlocks;
-        int maxX = minX + CoverageCellBlocks;
-        int maxZ = minZ + CoverageCellBlocks;
-        int highSpacing = LodSilhouetteTile.TileBlocks / HighQuadsPerEdge;
-        float weightedHeight = 0f;
-        float totalWeight = 0f;
-
-        void Add(int anchorX, int anchorZ, int distance)
-        {
-            if (distance < 0 || distance >= JoinBlendBlocks) return;
-            int highX = anchorX / highSpacing;
-            int highZ = anchorZ / highSpacing;
-            float anchor = anchors[highZ * AnchorVerticesPerEdge + highX];
-            if (float.IsNaN(anchor)) return;
-            float t = Math.Clamp(distance / JoinBlendBlocks, 0f, 1f);
-            float smooth = t * t * (3f - 2f * t);
-            float weight = 1f - smooth;
-            weightedHeight += anchor * weight;
-            totalWeight += weight;
-        }
-
-        Add(minX, blockZ, blockX - minX);
-        Add(maxX, blockZ, maxX - blockX);
-        Add(blockX, minZ, blockZ - minZ);
-        Add(blockX, maxZ, maxZ - blockZ);
-
-        height = totalWeight > 0f ? weightedHeight / totalWeight : float.NaN;
-        // Two cached sides of a one-cell gap should bridge between both live edges instead of
-        // reintroducing the unrelated sampled height at the centre.
-        influence = Math.Min(1f, totalWeight);
-        return totalWeight > 0f;
     }
 
     static void VertexCoverage(LodSilhouetteCoverage mask, int blockX, int blockZ,

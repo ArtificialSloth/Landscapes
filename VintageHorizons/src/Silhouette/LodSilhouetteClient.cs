@@ -650,24 +650,7 @@ internal sealed class LodSilhouetteClient : IDisposable
             LodSilhouetteCoverage mask = CoverageOf(world, tile.TileX, tile.TileZ);
             if (coverage.TryGetValue(key, out LodSilhouetteCoverage held) && held == mask) continue;
             coverage[key] = mask;
-            DirtyAnchorNeighbours(tile.TileX, tile.TileZ);
-        }
-    }
-
-    /// <summary>
-    /// A changed edge also changes the live anchors of the tile on its other side. Rebuild the
-    /// small 3x3 neighbourhood so a newly cached section cannot leave a stale cliff on an
-    /// otherwise unchanged Farseer tile.
-    /// </summary>
-    void DirtyAnchorNeighbours(int tileX, int tileZ)
-    {
-        for (int dz = -1; dz <= 1; dz++)
-        {
-            for (int dx = -1; dx <= 1; dx++)
-            {
-                long neighbour = LodSilhouetteTile.KeyOf(tileX + dx, tileZ + dz);
-                if (tiles.ContainsKey(neighbour)) MarkDirty(neighbour);
-            }
+            MarkDirty(key);
         }
     }
 
@@ -744,11 +727,6 @@ internal sealed class LodSilhouetteClient : IDisposable
                     neighbourhood[dz + radius, dx + radius] = tiles.GetValueOrDefault(
                         LodSilhouetteTile.KeyOf(tile.TileX + dx, tile.TileZ + dz));
 
-            // Live LodSections are owner-thread objects. Copy only the visible top heights that
-            // boundary vertices may need; the worker never observes a mutable section.
-            float[]? anchors = mask.IsFull || !HasNearbyCachedData(world, tile.TileX, tile.TileZ)
-                ? null
-                : CaptureAnchors(world, tile.TileX, tile.TileZ);
             int tileX = tile.TileX, tileZ = tile.TileZ, epoch = Epoch, sea = seaLevel;
             float softness = hillSoftness;
             Interlocked.Increment(ref jobsInFlight);
@@ -757,7 +735,7 @@ internal sealed class LodSilhouetteClient : IDisposable
                 LodSilhouetteMeshSet? meshes = null;
                 try
                 {
-                    meshes = LodSilhouetteField.BuildMeshes(neighbourhood, mask, sea, anchors,
+                    meshes = LodSilhouetteField.BuildMeshes(neighbourhood, mask, sea,
                         hillSoftness: softness);
                 }
                 catch (Exception e)
@@ -772,72 +750,6 @@ internal sealed class LodSilhouetteClient : IDisposable
                 }
             });
         }
-    }
-
-    static float[] CaptureAnchors(LodWorld world, int tileX, int tileZ)
-    {
-        int edge = LodSilhouetteField.AnchorVerticesPerEdge;
-        int spacing = LodSilhouetteTile.TileBlocks / LodSilhouetteField.HighQuadsPerEdge;
-        var result = new float[edge * edge];
-        Array.Fill(result, float.NaN);
-
-        for (int vz = 0; vz < edge; vz++)
-        {
-            int worldZ = tileZ * LodSilhouetteTile.TileBlocks + vz * spacing;
-            int minDz = Mod(worldZ, LodSilhouetteField.CoverageCellBlocks) == 0 ? -1 : 0;
-            for (int vx = 0; vx < edge; vx++)
-            {
-                int worldX = tileX * LodSilhouetteTile.TileBlocks + vx * spacing;
-                int minDx = Mod(worldX, LodSilhouetteField.CoverageCellBlocks) == 0 ? -1 : 0;
-                bool covered = false, uncovered = false;
-                float anchor = float.NaN;
-                for (int dz = minDz; dz <= 0; dz++)
-                {
-                    for (int dx = minDx; dx <= 0; dx++)
-                    {
-                        int sampleX = worldX + dx, sampleZ = worldZ + dz;
-                        int sx = (int)Math.Floor(sampleX / (double)LodSection.SectionBlocks);
-                        int sz = (int)Math.Floor(sampleZ / (double)LodSection.SectionBlocks);
-                        long key = LodWorld.SectionKey(0, sx, sz);
-                        LodSection? source = null;
-                        bool cellCovered = false;
-                        int localX = sampleX - sx * LodSection.SectionBlocks;
-                        int localZ = sampleZ - sz * LodSection.SectionBlocks;
-                        if (world.HasDataSet.Contains(key)
-                            && world.Sections.TryGetValue(key, out source))
-                            cellCovered = source.Captured[LodSection.ColumnIndex(localX, localZ)];
-                        covered |= cellCovered;
-                        uncovered |= !cellCovered;
-                        if (!cellCovered || source == null) continue;
-                        int col = LodSection.ColumnIndex(localX, localZ);
-                        Span<ulong> runs = source.ColumnRuns(col);
-                        if (runs.Length == 0) continue;
-                        float top = LodSection.RunYTop(runs[0]);
-                        anchor = float.IsNaN(anchor) ? top : Math.Max(anchor, top);
-                    }
-                }
-                if (covered && uncovered && !float.IsNaN(anchor))
-                    result[vz * edge + vx] = anchor;
-            }
-        }
-        return result;
-    }
-
-    static bool HasNearbyCachedData(LodWorld world, int tileX, int tileZ)
-    {
-        int sections = LodSilhouetteTile.TileBlocks / LodSection.SectionBlocks;
-        int baseX = tileX * sections, baseZ = tileZ * sections;
-        for (int z = -1; z <= sections; z++)
-            for (int x = -1; x <= sections; x++)
-                if (world.HasDataSet.Contains(LodWorld.SectionKey(0, baseX + x, baseZ + z)))
-                    return true;
-        return false;
-    }
-
-    static int Mod(int value, int divisor)
-    {
-        int remainder = value % divisor;
-        return remainder < 0 ? remainder + divisor : remainder;
     }
 
     void MarkDirty(long key)
