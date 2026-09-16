@@ -575,6 +575,8 @@ public static class SilhouetteChecks
         string path = Path.Combine(dir, "world-silhouette.db");
         int cx = TileX * 16, cz = TileZ * 16;
         long key = LodSilhouetteTile.KeyOf(TileX, TileZ);
+        int earlyTileX = TileX + 1, earlyCx = earlyTileX * 16;
+        long earlyKey = LodSilhouetteTile.KeyOf(earlyTileX, TileZ);
         var logger = new CaptureLogger();
         try
         {
@@ -608,17 +610,51 @@ public static class SilhouetteChecks
                 c.False(File.Exists(coldPath),
                     "an off client does not create or open its configured silhouette store");
 
-                client.SetStorePath(path);
+                available = false;
+                client.SetEnabled(true);
+                client.Pump(new LodWorld(), TileX * LodSilhouetteTile.TileBlocks,
+                    TileZ * LodSilhouetteTile.TileBlocks, 110);
+                c.False(client.StoreOpen || File.Exists(coldPath),
+                    "an enabled client does not open a store when the server does not advertise silhouettes");
+                client.SetEnabled(false);
+
+                client.SetStorePath(null);
+                available = true;
                 client.SetEnabled(true);
                 var world = new LodWorld();
+                client.Pump(world, TileX * LodSilhouetteTile.TileBlocks,
+                    TileZ * LodSilhouetteTile.TileBlocks, 110);
+
+                var earlyTile = new LodSilhouetteTile(earlyTileX, TileZ);
+                earlyTile.SetChunk(earlyCx, cz, HeightMap((_, _) => 95), EnumSilhouetteOrigin.Captured);
+                client.OnTileArrived(new AssistSilhouetteTile
+                {
+                    TileX = earlyTileX,
+                    TileZ = TileZ,
+                    Key = earlyKey,
+                    Revision = 3,
+                    Payload = earlyTile.Encode(),
+                    SessionId = 0,
+                });
                 long deadline = Environment.TickCount64 + 5000;
-                while (client.TileCount == 0 && Environment.TickCount64 < deadline)
+                while (client.TilesReceived == 0 && Environment.TickCount64 < deadline)
                 {
                     client.Pump(world, TileX * LodSilhouetteTile.TileBlocks,
                         TileZ * LodSilhouetteTile.TileBlocks, 110);
                     Thread.Sleep(2);
                 }
-                c.Eq(1, client.TileCount, "a persisted client tile is held before the server sends it again");
+                c.Eq(1, client.TileCount,
+                    "a server tile may arrive before LevelFinalize supplies the client store path");
+
+                client.SetStorePath(path);
+                deadline = Environment.TickCount64 + 5000;
+                while (client.TileCount < 2 && Environment.TickCount64 < deadline)
+                {
+                    client.Pump(world, TileX * LodSilhouetteTile.TileBlocks,
+                        TileZ * LodSilhouetteTile.TileBlocks, 110);
+                    Thread.Sleep(2);
+                }
+                c.Eq(2, client.TileCount, "a persisted client tile is held before the server sends it again");
                 c.Eq(1, client.TilesLoadedFromStore, "the instant-rejoin tile is identified as a local read");
                 c.True(client.StoreOpen, "the enabled, advertised feature owns an open client store");
 
@@ -651,14 +687,16 @@ public static class SilhouetteChecks
                     Payload = current.Encode(),
                     SessionId = session,
                 });
+                int receivedBeforeReplacement = client.TilesReceived;
                 deadline = Environment.TickCount64 + 5000;
-                while (client.TilesReceived == 0 && Environment.TickCount64 < deadline)
+                while (client.TilesReceived == receivedBeforeReplacement && Environment.TickCount64 < deadline)
                 {
                     client.Pump(world, TileX * LodSilhouetteTile.TileBlocks,
                         TileZ * LodSilhouetteTile.TileBlocks, 110);
                     Thread.Sleep(2);
                 }
-                c.Eq(1, client.TilesReceived, "the current server answer replaces the persisted copy");
+                c.Eq(receivedBeforeReplacement + 1, client.TilesReceived,
+                    "the current server answer replaces the persisted copy");
 
                 client.SetEnabled(false);
                 c.False(client.StoreOpen, "switching silhouettes off closes the client store");
@@ -674,6 +712,12 @@ public static class SilhouetteChecks
                 c.True(stored != null && stored.Revision == 1
                         && stored.TryGetHeight(0, 0, out ushort height) && height == 80,
                     "client persistence keeps the server's exact lower-revision answer, not a merge");
+                c.True(reopened.TryRequestLoad(earlyTileX, TileZ),
+                    "a tile received before the store path existed can be read back");
+                LodSilhouetteTile? earlyStored = WaitForLoad(reopened)?.Tile;
+                c.True(earlyStored != null && earlyStored.Revision == 3
+                        && earlyStored.TryGetHeight(0, 0, out ushort earlyHeight) && earlyHeight == 95,
+                    "opening the client store backfills authoritative tiles already held in memory");
             }
         }
         finally

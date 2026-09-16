@@ -181,6 +181,18 @@ internal sealed class LodSilhouetteClient : IDisposable
             // server-side rebuild may restart its revisions, so merging an older client row
             // would preserve stale heights under a newly authoritative answer.
             store = new LodSilhouetteStore(storePath, logger, mergeStoredRows: false);
+
+            // A client tick can receive current tiles before LevelFinalize has opened the
+            // ordinary cache and supplied this sibling path. Those answers are already
+            // authoritative; backfill them now so startup ordering cannot make the first
+            // session after an upgrade the one session that fails to persist.
+            foreach (long key in networkConfirmed)
+            {
+                if (!tiles.TryGetValue(key, out LodSilhouetteTile? tile)
+                    || store.Save(tile.Snapshot()) != true) continue;
+                (storedKeys ??= new HashSet<long>()).Add(key);
+                storeReads.Add(key);
+            }
         }
         catch (Exception e)
         {
