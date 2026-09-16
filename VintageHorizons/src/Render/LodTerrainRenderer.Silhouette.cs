@@ -200,7 +200,6 @@ public partial class LodTerrainRenderer
         float cacheDistStart = ApprovedViewDistance() * 0.785f;
         p.Uniform("cacheFadeStart", cacheDistStart
             + 0.75f * Math.Max(0f, EffectiveFarDistance - cacheDistStart - 512f));
-        p.Uniform("joinOverlapBlocks", LodSilhouetteField.JoinOverlapBlocks);
 
         double reachSq = (double)reach * reach;
         foreach (SilhouetteGpuMesh mesh in silhouetteMeshes.Values)
@@ -221,9 +220,8 @@ public partial class LodTerrainRenderer
             int resolution = LodSilhouetteField.ResolutionFor(
                 ScreenBlockScale, Math.Max(1.0, Math.Sqrt(nearestDistanceSq)),
                 SilhouetteOutlineDetail);
-            // Only the high mesh has a vertex at every 32-block cached boundary and carries the
-            // tiny buried join skirts. This affects the narrow join ring, not the broad horizon.
-            if (mesh.HasAnchors) resolution = LodSilhouetteField.HighQuadsPerEdge;
+            if (mesh.HasAnchors && resolution == LodSilhouetteField.LowQuadsPerEdge)
+                resolution = LodSilhouetteField.MediumQuadsPerEdge;
             rapi.RenderMesh(mesh.At(resolution));
             SilhouetteTrianglesLastFrame += mesh.TrianglesAt(resolution);
             if (resolution == LodSilhouetteField.HighQuadsPerEdge) SilhouetteHighDrawsLastFrame++;

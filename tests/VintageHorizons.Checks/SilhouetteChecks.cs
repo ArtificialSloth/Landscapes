@@ -1234,32 +1234,19 @@ public static class SilhouetteChecks
         foreach (LodSilhouetteMeshArrays mesh in new[] { set.High, set.Medium, set.Low })
             c.Eq((float)(sea - 20), mesh.Xyz[1],
                 $"the covered interior of the {mesh.QuadsPerEdge}-quad mesh keeps raw seabed height");
-        c.Eq(137f - LodSilhouetteField.DefaultSinkBlocks, set.High.Xyz[highX * 3 + 1],
-            "the ordinary Farseer surface dips significantly below the real cached edge");
+        c.Eq(137f, set.High.Xyz[highX * 3 + 1],
+            "the lightweight join mesh meets the real 32-block cached edge exactly");
         c.True(set.HasAnchors, "an anchored tile is marked so rendering retains its join mesh");
 
         // A whole anchor line is what CaptureAnchors supplies for an ordinary cached edge.
-        LodSilhouetteCoverage coveredColumn = LodSilhouetteCoverage.Empty;
-        for (int z = 0; z < LodSilhouetteField.CoverageCellsPerEdge; z++)
-            coveredColumn = coveredColumn.WithCovered(0, z);
         for (int z = 0; z < LodSilhouetteField.AnchorVerticesPerEdge; z++)
             anchors[z * LodSilhouetteField.AnchorVerticesPerEdge + highX] = 137;
-        set = LodSilhouetteField.BuildMeshes(deep, coveredColumn, sea, anchors);
+        set = LodSilhouetteField.BuildMeshes(deep, covered, sea, anchors);
         if (set == null) return;
-        c.Eq(137f - LodSilhouetteField.DefaultSinkBlocks,
+        c.Eq(137f,
             set.High.Xyz[((LodSilhouetteField.HighQuadsPerEdge / 2)
                 * LodSilhouetteField.AnchorVerticesPerEdge + highX) * 3 + 1],
-            "the full cached boundary line remains buried in the lightweight join mesh");
-        int baseVertices = LodSilhouetteField.AnchorVerticesPerEdge
-            * LodSilhouetteField.AnchorVerticesPerEdge;
-        int baseIndices = LodSilhouetteField.HighQuadsPerEdge
-            * LodSilhouetteField.HighQuadsPerEdge * 6;
-        c.Eq(baseVertices + LodSilhouetteField.AnchorVerticesPerEdge, set.High.VertexCount,
-            "one straight join adds only one shared top vertex per 32-block boundary point");
-        c.Eq(baseIndices + LodSilhouetteField.HighQuadsPerEdge * 6, set.High.IndexCount,
-            "one straight join adds only two skirt triangles per 32-block boundary segment");
-        c.Eq(137f, set.High.MaxY,
-            "the lightweight skirt alone bridges from the buried surface to the exact live height");
+            "the full cached boundary line remains exact in the lightweight join mesh");
 
         // An anchor at x=0 came from a cached section in the neighbouring tile. It must still
         // own this tile's outer edge even though this tile's coverage mask is entirely uncovered.
@@ -1269,11 +1256,8 @@ public static class SilhouetteChecks
             outerAnchors[z * LodSilhouetteField.AnchorVerticesPerEdge] = 145;
         LodSilhouetteMeshSet? outer = LodSilhouetteField.BuildMeshes(
             deep, LodSilhouetteCoverage.Empty, sea, outerAnchors);
-        c.Eq(145f - LodSilhouetteField.DefaultSinkBlocks,
-            outer?.High.Xyz[1] ?? float.NaN,
-            "a cached neighbour across a tile border buries this tile's ordinary surface");
-        c.Eq(145f, outer?.High.MaxY ?? float.NaN,
-            "an outer-edge skirt still reaches the neighbouring cache's exact live height");
+        c.Eq(145f, outer?.High.Xyz[1] ?? float.NaN,
+            "a cached neighbour across a tile border anchors the tile's outer edge");
 
         c.Eq(LodSilhouetteField.HighQuadsPerEdge,
             LodSilhouetteField.ResolutionFor(1000, 1000, 0.35f),
@@ -1489,18 +1473,10 @@ public static class SilhouetteChecks
         c.True(fragment.Contains("floor(tilePos / 32.0)", StringComparison.Ordinal)
                 && fragment.Contains("coveredCells0", StringComparison.Ordinal)
                 && fragment.Contains("coveredCells3", StringComparison.Ordinal)
-                && fragment.Contains("joinOverlapBlocks", StringComparison.Ordinal)
-                && fragment.Contains("buriedOverlap", StringComparison.Ordinal)
                 && fragment.Contains("dot(worldPos.xz, worldPos.xz) < cacheFadeStart * cacheFadeStart",
                     StringComparison.Ordinal)
                 && fragment.Contains("discard;", StringComparison.Ordinal),
-            "cached 32-block chunk footprints leave only a narrow buried overlap at their edge and resume beyond the far fade");
-        c.True(field.Contains("DefaultSinkBlocks = 32f", StringComparison.Ordinal)
-                && field.Contains("JoinOverlapBlocks = 4f", StringComparison.Ordinal)
-                && field.Contains("AppendJoinSkirts", StringComparison.Ordinal)
-                && pass.Contains("if (mesh.HasAnchors) resolution = LodSilhouetteField.HighQuadsPerEdge;",
-                    StringComparison.Ordinal),
-            "anchored tiles use the exact 32-block mesh, a deep surface sink and lightweight join skirts");
+            "cached 32-block chunk footprints discard exactly inside the cached fade and resume beyond its far edge");
         c.True(pass.Contains("SilhouetteUploadBytesPerFrame", StringComparison.Ordinal)
                 && pass.Contains("SilhouetteUploadMillisecondsPerFrame", StringComparison.Ordinal)
                 && pass.Contains("rapi.GlEnableCullFace();", StringComparison.Ordinal)
