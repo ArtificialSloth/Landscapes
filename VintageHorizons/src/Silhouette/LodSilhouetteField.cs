@@ -126,10 +126,11 @@ public static class LodSilhouetteField
     public const float MaxHillSoftness = 1f;
     public const float DefaultHillSoftness = 0.75f;
     public const int MaxFeatherRadiusCells = 32;
-    // A lowered boundary opened a visible sky slit because these meshes are height fields and
-    // have no vertical wall to bridge back up to cached terrain. Live anchors now meet the cache
-    // exactly; ordinary depth ownership still keeps cached pixels in front.
-    public const float DefaultSinkBlocks = 0f;
+    // The ordinary Farseer surface sits well below the cached-terrain edge. A lightweight join
+    // skirt bridges back to the exact live height, so the cache can overlap the silhouette without
+    // either z-fighting or exposing sky through the height difference.
+    public const float DefaultSinkBlocks = 32f;
+    public const float JoinOverlapBlocks = 4f;
     public const float JoinBlendBlocks = CoverageCellBlocks;
     public const int AnchorVerticesPerEdge = HighQuadsPerEdge + 1;
 
@@ -190,8 +191,8 @@ public static class LodSilhouetteField
     /// <summary>
     /// Builds all three meshes from the same filled field. A fully covered tile needs no GPU
     /// object. Partial coverage stays in the mesh and is discarded exactly per 32-block chunk by
-    /// the fragment shader; boundary vertices are pulled to copied cached heights and sunk a
-    /// little so real terrain owns the depth test.
+    /// the fragment shader; boundary vertices are pulled below copied cached heights and the high
+    /// mesh receives a narrow curtain back to the exact edge so real terrain owns the depth test.
     /// </summary>
     public static LodSilhouetteMeshSet? BuildMeshes(LodSilhouetteTile?[,] neighbourhood,
         LodSilhouetteCoverage coveredCells, int seaLevel, float[]? anchors = null,
@@ -285,7 +286,6 @@ public static class LodSilhouetteField
                 int blockZ = b * spacing;
                 VertexCoverage(coveredCells, blockX, blockZ,
                     out bool touchesCovered, out bool touchesUncovered);
-                bool boundary = touchesCovered && touchesUncovered;
                 float y = raw;
                 if (float.IsNaN(y)) y = seaLevel;
                 // Covered interiors retain raw land/seabed height. Everywhere the silhouette can
@@ -298,8 +298,8 @@ public static class LodSilhouetteField
                 if (!float.IsNaN(exactAnchor))
                 {
                     // CaptureAnchors marks the real cached edge, including an edge on the next
-                    // tile. Meet that edge exactly: lowering a surface-only height field leaves
-                    // a visible slit because there is no vertical face between the two heights.
+                    // tile. The surface deliberately runs below it; AppendJoinSkirts supplies the
+                    // missing vertical face so this cannot reopen the old sky slit.
                     y = exactAnchor - Math.Max(0f, sinkBlocks);
                 }
                 else if (anchors != null && (!touchesCovered || touchesUncovered)
@@ -313,11 +313,6 @@ public static class LodSilhouetteField
                     float target = joinAnchor - Math.Max(0f, sinkBlocks);
                     y += (target - y) * joinInfluence;
                 }
-                else if (boundary)
-                {
-                    y -= Math.Max(0f, sinkBlocks);
-                }
-
                 xyz[v * 3] = blockX;
                 xyz[v * 3 + 1] = y;
                 xyz[v * 3 + 2] = blockZ;
@@ -326,8 +321,7 @@ public static class LodSilhouetteField
             }
         }
 
-        var indices = new int[quadsPerEdge * quadsPerEdge * 6];
-        int n = 0;
+        var indices = new List<int>(quadsPerEdge * quadsPerEdge * 6);
         for (int b = 0; b < quadsPerEdge; b++)
         {
             for (int a = 0; a < quadsPerEdge; a++)
@@ -336,26 +330,132 @@ public static class LodSilhouetteField
                 int bottomLeft = (b + 1) * verts + a;
                 if (!valid[topLeft] || !valid[topLeft + 1]
                     || !valid[bottomLeft] || !valid[bottomLeft + 1]) continue;
-                indices[n++] = topLeft;
-                indices[n++] = bottomLeft;
-                indices[n++] = topLeft + 1;
-                indices[n++] = topLeft + 1;
-                indices[n++] = bottomLeft;
-                indices[n++] = bottomLeft + 1;
+                indices.Add(topLeft);
+                indices.Add(bottomLeft);
+                indices.Add(topLeft + 1);
+                indices.Add(topLeft + 1);
+                indices.Add(bottomLeft);
+                indices.Add(bottomLeft + 1);
             }
         }
-        if (n == 0) return null;
-        if (n != indices.Length) Array.Resize(ref indices, n);
+        if (indices.Count == 0) return null;
+
+        var allXyz = new List<float>(xyz.Length + AnchorVerticesPerEdge * AnchorVerticesPerEdge * 3);
+        allXyz.AddRange(xyz);
+        if (quadsPerEdge == HighQuadsPerEdge && anchors != null && sinkBlocks > 0f)
+            AppendJoinSkirts(allXyz, indices, valid, coveredCells, anchors,
+                Math.Max(0f, sinkBlocks), ref minY, ref maxY);
+
         return new LodSilhouetteMeshArrays
         {
-            Xyz = xyz,
-            Indices = indices,
-            VertexCount = verts * verts,
-            IndexCount = indices.Length,
+            Xyz = allXyz.ToArray(),
+            Indices = indices.ToArray(),
+            VertexCount = allXyz.Count / 3,
+            IndexCount = indices.Count,
             QuadsPerEdge = quadsPerEdge,
             MinY = minY,
             MaxY = maxY,
         };
+    }
+
+    /// <summary>
+    /// Adds only the cached/uncovered boundary faces. Their lower edge reuses the sunk terrain
+    /// grid and their upper edge follows live cached heights. Ordinary joins add two triangles per
+    /// 32-block edge; even pathological coverage remains tiny beside real terrain geometry.
+    /// </summary>
+    static void AppendJoinSkirts(List<float> xyz, List<int> indices, bool[] valid,
+        LodSilhouetteCoverage coveredCells, float[] anchors, float sinkBlocks,
+        ref float minY, ref float maxY)
+    {
+        int edge = AnchorVerticesPerEdge;
+        var topVertices = new int[anchors.Length];
+        Array.Fill(topVertices, -1);
+        float skirtMinY = minY, skirtMaxY = maxY;
+
+        int TopVertex(int x, int z)
+        {
+            int anchorIndex = z * edge + x;
+            int held = topVertices[anchorIndex];
+            if (held >= 0) return held;
+            int vertex = xyz.Count / 3;
+            float height = anchors[anchorIndex];
+            xyz.Add(x * CoverageCellBlocks);
+            xyz.Add(height);
+            xyz.Add(z * CoverageCellBlocks);
+            topVertices[anchorIndex] = vertex;
+            skirtMinY = Math.Min(skirtMinY, height - sinkBlocks);
+            skirtMaxY = Math.Max(skirtMaxY, height);
+            return vertex;
+        }
+
+        bool Anchored(int x, int z) => valid[z * edge + x]
+            && !float.IsNaN(anchors[z * edge + x]);
+
+        void AddVertical(int x, int z, bool uncoveredPositive)
+        {
+            if (!Anchored(x, z) || !Anchored(x, z + 1)) return;
+            int bottom0 = z * edge + x;
+            int bottom1 = (z + 1) * edge + x;
+            int top0 = TopVertex(x, z);
+            int top1 = TopVertex(x, z + 1);
+            if (uncoveredPositive)
+            {
+                indices.Add(top0); indices.Add(top1); indices.Add(bottom0);
+                indices.Add(top1); indices.Add(bottom1); indices.Add(bottom0);
+            }
+            else
+            {
+                indices.Add(top0); indices.Add(bottom0); indices.Add(top1);
+                indices.Add(top1); indices.Add(bottom0); indices.Add(bottom1);
+            }
+        }
+
+        void AddHorizontal(int x, int z, bool uncoveredPositive)
+        {
+            if (!Anchored(x, z) || !Anchored(x + 1, z)) return;
+            int bottom0 = z * edge + x;
+            int bottom1 = z * edge + x + 1;
+            int top0 = TopVertex(x, z);
+            int top1 = TopVertex(x + 1, z);
+            if (uncoveredPositive)
+            {
+                indices.Add(top0); indices.Add(bottom0); indices.Add(top1);
+                indices.Add(top1); indices.Add(bottom0); indices.Add(bottom1);
+            }
+            else
+            {
+                indices.Add(top0); indices.Add(top1); indices.Add(bottom0);
+                indices.Add(top1); indices.Add(bottom1); indices.Add(bottom0);
+            }
+        }
+
+        for (int z = 0; z < CoverageCellsPerEdge; z++)
+        {
+            for (int x = 0; x <= CoverageCellsPerEdge; x++)
+            {
+                bool left = x > 0 && coveredCells.Covered(x - 1, z);
+                bool right = x < CoverageCellsPerEdge && coveredCells.Covered(x, z);
+                if (x > 0 && x < CoverageCellsPerEdge && left == right) continue;
+                // An outer anchor proves that the unseen neighbouring cell differs from the local
+                // one. Inside the tile the mask directly identifies the uncovered viewing side.
+                bool uncoveredPositive = x == 0 ? !right : left;
+                AddVertical(x, z, uncoveredPositive);
+            }
+        }
+
+        for (int z = 0; z <= CoverageCellsPerEdge; z++)
+        {
+            for (int x = 0; x < CoverageCellsPerEdge; x++)
+            {
+                bool north = z > 0 && coveredCells.Covered(x, z - 1);
+                bool south = z < CoverageCellsPerEdge && coveredCells.Covered(x, z);
+                if (z > 0 && z < CoverageCellsPerEdge && north == south) continue;
+                bool uncoveredPositive = z == 0 ? !south : north;
+                AddHorizontal(x, z, uncoveredPositive);
+            }
+        }
+        minY = skirtMinY;
+        maxY = skirtMaxY;
     }
 
     static bool TryJoinAnchor(float[] anchors, int blockX, int blockZ,

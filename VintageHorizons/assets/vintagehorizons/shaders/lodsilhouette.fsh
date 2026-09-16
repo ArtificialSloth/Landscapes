@@ -31,6 +31,7 @@ uniform vec4 coveredCells1;
 uniform vec4 coveredCells2;
 uniform vec4 coveredCells3;
 uniform float cacheFadeStart;
+uniform float joinOverlapBlocks;
 
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outGlow;
@@ -46,20 +47,33 @@ layout(location = 3) out vec4 outGPosition;
 #include underwatereffects.fsh
 #include lodsilhouettecolor.fsh
 
-void main()
+bool vhSilhouetteCovered(ivec2 cell)
 {
-    if (dist < 0.0 || dist > 1.0) discard;
-
-    ivec2 coveredCell = clamp(ivec2(floor(tilePos / 32.0)), ivec2(0), ivec2(15));
-    int coveredBit = coveredCell.y * 16 + coveredCell.x;
-    int wordIndex = coveredBit >> 4;
+    if (cell.x < 0 || cell.y < 0 || cell.x >= 16 || cell.y >= 16) return false;
+    int bit = cell.y * 16 + cell.x;
+    int wordIndex = bit >> 4;
     vec4 coveredGroup = wordIndex < 4 ? coveredCells0
         : wordIndex < 8 ? coveredCells1
         : wordIndex < 12 ? coveredCells2
         : coveredCells3;
     int coveredWord = int(coveredGroup[wordIndex & 3]);
-    bool cachedCell = (coveredWord & (1 << (coveredBit & 15))) != 0;
-    if (cachedCell && dot(worldPos.xz, worldPos.xz) < cacheFadeStart * cacheFadeStart) discard;
+    return (coveredWord & (1 << (bit & 15))) != 0;
+}
+
+void main()
+{
+    if (dist < 0.0 || dist > 1.0) discard;
+
+    ivec2 coveredCell = clamp(ivec2(floor(tilePos / 32.0)), ivec2(0), ivec2(15));
+    bool cachedCell = vhSilhouetteCovered(coveredCell);
+    vec2 cellPos = tilePos - vec2(coveredCell) * 32.0;
+    bool buriedOverlap = cachedCell && (
+        (cellPos.x <= joinOverlapBlocks && !vhSilhouetteCovered(coveredCell + ivec2(-1, 0)))
+        || (cellPos.x >= 32.0 - joinOverlapBlocks && !vhSilhouetteCovered(coveredCell + ivec2(1, 0)))
+        || (cellPos.y <= joinOverlapBlocks && !vhSilhouetteCovered(coveredCell + ivec2(0, -1)))
+        || (cellPos.y >= 32.0 - joinOverlapBlocks && !vhSilhouetteCovered(coveredCell + ivec2(0, 1))));
+    if (cachedCell && !buriedOverlap
+        && dot(worldPos.xz, worldPos.xz) < cacheFadeStart * cacheFadeStart) discard;
 
     // The sky with a height-dependent offset is the terrain's own colour.
     vec4 terraColor;
