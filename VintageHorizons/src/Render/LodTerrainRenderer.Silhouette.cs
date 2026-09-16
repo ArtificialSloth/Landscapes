@@ -21,6 +21,9 @@ public partial class LodTerrainRenderer
         public required MeshRef High;
         public required MeshRef Medium;
         public required MeshRef Low;
+        public required int HighTriangles;
+        public required int MediumTriangles;
+        public required int LowTriangles;
         public required int TileX;
         public required int TileZ;
         public required float MinY;
@@ -32,6 +35,13 @@ public partial class LodTerrainRenderer
             LodSilhouetteField.HighQuadsPerEdge => High,
             LodSilhouetteField.MediumQuadsPerEdge => Medium,
             _ => Low,
+        };
+
+        public int TrianglesAt(int quadsPerEdge) => quadsPerEdge switch
+        {
+            LodSilhouetteField.HighQuadsPerEdge => HighTriangles,
+            LodSilhouetteField.MediumQuadsPerEdge => MediumTriangles,
+            _ => LowTriangles,
         };
 
         public void Dispose()
@@ -59,11 +69,13 @@ public partial class LodTerrainRenderer
     internal float SilhouetteLightLevelBias = 0.70f;
     internal float SilhouetteFadeBias = 0.4f;
     internal float SilhouetteGlobeEffect = 0.05f;
+    internal float SilhouetteOutlineDetail = LodSilhouetteField.DefaultOutlineDetail;
 
     internal int SilhouetteDrawsLastFrame { get; private set; }
     internal int SilhouetteHighDrawsLastFrame { get; private set; }
     internal int SilhouetteMediumDrawsLastFrame { get; private set; }
     internal int SilhouetteLowDrawsLastFrame { get; private set; }
+    internal long SilhouetteTrianglesLastFrame { get; private set; }
     internal int SilhouetteMeshCount => silhouetteMeshes.Count;
     int silhouetteUploadFailures;
 
@@ -116,6 +128,7 @@ public partial class LodTerrainRenderer
         SilhouetteHighDrawsLastFrame = 0;
         SilhouetteMediumDrawsLastFrame = 0;
         SilhouetteLowDrawsLastFrame = 0;
+        SilhouetteTrianglesLastFrame = 0;
         LodSilhouetteClient? silhouettes = Silhouettes;
         if (silhouettes == null || !silhouettes.Enabled)
         {
@@ -199,8 +212,10 @@ public partial class LodTerrainRenderer
             p.Uniform("coveredCellsLow", unchecked((int)(uint)mesh.CoveredCells));
             p.Uniform("coveredCellsHigh", unchecked((int)(uint)(mesh.CoveredCells >> 32)));
             int resolution = LodSilhouetteField.ResolutionFor(
-                ScreenBlockScale, Math.Max(1.0, Math.Sqrt(nearestDistanceSq)), LodTargetPixels);
+                ScreenBlockScale, Math.Max(1.0, Math.Sqrt(nearestDistanceSq)),
+                SilhouetteOutlineDetail);
             rapi.RenderMesh(mesh.At(resolution));
+            SilhouetteTrianglesLastFrame += mesh.TrianglesAt(resolution);
             if (resolution == LodSilhouetteField.HighQuadsPerEdge) SilhouetteHighDrawsLastFrame++;
             else if (resolution == LodSilhouetteField.MediumQuadsPerEdge) SilhouetteMediumDrawsLastFrame++;
             else SilhouetteLowDrawsLastFrame++;
@@ -246,6 +261,9 @@ public partial class LodTerrainRenderer
                     High = high,
                     Medium = medium,
                     Low = low,
+                    HighTriangles = result.Meshes.High.IndexCount / 3,
+                    MediumTriangles = result.Meshes.Medium.IndexCount / 3,
+                    LowTriangles = result.Meshes.Low.IndexCount / 3,
                     TileX = result.TileX,
                     TileZ = result.TileZ,
                     MinY = result.Meshes.MinY,

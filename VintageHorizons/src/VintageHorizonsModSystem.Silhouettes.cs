@@ -117,7 +117,9 @@ public partial class VintageHorizonsModSystem
             + $"with nothing to draw), {renderer.SilhouetteDrawsLastFrame} drawn last frame "
             + $"({renderer.SilhouetteHighDrawsLastFrame} high, "
             + $"{renderer.SilhouetteMediumDrawsLastFrame} medium, "
-            + $"{renderer.SilhouetteLowDrawsLastFrame} low). "
+            + $"{renderer.SilhouetteLowDrawsLastFrame} low; "
+            + $"{renderer.SilhouetteTrianglesLastFrame:N0} triangles at "
+            + $"{renderer.SilhouetteOutlineDetail * 100f:0}% outline detail). "
             + $"Shader: {renderer.SilhouetteShaderState}.";
     }
 
@@ -131,7 +133,8 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteTintStrength,
         config.SilhouetteLightLevelBias,
         config.SilhouetteFadeBias,
-        config.SilhouetteGlobeEffect).Normalize();
+        config.SilhouetteGlobeEffect,
+        config.SilhouetteOutlineDetail).Normalize();
 
     LodSilhouetteSettings CurrentSilhouetteSettings()
     {
@@ -146,7 +149,8 @@ public partial class VintageHorizonsModSystem
             renderer.SilhouetteColorTint.A,
             renderer.SilhouetteLightLevelBias,
             renderer.SilhouetteFadeBias,
-            renderer.SilhouetteGlobeEffect).Normalize();
+            renderer.SilhouetteGlobeEffect,
+            renderer.SilhouetteOutlineDetail).Normalize();
     }
 
     void PreviewSilhouetteSettings(LodSilhouetteSettings value)
@@ -164,6 +168,7 @@ public partial class VintageHorizonsModSystem
         renderer.SilhouetteLightLevelBias = value.LightLevelBias;
         renderer.SilhouetteFadeBias = value.FadeBias;
         renderer.SilhouetteGlobeEffect = value.GlobeEffect;
+        renderer.SilhouetteOutlineDetail = value.OutlineDetail;
         silhouettes.SetReachBlocks(value.ReachBlocks);
         silhouettes.SetEnabled(value.Enabled);
         if (!value.Enabled) renderer.ReleaseSilhouetteMeshes();
@@ -182,5 +187,6 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteLightLevelBias = value.LightLevelBias;
         config.SilhouetteFadeBias = value.FadeBias;
         config.SilhouetteGlobeEffect = value.GlobeEffect;
+        config.SilhouetteOutlineDetail = value.OutlineDetail;
     }
 }

@@ -1187,8 +1187,8 @@ public static class SilhouetteChecks
         LodSilhouetteMeshSet? set = LodSilhouetteField.BuildMeshes(deep, covered, sea, anchors);
         c.True(set != null, "a partially covered tile publishes its three resolutions together");
         if (set == null) return;
-        c.Eq((128, 32, 8), (set.High.QuadsPerEdge, set.Medium.QuadsPerEdge, set.Low.QuadsPerEdge),
-            "the P4 mesh set contains 4-, 16- and 64-block quads");
+        c.Eq((64, 16, 8), (set.High.QuadsPerEdge, set.Medium.QuadsPerEdge, set.Low.QuadsPerEdge),
+            "the simplified mesh set contains 8-, 32- and 64-block quads");
         c.True(set.ByteCount > set.High.ByteCount,
             "the upload budget accounts for all three arrays rather than only the selected one");
 
@@ -1230,14 +1230,20 @@ public static class SilhouetteChecks
             "a cached neighbour across a tile border anchors the tile's outer edge");
 
         c.Eq(LodSilhouetteField.HighQuadsPerEdge,
-            LodSilhouetteField.ResolutionFor(1000, 1000),
+            LodSilhouetteField.ResolutionFor(1000, 1000, 0.35f),
             "a large on-screen tile selects the high silhouette mesh");
         c.Eq(LodSilhouetteField.MediumQuadsPerEdge,
-            LodSilhouetteField.ResolutionFor(1000, 20000),
+            LodSilhouetteField.ResolutionFor(1000, 2500, 0.35f),
             "a medium on-screen tile selects the medium silhouette mesh");
         c.Eq(LodSilhouetteField.LowQuadsPerEdge,
-            LodSilhouetteField.ResolutionFor(1000, 50000),
+            LodSilhouetteField.ResolutionFor(1000, 8000, 0.35f),
             "a small on-screen tile selects the low silhouette mesh");
+        c.Eq(LodSilhouetteField.HighQuadsPerEdge,
+            LodSilhouetteField.ResolutionFor(1000, 8000, 1f),
+            "the sharp end of the dial retains fine distant peaks");
+        c.Eq(LodSilhouetteField.LowQuadsPerEdge,
+            LodSilhouetteField.ResolutionFor(1000, 8000, 0f),
+            "the soft end of the dial chooses the broadest distant samples");
         c.Eq(LodSilhouetteField.LowQuadsPerEdge,
             LodSilhouetteField.ResolutionFor(0, 1),
             "an unavailable screen scale fails to the cheapest mesh");
@@ -1276,13 +1282,15 @@ public static class SilhouetteChecks
             LightLevelBias = 0,
             FadeBias = 2,
             GlobeEffect = float.PositiveInfinity,
+            OutlineDetail = float.PositiveInfinity,
         }).Normalize();
         c.Eq(32768, repaired.ReachBlocks, "a hand-edited reach is normalized");
         c.Near(defaults.SkyTint, repaired.SkyTint, 1e-6, "a non-finite dial returns to its default");
         c.Eq((0f, 1f), (repaired.TintRed, repaired.TintStrength),
             "colour settings stay inside their shader range");
-        c.Eq((0.51f, 0.95f, defaults.GlobeEffect),
-            (repaired.LightLevelBias, repaired.FadeBias, repaired.GlobeEffect),
+        c.Eq((0.51f, 0.95f, defaults.GlobeEffect, defaults.OutlineDetail),
+            (repaired.LightLevelBias, repaired.FadeBias, repaired.GlobeEffect,
+                repaired.OutlineDetail),
             "bias and globe settings avoid invalid pow inputs and non-finite curves");
     }
 
@@ -1411,10 +1419,10 @@ public static class SilhouetteChecks
             + Source("src", "VintageHorizonsModSystem.Silhouettes.cs");
 
         c.True(field.Contains("BuildMeshes", StringComparison.Ordinal)
-                && field.Contains("HighQuadsPerEdge = 128", StringComparison.Ordinal)
-                && field.Contains("MediumQuadsPerEdge = 32", StringComparison.Ordinal)
+                && field.Contains("HighQuadsPerEdge = 64", StringComparison.Ordinal)
+                && field.Contains("MediumQuadsPerEdge = 16", StringComparison.Ordinal)
                 && field.Contains("LowQuadsPerEdge = 8", StringComparison.Ordinal),
-            "P4 builds the planned 128, 32 and 8-quad tile meshes");
+            "Farseer builds simplified 64, 16 and 8-quad tile meshes");
         c.True(client.IndexOf("CaptureAnchors(world", StringComparison.Ordinal)
                 < client.IndexOf("Task.Run", StringComparison.Ordinal)
                 && client.Contains("source.ColumnRuns(col)", StringComparison.Ordinal)
@@ -1425,8 +1433,10 @@ public static class SilhouetteChecks
             "cached edge heights, including neighbours across tile borders, are copied on the owner thread and invalidate both sides before a worker starts");
         c.True(pass.Contains("LodSilhouetteField.ResolutionFor(", StringComparison.Ordinal)
                 && pass.Contains("ScreenBlockScale", StringComparison.Ordinal)
-                && pass.Contains("mesh.At(resolution)", StringComparison.Ordinal),
-            "the draw pass chooses one of the three meshes from the live screen scale");
+                && pass.Contains("SilhouetteOutlineDetail", StringComparison.Ordinal)
+                && pass.Contains("mesh.At(resolution)", StringComparison.Ordinal)
+                && pass.Contains("silhouetteFrustum.BoxInView", StringComparison.Ordinal),
+            "the draw pass frustum-culls and chooses one of three meshes from screen scale and the outline dial");
 
         c.True(fragment.Contains("floor(tilePos / 64.0)", StringComparison.Ordinal)
                 && fragment.Contains("coveredCellsLow", StringComparison.Ordinal)
@@ -1457,8 +1467,9 @@ public static class SilhouetteChecks
 
         c.True(dialog.Contains("Name = \"Farseer\"", StringComparison.Ordinal)
                 && dialog.Contains("ComposeSilhouettes", StringComparison.Ordinal)
-                && dialog.Contains("SilhouetteRows", StringComparison.Ordinal),
-            "the settings editor names the feature for Farseer while retaining its appearance dials");
+                && dialog.Contains("SilhouetteRows", StringComparison.Ordinal)
+                && dialog.Contains("Outline detail", StringComparison.Ordinal),
+            "the settings editor names the feature for Farseer and exposes its appearance and outline dials");
         c.True(scale.Contains("DrawMarker", StringComparison.Ordinal)
                 && scale.Contains("SilhouetteMarker", StringComparison.Ordinal)
                 && scale.Contains("silhouettesEnabled", StringComparison.Ordinal)
@@ -1479,7 +1490,7 @@ public static class SilhouetteChecks
             "HorizonSilhouettes", "SilhouetteReachBlocks", "SilhouetteSkyTint",
             "SilhouetteTintRed", "SilhouetteTintGreen", "SilhouetteTintBlue",
             "SilhouetteTintStrength", "SilhouetteLightLevelBias", "SilhouetteFadeBias",
-            "SilhouetteGlobeEffect",
+            "SilhouetteGlobeEffect", "SilhouetteOutlineDetail",
         })
             c.True(mod.Contains(name, StringComparison.Ordinal), name + " is persisted in client config");
     }

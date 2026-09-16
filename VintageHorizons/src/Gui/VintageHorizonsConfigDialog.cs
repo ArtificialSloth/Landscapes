@@ -344,7 +344,19 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("sil-globe", "Globe curve", "Gently lowers only far Farseer terrain to hide the finite horizon edge.",
             0, 200, 1, s => (int)MathF.Round(s.GlobeEffect * 1000),
             (s, v) => s with { GlobeEffect = v / 1000f }, v => (v / 1000f).ToString("0.000")),
+        new("sil-detail", "Outline detail", "Soft uses broader terrain samples for a calmer, faster horizon. Sharp preserves more small peaks.",
+            0, 100, 1, s => (int)MathF.Round(s.OutlineDetail * 100),
+            (s, v) => s with { OutlineDetail = v / 100f }, OutlineDetailLabel),
     };
+
+    static string OutlineDetailLabel(int value) => $"{value}% " + (value switch
+    {
+        <= 20 => "Softest",
+        <= 40 => "Soft",
+        <= 60 => "Balanced",
+        <= 80 => "Detailed",
+        _ => "Sharp",
+    });
 
     void ComposeDialog()
     {
@@ -622,7 +634,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         composer.AddStaticText(
             "Changes on this tab show immediately. Off releases received tiles and all Farseer GPU meshes.",
-            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(626), Width - 2 * Margin, 28));
+            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(714), Width - 2 * Margin, 28));
     }
 
     void SetSilhouetteValues()

@@ -14,7 +14,8 @@ internal readonly record struct LodSilhouetteSettings(
     float TintStrength,
     float LightLevelBias,
     float FadeBias,
-    float GlobeEffect)
+    float GlobeEffect,
+    float OutlineDetail)
 {
     public const int MinReachBlocks = 1024;
     public const int MaxReachBlocks = 32768;
@@ -30,7 +31,8 @@ internal readonly record struct LodSilhouetteSettings(
         TintStrength: 0.40f,
         LightLevelBias: 0.70f,
         FadeBias: 0.40f,
-        GlobeEffect: 0.05f);
+        GlobeEffect: 0.05f,
+        OutlineDetail: Silhouette.LodSilhouetteField.DefaultOutlineDetail);
 
     public static int ClampReach(int blocks)
     {
@@ -49,7 +51,8 @@ internal readonly record struct LodSilhouetteSettings(
         Dial(TintStrength, Default.TintStrength, 0f, 1f),
         Dial(LightLevelBias, Default.LightLevelBias, 0.51f, 0.99f),
         Dial(FadeBias, Default.FadeBias, 0.05f, 0.95f),
-        Dial(GlobeEffect, Default.GlobeEffect, 0f, 0.2f));
+        Dial(GlobeEffect, Default.GlobeEffect, 0f, 0.2f),
+        Silhouette.LodSilhouetteField.NormalizeOutlineDetail(OutlineDetail));
 
     static float Dial(float value, float fallback, float min, float max) =>
         Math.Clamp(float.IsFinite(value) ? value : fallback, min, max);

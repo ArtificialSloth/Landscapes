@@ -48,13 +48,19 @@ public static class LodSilhouetteField
     public const double NodeOriginBlocks =
         LatticeOffsetChunks * LodSilhouetteTile.ChunkBlocks + LodSilhouetteTile.ChunkBlocks / 2.0;
 
-    // Four-, sixteen- and sixty-four-block quads. Every edge is a divisor of the 512-block tile,
-    // and the fine meshes pin their outer edge to the low mesh's 64-block line so mixed-resolution
-    // neighbours cannot open a crack.
-    public const int HighQuadsPerEdge = 128;
-    public const int MediumQuadsPerEdge = 32;
+    // Eight-, thirty-two- and sixty-four-block quads. Sixty-four blocks is the deliberately
+    // coarse floor: it still places a vertex on every cache-coverage boundary, which is required
+    // for exact anchors and hole-free handover. Fine meshes pin their outer edge to that same
+    // line so mixed-resolution neighbours cannot open a crack.
+    public const int HighQuadsPerEdge = 64;
+    public const int MediumQuadsPerEdge = 16;
     public const int LowQuadsPerEdge = 8;
     public const int DefaultQuadsPerEdge = MediumQuadsPerEdge;
+    public const float MinOutlineDetail = 0f;
+    public const float MaxOutlineDetail = 1f;
+    public const float DefaultOutlineDetail = 0.35f;
+    public const float SoftTargetPixels = 24f;
+    public const float SharpTargetPixels = 2f;
     // A lowered boundary opened a visible sky slit because these meshes are height fields and
     // have no vertical wall to bridge back up to cached terrain. Live anchors now meet the cache
     // exactly; ordinary depth ownership still keeps cached pixels in front.
@@ -86,22 +92,32 @@ public static class LodSilhouetteField
         && (coveredCells & (1UL << CoverageBit(localCellX, localCellZ))) != 0;
 
     /// <summary>
-    /// Selects the cheapest mesh whose quads remain at most two pixels wide. The decision is
-    /// screen-size driven, so changing resolution or field of view moves the transition rather
-    /// than silently changing silhouette quality.
+    /// Selects the cheapest mesh allowed by the player's outline-detail dial. The decision is
+    /// screen-size driven, so changing resolution or field of view still moves the transition.
+    /// A soft outline tolerates wider on-screen quads and therefore draws much less geometry.
     /// </summary>
     public static int ResolutionFor(float blockScale, double viewDepth,
-        float targetPixels = LodAutoThresholds.DefaultTargetPixels)
+        float outlineDetail = DefaultOutlineDetail)
     {
         if (!(blockScale > 0f) || !float.IsFinite(blockScale) || !(viewDepth > 0))
             return LowQuadsPerEdge;
-        float target = Math.Clamp(float.IsFinite(targetPixels)
-            ? targetPixels : LodAutoThresholds.DefaultTargetPixels,
-            LodAutoThresholds.MinTargetPixels, LodAutoThresholds.MaxTargetPixels);
+        float target = TargetPixelsForDetail(outlineDetail);
         double blockPixels = blockScale / viewDepth;
-        if (blockPixels * 16 > target) return HighQuadsPerEdge;
-        if (blockPixels * 64 > target) return MediumQuadsPerEdge;
+        int mediumSpacing = LodSilhouetteTile.TileBlocks / MediumQuadsPerEdge;
+        int lowSpacing = LodSilhouetteTile.TileBlocks / LowQuadsPerEdge;
+        if (blockPixels * mediumSpacing > target) return HighQuadsPerEdge;
+        if (blockPixels * lowSpacing > target) return MediumQuadsPerEdge;
         return LowQuadsPerEdge;
+    }
+
+    public static float NormalizeOutlineDetail(float value) => Math.Clamp(
+        float.IsFinite(value) ? value : DefaultOutlineDetail,
+        MinOutlineDetail, MaxOutlineDetail);
+
+    public static float TargetPixelsForDetail(float outlineDetail)
+    {
+        float detail = NormalizeOutlineDetail(outlineDetail);
+        return SoftTargetPixels + (SharpTargetPixels - SoftTargetPixels) * detail;
     }
 
     /// <summary>
@@ -116,7 +132,8 @@ public static class LodSilhouetteField
     {
         if (coveredCells == ulong.MaxValue) return null;
         if (anchors != null && anchors.Length != AnchorVerticesPerEdge * AnchorVerticesPerEdge)
-            throw new ArgumentException("Silhouette anchors must be a 129x129 high-resolution grid.",
+            throw new ArgumentException(
+                $"Silhouette anchors must be a {AnchorVerticesPerEdge}x{AnchorVerticesPerEdge} high-resolution grid.",
                 nameof(anchors));
 
         float[] filled = LodSilhouetteFill.FillCentreFeathered(
