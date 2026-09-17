@@ -423,6 +423,7 @@ layout(location = 3) out vec4 outGPosition;
 #include skycolor.fsh
 #include underwatereffects.fsh
 #include lodsilhouettecolor.fsh
+#include lodsilhouettefog.fsh
 
 // Immutable vanilla-only depth, never the attached liquid-depth destination. The depth
 // and OIT surface passes both read the same snapshot so a clear boundary pixel cannot get

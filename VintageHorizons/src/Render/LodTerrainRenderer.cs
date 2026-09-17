@@ -5838,6 +5838,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// The engine's automatic bindings are explicitly assigned by LodTerrainSamplerLayout;
     /// their declaration-order defaults do NOT reserve the low units for shared includes.
     /// </summary>
+    const int SilhouetteSeamMaskUnit = LodTerrainSamplerLayout.SilhouetteSeamMask;
     const int ReadinessMaskUnit = LodTerrainSamplerLayout.ReadinessMask;
     const int SeamFieldUnit = LodTerrainSamplerLayout.SeamField;
     const int BlockTableUnit = LodTerrainSamplerLayout.BlockTable;
@@ -5989,6 +5990,7 @@ public partial class LodTerrainRenderer : IRenderer
         prog.Uniform("silhouetteColorTint", SilhouetteColorTint);
         prog.Uniform("silhouetteLightLevelBias", SilhouetteLightLevelBias);
         prog.Uniform("silhouetteSeaLevel", capi.World.SeaLevel);
+        ApplySilhouetteSeamFogUniforms(prog);
         if (maskOwnsPixels && readiness != null && readinessMaskTexture != null)
         {
             prog.Uniform("maskMinX", readiness.ActiveMinChunkX);
@@ -6968,6 +6970,10 @@ public partial class LodTerrainRenderer : IRenderer
     /// </summary>
     void RebindOwnSamplers(IShaderProgram target)
     {
+        if (silhouetteSeamFogActive && silhouetteSeamMask.Active
+            && silhouetteSeamMaskTexture != null)
+            target.BindTexture2D("silhouetteSeamMask", silhouetteSeamMaskTexture.TextureId,
+                SilhouetteSeamMaskUnit);
         if (readinessMaskActive && readinessMask != null && readinessMaskTexture != null)
             target.BindTexture2D("readinessMask", readinessMaskTexture.TextureId,
                 ReadinessMaskUnit);

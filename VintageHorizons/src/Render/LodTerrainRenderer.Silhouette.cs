@@ -52,16 +52,27 @@ public partial class LodTerrainRenderer
         }
     }
 
+    readonly record struct SilhouetteFrameDraw(
+        SilhouetteGpuMesh Mesh, float RelX, float RelZ, LodSilhouetteCoverage Replacements,
+        int Resolution);
+
     readonly Dictionary<long, SilhouetteGpuMesh> silhouetteMeshes = new();
+    readonly List<SilhouetteFrameDraw> silhouetteFrameDraws = new();
     readonly LodFrustum silhouetteFrustum = new();
+    readonly LodSilhouetteSeamMask silhouetteSeamMask = new();
+    LoadedTexture? silhouetteSeamMaskTexture;
     IShaderProgram? silhouetteProg;
     bool silhouetteShaderOk;
     bool silhouetteShaderWanted;
+    bool silhouetteSeamFogActive;
+    bool silhouetteSeamFogFailed;
     int silhouetteMeshEpoch = -1;
 
     const int SilhouetteUploadsPerFrame = 4;
     const long SilhouetteUploadBytesPerFrame = 2 * 1024 * 1024;
     const double SilhouetteUploadMillisecondsPerFrame = 2.0;
+    const float SilhouetteSeamFogWidthBlocks = LodSilhouetteSeamMask.CellBlocks;
+    const float SilhouetteSeamFogStrength = 1f;
 
     // Farseer 1.4.0's client defaults: the classic look (owner decision D11) until they are tuned.
     internal float SilhouetteSkyTint = 5.0f;
@@ -87,6 +98,7 @@ public partial class LodTerrainRenderer
 
     internal string SilhouetteShaderState => !silhouetteShaderWanted
         ? "not compiled (never switched on)"
+        : silhouetteSeamFogFailed ? "FAILED to upload seam fog, silhouettes are off for this session"
         : silhouetteShaderOk ? "ok" : "FAILED to compile, silhouettes are off for this session";
 
     /// <summary>
@@ -124,17 +136,19 @@ public partial class LodTerrainRenderer
         }
     }
 
-    void DrawSilhouettes()
+    /// <summary>
+    /// Uploads and selects the Farseer tiles before cached terrain draws, then publishes one
+    /// packed ownership-edge texture shared by both shaders. Preparing first is what lets the
+    /// LOD side receive the same fog as the Farseer side in the current frame.
+    /// </summary>
+    void PrepareSilhouetteFrame()
     {
-        SilhouetteDrawsLastFrame = 0;
-        SilhouetteHighDrawsLastFrame = 0;
-        SilhouetteMediumDrawsLastFrame = 0;
-        SilhouetteLowDrawsLastFrame = 0;
-        SilhouetteTrianglesLastFrame = 0;
+        silhouetteFrameDraws.Clear();
         LodSilhouetteClient? silhouettes = Silhouettes;
         if (silhouettes == null || !silhouettes.Enabled)
         {
-            if (silhouetteMeshes.Count > 0) ReleaseSilhouetteMeshes();
+            if (silhouetteMeshes.Count > 0 || silhouetteSeamMaskTexture != null)
+                ReleaseSilhouetteMeshes();
             return;
         }
         if (silhouetteMeshEpoch != silhouettes.Epoch)
@@ -145,20 +159,103 @@ public partial class LodTerrainRenderer
         UploadSilhouetteMeshes(silhouettes);
         // No offered/decoded tile means no compile either. This keeps a server that does not
         // offer silhouettes at the exact old render cost even when the saved client switch is on.
-        if (silhouetteMeshes.Count == 0) return;
+        if (silhouetteMeshes.Count == 0)
+        {
+            silhouetteSeamMask.Deactivate();
+            silhouetteSeamFogActive = false;
+            return;
+        }
         if (!silhouetteShaderWanted)
         {
             silhouetteShaderWanted = true;
             LoadSilhouetteShader();
         }
-        if (!silhouetteShaderOk || silhouetteProg == null || silhouetteProg.LoadError)
+        if (!silhouetteShaderOk || silhouetteProg == null || silhouetteProg.LoadError
+            || silhouetteSeamFogFailed)
         {
             ReleaseSilhouetteMeshes();
-            // A compile/load failure is a session failure, not a per-frame retry. Shutting the
-            // client feature down also stops offers, decoding, meshing and future uploads.
+            // A compile/load/fog failure is a session failure, not a plausible no-fog fallback.
+            // Shutting the client feature down also stops offers, decoding, meshing and uploads.
             silhouettes.SetEnabled(false);
             return;
         }
+
+        var rapi = capi.Render;
+        if (rapi.FrameWidth == 0)
+        {
+            silhouetteSeamMask.Deactivate();
+            silhouetteSeamFogActive = false;
+            return;
+        }
+
+        Vec3d cam = capi.World.Player.Entity.CameraPos;
+        silhouetteFrustum.Update(rapi.CurrentProjectionMatrix, rapi.CameraMatrixOriginf);
+        float reach = silhouettes.ReachBlocks;
+        double reachSq = (double)reach * reach;
+        float drop = SilhouetteGlobeEffect * reach + 5f
+            + SilhouetteUnderlayDepthBlocks;
+        const int tileBlocks = LodSilhouetteTile.TileBlocks;
+        int minTileX = int.MaxValue, minTileZ = int.MaxValue;
+        int maxTileX = int.MinValue, maxTileZ = int.MinValue;
+        ulong signatureXor = 0;
+        ulong signatureSum = 0;
+
+        foreach (SilhouetteGpuMesh mesh in silhouetteMeshes.Values)
+        {
+            double relX = mesh.TileX * (double)tileBlocks - cam.X;
+            double relZ = mesh.TileZ * (double)tileBlocks - cam.Z;
+            double nearX = Math.Clamp(0, relX, relX + tileBlocks);
+            double nearZ = Math.Clamp(0, relZ, relZ + tileBlocks);
+            double nearestDistanceSq = nearX * nearX + nearZ * nearZ;
+            if (nearestDistanceSq > reachSq) continue;
+            if (!silhouetteFrustum.BoxInView(relX, mesh.MinY - drop - cam.Y, relZ,
+                relX + tileBlocks, mesh.MaxY - cam.Y, relZ + tileBlocks)) continue;
+
+            LodSilhouetteCoverage replacements = SilhouetteStableReplacementCoverage(mesh);
+            int resolution = LodSilhouetteField.ResolutionFor(
+                ScreenBlockScale, Math.Max(1.0, Math.Sqrt(nearestDistanceSq)),
+                SilhouetteOutlineDetail);
+            silhouetteFrameDraws.Add(new SilhouetteFrameDraw(
+                mesh, (float)relX, (float)relZ, replacements, resolution));
+            minTileX = Math.Min(minTileX, mesh.TileX);
+            minTileZ = Math.Min(minTileZ, mesh.TileZ);
+            maxTileX = Math.Max(maxTileX, mesh.TileX);
+            maxTileZ = Math.Max(maxTileZ, mesh.TileZ);
+            ulong tileSignature = SilhouetteSeamTileSignature(mesh, replacements);
+            signatureXor ^= tileSignature;
+            signatureSum += tileSignature;
+        }
+
+        if (silhouetteFrameDraws.Count == 0)
+        {
+            silhouetteSeamMask.Deactivate();
+            silhouetteSeamFogActive = false;
+            return;
+        }
+
+        ulong signature = signatureXor ^ RotateLeft(signatureSum, 23)
+            ^ ((ulong)silhouetteFrameDraws.Count * 0x9E3779B97F4A7C15UL);
+        if (silhouetteSeamMask.BeginBuild(
+            minTileX, minTileZ, maxTileX, maxTileZ, signature))
+        {
+            foreach (SilhouetteFrameDraw draw in silhouetteFrameDraws)
+                silhouetteSeamMask.SetTile(
+                    draw.Mesh.TileX, draw.Mesh.TileZ, draw.Replacements);
+            silhouetteSeamMask.CompleteBuild();
+        }
+        UploadSilhouetteSeamMask(silhouettes);
+    }
+
+    void DrawSilhouettes()
+    {
+        SilhouetteDrawsLastFrame = 0;
+        SilhouetteHighDrawsLastFrame = 0;
+        SilhouetteMediumDrawsLastFrame = 0;
+        SilhouetteLowDrawsLastFrame = 0;
+        SilhouetteTrianglesLastFrame = 0;
+        LodSilhouetteClient? silhouettes = Silhouettes;
+        if (silhouettes == null || !silhouettes.Enabled || silhouetteFrameDraws.Count == 0
+            || !silhouetteShaderOk || silhouetteProg == null || silhouetteProg.LoadError) return;
 
         var rapi = capi.Render;
         if (rapi.FrameWidth == 0) return;
@@ -166,12 +263,7 @@ public partial class LodTerrainRenderer
         // A no-op unless the needed distance changed; a change applies from the next frame.
         ApplyZFar();
         Vec3d cam = capi.World.Player.Entity.CameraPos;
-        silhouetteFrustum.Update(rapi.CurrentProjectionMatrix, rapi.CameraMatrixOriginf);
         float reach = silhouettes.ReachBlocks;
-        // The buried near underlay, original near sink and globe curve only lower vertices.
-        float drop = SilhouetteGlobeEffect * reach + 5f
-            + SilhouetteUnderlayDepthBlocks;
-        const int tileBlocks = LodSilhouetteTile.TileBlocks;
 
         IShaderProgram p = silhouetteProg;
         p.Use();
@@ -198,40 +290,131 @@ public partial class LodTerrainRenderer
         p.Uniform("silhouetteLightLevelBias", SilhouetteLightLevelBias);
         p.Uniform("silhouetteFadeBias", SilhouetteFadeBias);
         p.Uniform("silhouetteSeaLevel", capi.World.SeaLevel);
+        ApplySilhouetteSeamFogUniforms(p);
 
-        double reachSq = (double)reach * reach;
-        foreach (SilhouetteGpuMesh mesh in silhouetteMeshes.Values)
+        foreach (SilhouetteFrameDraw draw in silhouetteFrameDraws)
         {
-            double relX = mesh.TileX * (double)tileBlocks - cam.X;
-            double relZ = mesh.TileZ * (double)tileBlocks - cam.Z;
-            double nearX = Math.Clamp(0, relX, relX + tileBlocks);
-            double nearZ = Math.Clamp(0, relZ, relZ + tileBlocks);
-            double nearestDistanceSq = nearX * nearX + nearZ * nearZ;
-            if (nearestDistanceSq > reachSq) continue;
-            if (!silhouetteFrustum.BoxInView(relX, mesh.MinY - drop - cam.Y, relZ,
-                relX + tileBlocks, mesh.MaxY - cam.Y, relZ + tileBlocks)) continue;
-            p.Uniform("tileOrigin", new Vec3f((float)relX, (float)-cam.Y, (float)relZ));
-            LodSilhouetteCoverage replacements = SilhouetteStableReplacementCoverage(mesh);
-            p.Uniform("replacementCells0", CoverageWords(replacements, 0));
-            p.Uniform("replacementCells1", CoverageWords(replacements, 4));
-            p.Uniform("replacementCells2", CoverageWords(replacements, 8));
-            p.Uniform("replacementCells3", CoverageWords(replacements, 12));
+            SilhouetteGpuMesh mesh = draw.Mesh;
+            p.Uniform("tileOrigin", new Vec3f(draw.RelX, (float)-cam.Y, draw.RelZ));
+            p.Uniform("tileMinCellX",
+                mesh.TileX * LodSilhouetteField.CoverageCellsPerEdge);
+            p.Uniform("tileMinCellZ",
+                mesh.TileZ * LodSilhouetteField.CoverageCellsPerEdge);
+            p.Uniform("replacementCells0", CoverageWords(draw.Replacements, 0));
+            p.Uniform("replacementCells1", CoverageWords(draw.Replacements, 4));
+            p.Uniform("replacementCells2", CoverageWords(draw.Replacements, 8));
+            p.Uniform("replacementCells3", CoverageWords(draw.Replacements, 12));
             // The apron was shaped from cached-data hints on a worker. It may sink only after
             // every centre-tile hint has a live replacement; a load or eviction race therefore
             // reveals ordinary Farseer height, never a stale trench.
             p.Uniform("underlayActive",
-                !mesh.ApronCells.IsEmpty && replacements.Contains(mesh.ApronCells) ? 1 : 0);
-            int resolution = LodSilhouetteField.ResolutionFor(
-                ScreenBlockScale, Math.Max(1.0, Math.Sqrt(nearestDistanceSq)),
-                SilhouetteOutlineDetail);
-            rapi.RenderMesh(mesh.At(resolution));
-            SilhouetteTrianglesLastFrame += mesh.TrianglesAt(resolution);
-            if (resolution == LodSilhouetteField.HighQuadsPerEdge) SilhouetteHighDrawsLastFrame++;
-            else if (resolution == LodSilhouetteField.MediumQuadsPerEdge) SilhouetteMediumDrawsLastFrame++;
+                !mesh.ApronCells.IsEmpty && draw.Replacements.Contains(mesh.ApronCells) ? 1 : 0);
+            rapi.RenderMesh(mesh.At(draw.Resolution));
+            SilhouetteTrianglesLastFrame += mesh.TrianglesAt(draw.Resolution);
+            if (draw.Resolution == LodSilhouetteField.HighQuadsPerEdge)
+                SilhouetteHighDrawsLastFrame++;
+            else if (draw.Resolution == LodSilhouetteField.MediumQuadsPerEdge)
+                SilhouetteMediumDrawsLastFrame++;
             else SilhouetteLowDrawsLastFrame++;
             SilhouetteDrawsLastFrame++;
         }
         p.Stop();
+    }
+
+    static ulong SilhouetteSeamTileSignature(
+        SilhouetteGpuMesh mesh, LodSilhouetteCoverage replacements)
+    {
+        ulong hash = 1469598103934665603UL;
+        void Add(ulong value)
+        {
+            hash ^= value;
+            hash *= 1099511628211UL;
+        }
+
+        Add(unchecked((uint)mesh.TileX));
+        Add(unchecked((uint)mesh.TileZ));
+        Add(replacements.Word0);
+        Add(replacements.Word1);
+        Add(replacements.Word2);
+        Add(replacements.Word3);
+        hash ^= hash >> 32;
+        hash *= 0xD6E8FEB86659FD93UL;
+        return hash ^ (hash >> 32);
+    }
+
+    static ulong RotateLeft(ulong value, int bits) =>
+        (value << bits) | (value >> (64 - bits));
+
+    void UploadSilhouetteSeamMask(LodSilhouetteClient silhouettes)
+    {
+        if (!silhouetteSeamMask.Active)
+        {
+            silhouetteSeamFogActive = false;
+            return;
+        }
+        if (!silhouetteSeamMask.HasEdges)
+        {
+            if (silhouetteSeamMask.TextureSizeChanged)
+                DisposeSilhouetteSeamMaskTexture();
+            silhouetteSeamMask.MarkUploaded();
+            silhouetteSeamFogActive = false;
+            return;
+        }
+
+        try
+        {
+            if (silhouetteSeamMask.TextureSizeChanged)
+                DisposeSilhouetteSeamMaskTexture();
+            if (silhouetteSeamMask.Dirty || silhouetteSeamMaskTexture == null)
+            {
+                LoadedTexture texture = silhouetteSeamMaskTexture
+                    ?? new LoadedTexture(capi, 0,
+                        silhouetteSeamMask.TextureWidth, silhouetteSeamMask.TextureHeight);
+                UploadOwnTexture(silhouetteSeamMask.Texels,
+                    SilhouetteSeamMaskUnit, ref texture);
+                if (texture.TextureId <= 0)
+                    throw new InvalidOperationException(
+                        "Farseer seam fog texture was not created.");
+                silhouetteSeamMaskTexture = texture;
+                silhouetteSeamMask.MarkUploaded();
+            }
+            silhouetteSeamFogActive = true;
+        }
+        catch (Exception e)
+        {
+            silhouetteSeamFogFailed = true;
+            capi.Logger.Error(
+                "[VintageHorizons] Farseer seam fog failed; Farseer is off for this session "
+                + "instead of drawing an exposed join: {0}", e.Message);
+            silhouettes.SetEnabled(false);
+            ReleaseSilhouetteMeshes();
+        }
+    }
+
+    void ApplySilhouetteSeamFogUniforms(IShaderProgram p)
+    {
+        bool active = silhouetteSeamFogActive && silhouetteSeamMask.Active
+            && silhouetteSeamMaskTexture != null;
+        p.Uniform("silhouetteSeamFogEnabled", active ? 1 : 0);
+        p.Uniform("silhouetteSeamMinCellX", silhouetteSeamMask.MinCellX);
+        p.Uniform("silhouetteSeamMinCellZ", silhouetteSeamMask.MinCellZ);
+        p.Uniform("silhouetteSeamWidthCells", silhouetteSeamMask.WidthCells);
+        p.Uniform("silhouetteSeamDepthCells", silhouetteSeamMask.DepthCells);
+        p.Uniform("silhouetteSeamTextureWidth", silhouetteSeamMask.TextureWidth);
+        p.Uniform("silhouetteSeamFogWidthBlocks", SilhouetteSeamFogWidthBlocks);
+        p.Uniform("silhouetteSeamFogStrength", SilhouetteSeamFogStrength);
+        if (active)
+            p.BindTexture2D("silhouetteSeamMask",
+                silhouetteSeamMaskTexture!.TextureId, SilhouetteSeamMaskUnit);
+    }
+
+    void DisposeSilhouetteSeamMaskTexture()
+    {
+        if (silhouetteSeamMaskTexture == null) return;
+        try { capi.Render.GLDeleteTexture(silhouetteSeamMaskTexture.TextureId); }
+        catch { /* teardown must not throw over a texture the driver already released */ }
+        silhouetteSeamMaskTexture = null;
+        silhouetteSeamFogActive = false;
     }
 
     void UploadSilhouetteMeshes(LodSilhouetteClient silhouettes)
@@ -452,5 +635,8 @@ public partial class LodTerrainRenderer
     {
         foreach (SilhouetteGpuMesh mesh in silhouetteMeshes.Values) mesh.Dispose();
         silhouetteMeshes.Clear();
+        silhouetteFrameDraws.Clear();
+        silhouetteSeamMask.Clear();
+        DisposeSilhouetteSeamMaskTexture();
     }
 }

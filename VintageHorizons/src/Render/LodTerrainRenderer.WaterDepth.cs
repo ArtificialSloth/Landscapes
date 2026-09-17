@@ -106,6 +106,7 @@ public partial class LodTerrainRenderer
         try
         {
             PrepareRenderFrame(dt);
+            PrepareSilhouetteFrame();
             BeginWaterCapture();
         }
         finally { beforeStageTicks = Stopwatch.GetTimestamp() - beforeStageStart; }

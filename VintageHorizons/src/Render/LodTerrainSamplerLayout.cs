@@ -11,6 +11,7 @@ namespace VintageHorizons;
 /// </summary>
 internal static class LodTerrainSamplerLayout
 {
+    internal const int SilhouetteSeamMask = 5;
     internal const int ReadinessMask = 6;
     internal const int SeamField = 7;
     internal const int BlockTable = 8;
@@ -26,6 +27,7 @@ internal static class LodTerrainSamplerLayout
     [
         ("shadowMapFar", 0), ("shadowMapNear", 1), ("glow", 2), ("sky", 3),
         ("liquidDepth", 4),
+        ("silhouetteSeamMask", SilhouetteSeamMask),
         ("readinessMask", ReadinessMask), ("seamField", SeamField),
         ("blockTable", BlockTable), ("blockAtlas", BlockAtlas),
         ("vanillaWaterDepth", VanillaWaterDepth),
