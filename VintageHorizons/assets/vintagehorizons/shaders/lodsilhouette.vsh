@@ -36,6 +36,7 @@ out float dist;
 out float fogAmount;
 out float nightVisionStrengthv;
 out vec2 tilePos;
+out float horizonDepth;
 
 #include vertexflagbits.ash
 #include colorutil.ash
@@ -51,6 +52,7 @@ void main()
     worldPos = applyGlobalWarping(worldPos);
 
     float horizontal = length(worldPos.xz);
+    horizonDepth = clamp(horizontal / max(1.0, farViewDistance), 0.0, 1.0);
     // This is a colour/fog ramp, not an ownership radius. Farseer stays available on the near
     // side until a render-ready vanilla or cached-LOD replacement takes over its exact cell.
     float distStart = viewDistance * 0.785;

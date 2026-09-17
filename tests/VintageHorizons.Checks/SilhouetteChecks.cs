@@ -28,6 +28,7 @@ public static class SilhouetteChecks
         MeshMatchesAcrossTileBorders(c);
         MeshSeaAndCoverage(c);
         MeshResolutionsAndUnderlay(c);
+        StableReplacementLevelSelection(c);
         ClientSettingsArithmetic(c);
         FeatureGate(c);
         GeneratorStallWatch(c);
@@ -38,6 +39,26 @@ public static class SilhouetteChecks
         AcceleratorSelectionAndSampling(c);
         TileTransferState(c);
         BuilderYieldRules(c);
+    }
+
+    static void StableReplacementLevelSelection(Check c)
+    {
+        var resident = new LodSilhouetteCoverage[LodWorld.MaxLevel + 1];
+        resident[1] = resident[1].WithCovered(3, 4);
+        resident[2] = resident[2].WithCovered(3, 4);
+        resident[3] = resident[3].WithCovered(3, 4);
+        c.Eq(2, LodTerrainRenderer.SelectStableSilhouetteLevel(resident, 2, 3, 4),
+            "the distance-selected resident level owns a Farseer cell");
+
+        resident[2] = LodSilhouetteCoverage.Empty;
+        c.Eq(3, LodTerrainRenderer.SelectStableSilhouetteLevel(resident, 2, 3, 4),
+            "a missing target keeps the coarser resident parent as the stable fallback");
+
+        resident[3] = LodSilhouetteCoverage.Empty;
+        c.Eq(1, LodTerrainRenderer.SelectStableSilhouetteLevel(resident, 2, 3, 4),
+            "a finer descendant owns the cell only after the target and parent chain are absent");
+        c.Eq(-1, LodTerrainRenderer.SelectStableSilhouetteLevel(resident, 2, 8, 8),
+            "a cell with no resident level remains Farseer-owned");
     }
 
     public static void RunWiring(Check c)
@@ -1488,12 +1509,18 @@ public static class SilhouetteChecks
                 && fragment.Contains("tilePos", StringComparison.Ordinal)
                 && fragment.Contains("replacementCells0", StringComparison.Ordinal)
                 && pass.Contains("SilhouetteStableReplacementCoverage", StringComparison.Ordinal)
-                && pass.Contains("sectionMeshes.ContainsKey(key)", StringComparison.Ordinal)
-                && pass.Contains("mesh.ApronCells.Intersect(residentSections)", StringComparison.Ordinal)
+                && pass.Contains("liveMeshStats.TryGetValue(key", StringComparison.Ordinal)
+                && pass.Contains("resident.OpaqueGroundCoverage.Covered", StringComparison.Ordinal)
+                && pass.Contains("level <= LodWorld.MaxLevel", StringComparison.Ordinal)
                 && pass.Contains("readinessMask.ColumnHasReady", StringComparison.Ordinal)
                 && !renderer.Contains("AddSilhouetteLodReplacements(recorded)", StringComparison.Ordinal)
                 && field.Contains("CoveredCells = coveredCells", StringComparison.Ordinal),
-            "Farseer yields exact 32-block cells only to stable resident LOD ground or ready vanilla");
+            "Farseer yields exact 32-block cells to stable installed ground at every LOD level or ready vanilla");
+        c.True(fragment.Contains("dFdx(worldPos.xyz)", StringComparison.Ordinal)
+                && fragment.Contains("directionalShade", StringComparison.Ordinal)
+                && fragment.Contains("depthShade", StringComparison.Ordinal)
+                && vertex.Contains("horizonDepth", StringComparison.Ordinal),
+            "Farseer separates overlapping ridges with camera-independent slope and depth contrast");
         c.True(field.Contains("DefaultUnderlayDepthBlocks = 64f", StringComparison.Ordinal)
                 && field.Contains("DefaultUnderlayWidthBlocks = 384f", StringComparison.Ordinal)
                 && field.Contains("EdgeDistance(", StringComparison.Ordinal)

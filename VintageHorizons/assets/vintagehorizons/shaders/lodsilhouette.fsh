@@ -13,6 +13,7 @@ in float dist;
 in float fogAmount;
 in float nightVisionStrengthv;
 in vec2 tilePos;
+in float horizonDepth;
 
 uniform float fogDensityIn;
 uniform float fogMinIn;
@@ -62,18 +63,30 @@ void main()
 {
     if (dist > 1.0) discard;
 
-    // A bit exists only where vanilla has committed render readiness or an exact data-covered
-    // 32-block cell has resident level-zero LOD ground. Neither answer depends on camera direction.
-    // Unknown and still-loading cells retain Farseer instead of opening onto the sky.
+    // A bit exists only where vanilla has committed render readiness or the finest resident LOD
+    // mesh at any level contains a complete 32-block ground cell. Neither answer depends on
+    // camera direction. Unknown and still-loading cells retain Farseer instead of opening sky.
     ivec2 replacementCell = clamp(ivec2(floor(tilePos / 32.0)), ivec2(0), ivec2(15));
     if (vhSilhouetteReplaced(replacementCell)) discard;
+
+    // Camera-independent geometric light separates overlapping ridges. Derivatives recover the
+    // height-field normal from the mesh itself; the shallow distance term keeps nearer ridges a
+    // little darker than farther ones before atmospheric fog is applied.
+    vec3 surfaceNormal = normalize(cross(dFdx(worldPos.xyz), dFdy(worldPos.xyz)));
+    if (surfaceNormal.y < 0.0) surfaceNormal = -surfaceNormal;
+    vec3 ridgeLight = normalize(vec3(
+        sunPosition.x, max(0.35, abs(sunPosition.y)), sunPosition.z));
+    float directionalShade = mix(0.78, 1.08,
+        clamp(dot(surfaceNormal, ridgeLight), 0.0, 1.0));
+    float depthShade = mix(0.86, 1.0, smoothstep(0.0, 0.82, horizonDepth));
+    float terrainShade = directionalShade * depthShade;
 
     // The sky with a height-dependent offset is the terrain's own colour.
     vec4 terraColor;
     vec4 terraGlow;
     vhSilhouetteTerrainColor(worldPos.xyz, yLevel, sunPosition, sunColor, dayLight,
         horizonFog, fogAmount, silhouetteSkyTint, silhouetteColorTint,
-        silhouetteLightLevelBias, terraColor, terraGlow);
+        silhouetteLightLevelBias, terrainShade, terraColor, terraGlow);
 
     // The real sky, for the fade.
     vec4 skyColor = vec4(1.0);

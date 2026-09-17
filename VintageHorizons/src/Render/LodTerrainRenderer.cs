@@ -1357,7 +1357,8 @@ public partial class LodTerrainRenderer : IRenderer
 
     readonly record struct LodLiveMeshStats(
         int OpaqueVertices, int OpaqueIndices, int WaterVertices, int WaterIndices,
-        LodSectionHeights Heights, bool HasTextureSlots)
+        LodSectionHeights Heights, bool HasTextureSlots,
+        LodMeshGroundCoverage OpaqueGroundCoverage)
     {
         public long Bytes => OpaqueVertices * 16L + OpaqueIndices * sizeof(int)
             + WaterVertices * 16L + WaterIndices * sizeof(int);
@@ -3001,7 +3002,8 @@ public partial class LodTerrainRenderer : IRenderer
                     result.PackedOpaqueQuads, result.PackedOpaqueQuadCount,
                     result.ClusteredPackedOpaqueQuads, result.PackedOpaqueClusters),
                 result.Heights,
-                result.HasTextureSlots);
+                result.HasTextureSlots,
+                result.OpaqueGroundCoverage);
         }
 
         MeshUploadItems += uploadBudget.Items;
@@ -3065,7 +3067,8 @@ public partial class LodTerrainRenderer : IRenderer
             Math.Max(0, publication.WaterVertices),
             Math.Max(0, publication.WaterIndices),
             publication.Heights,
-            publication.HasTextureSlots);
+            publication.HasTextureSlots,
+            publication.OpaqueGroundCoverage);
         if (stats.OpaqueIndices == 0 && stats.WaterIndices == 0) return;
 
         liveMeshStats[key] = stats;

@@ -163,7 +163,8 @@ internal readonly record struct LodRenderPublication(
     byte AssumedCoveredSides,
     LodRenderGeometry OpaqueGeometry = default,
     LodSectionHeights Heights = default,
-    bool HasTextureSlots = false);
+    bool HasTextureSlots = false,
+    LodMeshGroundCoverage OpaqueGroundCoverage = default);
 
 internal readonly record struct LodRenderFrame(
     long WorldEpoch,
@@ -384,7 +385,8 @@ internal sealed class LodRenderPathCoordinator : IDisposable
         byte assumedCoveredSides,
         LodRenderGeometry opaqueGeometry = default,
         LodSectionHeights heights = default,
-        bool hasTextureSlots = false)
+        bool hasTextureSlots = false,
+        LodMeshGroundCoverage opaqueGroundCoverage = default)
     {
         AdvanceWorld(worldEpoch);
         LodRenderResourceIdentity identity = identities.PreparePublication(
@@ -392,7 +394,8 @@ internal sealed class LodRenderPathCoordinator : IDisposable
         var publication = new LodRenderPublication(
             identity, opaque, water,
             opaqueVertices, opaqueIndices, waterVertices, waterIndices,
-            assumedCoveredSides, opaqueGeometry, heights, hasTextureSlots);
+            assumedCoveredSides, opaqueGeometry, heights, hasTextureSlots,
+            opaqueGroundCoverage);
 
         visible.Publish(publication);
         identities.Commit(identity);

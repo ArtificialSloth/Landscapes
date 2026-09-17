@@ -269,6 +269,12 @@ public class MeshResult
     public int VertexCount;
     public int IndexCount;
 
+    /// <summary>
+    /// Exact 32-block cells spanned by opaque top surfaces in this result. Kept with the mesh
+    /// through publication so Farseer can yield to what is actually resident, at every level.
+    /// </summary>
+    internal LodMeshGroundCoverage OpaqueGroundCoverage;
+
     // Exact worker-produced opaque quads for the optional Phase 7 renderer. Kept beside
     // the expanded arrays until the packed path has passed its visual/performance gates.
     public uint[] PackedOpaqueQuads = Array.Empty<uint>();

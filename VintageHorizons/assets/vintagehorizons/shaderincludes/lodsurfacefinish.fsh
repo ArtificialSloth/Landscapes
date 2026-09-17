@@ -149,7 +149,7 @@
         {
             vhSilhouetteTerrainColor(worldPos.xyz, yLevel, sunPosition, sunColor, dayLight,
                 horizonFog, fogAmount, silhouetteSkyTint, silhouetteColorTint,
-                silhouetteLightLevelBias, fadeColor, fadeGlow);
+                silhouetteLightLevelBias, 1.0, fadeColor, fadeGlow);
             fadeGlow *= dist;
         }
 

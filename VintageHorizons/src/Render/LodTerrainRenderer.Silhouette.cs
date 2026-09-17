@@ -317,37 +317,119 @@ public partial class LodTerrainRenderer
         coverage.ShortWord(first + 2), coverage.ShortWord(first + 3));
 
     /// <summary>
-    /// Combines stable resident level-zero ground with vanilla's committed per-column readiness.
+    /// Picks the stable resident owner for one Farseer cell. The wanted level is the normal
+    /// distance choice. A missing target leaves the renderer on a coarser parent when one exists;
+    /// only a missing parent chain can expose a finer descendant. Camera direction is deliberately
+    /// absent from the decision.
+    /// </summary>
+    internal static int SelectStableSilhouetteLevel(
+        ReadOnlySpan<LodSilhouetteCoverage> residentByLevel,
+        int wanted, int cellX, int cellZ)
+    {
+        if ((uint)wanted >= (uint)residentByLevel.Length) return -1;
+        if (residentByLevel[wanted].Covered(cellX, cellZ)) return wanted;
+        for (int level = wanted + 1; level < residentByLevel.Length; level++)
+            if (residentByLevel[level].Covered(cellX, cellZ)) return level;
+        for (int level = wanted - 1; level >= 0; level--)
+            if (residentByLevel[level].Covered(cellX, cellZ)) return level;
+        return -1;
+    }
+
+    /// <summary>
+    /// Combines stable resident ground at every LOD level with vanilla's committed readiness.
     ///
     /// The 0.4.99 trial derived LOD ownership from this frame's selected draw commands. Selection
     /// is frustum-dependent, so merely turning the camera moved both the discard edge and the
     /// apron. Coarse commands also claimed their whole footprint even where no ground existed.
-    /// Here residency is independent of camera direction, and the mesh's exact 32-block data mask
-    /// limits each resident section to cells known complete. Every unknown state remains fail-open
-    /// to Farseer.
+    /// Here residency is independent of camera direction, and every installed mesh carries the
+    /// exact 32-block ground mask produced with its own geometry. Each cell starts at its
+    /// distance-selected level, falls back to a coarser parent while that target is missing, and
+    /// only then falls through to finer descendants. An incomplete selected mesh is never
+    /// overruled by another level.
+    /// Every unknown or partial state remains fail-open to Farseer.
     /// </summary>
     LodSilhouetteCoverage SilhouetteStableReplacementCoverage(SilhouetteGpuMesh mesh)
     {
-        const int sectionsPerEdge = LodSilhouetteTile.TileBlocks / LodSection.SectionBlocks;
-        const int cellsPerSection = LodSection.SectionBlocks
-            / LodSilhouetteField.CoverageCellBlocks;
-        LodSilhouetteCoverage residentSections = LodSilhouetteCoverage.Empty;
-        for (int sectionZ = 0; sectionZ < sectionsPerEdge; sectionZ++)
+        Span<LodSilhouetteCoverage> residentByLevel =
+            stackalloc LodSilhouetteCoverage[LodWorld.MaxLevel + 1];
+        Span<LodSilhouetteCoverage> coveredByLevel =
+            stackalloc LodSilhouetteCoverage[LodWorld.MaxLevel + 1];
+        residentByLevel.Clear();
+        coveredByLevel.Clear();
+        int tileBlockX = mesh.TileX * LodSilhouetteTile.TileBlocks;
+        int tileBlockZ = mesh.TileZ * LodSilhouetteTile.TileBlocks;
+        int tileMaxBlockX = tileBlockX + LodSilhouetteTile.TileBlocks;
+        int tileMaxBlockZ = tileBlockZ + LodSilhouetteTile.TileBlocks;
+        for (int level = 0; level <= LodWorld.MaxLevel; level++)
         {
-            for (int sectionX = 0; sectionX < sectionsPerEdge; sectionX++)
+            int footprint = LodSection.SectionBlocks << level;
+            int firstSectionX = (int)Math.Floor(tileBlockX / (double)footprint);
+            int firstSectionZ = (int)Math.Floor(tileBlockZ / (double)footprint);
+            int lastSectionX = (int)Math.Floor((tileMaxBlockX - 1) / (double)footprint);
+            int lastSectionZ = (int)Math.Floor((tileMaxBlockZ - 1) / (double)footprint);
+            for (int sectionZ = firstSectionZ; sectionZ <= lastSectionZ; sectionZ++)
             {
-                long key = LodWorld.SectionKey(0,
-                    mesh.TileX * sectionsPerEdge + sectionX,
-                    mesh.TileZ * sectionsPerEdge + sectionZ);
-                if (!sectionMeshes.ContainsKey(key)) continue;
-                for (int dz = 0; dz < cellsPerSection; dz++)
-                    for (int dx = 0; dx < cellsPerSection; dx++)
-                        residentSections = residentSections.WithCovered(
-                            sectionX * cellsPerSection + dx,
-                            sectionZ * cellsPerSection + dz);
+                for (int sectionX = firstSectionX; sectionX <= lastSectionX; sectionX++)
+                {
+                    long key = LodWorld.SectionKey(level, sectionX, sectionZ);
+                    if (!liveMeshStats.TryGetValue(key, out LodLiveMeshStats resident)
+                        || resident.OpaqueIndices == 0) continue;
+
+                    int sectionBlockX = sectionX * footprint;
+                    int sectionBlockZ = sectionZ * footprint;
+                    int firstCellX = Math.Max(0,
+                        (sectionBlockX - tileBlockX) / LodMeshGroundCoverage.CellBlocks);
+                    int firstCellZ = Math.Max(0,
+                        (sectionBlockZ - tileBlockZ) / LodMeshGroundCoverage.CellBlocks);
+                    int lastCellX = Math.Min(LodSilhouetteField.CoverageCellsPerEdge,
+                        (sectionBlockX + footprint - tileBlockX)
+                            / LodMeshGroundCoverage.CellBlocks);
+                    int lastCellZ = Math.Min(LodSilhouetteField.CoverageCellsPerEdge,
+                        (sectionBlockZ + footprint - tileBlockZ)
+                            / LodMeshGroundCoverage.CellBlocks);
+                    for (int cellZ = firstCellZ; cellZ < lastCellZ; cellZ++)
+                    {
+                        for (int cellX = firstCellX; cellX < lastCellX; cellX++)
+                        {
+                            residentByLevel[level] =
+                                residentByLevel[level].WithCovered(cellX, cellZ);
+                            int blockX = tileBlockX
+                                + cellX * LodMeshGroundCoverage.CellBlocks;
+                            int blockZ = tileBlockZ
+                                + cellZ * LodMeshGroundCoverage.CellBlocks;
+                            int localCellX = (blockX - sectionBlockX)
+                                / LodMeshGroundCoverage.CellBlocks;
+                            int localCellZ = (blockZ - sectionBlockZ)
+                                / LodMeshGroundCoverage.CellBlocks;
+                            if (resident.OpaqueGroundCoverage.Covered(localCellX, localCellZ))
+                                coveredByLevel[level] =
+                                    coveredByLevel[level].WithCovered(cellX, cellZ);
+                        }
+                    }
+                }
             }
         }
-        LodSilhouetteCoverage result = mesh.ApronCells.Intersect(residentSections);
+
+        LodSilhouetteCoverage result = LodSilhouetteCoverage.Empty;
+        for (int cellZ = 0; cellZ < LodSilhouetteField.CoverageCellsPerEdge; cellZ++)
+        {
+            for (int cellX = 0; cellX < LodSilhouetteField.CoverageCellsPerEdge; cellX++)
+            {
+                double cellMinX = tileBlockX + cellX * LodMeshGroundCoverage.CellBlocks;
+                double cellMinZ = tileBlockZ + cellZ * LodMeshGroundCoverage.CellBlocks;
+                double dx = Math.Max(0, Math.Max(cellMinX - camPos.X,
+                    camPos.X - (cellMinX + LodMeshGroundCoverage.CellBlocks)));
+                double dz = Math.Max(0, Math.Max(cellMinZ - camPos.Z,
+                    camPos.Z - (cellMinZ + LodMeshGroundCoverage.CellBlocks)));
+                int wanted = Math.Clamp(LodWorld.WantedLevelForSq(dx * dx + dz * dz),
+                    0, LodWorld.MaxLevel);
+
+                int selected = SelectStableSilhouetteLevel(
+                    residentByLevel, wanted, cellX, cellZ);
+                if (selected >= 0 && coveredByLevel[selected].Covered(cellX, cellZ))
+                    result = result.WithCovered(cellX, cellZ);
+            }
+        }
         if (!readinessMaskActive || readiness == null || readinessMask == null) return result;
 
         int tileChunkX = mesh.TileX * LodSilhouetteField.CoverageCellsPerEdge;

@@ -27,9 +27,61 @@ public static class MesherChecks
         UnloadedNeighbourIsNotTheFrontier(c);
         HeightBounds(c);
         HeightSpanAlgebra(c);
+        GroundCoverageHandoff(c);
         HeightDistribution(c);
         FrontierWallsSetTheFloor(c);
         HalfBlocks(c);
+    }
+
+    /// <summary>
+    /// Farseer suppression follows the installed mesh's own opaque top surfaces. The mask must
+    /// stay exact at fine levels and expand one genuinely coarse surface over the 32-block cells
+    /// it really spans.
+    /// </summary>
+    static void GroundCoverageHandoff(Check c)
+    {
+        MeshResult full = LodMesher.BuildMesh(Fixtures.Job(
+            Fixtures.SolidSection(), LodWorld.SectionKey(1, 0, 0)));
+        c.Eq(4, full.OpaqueGroundCoverage.CellsPerEdge,
+            "a level-1 mesh reports four 32-block cells per section edge");
+        c.Eq(16, CountCovered(full.OpaqueGroundCoverage),
+            "a complete level-1 surface covers its full 4x4 handoff mask");
+
+        LodSection partial = Fixtures.SolidSection();
+        int missing = LodSection.ColumnIndex(17, 18);
+        partial.Captured[missing] = false;
+        partial.CapturedColumns--;
+        MeshResult hole = LodMesher.BuildMesh(Fixtures.Job(
+            partial, LodWorld.SectionKey(1, 0, 0)));
+        c.False(hole.OpaqueGroundCoverage.Covered(1, 1),
+            "one missing coarse column keeps its whole 32-block cell fail-open to Farseer");
+        c.Eq(15, CountCovered(hole.OpaqueGroundCoverage),
+            "a partial level-1 mesh does not discard neighbouring complete cells");
+
+        var single = new LodSection();
+        int stone = single.FindOrAddPaletteEntry(1, 0x00808080, 0);
+        single.SetColumn(LodSection.ColumnIndex(3, 4),
+            new[] { LodSection.PackRun(stone, 10, 0) });
+        MeshResult veryCoarse = LodMesher.BuildMesh(Fixtures.Job(
+            single, LodWorld.SectionKey(6, 0, 0)));
+        c.Eq(128, veryCoarse.OpaqueGroundCoverage.CellsPerEdge,
+            "a level-6 section keeps a compact 128-cell coverage edge");
+        c.True(veryCoarse.OpaqueGroundCoverage.Covered(6, 8)
+                && veryCoarse.OpaqueGroundCoverage.Covered(7, 8)
+                && veryCoarse.OpaqueGroundCoverage.Covered(6, 9)
+                && veryCoarse.OpaqueGroundCoverage.Covered(7, 9),
+            "one real 64-block L6 top surface covers exactly its four 32-block cells");
+        c.Eq(4, CountCovered(veryCoarse.OpaqueGroundCoverage),
+            "the coarse handoff mask never claims the rest of its section");
+    }
+
+    static int CountCovered(LodMeshGroundCoverage coverage)
+    {
+        int count = 0;
+        for (int z = 0; z < coverage.CellsPerEdge; z++)
+            for (int x = 0; x < coverage.CellsPerEdge; x++)
+                if (coverage.Covered(x, z)) count++;
+        return count;
     }
 
     /// <summary>

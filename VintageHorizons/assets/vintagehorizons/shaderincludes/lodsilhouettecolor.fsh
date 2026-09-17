@@ -12,7 +12,7 @@ vec3 vhSilhouetteBias(vec3 value, float b)
 
 void vhSilhouetteTerrainColor(vec3 position, float level, vec3 sunPos, vec3 sunlight,
     float daylight, float horizon, float fog, float skyTintValue, vec4 tint,
-    float lightBias, out vec4 terrainColor, out vec4 terrainGlow)
+    float lightBias, float surfaceShade, out vec4 terrainColor, out vec4 terrainGlow)
 {
     terrainColor = vec4(1.0);
     terrainGlow = vec4(1.0);
@@ -23,6 +23,7 @@ void vhSilhouetteTerrainColor(vec3 position, float level, vec3 sunPos, vec3 sunl
         terrainColor, terrainGlow);
     terrainColor.rgb = mix(terrainColor.rgb, tint.rgb, tint.a);
     terrainColor.rgb *= vhSilhouetteBias(clamp(sunlight * daylight, 0.0, 1.0), lightBias);
+    terrainColor.rgb *= surfaceShade;
     terrainColor = applyFog(terrainColor, fog);
     terrainColor = applySpheresFog(terrainColor, fog, position);
 }

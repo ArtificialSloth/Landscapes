@@ -299,6 +299,9 @@ public static class LodMesher
         var water = waterBuffers ??= new Buffers(pack: false);
         var hf = hFaces ??= new List<HFace>(8192);
         var vf = vFaces ??= new List<VFace>(8192);
+        Span<ulong> opaqueTopColumns = stackalloc ulong[
+            LodSection.GridSize * LodSection.GridSize / 64];
+        opaqueTopColumns.Clear();
         opaque.Clear();
         water.Clear();
         hf.Clear();
@@ -412,6 +415,11 @@ public static class LodMesher
                         hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false,
                             isTranslucent, false, r == snowSurfaceRun, 0, submerged,
                             SeamCellFor(cx, cz, job.WaterSeamStripBlocks, step, isTranslucent)));
+                        if (!isTranslucent)
+                        {
+                            int coverageBit = col;
+                            opaqueTopColumns[coverageBit >> 6] |= 1UL << (coverageBit & 63);
+                        }
                     }
 
                     bool bottomCovered = r < runs.Length - 1
@@ -470,6 +478,7 @@ public static class LodMesher
             Indices = opaque.Indices.ToArray(),
             VertexCount = opaque.Xyz.Count / 3,
             IndexCount = opaque.Indices.Count,
+            OpaqueGroundCoverage = LodMeshGroundCoverage.Build(level, opaqueTopColumns),
             PackedOpaqueQuads = opaque.Packed.ToArray(),
             PackedOpaqueQuadCount = opaque.Packed.Count / LodPackedQuadFormat.WordsPerQuad,
             HasTextureSlots = opaque.HasTextureSlots,
