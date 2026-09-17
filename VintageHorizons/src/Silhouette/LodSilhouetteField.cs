@@ -84,6 +84,10 @@ public readonly record struct LodSilhouetteCoverage(
     public LodSilhouetteCoverage Union(LodSilhouetteCoverage other) => new(
         Word0 | other.Word0, Word1 | other.Word1,
         Word2 | other.Word2, Word3 | other.Word3);
+
+    public LodSilhouetteCoverage Intersect(LodSilhouetteCoverage other) => new(
+        Word0 & other.Word0, Word1 & other.Word1,
+        Word2 & other.Word2, Word3 & other.Word3);
 }
 
 /// <summary>The three P4 meshes published atomically for one 512-block tile.</summary>

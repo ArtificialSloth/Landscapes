@@ -1210,6 +1210,8 @@ public static class SilhouetteChecks
         c.True(bothCells.Contains(oneCell) && bothCells.Contains(anotherCell)
                 && !oneCell.Contains(anotherCell),
             "the live replacement mask can prove every apron dependency before sinking it");
+        c.Eq(oneCell, bothCells.Intersect(oneCell),
+            "resident footprints can retain exact data-covered cells without claiming neighbours");
         if (cut == null) return;
         int verts = LodSilhouetteField.HighQuadsPerEdge + 1;
         c.Eq((float)sea, cut.Xyz[quadsPerCellEdge * 3 + 1],
@@ -1485,11 +1487,13 @@ public static class SilhouetteChecks
                     StringComparison.Ordinal)
                 && fragment.Contains("tilePos", StringComparison.Ordinal)
                 && fragment.Contains("replacementCells0", StringComparison.Ordinal)
-                && pass.Contains("SilhouetteReplacementCoverage", StringComparison.Ordinal)
-                && renderer.Contains("AddSilhouetteLodReplacements(recorded)", StringComparison.Ordinal)
+                && pass.Contains("SilhouetteStableReplacementCoverage", StringComparison.Ordinal)
+                && pass.Contains("sectionMeshes.ContainsKey(key)", StringComparison.Ordinal)
+                && pass.Contains("mesh.ApronCells.Intersect(residentSections)", StringComparison.Ordinal)
                 && pass.Contains("readinessMask.ColumnHasReady", StringComparison.Ordinal)
+                && !renderer.Contains("AddSilhouetteLodReplacements(recorded)", StringComparison.Ordinal)
                 && field.Contains("CoveredCells = coveredCells", StringComparison.Ordinal),
-            "Farseer yields exact 32-block cells only to issued LOD ground or ready vanilla");
+            "Farseer yields exact 32-block cells only to stable resident LOD ground or ready vanilla");
         c.True(field.Contains("DefaultUnderlayDepthBlocks = 64f", StringComparison.Ordinal)
                 && field.Contains("DefaultUnderlayWidthBlocks = 384f", StringComparison.Ordinal)
                 && field.Contains("EdgeDistance(", StringComparison.Ordinal)

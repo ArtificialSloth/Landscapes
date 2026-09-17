@@ -62,9 +62,9 @@ void main()
 {
     if (dist > 1.0) discard;
 
-    // The mask is rebuilt after this frame's cached draw. A bit exists only when vanilla has
-    // committed render readiness or a cached-LOD ground command was actually issued. Unknown and
-    // still-loading cells therefore retain Farseer instead of opening onto the sky.
+    // A bit exists only where vanilla has committed render readiness or an exact data-covered
+    // 32-block cell has resident level-zero LOD ground. Neither answer depends on camera direction.
+    // Unknown and still-loading cells retain Farseer instead of opening onto the sky.
     ivec2 replacementCell = clamp(ivec2(floor(tilePos / 32.0)), ivec2(0), ivec2(15));
     if (vhSilhouetteReplaced(replacementCell)) discard;
 

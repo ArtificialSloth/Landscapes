@@ -53,10 +53,6 @@ public partial class LodTerrainRenderer
     }
 
     readonly Dictionary<long, SilhouetteGpuMesh> silhouetteMeshes = new();
-    // Rebuilt from successful cached-ground command buckets every frame. Unlike the silhouette
-    // client's apron hints, these cells describe geometry that was genuinely ready to replace
-    // Farseer in the current frame.
-    readonly Dictionary<long, LodSilhouetteCoverage> silhouetteLodReplacements = new();
     readonly LodFrustum silhouetteFrustum = new();
     IShaderProgram? silhouetteProg;
     bool silhouetteShaderOk;
@@ -215,7 +211,7 @@ public partial class LodTerrainRenderer
             if (!silhouetteFrustum.BoxInView(relX, mesh.MinY - drop - cam.Y, relZ,
                 relX + tileBlocks, mesh.MaxY - cam.Y, relZ + tileBlocks)) continue;
             p.Uniform("tileOrigin", new Vec3f((float)relX, (float)-cam.Y, (float)relZ));
-            LodSilhouetteCoverage replacements = SilhouetteReplacementCoverage(mesh);
+            LodSilhouetteCoverage replacements = SilhouetteStableReplacementCoverage(mesh);
             p.Uniform("replacementCells0", CoverageWords(replacements, 0));
             p.Uniform("replacementCells1", CoverageWords(replacements, 4));
             p.Uniform("replacementCells2", CoverageWords(replacements, 8));
@@ -320,69 +316,38 @@ public partial class LodTerrainRenderer
         coverage.ShortWord(first), coverage.ShortWord(first + 1),
         coverage.ShortWord(first + 2), coverage.ShortWord(first + 3));
 
-    /// <summary>Starts a fail-open Farseer handoff for a new frame.</summary>
-    void BeginSilhouetteReplacementFrame() => silhouetteLodReplacements.Clear();
-
     /// <summary>
-    /// Adds cached ground whose packed command bucket was successfully issued. Data residency,
-    /// mesh residency and command selection are intentionally not enough on their own: a failed
-    /// required draw must leave Farseer visible.
+    /// Combines stable resident level-zero ground with vanilla's committed per-column readiness.
+    ///
+    /// The 0.4.99 trial derived LOD ownership from this frame's selected draw commands. Selection
+    /// is frustum-dependent, so merely turning the camera moved both the discard edge and the
+    /// apron. Coarse commands also claimed their whole footprint even where no ground existed.
+    /// Here residency is independent of camera direction, and the mesh's exact 32-block data mask
+    /// limits each resident section to cells known complete. Every unknown state remains fail-open
+    /// to Farseer.
     /// </summary>
-    void AddSilhouetteLodReplacements(IEnumerable<long> sectionKeys)
+    LodSilhouetteCoverage SilhouetteStableReplacementCoverage(SilhouetteGpuMesh mesh)
     {
-        const int tileBlocks = LodSilhouetteTile.TileBlocks;
-        const int cellBlocks = LodSilhouetteField.CoverageCellBlocks;
-        const int cellsPerEdge = LodSilhouetteField.CoverageCellsPerEdge;
-
-        foreach (long key in sectionKeys)
+        const int sectionsPerEdge = LodSilhouetteTile.TileBlocks / LodSection.SectionBlocks;
+        const int cellsPerSection = LodSection.SectionBlocks
+            / LodSilhouetteField.CoverageCellBlocks;
+        LodSilhouetteCoverage residentSections = LodSilhouetteCoverage.Empty;
+        for (int sectionZ = 0; sectionZ < sectionsPerEdge; sectionZ++)
         {
-            int footprint = LodWorld.KeyFootprintBlocks(key);
-            int minBlockX = checked(LodWorld.KeySx(key) * footprint);
-            int minBlockZ = checked(LodWorld.KeySz(key) * footprint);
-            int maxBlockX = checked(minBlockX + footprint);
-            int maxBlockZ = checked(minBlockZ + footprint);
-            int minTileX = minBlockX / tileBlocks;
-            int minTileZ = minBlockZ / tileBlocks;
-            int maxTileX = (maxBlockX - 1) / tileBlocks;
-            int maxTileZ = (maxBlockZ - 1) / tileBlocks;
-
-            for (int tileZ = minTileZ; tileZ <= maxTileZ; tileZ++)
+            for (int sectionX = 0; sectionX < sectionsPerEdge; sectionX++)
             {
-                for (int tileX = minTileX; tileX <= maxTileX; tileX++)
-                {
-                    long tileKey = LodSilhouetteTile.KeyOf(tileX, tileZ);
-                    int tileMinX = tileX * tileBlocks;
-                    int tileMinZ = tileZ * tileBlocks;
-                    int localMinX = Math.Max(0, minBlockX - tileMinX) / cellBlocks;
-                    int localMinZ = Math.Max(0, minBlockZ - tileMinZ) / cellBlocks;
-                    int localMaxX = Math.Min(tileBlocks, maxBlockX - tileMinX + cellBlocks - 1)
-                        / cellBlocks;
-                    int localMaxZ = Math.Min(tileBlocks, maxBlockZ - tileMinZ + cellBlocks - 1)
-                        / cellBlocks;
-                    LodSilhouetteCoverage mask = silhouetteLodReplacements.GetValueOrDefault(tileKey);
-                    if (localMinX == 0 && localMinZ == 0
-                        && localMaxX >= cellsPerEdge && localMaxZ >= cellsPerEdge)
-                    {
-                        silhouetteLodReplacements[tileKey] = LodSilhouetteCoverage.Full;
-                        continue;
-                    }
-                    for (int z = localMinZ; z < Math.Min(cellsPerEdge, localMaxZ); z++)
-                        for (int x = localMinX; x < Math.Min(cellsPerEdge, localMaxX); x++)
-                            mask = mask.WithCovered(x, z);
-                    silhouetteLodReplacements[tileKey] = mask;
-                }
+                long key = LodWorld.SectionKey(0,
+                    mesh.TileX * sectionsPerEdge + sectionX,
+                    mesh.TileZ * sectionsPerEdge + sectionZ);
+                if (!sectionMeshes.ContainsKey(key)) continue;
+                for (int dz = 0; dz < cellsPerSection; dz++)
+                    for (int dx = 0; dx < cellsPerSection; dx++)
+                        residentSections = residentSections.WithCovered(
+                            sectionX * cellsPerSection + dx,
+                            sectionZ * cellsPerSection + dz);
             }
         }
-    }
-
-    /// <summary>
-    /// Combines successfully issued cached ground with vanilla's committed per-column readiness.
-    /// Every missing tracker, inactive mask and out-of-window coordinate answers "not replaced".
-    /// </summary>
-    LodSilhouetteCoverage SilhouetteReplacementCoverage(SilhouetteGpuMesh mesh)
-    {
-        long tileKey = LodSilhouetteTile.KeyOf(mesh.TileX, mesh.TileZ);
-        LodSilhouetteCoverage result = silhouetteLodReplacements.GetValueOrDefault(tileKey);
+        LodSilhouetteCoverage result = mesh.ApronCells.Intersect(residentSections);
         if (!readinessMaskActive || readiness == null || readinessMask == null) return result;
 
         int tileChunkX = mesh.TileX * LodSilhouetteField.CoverageCellsPerEdge;
@@ -405,6 +370,5 @@ public partial class LodTerrainRenderer
     {
         foreach (SilhouetteGpuMesh mesh in silhouetteMeshes.Values) mesh.Dispose();
         silhouetteMeshes.Clear();
-        silhouetteLodReplacements.Clear();
     }
 }
