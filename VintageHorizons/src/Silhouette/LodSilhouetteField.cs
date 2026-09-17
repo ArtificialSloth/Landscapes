@@ -73,6 +73,17 @@ public readonly record struct LodSilhouetteCoverage(
             _ => throw new ArgumentOutOfRangeException(nameof(localCellX)),
         };
     }
+
+    /// <summary>Every cell covered by <paramref name="other"/> is also covered here.</summary>
+    public bool Contains(LodSilhouetteCoverage other) =>
+        (Word0 & other.Word0) == other.Word0
+        && (Word1 & other.Word1) == other.Word1
+        && (Word2 & other.Word2) == other.Word2
+        && (Word3 & other.Word3) == other.Word3;
+
+    public LodSilhouetteCoverage Union(LodSilhouetteCoverage other) => new(
+        Word0 | other.Word0, Word1 | other.Word1,
+        Word2 | other.Word2, Word3 | other.Word3);
 }
 
 /// <summary>The three P4 meshes published atomically for one 512-block tile.</summary>
@@ -191,9 +202,10 @@ public static class LodSilhouetteField
         NormalizeHillSoftness(hillSoftness);
 
     /// <summary>
-    /// Builds all three meshes from the same filled field. A fully covered tile needs no GPU
-    /// object. A partial tile stays complete so its sloped apron can fill any raster gap behind
-    /// cached terrain without needing a height-perfect join.
+    /// Builds all three meshes from the same filled field. Every tile stays complete even while
+    /// cached data claims its whole footprint: render readiness, not data availability, performs
+    /// the live handoff. Keeping the fallback geometry resident means a failed or lost
+    /// replacement immediately reveals Farseer rather than sky.
     /// </summary>
     public static LodSilhouetteMeshSet? BuildMeshes(LodSilhouetteTile?[,] neighbourhood,
         LodSilhouetteCoverage coveredCells, int seaLevel,
@@ -210,7 +222,6 @@ public static class LodSilhouetteField
     {
         ValidateCoverageNeighbourhood(coverageNeighbourhood);
         LodSilhouetteCoverage coveredCells = coverageNeighbourhood[1, 1];
-        if (coveredCells.IsFull) return null;
 
         float[] filled = LodSilhouetteFill.FillCentreFeathered(neighbourhood,
             FeatherRadiusFor(hillSoftness), FeatherStrengthFor(hillSoftness));
@@ -234,12 +245,11 @@ public static class LodSilhouetteField
     public static LodSilhouetteMeshArrays? BuildMesh(LodSilhouetteTile?[,] neighbourhood,
         LodSilhouetteCoverage coveredCells, int seaLevel,
         int quadsPerEdge = DefaultQuadsPerEdge,
-        float hillSoftness = DefaultHillSoftness) => coveredCells.IsFull
-            ? null
-            : BuildMeshFromFilled(LodSilhouetteFill.FillCentreFeathered(
-                    neighbourhood, FeatherRadiusFor(hillSoftness),
-                    FeatherStrengthFor(hillSoftness)),
-                coveredCells, CentreCoverageNeighbourhood(coveredCells), seaLevel, quadsPerEdge);
+        float hillSoftness = DefaultHillSoftness) => BuildMeshFromFilled(
+            LodSilhouetteFill.FillCentreFeathered(
+                neighbourhood, FeatherRadiusFor(hillSoftness),
+                FeatherStrengthFor(hillSoftness)),
+            coveredCells, CentreCoverageNeighbourhood(coveredCells), seaLevel, quadsPerEdge);
 
     static LodSilhouetteMeshArrays? BuildMeshFromFilled(float[] filled,
         LodSilhouetteCoverage coveredCells, LodSilhouetteCoverage[,] coverageNeighbourhood,
@@ -292,13 +302,12 @@ public static class LodSilhouetteField
 
                 int blockX = a * spacing;
                 int blockZ = b * spacing;
-                VertexCoverage(coveredCells, blockX, blockZ,
-                    out bool touchesCovered, out bool touchesUncovered);
                 float y = raw;
                 if (float.IsNaN(y)) y = seaLevel;
-                // Covered interiors retain raw land/seabed height. Everywhere the silhouette can
-                // be seen uses Farseer's flat-sea rule.
-                if (!touchesCovered || touchesUncovered) y = Math.Max(y, seaLevel);
+                // Coverage can arrive before a renderable replacement. Keep fallback geometry at
+                // Farseer's ordinary flat-sea height everywhere; the live readiness mask decides
+                // which fragments may disappear and when the edge apron may sink.
+                y = Math.Max(y, seaLevel);
 
                 xyz[v * 3] = blockX;
                 xyz[v * 3 + 1] = y;
@@ -394,30 +403,6 @@ public static class LodSilhouetteField
 
         if (nearestSquared == float.MaxValue) return MaxUnderlayWidthBlocks;
         return Math.Min(MaxUnderlayWidthBlocks, MathF.Sqrt(nearestSquared));
-    }
-
-    static void VertexCoverage(LodSilhouetteCoverage mask, int blockX, int blockZ,
-        out bool touchesCovered, out bool touchesUncovered)
-    {
-        touchesCovered = false;
-        touchesUncovered = false;
-        int cellX = Math.Min(CoverageCellsPerEdge - 1, blockX / CoverageCellBlocks);
-        int cellZ = Math.Min(CoverageCellsPerEdge - 1, blockZ / CoverageCellBlocks);
-        int minDx = blockX > 0 && blockX < LodSilhouetteTile.TileBlocks
-            && blockX % CoverageCellBlocks == 0 ? -1 : 0;
-        int minDz = blockZ > 0 && blockZ < LodSilhouetteTile.TileBlocks
-            && blockZ % CoverageCellBlocks == 0 ? -1 : 0;
-        for (int dz = minDz; dz <= 0; dz++)
-        {
-            for (int dx = minDx; dx <= 0; dx++)
-            {
-                int x = cellX + dx, z = cellZ + dz;
-                if (x < 0 || x >= CoverageCellsPerEdge
-                    || z < 0 || z >= CoverageCellsPerEdge) continue;
-                if (mask.Covered(x, z)) touchesCovered = true;
-                else touchesUncovered = true;
-            }
-        }
     }
 
     static float LerpKnown(float a, float b, float t) => float.IsNaN(a) ? b

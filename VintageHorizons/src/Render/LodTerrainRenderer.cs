@@ -5720,6 +5720,7 @@ public partial class LodTerrainRenderer : IRenderer
 
     void RenderFrame(float deltaTime, EnumRenderStage stage)
     {
+        BeginSilhouetteReplacementFrame();
         if (!preparedFrameReady || prog == null) return;
         var rapi = capi.Render;
         float viewDistance = ApprovedViewDistance();
@@ -6801,6 +6802,7 @@ public partial class LodTerrainRenderer : IRenderer
 
         if (drew)
         {
+            AddSilhouetteLodReplacements(recorded);
             LastIndirectBatches += drawer.LastBatches;
             LastIndirectCommands += drawer.LastCommands;
             // A multi-draw is a draw call; counting it keeps the periodic report's

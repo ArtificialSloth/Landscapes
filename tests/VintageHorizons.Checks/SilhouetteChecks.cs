@@ -1185,8 +1185,10 @@ public static class SilhouetteChecks
             deep, LodSilhouetteCoverage.Empty, sea);
         c.True(flat != null && Enumerable.Range(0, flat.VertexCount).All(v => flat.Xyz[v * 3 + 1] == sea),
             "ground below sea level draws as a flat sea");
-        c.True(LodSilhouetteField.BuildMesh(deep, LodSilhouetteCoverage.Full, sea) == null,
-            "a tile cached terrain fully covers has no mesh");
+        LodSilhouetteMeshArrays? fullFallback = LodSilhouetteField.BuildMesh(
+            deep, LodSilhouetteCoverage.Full, sea);
+        c.True(fullFallback != null,
+            "a data-covered tile keeps fallback geometry until a live replacement owns it");
         c.True(LodSilhouetteField.BuildMesh(new LodSilhouetteTile?[3, 3],
                 LodSilhouetteCoverage.Empty, sea) == null,
             "a tile with nothing known around it has no mesh");
@@ -1203,6 +1205,11 @@ public static class SilhouetteChecks
                 && !oneCell.Covered(1, 0)
                 && !oneCell.Covered(0, 1),
             "the coverage predicate selects exactly its own 32-block chunk footprint");
+        LodSilhouetteCoverage anotherCell = LodSilhouetteCoverage.Empty.WithCovered(1, 0);
+        LodSilhouetteCoverage bothCells = oneCell.Union(anotherCell);
+        c.True(bothCells.Contains(oneCell) && bothCells.Contains(anotherCell)
+                && !oneCell.Contains(anotherCell),
+            "the live replacement mask can prove every apron dependency before sinking it");
         if (cut == null) return;
         int verts = LodSilhouetteField.HighQuadsPerEdge + 1;
         c.Eq((float)sea, cut.Xyz[quadsPerCellEdge * 3 + 1],
@@ -1229,8 +1236,8 @@ public static class SilhouetteChecks
 
         foreach (LodSilhouetteMeshArrays mesh in new[] { set.High, set.Medium, set.Low })
         {
-            c.Eq((float)(sea - 20), mesh.Xyz[1],
-                $"the covered interior of the {mesh.QuadsPerEdge}-quad mesh keeps raw seabed height");
+            c.Eq((float)sea, mesh.Xyz[1],
+                $"the covered interior of the {mesh.QuadsPerEdge}-quad mesh remains safe fallback sea");
             c.Eq(0f, mesh.EdgeDistanceUv[0],
                 $"the {mesh.QuadsPerEdge}-quad mesh records zero distance at the cached frontier");
             c.True(mesh.EdgeDistanceUv[^2] > LodSilhouetteField.DefaultUnderlayWidthBlocks,
@@ -1474,27 +1481,32 @@ public static class SilhouetteChecks
                 && pass.Contains("silhouetteFrustum.BoxInView", StringComparison.Ordinal),
             "the draw pass frustum-culls and chooses one of three meshes from screen scale and the geometry dial");
 
-        c.True(fragment.Contains("if (vhSilhouetteCovered(coveredCell)) discard;",
+        c.True(fragment.Contains("if (vhSilhouetteReplaced(replacementCell)) discard;",
                     StringComparison.Ordinal)
                 && fragment.Contains("tilePos", StringComparison.Ordinal)
-                && pass.Contains("CoveredCells0", StringComparison.Ordinal)
+                && fragment.Contains("replacementCells0", StringComparison.Ordinal)
+                && pass.Contains("SilhouetteReplacementCoverage", StringComparison.Ordinal)
+                && renderer.Contains("AddSilhouetteLodReplacements(recorded)", StringComparison.Ordinal)
+                && pass.Contains("readinessMask.ColumnHasReady", StringComparison.Ordinal)
                 && field.Contains("CoveredCells = coveredCells", StringComparison.Ordinal),
-            "Farseer fragments are suppressed in exact cache-owned 32-block cells");
+            "Farseer yields exact 32-block cells only to issued LOD ground or ready vanilla");
         c.True(field.Contains("DefaultUnderlayDepthBlocks = 64f", StringComparison.Ordinal)
                 && field.Contains("DefaultUnderlayWidthBlocks = 384f", StringComparison.Ordinal)
                 && field.Contains("EdgeDistance(", StringComparison.Ordinal)
                 && vertex.Contains("uniform float underlaySinkBlocks", StringComparison.Ordinal)
                 && vertex.Contains("uniform float underlayWidthBlocks", StringComparison.Ordinal)
                 && vertex.Contains("underlayDataIn.x", StringComparison.Ordinal)
-                && vertex.Contains("float distStart = viewDistance;", StringComparison.Ordinal)
-                && !vertex.Contains("viewDistance * 0.785", StringComparison.Ordinal)
+                && vertex.Contains("float distStart = viewDistance * 0.785;", StringComparison.Ordinal)
+                && vertex.Contains("uniform int underlayActive", StringComparison.Ordinal)
+                && fragment.Contains("if (dist > 1.0) discard;", StringComparison.Ordinal)
+                && !fragment.Contains("dist < 0.0", StringComparison.Ordinal)
                 && !vertex.Contains("cacheFadeStart", StringComparison.Ordinal)
                 && pass.Contains("SilhouetteUnderlayDepthBlocks", StringComparison.Ordinal)
                 && pass.Contains("SilhouetteUnderlayWidthBlocks", StringComparison.Ordinal)
                 && pass.Contains("data.Uv = mesh.EdgeDistanceUv", StringComparison.Ordinal)
                 && pass.Contains("p.Uniform(\"underlaySinkBlocks\"", StringComparison.Ordinal)
                 && pass.Contains("p.Uniform(\"underlayWidthBlocks\"", StringComparison.Ordinal),
-            "Farseer starts beyond vanilla and its cached-terrain edge has live depth and width");
+            "Farseer remains a near-side fallback and its ready cached-terrain edge has live depth and width");
         c.True(pass.Contains("SilhouetteUploadBytesPerFrame", StringComparison.Ordinal)
                 && pass.Contains("SilhouetteUploadMillisecondsPerFrame", StringComparison.Ordinal)
                 && pass.Contains("rapi.GlEnableCullFace();", StringComparison.Ordinal)
