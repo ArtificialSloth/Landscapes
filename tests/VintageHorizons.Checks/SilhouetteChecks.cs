@@ -1616,6 +1616,9 @@ public static class SilhouetteChecks
                 && fogPass.Contains("BlendingFactorDest.OneMinusSrcAlpha", StringComparison.Ordinal)
                 && !fogPass.Contains("GlToggleBlend(true);", StringComparison.Ordinal)
                 && fogPass.Contains("GL.ColorMask(true, true, true, false);", StringComparison.Ordinal)
+                && fogPass.Contains(
+                    "p.Uniform(\"farViewDistance\", (float)silhouettes.ReachBlocks);",
+                    StringComparison.Ordinal)
                 && fogPass.Contains("p.BindTexture2D(\"sceneDepth\"", StringComparison.Ordinal)
                 && !fogPass.Contains("FramebufferAttachment.DepthAttachment", StringComparison.Ordinal)
                 && fogVolume.Contains("DefaultSpillBlocks = 48f", StringComparison.Ordinal)

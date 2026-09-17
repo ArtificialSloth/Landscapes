@@ -210,7 +210,7 @@ public partial class LodTerrainRenderer
                 (float)(silhouetteFogOriginZ - cam.Z)));
             p.Uniform("volumeWorldOriginX", (float)silhouetteFogOriginX);
             p.Uniform("volumeWorldOriginZ", (float)silhouetteFogOriginZ);
-            p.Uniform("farViewDistance", silhouettes.ReachBlocks);
+            p.Uniform("farViewDistance", (float)silhouettes.ReachBlocks);
             p.Uniform("globeStart", EffectiveFarDistance);
             p.Uniform("globeEffect", SilhouetteGlobeEffect);
             p.Uniform("rgbaFogIn", capi.Ambient.BlendedFogColor);
