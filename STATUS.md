@@ -3,19 +3,19 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-09-15`
-**Mod version:** `0.4.87` — current private test build (silhouette P3/P4 source complete), verified, copy-installed and checkpointed; 0.4.85–0.4.87 have not been run in game
+**Status date:** `2026-09-17`
+**Mod version:** `0.4.101` — current private test build (Farseer P1-P4 and most P5 work), verified, copy-installed and checkpointed; the all-level mesh-exact handoff and ridge contrast have not run in game
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.84 `8cd445f`, 0.4.85 `65990f1`, 0.4.86 `069f0b1`, 0.4.87 `2111ee9`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.95 `020f3e5`, 0.4.96 `8cb90e7`, 0.4.97 `62d5f29`, 0.4.98 `d6aae26`, 0.4.99 `85b7f20`, 0.4.100 `df4bf43`, 0.4.101 `a137181`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `130` C# files under `VintageHorizons/src`
+**Source files:** `131` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
 
 ## Current result
 
-**Horizon silhouettes: P1-P4 built in source (0.4.77–0.4.87).** Sessions 92–96.
+**Farseer: P1-P4 and most P5 built (0.4.77–0.4.101).** Sessions 92–98.
 - **Availability and switches.** The saved client choice defaults on. Integrated/LAN servers offer
   silhouettes automatically unless `EnableSilhouettes = false`; dedicated servers default off and
   require `EnableSilhouettes = true`. Their requested reach is clamped by
@@ -32,16 +32,25 @@
   16 may be in flight. Every accepted request ends in success, explicit refusal or bounded retry.
   World-session identity rejects stale packets, and tiles/offers outside the moving reach are
   pruned. The old direct-push form remains for 0.4.77-0.4.85 peers.
-- **Client and rendering.** Worker meshes exist at 128/32/8 quads per tile edge and are selected by
-  projected cell size. Mixed edges stitch, cached edges anchor, uncovered ground clamps to sea
-  level, and exact 64-block cache coverage controls the shader. The pass follows cached opaque
-  terrain and contributes through the existing far-plane policy. Cached terrain and silhouettes
-  share the classic-colour fade target at their join.
-- **Settings and off state.** The Silhouettes tab persists enable, reach and classic-look dials;
-  cached draw distance and silhouette reach are General-scale handles. Performance turns it off;
+- **Client and rendering.** Worker meshes exist at 16/8/4 quads per 512-block tile and are selected
+  by projected size. Frustum/back-face culling remain. At a data frontier, only the Farseer edge
+  slopes down through an adjustable buried apron; the distant field keeps its representative
+  height. Every installed L0-L6 LOD mesh carries exact 32-block coverage derived from the opaque
+  top surfaces it actually emitted. A camera-position-only target/parent/descendant selector and
+  stable vanilla readiness suppress Farseer only where replacement can draw; unknown coverage
+  leaves the fallback present. World-directed slope shading and gentle depth shading separate
+  overlapping ridges. The pass follows cached opaque terrain through the existing far-plane policy
+  and shared classic colour.
+- **Persistence, scheduling and settings.** A lazy client store reads nearest saved tiles for
+  instant rejoin and closes when off. Decode/mesh work is capped off-thread; owner publication,
+  coverage, pruning, remesh and upload are bounded. The **Farseer** tab persists enable, reach,
+  Outline detail, Hill softness, apron width/depth and classic-look dials; cached draw and reach
+  remain scale handles.
+  Performance turns it off;
   Balanced/Quality turn it on. Off sends one final demand and clears network, RAM, workers, GPU
   meshes and projection extent. The shader is compiled only after a drawable tile arrives.
-- **Not built:** P5 client tile persistence and owner tuning; P6 Terrain Ahead; P7 canopy.
+- **Not built:** optional P5 island/inlet refinement, complete player-facing Farseer rename/license
+  bundling, P6 Terrain Ahead, and P7 canopy.
 
 | Silhouette evidence | Result | Level |
 |---|---|---|
@@ -55,9 +64,16 @@
 | P0.3, 0.4.84, `p03-cold` (270,336 cells, every 4 blocks) | Median error 1, 95% within 4, max 63; lean +1.4; land/sea disagreement 3.7%; 0.16% of cells 8+ blocks off, almost all on land or at the coast. Answers taken before the land existed matched later ones at every cell, and a new region's first sample took under 1 ms. Sea level 82 | Integration-tested over two server sessions (Session 95) |
 | Accelerators with Watersheds installed | Algernon's sampler answers Watersheds' height function. Both include river valleys, neither applies the channel carve, and both return the top solid block, as the stored map does | Source-traced (decompiled) |
 | Owner's accelerator decision | Accuracy accepted; use Watersheds when both supported samplers exist and Algernon alone otherwise | Human decision; implementation source/harness-tested |
-| P3/P4 checks | 25,076 assertions pass; Release build has zero warnings/errors | Harness-/build-tested at 0.4.87 |
-| 0.4.87 artifact | 41 entries, exact assembled content, no PDB, matching installed copy; SHA-256 `0BEEBE9B8B8CC8561CBDB90F08B86063B7C181F92F68035A99D456B8E0E330AA` | Artifact-verified |
-| Joins, weather look, shader compilation, scale handles, restart read-back, error brake, GPU/off A/B, complete disc, dedicated players and mixed versions | Not observed or measured | — |
+| Client persistence | Leaving and rejoining immediately restored the prior Farseer terrain | Human-tested; cold process/full-disc restart still open |
+| 0.4.93 geometry reduction | Owner saw no visual difference after the 16/8/4 reduction and called the performance-oriented removal successful | Human-tested visually; no controlled final timing |
+| Early performance observation | About 550→450 FPS at 8 km before the final simplification | Informal owner observation, not a controlled A/B |
+| 0.4.94 join | Visible bands and an over-sunken far field; rejected. The owner clarified that only the Farseer edge should slope down near real terrain | Human-observed; removed/reworked in 0.4.95-0.4.97 |
+| 0.4.98 suppression | Substantially more stable than 0.4.99, but broad suppression could precede replacement readiness | Human comparison; superseded |
+| 0.4.99 readiness handoff | Farseer shifted as the camera turned and a gap reopened beside LOD terrain because ownership came from current-frame/frustum selection | Human-observed; source-traced; superseded |
+| 0.4.100 stable handoff | Camera reaction fixed, but broad Farseer geometry remained over visible LOD because only L0 resident meshes were recognized | Human-observed in screenshots; source-traced; superseded |
+| Final checks | 25,137 assertions pass; Release mod and benchmark projects have zero warnings/errors | Harness-/build-tested at 0.4.101 |
+| 0.4.101 artifact | 41 root-relative entries, one DLL, no PDB/wrapper, matching installed copy; SHA-256 `14CAC44C0C41DC26F48155DC2352A22E90EF123CE0C5B72F21B4734A99C8B392` | Artifact-verified |
+| 0.4.101 exact suppression, no-gap loading handoff, ridge contrast, final GLSL, weather look, controlled GPU/off A/B, cold/full-disc read-back, dedicated players and mixed versions | Not observed or measured | — |
 
 **The core world-generation/LOD-coverage plan is complete.**
 - P1–P5 and P7 landed in 0.4.66–0.4.76.
@@ -240,8 +256,9 @@ In an active world, the vanilla Settings header has a dedicated **Horizons** tab
 
 - **The pages.** **General** holds automatic/manual LOD distances, the far draw cap, silhouette
   reach, the saved **Load terrain while paused** switch, and visual features with presets.
-  **Anti-Aliasing** holds every TAA dial; **Silhouettes** holds its saved switch, reach, status and
-  classic-look dials; **Generate** holds permanent world-generation controls.
+  **Anti-Aliasing** holds every TAA dial; **Farseer** holds its saved switch, reach, status,
+  Outline detail, Hill softness and classic-look dials; **Generate** holds permanent
+  world-generation controls.
   - Descriptions appear on hover.
   - Secondary tabs sit below the vanilla header.
   - Compact rows and independently placed actions keep text and controls inside the page.
@@ -250,8 +267,9 @@ In an active world, the vanilla Settings header has a dedicated **Horizons** tab
 - **Distance map.** A logarithmic map begins at 32 blocks.
   - Vanilla's range is neutral grey. The coloured and labelled L0-L6 spans begin at its edge, and
     each L1-L6 marker frame matches the region it introduces.
-  - Cached draw distance and silhouette reach are handles; the silhouette band runs between them,
-    levels beyond cached draw distance dim, and the silhouette parts hide when the feature is off.
+  - Cached draw distance and Farseer reach are handles; the Farseer band runs between them, levels
+    beyond cached draw distance dim, and the Farseer parts hide when the feature is off. L1-L6 put
+    their numeric distance on a second line and use the vanilla tab typography.
   - This picture is explanatory, and does not remove the renderer's internal seam overlap.
 - **Vanilla render distance.** The white Vanilla marker is a second control for
   `ClientSettings.ViewDistance`, not mod configuration.
@@ -268,8 +286,9 @@ In an active world, the vanilla Settings header has a dedicated **Horizons** tab
   feature individually, producing a Custom configuration.
 
 The owner's first 0.4.63 screenshots exposed the remaining tab, colour and Vanilla/L0 separation
-defects. He reviewed the corrected 0.4.64 window and said, "This looked good." The new 0.4.87
-Silhouettes tab and scale handles have only source/harness evidence.
+defects. He reviewed the corrected 0.4.64 window and said, "This looked good." Session 97 then
+iterated the Farseer scale from screenshots; the final 0.4.91 typography/reach result still needs a
+focused acceptance look.
 
 ## Tree and glacier corrections: accepted
 
@@ -369,7 +388,7 @@ so neither the blob format nor the schema meaning moved; `dev/WIRE_HISTORY.md` c
   - It shares nothing with the section cache.
 - Session 94 changed no stored or transmitted meaning. Features bit 2 now marks a server that
   offers silhouettes, not every server holding a builder (`dev/WIRE_HISTORY.md`).
-- Sessions 95-96 changed no section blob or section database meaning. Silhouette transport
+- Sessions 95-98 changed no section blob or section database meaning. Silhouette transport
   generation 1 is append-compatible protocol 1; the tile payload and tile-store schema remain 1.
 
 The numbers stay `1 / 4 / 6`.
@@ -418,8 +437,9 @@ to the server log.
 
 ## Performance and artifact evidence
 
-**Checks and builds.** The final fast tier passed **25,076 assertions with zero failures** at 0.4.87,
-and the Release build completed with zero warnings and zero errors.
+**Checks and builds.** The final fast tier passed **25,137 assertions with zero failures** at
+0.4.101. The Release mod build and benchmark project build completed with zero warnings and zero
+errors.
 
 Measured costs, and what is not measured:
 - **Sibling-cache scanner.** Its cost is in the current-result table. Merging into held sections
@@ -434,21 +454,30 @@ Measured costs, and what is not measured:
   player's block.
 - **Snow** adds 1,024 uncompressed bits-array bytes per resident section before compression. No
   paired large-world capture yet isolates winter campaign cost.
-- **Silhouettes:**
+- **Farseer:**
   - GPU cost and the off-state A/B are not measured.
   - Captured heights cost one 2 KB copy per column the server loads.
-  - Accelerator calls and the fill/three-resolution mesh build run off the main thread. Up to four
-    accelerator tile jobs may wait, but calls are serialized until concurrency beside real
-    generation is measured.
+  - Accelerator calls, network decode, fill and three-resolution mesh builds run off the main
+    thread. Decode and mesh work are capped at two jobs each; owner-thread publication snapshots at
+    most one mesh job per pump.
+  - A tile stores 672 base triangles across 16/8/4 meshes and draws one. The edge apron changes
+    those existing vertices and adds no separate visible band.
+  - Every installed LOD mesh carries a 32-block ground mask built during its existing worker mesh
+    pass. It ranges from 2×2 cells at L0 to at most 128×128 cells / 2 KiB at L6. One visible
+    Farseer tile performs about 89 bounded resident-map lookups plus bit tests; it does not scan
+    geometry, add a render pass or read back the GPU. Live cost is unmeasured.
+  - Slope contrast reconstructs the geometric normal with shader derivatives and adds one gentle
+    depth term. It adds no terrain geometry; live shader/GPU cost is unmeasured.
   - Render upload is bounded to four tiles, 2 MiB and 2 ms per frame; live GPU time is unmeasured.
   - An accelerator height took 0.01–0.02 ms in freshly generated land (Session 94). On land nobody
     had generated it took under 0.01 ms, and under 1 ms for a new region's first sample (Session 95).
     Sampling beside real generation is not measured.
 
-**The 0.4.87 artifact.** The verified `dist/vintagehorizons_0.4.87.zip` is 643,980 bytes and has
-SHA-256 `0BEEBE9B8B8CC8561CBDB90F08B86063B7C181F92F68035A99D456B8E0E330AA`. Its 41 entries match the
-assembled mod folder, its `modinfo.json` reports 0.4.87, it contains no PDB, and it was copy-installed
-with a matching hash. Older test zips remain in that folder.
+**The 0.4.101 artifact.** The verified `dist/vintagehorizons_0.4.101.zip` is 654,148 bytes and has
+SHA-256 `14CAC44C0C41DC26F48155DC2352A22E90EF123CE0C5B72F21B4734A99C8B392`. Its 41 root-relative file
+entries are readable, its DLL matches Release, `modinfo.json` reports 0.4.101, it contains no PDB or
+wrapper directory, and it was copy-installed with a matching hash. Older test zips remain in that
+folder.
 
 **Checkpoints.** Every incremented private test build receives an exact Git checkpoint after
 verification and installation. This does not authorize a push, tag, publication or public release.
@@ -458,9 +487,13 @@ verification and installation. This does not authorize a push, tag, publication 
   permission for needed tests: two runs in Session 94, and one two-session run in Session 95.
 - Session 96 launched no server or game client; the owner was unavailable to test and no other
   players were available.
+- Session 97 launched no server or game client. The owner ran the private builds and supplied the
+  visual/performance observations recorded above.
+- Session 98 launched no server or game client. The owner supplied the handoff and contrast
+  observations; 0.4.101 remains unrun.
 - Session 91's controlled servers ran only after the owner's approval.
 
-**Documentation.** Validation passed **10,659 checks** with no failures at the Session 96 doc pass.
+**Documentation.** Validation passed **10,664 checks** with no failures at the Session 98 doc pass.
 It covers:
 - current version and changelog coverage;
 - source count;
@@ -495,25 +528,32 @@ It covers:
   the generates-nothing promise (settled decision 38).
 - **Yielding.** Automatic producers never monopolize generation authority; the frontier and the
   silhouette builder yield to explicit `/vhworldgen` and `/vhgen` work (settled decision 39).
-- **Silhouettes.** Silhouettes never replace real cached terrain. They draw only where cached
-  terrain is missing.
+- **Farseer ownership.** Farseer is fallback scenery and may never show over ready vanilla or LOD
+  terrain, including below excavated vanilla ground. It remains until live replacement coverage is
+  proven. The proof comes from stable vanilla readiness and exact all-level installed-mesh
+  coverage, never cached data alone, the current frustum or camera yaw (settled decisions 42 and
+  45–46).
 - **Thread count.** Multi-thread generation is not a player option. The engine setting was active in
   P0, but failed both the material-speedup and terrain-identity gates (G198).
 
 ## Next work
 
-Begin with [the silhouette handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
-[Session 96](dev/sessions/SESSION_96.md), the top of [TODO](dev/TODO.md), and
+Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
+[Session 98](dev/sessions/SESSION_98.md), the top of [TODO](dev/TODO.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. **Run P4's human gate on 0.4.87 when the owner is available:** shader compilation; sea and
-   inland visibility; cached joins; night/rain/fog/winter; scale handles; GPU cost and a true off/on
-   A/B. If the join fails, the plan's beyond-draw-distance fallback is an owner decision.
+1. **Run 0.4.101's focused ownership gate:** at the same screenshot locations, turn in place,
+   approach vanilla/LOD edges obliquely, watch rapid loading/unloading and look into excavated
+   vanilla ground. There must be no view-dependent shift, Farseer over ready terrain, or sky gap
+   before replacement. Judge whether the new contrast separates overlapping ridges naturally.
+   This also proves the changed shader compiles.
 2. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
-3. **P5 after P4 acceptance:** tune islands/inlets and the look with the owner, then add client tile
-   persistence. Optimize colour, grids or coverage only if P4 measures a need.
+3. **Finish P5 evidence/credit:** after suppression is accepted, tune final Outline detail, Hill
+   softness and apron defaults; measure controlled GPU/off and regeneration hitches; refine
+   islands/inlets only if needed; finish the deliberate player-facing Farseer rename plus bundled
+   MIT notice.
 4. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
 5. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
    offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
@@ -524,12 +564,14 @@ Begin with [the silhouette handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
    - pause loading;
    - Session 84 diagnostic cleanup.
 
-[Session 96](dev/sessions/SESSION_96.md) is the authoritative continuation point, and
+[Session 98](dev/sessions/SESSION_98.md) is the authoritative continuation point, and
 [the silhouette handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md) orients a new agent.
-- Sessions 95-82 retain the silhouette comparison, P2 and the first look, and the Generate,
+- Sessions 97-82 retain Farseer persistence/tuning, the silhouette comparison, P2 and the first
+  look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G208 in `dev/GOTCHAS.md` preserve the recent proven traps; Session 96 added no new one.
+- G166-G216 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+  buried joins, bounded regeneration and the stable all-level Farseer handoff.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work

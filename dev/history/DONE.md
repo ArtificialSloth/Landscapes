@@ -2,6 +2,36 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-17 - Farseer edge, suppression handoff and ridge contrast (0.4.95-0.4.101)
+
+- Removed 0.4.94's visible join bands, replaced them with an adjustable buried apron and then kept
+  the distant field at its representative height while sloping only the edge toward real terrain.
+- Made Farseer suppression mandatory beneath ready vanilla and LOD terrain, including excavated
+  vanilla ground, while keeping Farseer until replacement geometry is actually drawable.
+- Rejected current-frame/frustum ownership after 0.4.99 made geometry shift with camera yaw.
+- Corrected 0.4.100's level-0-only blind spot by carrying exact 32-block opaque-top coverage with
+  every installed L0-L6 mesh and selecting stable target/parent/descendant replacement without
+  using view direction.
+- Added world-directed slope lighting and gentle depth contrast so overlapping Farseer hills are
+  distinguishable without adding geometry.
+
+Source, builds, checks and artifact verification are complete at 0.4.101 / `a137181`. Runtime GLSL,
+no-overlap/no-gap behavior, ridge appearance and performance remain open in TODO.
+
+## 2026-09-16 - Farseer P5 persistence and lightweight tuning (0.4.88-0.4.94)
+
+- Added the lazy per-world client tile store and repaired early-reply persistence; the owner saw
+  instant Farseer terrain after rejoin.
+- Renamed the visible tab to Farseer, repaired reach application, standardized/expanded the scale,
+  and added effective Outline detail and Hill softness controls.
+- Reduced tile geometry to 16/8/4 quads, kept frustum culling, enabled back-face culling, moved
+  decode/mesh work off-thread and bounded publication, coverage, pruning and rolling remesh work.
+- Refined ownership to exact 32-block coverage and built the 0.4.94 buried-overlap/skirt join.
+
+P5 client persistence and primary look/performance controls are complete. Final join acceptance,
+controlled cost/hitch evidence, optional island/inlet refinement, the remaining Farseer rename and
+license bundling stay open in TODO.
+
 ## 2026-09-15 - Horizon silhouette P3/P4 source complete (0.4.85-0.4.87)
 
 - **0.4.85:** both optional accelerators accepted; Watersheds preferred when both exist, Algernon's

@@ -552,18 +552,40 @@ live until the exact replacement persistence revision is acknowledged.
     fields, so a stale world cannot release a current request slot. An older peer's direct-push
     packets remain a deliberate compatibility path. Dedicated servers offer the feature only after
     explicit admin opt-in and clamp reach; integrated/LAN servers retain the automatic default.
-42. **Real cached terrain owns the silhouette join.** Silhouettes are a separate height-field layer,
-    never section-cache data and never terrain ownership. Exact 64-block cache coverage suppresses
-    them inside the cached fade, while they may draw beyond cached terrain's far edge. The cached
-    fade and silhouette pass evaluate the same colour function at their join. One renderer and the
-    existing stepped far-plane policy own both extents; silhouette meshes choose resolution from
-    on-screen cell size, not fixed distance.
+42. **Ready real terrain owns the Farseer join; only the unresolved edge slopes.** Farseer is a
+    separate fallback height field, never section-cache data and never terrain ownership. It may
+    not remain visible over ready vanilla or LOD terrain, including below excavated vanilla ground,
+    but it remains until live replacement coverage is proven so a pending mesh cannot expose sky.
+    At an unresolved frontier, an adjustable buried apron slopes only the near Farseer edge down;
+    the distant field keeps its representative height. A global sink, visible join bands, exact
+    coplanar contact and a separately visible skirt are rejected designs. The cached fade and
+    Farseer pass retain the shared classic-colour handoff, and the existing stepped far-plane policy
+    owns both extents.
 43. **A silhouette off switch removes the feature's live cost.** It sends one final off demand,
     then clears client offers, requests, tile data, worker obligations and GPU meshes; its render
     pass returns without GL work, its shader is not compiled merely because the saved switch is on,
     and its extent contributes nothing to projection. The server drops that player's demand and is
     idle when nobody asks. Stored server tiles remain reusable. Terrain Ahead is an independent,
     later feature with a separate switch and acceptance.
+44. **Farseer is intentionally coarse and incrementally regenerated.** Representative rolling
+    shape, not terrain detail, is the requirement. A tile stores 16/8/4-quad meshes and draws one;
+    outline detail chooses by projected size, while Hill softness changes broad worker-only
+    feathering. Decode and mesh work stay capped off-thread, owner-thread snapshots/publication and
+    uploads stay bounded, shape changes debounce and roll through dirty tiles, and reach changes
+    retain the intersection instead of clearing the disc. The client tile store is lazy and
+    off-owned: it opens only for an enabled offered feature and closes with live state on off/world
+    teardown.
+45. **Farseer suppression is proven by the exact installed mesh, at every LOD level.** Each L0-L6
+    mesh result carries a compact 32-block mask derived from the opaque top surfaces the worker
+    actually emitted, and that immutable mask travels through publication with the mesh identity.
+    Suppression selects a distance-appropriate resident target from camera position, then a
+    coarser resident parent, then finer resident descendants. Cached data, requested work, mutable
+    section contents, current-frame draw selection, frustum state and camera yaw are not ownership
+    proof. Unknown or partial cells fail open and keep Farseer (G212-G215).
+46. **Farseer ridge contrast is world-directed and geometry-free.** The fragment shader
+    reconstructs the coarse surface's geometric normal, shades it from a world/sun direction and
+    adds gentle world-distance depth separation. Contrast may not depend on camera yaw, and it may
+    not add terrain detail merely to distinguish overlapping hills (G216).
 
 ## Concurrency invariants
 

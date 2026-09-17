@@ -1,143 +1,146 @@
-# Handoff - horizon silhouettes at 0.4.87, P4 runtime gate next
+# Handoff - Farseer at 0.4.101, mesh-exact ownership gate next
 
-**Updated:** `2026-09-15`, Session 96
-**Branch/source checkpoint:** `codex/water-depth-light`, 0.4.87 at `2111ee9`; nothing pushed
-**Installed:** verified 0.4.87 private test build, copy-installed; 0.4.85-0.4.87 have not run in game
+**Updated:** `2026-09-17`, Session 98
+**Branch/source checkpoint:** `codex/water-depth-light`, 0.4.101 at `a137181`; nothing pushed
+**Installed:** verified 0.4.101 private test build, copy-installed; not yet run
 **Last accepted baseline:** `0.4.64`
-**Compatibility:** assist protocol / blob / schema `1 / 4 / 6`, unchanged. The silhouette tile
-store has schema `1`; current silhouette transport generation is `1`.
+**Comparison note:** the owner called 0.4.98 substantially more stable than 0.4.99; 0.4.101 is the
+current correction, not yet accepted
+**Compatibility:** assist protocol / blob / schema `1 / 4 / 6`, unchanged. Server and client
+silhouette stores remain schema `1`; transport generation remains `1`.
 
 Read, in this order:
 1. this page;
-2. [Session 96](../sessions/SESSION_96.md);
-3. [the silhouette plan](PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md), especially phases P4-P5;
-4. [the gotchas](../GOTCHAS.md) G199-G208 plus shader/render G5, G10, G130, G158, G160-G161 and
+2. [Session 98](../sessions/SESSION_98.md);
+3. [the Farseer/Terrain Ahead plan](PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md), especially P4-P6;
+4. [the gotchas](../GOTCHAS.md) G209-G216 plus shader/render G5, G10, G130, G158, G160-G161 and
    G174;
 5. [TODO](../TODO.md).
 
-`CLAUDE.md` holds the working rules; follow them. Ask before any game launch.
+`CLAUDE.md` holds the working rules. Ask before any game launch.
 
 ## Where things stand
 
-- **P1-P4 are built in source.** The current artifact is 0.4.87.
-- **No 0.4.85-0.4.87 runtime evidence exists.** The owner was away and no other players were
-  available. Do not describe source/harness evidence as a passed visual, shader, performance,
-  restart or multiplayer gate.
-- **Next gate:** P4's small in-game visual/UI/performance checklist below.
-- **After acceptance:** P5 tuning and client tile persistence. Terrain Ahead remains the separate
-  P6 feature.
+- P1-P4 and most P5 persistence/tuning work are built through 0.4.101.
+- The owner saw instant prior terrain after leave/rejoin and saw no visual loss from 0.4.93's large
+  geometry reduction.
+- 0.4.94's bands/global sinking were rejected. 0.4.95 removed the bands; 0.4.96-0.4.97 changed the
+  join to an adjustable underlay whose near edge slopes down without sinking the whole field.
+- Suppression over ready vanilla and LOD terrain is non-negotiable, including below excavated
+  vanilla ground. It must not occur before replacement geometry can draw.
+- 0.4.99 used current-frame/frustum LOD selection and visibly shifted with camera yaw, reopening a
+  gap. 0.4.100 stabilized camera behavior but recognized only L0, so Farseer remained broadly over
+  visible coarser LOD parents.
+- 0.4.101 carries exact 32-block coverage with every installed L0-L6 mesh and adds
+  camera-independent slope/depth contrast. It is the exact next visual gate and has not run.
+- Terrain Ahead remains the independent P6 feature. Canopy remains P7.
 
-## Owner decisions now implemented
+## Current implementation
 
-- The P0.3 accelerator accuracy is accepted. Representative shape is enough; no +1.4-block lean
-  correction is applied.
-- Support both optional accelerators. Prefer Watersheds' native sampler when both are installed;
-  accept Algernon's Terrain Sampler when Watersheds is absent. Horizons requires neither.
-- Continue without multiplayer evidence, but retain that evidence as an open gate.
-- The P3 accelerator and P4 design were accepted for implementation.
+### Persistence and delivery
 
-## What 0.4.85-0.4.87 contain
+- The client store is `<savegame>-silhouette.db`. It opens only when Farseer is enabled and offered,
+  reads nearest stored tiles through bounded store work, and closes with live state on off/world
+  teardown.
+- Current-session network replies remain authoritative; stored revisions cannot block a server
+  whose revision sequence restarted. Replies that precede store opening are backfilled afterward.
+- Current peers use bounded revision manifests/nearest requests with session identity; 0.4.77-0.4.85
+  direct push remains the compatibility path.
 
-### 0.4.85 - accepted accelerator path
+### Lightweight renderer and scheduling
 
-- One selected sampler fills each tile at 64-block spacing (64 cells per tile) on a background
-  caller. Up to four tile jobs may wait; calls themselves are serialized until concurrency beside
-  real generation is measured.
-- Captured terrain and engine previews remain better origins and replace accelerator cells.
-- One engine preview refines a tile that looks low or coastal.
-- A named sampler failure disables it for the session and previews take over.
-- `SilhouetteUseAccelerators = false` retains the standalone preview path.
+- Each 512-block tile stores 16/8/4-quad meshes (32/64/128-block quads), 672 base triangles total,
+  and draws one. Projected size plus Outline detail chooses the broad-horizon tier.
+- Frustum and back-face culling are draw optimizations only; neither owns the handoff. Network decode
+  and mesh construction are capped at two worker jobs each. Owner-thread decode publication, one
+  mesh snapshot per pump, pruning, dirty work and GPU upload all have bounds.
+- Reach changes retain tiles/meshes, update demand in place and prune gradually. Hill softness
+  debounces 250 ms, feathers up to 128 blocks on workers and enqueues four remeshes per pump.
 
-### 0.4.86 - final P3 transport and dedicated opt-in
+### Edge apron and exact ownership
 
-- Current peers exchange chunked key/revision manifests and nearest-first requests; the older
-  direct-push path remains for 0.4.77-0.4.85 peers.
-- Sixteen client requests may be in flight. Server replies are capped at 20/s per player and 80/s
-  total. Every accepted key gets success, refusal or bounded retryable state.
-- A world-session id rejects late packets from an old world. Moving reach prunes offers, tiles and
-  meshes outside its margin.
-- Dedicated servers offer silhouettes only with explicit `EnableSilhouettes = true`; `null` remains
-  integrated/LAN automatic and dedicated off. `SilhouetteReachBlocks` clamps dedicated reach;
-  `SilhouettePreviewsPerSecond` is bounded.
-- The builder yields to the complete shared generation gate, `/vhworldgen`, `/vhgen` and real loads.
+- The fallback field keeps its distant representative height. Only its edge near real terrain
+  slopes down through an adjustable buried apron; the default width is 384 blocks. The width and
+  depth are dials.
+- Stable vanilla readiness and exact installed LOD geometry form the suppression union. Farseer
+  remains in unknown/partial cells, then disappears where replacement is proven.
+- During ordinary LOD meshing, every installed L0-L6 mesh gets a compact 32-block ground mask from
+  the opaque top surfaces actually emitted. The mask travels in the same mesh result/publication as
+  the GPU mesh, so it cannot describe different data.
+- For a visible Farseer tile, the selector chooses a target level from camera position/distance,
+  uses that resident level when present, then a coarser resident parent, then finer resident
+  descendants. View direction and current-frame draw lists do not participate.
+- The largest mask is 128×128 bits / 2 KiB at L6. Per visible tile, suppression is about 89 bounded
+  dictionary lookups plus bit tests; there is no geometry scan, extra render pass or GPU readback.
 
-### 0.4.87 - P4 rendering and settings
+### Ridge contrast
 
-- Each tile has 128/32/8-quad meshes. Projected cell size chooses one; no fixed LOD distances.
-- Covered interiors keep raw heights, uncovered terrain clamps to sea, live cached edge heights
-  anchor the join, outer edges stitch at a common 64-block boundary, and the near join sinks.
-- Exact 64-block cached coverage is a per-tile shader mask. It suppresses silhouette fragments
-  inside cached terrain's fade but permits them beyond cached terrain's far edge.
-- Cached terrain and the silhouette share one classic-colour include at the fade target.
-- The silhouette pass draws after cached opaque terrain and contributes through the existing
-  stepped projection policy.
-- Shader compilation waits for a drawable tile; failure disables the feature for the session.
-- `.vhconfig` has a persistent Silhouettes tab: enable, reach, status and classic-look dials. The
-  General scale has cached-draw and silhouette-reach handles. Performance disables silhouettes;
-  Balanced/Quality enable them. `.vhsilhouette` remains session-only.
-- Off sends the final demand and clears manifests, requests, tiles, coverage, mesh work, GPU meshes
-  and projection extent.
+- The Farseer fragment shader reconstructs a geometric normal with `dFdx`/`dFdy` and shades from a
+  world/sun direction.
+- Gentle distance-depth shading helps distinguish nearer and farther overlapping hills.
+- Neither term uses camera yaw. The cached outer fade passes neutral surface shade so the shared
+  color handoff keeps its existing behavior.
+
+### Settings and naming
+
+- The visible tab is **Farseer**. The General scale has vanilla-tab typography, two-line `L1`-`L6`
+  distances, and live cached/reach handles.
+- Farseer persists reach, Outline detail, Hill softness, Apron width/depth and classic color/look
+  controls.
+- Many internal/config/command names remain “Silhouette” for now. Finish the player-facing rename
+  deliberately without casually renaming registered protocol fields. Farseer's MIT license/notice
+  still needs to be bundled; source/shader attribution already exists.
 
 ## Exact continuation
 
-### First: P4 human gate
+1. Ask before launching. Load 0.4.101 at the same locations that exposed the 0.4.100 overlap.
+2. Hold position and turn through the whole scene. Farseer must not shift, appear or disappear merely
+   because camera yaw changed.
+3. Approach vanilla and LOD boundaries from oblique angles, then move quickly enough to see terrain
+   load and unload. Report separately:
+   - any Farseer color over ready vanilla terrain;
+   - any Farseer color over ready LOD terrain, especially coarser parents;
+   - any sky pixel, slit or flash before replacement becomes drawable;
+   - any Farseer visible below excavated vanilla ground.
+4. Compare overlapping Farseer ridges while turning. They should have readable slope/depth contrast
+   without stripes, exaggerated darkness or camera-relative shade changes.
+5. This run also proves or disproves the changed GLSL compilation.
+6. Only after ownership is clean, tune Apron width/depth, Outline detail and Hill softness. Then take
+   a controlled same-scene off/on FPS/GPU-time comparison and change reach/shape dials while watching
+   frame hitches.
+7. Only then decide whether islands/inlets need further low/coastal refinement.
+8. Finish the player-facing Farseer rename/license work before calling P5 complete.
 
-Use 0.4.87 when the owner is present. Ask before launching. Keep the observations small:
+Do not add terrain detail back merely because it is available. The owner explicitly saw no visual
+loss from the 0.4.93 reduction and wants this component as lightweight as feasibly possible.
 
-1. **Shader and sea:** at sea with no cached land inside draw distance, confirm silhouettes appear
-   toward known land and no compile failure is logged.
-2. **Inland gap:** find one unexplored gap between cached areas and confirm it fills.
-3. **Join:** look for a line, hole or double surface at an explored edge and at cached draw distance.
-4. **Weather:** one check each at night, rain/fog and winter.
-5. **Controls:** move cached draw distance and silhouette reach on the General scale; check the
-   haze band, dimming and hidden state when off. Check the Silhouettes tab fits and previews dials.
-6. **Cost:** capture silhouette GPU time if available and a same-scene on/off frame-time A/B.
+## Deferred integration debt
 
-If the join cannot be made clean, stop for the owner. The plan's fallback—silhouettes only beyond
-cached draw distance—is a product decision, not an implementation detail.
-
-### Then: P3 integration debt
-
-- Let one singleplayer reach complete and read the source/fill/transport counts.
-- Restart and observe server tile read-back.
-- When another player is available, test a dedicated server with explicit opt-in: reach clamp,
-  fairness, off/disconnect cleanup and current/older-peer behavior.
-- P2 still needs one `/vhworldgen` area's captured columns observed in silhouette tiles.
-- Do not deliberately reproduce the `bodanboys` stall merely to test its brakes. If generator
-  silence or errors occur naturally, confirm the named stop line.
-
-### After P4 acceptance: P5
-
-- Compare islands and inlets against dense real terrain and adjust low/coastal refinement only if
-  the picture needs it.
-- Tune reach and classic-look dials with the owner.
-- Add client tile persistence for instant rejoin; it must not open or cost anything while off.
-- Colour-per-vertex, shared grid/height textures and finer coverage are measurement-triggered only.
+- Cold client restart and full-disc store read-back; off-state store unopened/closed behavior.
+- Complete singleplayer disc counts and `/vhworldgen` captured-column integration.
+- Dedicated opt-in/reach clamp, multi-player fairness, disconnect/off cleanup and mixed versions.
+- Night, rain/fog and winter look.
+- `bodanboys` generator stall remains set aside; do not reproduce it just to test brakes.
 
 ## Verification and artifact
 
-- Release build: zero warnings/errors.
-- Fast tier: 25,076 assertions, zero failures.
-- `dist/vintagehorizons_0.4.87.zip`: 643,980 bytes, 41 entries, exact assembled content, no PDB.
-- SHA-256: `0BEEBE9B8B8CC8561CBDB90F08B86063B7C181F92F68035A99D456B8E0E330AA`.
+- Release mod build: zero warnings/errors.
+- Benchmark project build: zero warnings/errors.
+- Fast tier: 25,137 assertions, zero failures.
+- Stable-level unit coverage proves target, coarser-parent, finer-descendant and no-resident cases.
+- `dist/vintagehorizons_0.4.101.zip`: 654,148 bytes, 41 root-relative file entries, manifest
+  0.4.101, one matching DLL, no PDB or wrapper directory.
+- SHA-256: `14CAC44C0C41DC26F48155DC2352A22E90EF123CE0C5B72F21B4734A99C8B392`.
 - Copy-installed with older rollback archives retained.
-- Source checkpoint: `2111ee9a5ae1d0bf277fc41a8b6ec51c162db666`.
-
-## Open, not established
-
-- P4's actual GLSL compile and picture.
-- GPU cost and zero-cost off A/B.
-- Stored-tile restart read-back, complete-disc convergence and error-brake behavior.
-- Dedicated multiplayer and mixed-version behavior.
-- Accelerator sampling beside real generation; mountains were thin in P0.3.
-- Why the test worlds' sea level is 82 and whether the owner's worlds share it.
-- The set-aside `bodanboys` preview stall (G204).
+- Source checkpoint: `a137181`.
 
 ## Working cautions
 
-- Docs are current through Session 96. Do not edit them again until asked.
+- Docs are current through Session 98. Do not edit them again until asked.
 - Never launch a game or test server without the authority required by `CLAUDE.md`.
-- Versioned playable source receives its exact checkpoint; documentation-only commits still require
-  owner approval. Never push without approval.
-- Preserve the source hierarchy: captured > preview > accelerator. Do not let a fast answer replace
-  terrain the engine actually generated.
+- Every playable version receives its exact verified/install checkpoint. Never push, tag or publish
+  without approval.
+- Preserve height truth: captured > preview > accelerator.
+- Stored data is not live draw readiness; frustum selection is not terrain ownership; L0 is not all
+  visible LOD.
+- Source/static shader checks are not a runtime GLSL claim.

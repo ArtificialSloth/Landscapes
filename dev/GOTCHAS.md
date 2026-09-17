@@ -3995,3 +3995,126 @@ land/sea counts.
 statistics already do, and the map file records it.
 
 **Found:** 2026-09-15, Session 95 (measured; why it is 82 is not traced).
+
+### G209 - Silhouette replies can beat the client store path
+
+**Trigger:** persisting a tile only at network receipt while the store path is supplied later from
+`LevelFinalize`.
+
+**Trap:** a current tile can arrive, decode and display before the ordinary cache has supplied the
+world-specific sibling path. The tile is authoritative but there is no open store to save it, so
+the first session after adding persistence can become the one session that does not persist.
+
+**Safer action:** retain the keys of authoritative network confirmations and backfill their immutable
+tile snapshots when the store opens. Store reads must never acquire current-session authority over
+a later server reply.
+
+**Found:** 2026-09-16, Session 97 (source-traced; fixed in 0.4.89).
+
+### G210 - Lowering a height-field join creates a sky slit unless geometry bridges it
+
+**Trigger:** resolving overlap or z-fighting by lowering the Farseer boundary vertex below the real
+cached edge.
+
+**Trap:** the Farseer mesh is a top surface. Lowering its edge creates no vertical face between the
+old and new heights, so the attempted underlap becomes a visible strip of sky. Exact coplanar
+contact avoids that slit but can expose raster mismatch or visible overlap elsewhere.
+
+**Safer action:** bridge only the unresolved edge, not the whole field. Keep the distant Farseer
+surface at its representative height, slope an adjustable apron down near the replacement
+frontier, and let exact live-geometry suppression make ready real terrain authoritative. The
+0.4.94 skirt/buried-band implementation solved the literal slit but was rejected visually and
+removed in 0.4.95.
+
+**Found:** 2026-09-16, Session 97 (human-observed before 0.4.94; source/harness fix in 0.4.94).
+
+### G211 - A reach or shape dial must not rebuild the whole Farseer disc at once
+
+**Trigger:** clearing all client tiles/meshes when reach changes, or immediately marking every tile
+dirty for each shape-slider event.
+
+**Trap:** useful immutable tiles are thrown away and the whole disc decodes, snapshots, meshes and
+uploads again. Dragging a dial multiplies that work and the owner sees severe game hitches even if
+mesh construction itself uses a worker.
+
+**Safer action:** retain the old/new reach intersection, update demand in place, prune gradually,
+debounce shape changes, enqueue bounded rolling remeshes, cap worker jobs, and separately bound the
+owner-thread publication/snapshot step.
+
+**Found:** 2026-09-16, Session 97 (human-observed; fixed in 0.4.93).
+
+### G212 - Cached terrain data is not drawable replacement geometry
+
+**Trigger:** suppressing Farseer because the LOD cache has data, a request exists, or a build is in
+flight.
+
+**Trap:** those states can precede GPU-ready replacement geometry. Farseer disappears first and the
+player sees sky until vanilla or LOD publication catches up. The same distinction already matters
+in the vanilla-to-LOD handoff: availability is not appearance readiness (G94).
+
+**Safer action:** keep Farseer until a resident vanilla or LOD representation can actually cover
+the ground cell. Unknown and partial answers fail open. Tie the proof to the installed mesh
+publication, not mutable source data or scheduled work.
+
+**Found:** 2026-09-17, Session 98 (human-observed in the 0.4.98–0.4.99 handoff; fixed by the
+0.4.101 installed-mesh coverage path).
+
+### G213 - A frustum-selected draw list cannot own persistent ground
+
+**Trigger:** reusing the current frame's visible/selected LOD commands to decide whether Farseer
+must yield.
+
+**Trap:** frustum membership changes with camera direction. Turning in place then changes terrain
+ownership: Farseer shifts back and forth, and a gap can open beside real LOD even though neither
+terrain dataset changed.
+
+**Safer action:** choose ownership from stable resident state and camera position/distance only.
+Frustum and current-frame selection may reject draw work, but they may not decide which system owns
+a ground cell.
+
+**Found:** 2026-09-17, Session 98 (human-observed in 0.4.99; camera reaction removed in 0.4.100).
+
+### G214 - L0 readiness does not describe the LOD terrain that is on screen
+
+**Trigger:** recognizing only level-0 meshes when another renderer can substitute resident parent
+levels.
+
+**Trap:** the stable answer is still wrong. A coarser parent at L1–L6 can visibly draw while the
+level-0 descendants are absent, so Farseer remains over terrain the player can already see. This
+caused the broad overlap in 0.4.100 after its camera-yaw fix.
+
+**Safer action:** represent every resident level. Select the distance-appropriate target, then a
+resident coarser parent, then resident finer descendants. Test the ordering independently of the
+camera frustum.
+
+**Found:** 2026-09-17, Session 98 (human-observed and source-traced in 0.4.100; harness-fixed in
+0.4.101).
+
+### G215 - A resident coarse mesh does not necessarily cover its whole footprint
+
+**Trigger:** treating a section key or its rectangular bounds as proof that every enclosed ground
+cell has opaque terrain.
+
+**Trap:** sparse, partial, clipped or otherwise empty cells are overclaimed. Suppressing the
+fallback across the whole coarse footprint can expose sky even though the mesh is resident.
+
+**Safer action:** derive compact coverage from the opaque top surfaces the mesher actually emits,
+at the required ground-cell resolution, and carry that immutable mask with the exact mesh result
+through publication. Do not rescan geometry or query later-mutated section data at draw time.
+
+**Found:** 2026-09-17, Session 98 (source-traced; implemented and harness-tested in 0.4.101).
+
+### G216 - Camera-relative hill shading looks like moving geometry
+
+**Trigger:** adding contrast to distant Farseer ridges from view direction or another
+camera-relative light vector.
+
+**Trap:** the shades change while the player turns. On deliberately coarse, overlapping hills that
+reads as the terrain shifting—the same class of symptom as an unstable ownership mask.
+
+**Safer action:** reconstruct the geometric surface normal and shade from a world-space light
+direction. A gentle world-distance term may separate depth layers; neither answer should depend on
+camera yaw.
+
+**Found:** 2026-09-17, Session 98 (flat ridges human-observed; world-directed slope/depth fix is
+source/static-tested in 0.4.101 and awaits visual acceptance).

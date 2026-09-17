@@ -1,6 +1,6 @@
 # Plan - Horizon silhouettes and terrain ahead
 
-**Status:** Active. Reconciled 2026-09-15 through 0.4.87 (`2111ee9`), Session 96.
+**Status:** Active. Reconciled 2026-09-17 through 0.4.101 (`a137181`), Session 98.
 - P1, the first look, landed in 0.4.77 (`4c7720c`). The owner accepted the classic look apart from
   the joins.
 - P2 landed in 0.4.79-0.4.80, with a stall guard and an error brake in 0.4.78 and 0.4.81 (Session
@@ -8,8 +8,14 @@
 - P3 source is complete through 0.4.86: the owner accepted both accelerators, 0.4.85 added live
   sampling/refinement, and 0.4.86 added bounded manifest/request transport and dedicated opt-in.
   Its singleplayer/dedicated integration gate remains open.
-- P4 source and harness work landed in 0.4.87: adaptive meshes, draw/handoff, settings, scale and
-  off states. Its in-game visual/UI/performance gate is next.
+- P4 landed in 0.4.87 and was iterated by the owner through 0.4.101: the visible tab is Farseer,
+  scale/reach were repaired, geometry is 16/8/4 quads, only the near edge slopes through an
+  adjustable apron, and ready vanilla/LOD geometry owns exact suppression. 0.4.99's
+  frustum-dependent handoff and 0.4.100's L0-only handoff were rejected; 0.4.101's all-level
+  installed-mesh coverage, no-gap behavior and ridge contrast are the next human gate.
+- Most P5 work is built: lazy client persistence is human-seen on rejoin, and Outline detail/Hill
+  softness plus bounded regeneration are present. Final tuning, controlled cost evidence, optional
+  island/inlet refinement and complete Farseer naming/license credit remain.
 - [The silhouette handoff](HANDOFF_HORIZON_SILHOUETTES.md) is the exact continuation point.
 - Silhouettes come first (D14).
 - Terrain Ahead is a separate, later feature (D15).
@@ -38,14 +44,23 @@
   tuning options, not P3 requirements.
 - **Transport generation 1** adds session identity to the registered manifest/request path. The
   original direct-push behavior remains only for an older peer.
-- **Coverage is an exact per-tile 64-bit shader mask,** not a per-vertex covered flag. That avoids
-  ambiguity at vertices shared by covered and uncovered cells.
-- **The Silhouettes tab and General scale are built.** The tab strip currently has General,
-  Anti-Aliasing, Silhouettes and Generate; Terrain Ahead will make the planned fifth tab.
+- **Suppression no longer uses cache-data presence or only L0.** Every installed L0-L6 LOD mesh
+  carries exact 32-block coverage derived from its emitted opaque tops. A stable
+  camera-position-only selector chooses target, parent or descendant coverage; unknown cells keep
+  Farseer. The original tile-local cache-presence mask is not ownership proof.
+- **Only the Farseer edge slopes.** The 0.4.94 buried band/skirt was rejected. The current
+  adjustable apron slopes down near a replacement frontier without lowering the whole distant
+  field.
+- **Farseer hills have world-directed contrast.** Shader-derived slope light plus gentle depth
+  separation distinguishes overlapping ridges without adding geometry or depending on camera yaw.
+- **The Farseer tab and General scale are built.** The tab strip currently has General,
+  Anti-Aliasing, Farseer and Generate; Terrain Ahead will make the planned fifth tab.
+- **The client store is built.** It opens lazily only for an enabled/offered feature and returns
+  nearest authoritative tiles for instant rejoin; early network replies are backfilled on open.
 
 The first version was written from a report-only investigation on 2026-09-12 against 0.4.64
 (`dd0394c`).
-**Created:** 2026-09-12. **Revised:** 2026-09-15.
+**Created:** 2026-09-12. **Revised:** 2026-09-17.
 **Scope:** Two independent features that share server generation capacity. Each has its own
 switch and settings tab, and turning it off removes its cost.
 
@@ -117,6 +132,13 @@ is hidden.
 | D14 | 2026-09-14 | **Silhouettes come first and are built far in advance** for the whole reach, so distant terrain already tells the player where to travel. They do not wait on travel. |
 | D15 | 2026-09-14 | **Terrain Ahead is a separate feature** with its own switch in a different settings tab from Silhouettes, so a player can use either without the other. Supersedes the single master switch (former A1). |
 | D16 | 2026-09-15 | The P0.3 accuracy is accepted. Support both optional accelerators: **prefer Watersheds when both are installed; accept Algernon's Terrain Sampler when Watersheds is absent**. Apply no lean correction. Lower fidelity may remain acceptable when it buys a useful saving; measure that trade before changing the shipped grid. |
+| D17 | 2026-09-16 | The player-facing feature name is **Farseer**, crediting the original mod from which this work was derived. Rename remaining player-facing uses deliberately and bundle Farseer's MIT license/notice; do not casually rename registered compatibility fields. |
+| D18 | 2026-09-16 | Farseer geometry is intentionally **extremely simple and as lightweight as feasible**. The owner saw no visual loss from the 16/8/4-quad reduction. Representative rolling hills outrank outline detail. |
+| D19 | 2026-09-16 | *Superseded by D20-D22.* The 0.4.94 proposal sank Farseer below real terrain, added a narrow underlap and bridged to the exact edge with minimal skirts. The owner rejected its visible bands and globally sunken look. |
+| D20 | 2026-09-17 | **Only the Farseer edge slopes down.** The broad distant field keeps its representative height. The buried apron exists only near a replacement frontier, and its 384-block default width plus depth are dials. |
+| D21 | 2026-09-17 | **Farseer suppression over ready vanilla or LOD terrain is non-negotiable**, including below excavated vanilla ground. It must remain until replacement geometry is drawable so the handoff cannot reveal sky. |
+| D22 | 2026-09-17 | **Ownership may not depend on camera direction and must recognize every resident LOD level.** Exact suppression proof comes from opaque top surfaces carried with the installed mesh; the target level, coarser parents and finer descendants are considered in stable order. |
+| D23 | 2026-09-17 | Overlapping Farseer hills need readable contrast without more geometry. Use **world-directed slope light and gentle depth shading**, never camera-relative light that changes as the player turns. |
 
 Standing rules that apply throughout:
 - No hard-coded rendering distances: key rendering to on-screen size, pixel ownership, or the
@@ -439,7 +461,8 @@ How each source is used:
   - one connection, owned by a dedicated thread (G9), with batched writes;
   - a bounded RAM set of tiles near requesting players;
   - nothing shared with the section database.
-- **Client store:** RAM only until P5, then `<savegame>-silhouette.db` for instant rejoin.
+- **Client store:** `<savegame>-silhouette.db` since 0.4.88, opened lazily only while enabled and
+  offered; nearest stored tiles load first for instant rejoin.
 
 ### 4.4 Height extraction from captures
 
@@ -558,23 +581,24 @@ does (`OpenPipeline()`), so it works in singleplayer with the sweep off.
   - Bounded by reach.
   - Nearest-first requests under an in-flight cap.
   - Stale revisions and old world epochs are rejected.
-- **Coverage:** a 64x64-block cell is covered when its L0 key is in `LodWorld.HasDataSet`, the
-  same "has data" answer the renderer descends on. A tile's covered flags are recomputed when L0
-  keys inside it are added or removed, rolling and bounded (settled decision 21).
-- **Anchoring (D8).** Along the edge of covered ground, the mesher pulls filled heights toward the
-  cached terrain's own edge heights, which the client already holds. A loose interior then still
-  meets real terrain cleanly. At 60 degrees and 1,080 rows, a 20-block error costs about 2.6 px at
-  8,000 blocks and about 41 px at 500 blocks, so the join is where looseness matters.
+- **Replacement coverage (D21-D22):** data availability is not the handoff. Each installed L0-L6
+  LOD mesh publishes a compact 32-block ground mask derived from its emitted opaque top surfaces.
+  Stable vanilla readiness joins that proof. The selector uses camera position/distance only:
+  resident target, then coarser parent, then finer descendants. Unknown and partial cells remain
+  Farseer; frustum/current-frame selection never owns ground.
+- **Edge apron (D20).** Along a replacement frontier, only the nearby Farseer edge slopes down
+  through an adjustable buried apron. The broad field keeps its representative height. At 60
+  degrees and 1,080 rows, a 20-block error costs about 2.6 px at 8,000 blocks and about 41 px at
+  500 blocks, so the edge treatment is still where looseness matters.
 - **Mesher.** Arrays only, built on a worker thread and uploaded on the render thread within the
   existing completed-work budget (settled decisions 5 and 16).
   - Three resolutions per tile: 128, 32 and 8 cells per edge, chosen by on-screen cell size against
     the LOD target pixels. No fixed distances.
-  - Uncovered cells clamp to sea level (Farseer's flat sea). Covered cells keep the unclamped
-    height, so under water they lie beneath the cached seabed.
+  - Uncovered sea clamps to sea level (Farseer's flat sea).
   - Edges stitch from neighbour tiles when present.
-  - Cells next to covered cells sink a few blocks, so real terrain wins the depth test at the join
-    (Farseer's sink).
-  - Vertex = local x/z, height, covered flag.
+  - Only cells in the adjustable apron slope downward; the whole Farseer field never sinks.
+  - Replacement suppression is a fragment decision from live installed coverage, not a geometry
+    rebuild or a separately visible band.
 
 ### 4.8 Rendering and the handoff
 
@@ -590,6 +614,8 @@ does (`OpenPipeline()`), so it works in singleplayer with the sweep off.
   - terrain colour from `getSkyColorAt`, offset by height relative to sea level;
   - a tint mix;
   - a sun-and-daylight light bias;
+  - world-directed geometric-slope contrast reconstructed with shader derivatives;
+  - gentle world-distance depth separation between overlapping ridges;
   - fog and sphere fog;
   - glow;
   - a fade to sky at the reach;
@@ -600,15 +626,15 @@ does (`OpenPipeline()`), so it works in singleplayer with the sweep off.
   - Configured through `LodTerrainSamplerLayout` before the first `Use()`, because the sky and fog
     includes bind engine samplers (G130, G158).
   - The program is compiled only when silhouettes are first enabled (4.10).
-  - Colour is computed per fragment at first. Colour per vertex is an option to measure in P5, if
-    the pass is too expensive.
-- **Coverage in the shader:** a covered cell's fragment is discarded inside the cached far edge
-  minus the cross-fade band. Beyond the cached far edge, covered cells draw, because cached
-  terrain does not draw there.
+  - Slope and depth contrast are camera-independent; turning cannot change the terrain's shades.
+- **Coverage in the shader:** a fragment is discarded only when stable vanilla readiness or the
+  exact selected resident LOD mask proves replacement for its 32-block ground cell. Target-level,
+  coarser-parent and finer-descendant fallback are deterministic. Unknown coverage fails open.
 - **Handoff.** With silhouettes on, the cached terrain's existing far fade and explored-edge fade
   mix toward `silhouetteColor(worldPos)` instead of the sky colour. With silhouettes off, the
   cached shader's result is unchanged. At the join both sides paint the same colour, so there is no
-  seam.
+  seam. The adjustable buried apron hides an unresolved frontier; it does not authorize Farseer
+  over ready real terrain.
   - `lodsurfacefinish.fsh` is shared by the terrain and water programs. Every program that
     includes it must gain the new include and declare its uniforms (G161, G174).
 - **Far plane:** projection distance = max(cached far extent, silhouette extent), through the
@@ -636,13 +662,16 @@ scale:
   - Hidden when silhouettes are off.
   - Colours follow G184's one-palette rule.
 
-**Silhouettes tab** (`vintagehorizons.json`):
+**Farseer tab** (`vintagehorizons.json`; visible name since 0.4.90):
 
 - **Horizon silhouettes** on/off (default on). Off removes the feature (4.10). It does nothing
   unless the server allows it.
 - **Reach:** the same value as the scale handle.
+- **Shape dials:** Outline detail selects projected mesh resolution; Hill softness controls broad
+  worker-side feathering with debounced rolling remeshes; Apron width and depth control only the
+  edge slope (384-block default width).
 - **Look dials,** in the style of the anti-aliasing tab: tint colour and strength, sky tint, light
-  bias, fade bias, globe curve. Defaults are Farseer 1.4.0's (D11) until the owner tunes them.
+  bias, fade bias, globe curve. Defaults began from Farseer 1.4.0's terms (D11).
 - **Status line:** server availability, tiles held, fill ratio, active height source.
 
 **Terrain Ahead tab** (separate, D15):
@@ -885,17 +914,22 @@ reach arrives complete, and the log reports counts, sources and fill ratio.
 
 ### P4 - Drawing, the handoff and settings
 
-**Source/harness status:** complete in 0.4.87. No game was launched; every human gate below remains
-open (Session 96).
+**Source/harness status:** complete and iterated through 0.4.101. The owner has seen the feature,
+client rejoin and the 0.4.93 geometry reduction; rejected 0.4.94's bands, 0.4.99's camera-yaw
+ownership and 0.4.100's L0-only suppression; and made suppression over ready real terrain
+mandatory. The 0.4.101 all-level mesh-exact handoff, ridge contrast, final GLSL, controlled cost
+and weather checks remain open (Session 98).
 
 **Deliver:**
-- the mesher: three resolutions, coverage, sea rule, stitching, sink, anchoring;
+- the mesher: three resolutions, sea rule, stitching and the adjustable edge apron;
+- exact 32-block ground coverage carried by every installed L0-L6 terrain mesh;
+- stable target/parent/descendant replacement selection independent of view direction;
 - the draw pass;
-- shaders and sampler layout, with lazy compilation;
+- shaders and sampler layout, with lazy compilation and world-directed ridge contrast;
 - the fade-target switch in the cached shader;
 - the combined far projection;
-- the scale's draw-distance and Silhouettes handles;
-- the Silhouettes tab and preset wiring;
+- the scale's draw-distance and Farseer handles;
+- the Farseer tab and preset wiring;
 - the silhouette off states from 4.10.
 
 **Checks:**
@@ -904,7 +938,7 @@ open (Session 96).
 - with silhouettes off, the cached fade expression is unchanged and the silhouette program is never
   compiled;
 - GPU tile buffers are released on switch-off;
-- the coverage and discard rule as a pure function;
+- the coverage and discard rule, including target/parent/descendant ordering, as pure functions;
 - resolution choice by on-screen size;
 - the projection policy does not reset on ordinary movement (G5);
 - scale handles map to the right values and colours (G184).
@@ -914,22 +948,32 @@ open (Session 96).
 - a. At sea with no land inside the draw distance, silhouettes show toward land you know is there.
 - b. On land, a silhouette fills an unexplored gap between explored areas.
 - c. No visible line where cached terrain meets the silhouette, at the far edge or at the edge of
-  explored ground.
+  explored ground. Farseer never draws over ready vanilla/LOD terrain or below excavated vanilla
+  ground, but remains until replacement can draw; turning in place never changes ownership.
 - d. Night, rain or fog, and winter.
 - e. With silhouettes off, cached terrain looks exactly as before (A/B screenshots), and frame
   time matches the same build without the feature (4.10).
 - f. The silhouette pass's GPU time in the log, against a budget agreed with the owner.
 - g. The scale reads correctly with both new handles.
+- h. Overlapping hills retain readable slope/depth contrast while the camera turns, without bands
+  or camera-relative lighting changes.
 
 **Fallback if (c) cannot be met:** the other D1 option, silhouettes only beyond the draw distance.
 That is an owner decision, not a quiet change.
 
 ### P5 - Tuning and persistence
 
+**Status through 0.4.101:** client persistence is built and human-seen across leave/rejoin;
+effective Outline detail, Hill softness and apron controls are built; regeneration is worker-owned
+and bounded; the owner accepted the large geometry reduction visually. Exact ownership and ridge
+contrast now await human acceptance. Final defaults/cost evidence and optional island/inlet
+refinement remain. Complete player-facing Farseer naming and bundle its MIT notice before closing
+the phase.
+
 **Deliver:**
 - islands and inlets measured against real terrain on the owner's world (a dense `/vhworldgen`
   area compared with its silhouette), with refinement tuned from that;
-- reach and dials tuned by the owner;
+- reach, shape, apron and look dials tuned by the owner;
 - client tile persistence for instant rejoin, not opened while silhouettes are off.
 
 Only if P4 measured a need:
@@ -994,8 +1038,11 @@ Not started before P6 is accepted.
 | Offer latency makes the corridor late | P0.4; incremental queue; latency in the deadline margin |
 | Disk growth on busy servers | dense reach 0 by default; opt-in on dedicated; status reports disk |
 | "Off" still costs something | the 4.10 table; A/B in P4 and P6 |
-| 64-block coverage leaves gaps at explored edges | P4 observation; P5 refinement |
-| Silhouette plane visible through cached water in the fade band | covered cells keep the seabed height (4.7); P4 observation |
+| Suppression precedes drawable replacement and reveals sky | installed-mesh publication proof; unknown coverage fails open; P4 loading/unloading observation |
+| Camera direction changes ownership | stable resident state and position/distance-only selection; P4 full-yaw observation |
+| A coarser resident parent is visible while L0 is absent | L0-L6 masks plus target/parent/descendant selection; unit fixtures and P4 observation |
+| A resident coarse mesh only partly covers its footprint | mask the emitted opaque top surfaces at 32-block resolution; fail open elsewhere |
+| Silhouette plane visible through cached water in the fade band | exact live replacement coverage plus buried edge apron; P4 observation |
 | Silhouette pass too expensive at long reach | culling and on-screen resolution; P4 budget; P5 GPU path |
 | Many players multiply the server cost | per-player share; admin opt-in; caps |
 | Engine change to peek areas or message numbering | fast-tier checks pin what can be pinned; a mixed-version run each release |
@@ -1036,6 +1083,10 @@ Not started before P6 is accepted.
 - **37** - Settings has one editor. The new tabs and scale handles live in it, and each setting
   keeps its real owner.
 - **39** - Both features yield; neither ever holds the generation authority.
+- **42** - Ready real terrain owns the Farseer join; pending work does not, and only the unresolved
+  edge slopes through an adjustable apron.
+- **44-46** - Farseer remains coarse and incrementally regenerated; exact installed-mesh coverage
+  at every level owns suppression; ridge contrast is world-directed and geometry-free.
 
 ## 10. Files expected to change
 

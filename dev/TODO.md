@@ -2,41 +2,50 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.87 and the P4 runtime gate
+## Start here: 0.4.101 and the mesh-exact Farseer handoff gate
 
-Read [the silhouette handoff](plans/HANDOFF_HORIZON_SILHOUETTES.md) and
-[Session 96](sessions/SESSION_96.md), then
+Read [the Farseer handoff](plans/HANDOFF_HORIZON_SILHOUETTES.md) and
+[Session 98](sessions/SESSION_98.md), then
 [the horizon-silhouette and Terrain Ahead plan](plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
-P1-P4 are built in source through 0.4.87. No game was launched for 0.4.85-0.4.87, and the absence
-of another player deferred rather than passed the dedicated/multiplayer gate.
+P1-P4 are built and most P5 persistence/tuning work is complete through 0.4.101. The owner saw
+instant rejoin terrain, accepted the 0.4.93 geometry simplification visually, rejected 0.4.94's
+bands and global sinking, reported 0.4.99's camera-yaw regression, and showed the L0-only overlap
+left by 0.4.100. The 0.4.101 all-level mesh-exact handoff and ridge contrast have not run. The
+absence of another player still defers the dedicated/multiplayer gate.
 
 Open, in the order they block further work:
 
-- **P4 human gate, when the owner is available.** Use 0.4.87 and make only the plan's small,
-  specific observations:
-  - confirm the silhouette shader compiles and the pass draws at sea with no cached land nearby;
-  - fill an inland unexplored gap;
-  - inspect the cached join at explored edges and at cached draw distance for a line or hole;
+- **Final ownership/join gate.** Use 0.4.101 at the same screenshot locations and test each case
+  separately:
+  - hold position and turn through the whole scene; Farseer ownership must not shift with yaw;
+  - approach vanilla and LOD edges from oblique angles; no Farseer may appear over ready terrain;
+  - move quickly enough to watch replacement load and unload; Farseer must remain until the
+    replacement draws, with no sky flash or gap;
+  - look into excavated vanilla ground; no Farseer may show beneath it;
+  - compare overlapping hills; slope/depth contrast should separate ridges without bands or
+    camera-relative lighting changes.
+  This run also proves the changed GLSL compiles.
+- **Complete the remaining P4/P5 observations:**
   - look once at night, in rain/fog and in winter;
-  - check that the cached draw and silhouette reach handles read and move correctly;
-  - take an on/off A/B and record silhouette GPU time. No GPU budget has been accepted yet.
-  - If the join cannot be made clean, do not quietly narrow the feature. The plan's fallback—draw
-    only beyond cached draw distance—is an owner decision.
+  - verify the final scale typography/spacing and that the reach handle changes actual reach;
+  - tune Outline detail, Hill softness, Apron width (384-block default) and apron depth only after
+    exact suppression is accepted;
+  - take a controlled off/on A/B and record FPS/GPU time and reach/softness-change hitches. The
+    owner's earlier 550→450 observation was informal and predates the major simplification. Also
+    watch the 0.4.101 all-level coverage lookup and derivative/depth shading cost;
+  - compare islands/inlets only after the join is accepted; refine low/coastal sampling only if the
+    picture still needs it.
+- **Finish Farseer credit deliberately.** Rename remaining player-facing “Silhouette” labels,
+  settings and commands where compatibility permits, while leaving registered protocol names
+  stable. Bundle Farseer's MIT license/notice in addition to the existing source attribution.
 - **P3 integration debt.** Source and harness work is complete; live evidence is not.
   - In singleplayer, let the requested disc complete and confirm counts, sources and fill ratio.
-  - Restart and observe stored-tile read-back; provoke neither the stall nor error brake merely for
-    testing, but verify their lines if they occur.
+  - Persistence is human-seen across leave/rejoin. Still check a cold client restart, full-disc
+    read-back, and store unopened/closed behavior while Farseer is off.
   - With other players available, exercise a dedicated server explicitly opted in, its reach clamp,
     per-player fairness, disconnect/off cleanup and a current/older peer combination.
   - No `/vhworldgen` run has yet been checked for its captured columns appearing in silhouette
     tiles (the P2 integration gate).
-- **P5 after P4 acceptance:**
-  - compare islands and inlets with dense real terrain and tune the one-preview low/coastal
-    refinement only if the picture needs it;
-  - tune reach and classic-look dials with the owner;
-  - add client tile persistence for instant rejoin, unopened while silhouettes are off;
-  - pursue colour-per-vertex, shared grids/height textures or finer coverage only if P4 measures a
-    need.
 - **Then P6:** Terrain Ahead remains a separate feature with its own switch; P7 canopy follows only
   after P6 acceptance.
 - **Useful but non-blocking silhouette measurements:** mountains (the P0.3 areas were coastal),

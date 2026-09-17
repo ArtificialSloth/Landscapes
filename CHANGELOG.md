@@ -19,15 +19,69 @@ changed thousands of chunk rows that agreed between the one-thread controls. The
 therefore keeps only its Balanced behavior and does not expose thread controls or Fast/Maximum
 presets.
 
-**Known open:** let a small `/vhworldgen` job reach final durable completion; exercise offered resume
+**Known open:** human-check 0.4.101's mesh-exact Farseer suppression, no-gap loading handoff,
+camera stability, new ridge contrast and GLSL; measure its controlled GPU/off cost and
+reach/softness hitching; finish the deliberate player-facing Farseer rename and bundle its MIT
+license; let a
+small `/vhworldgen` job reach final durable completion; exercise offered resume
 across a real server restart; check dedicated-server permissions and long-run memory/disk behavior;
 make the fixed 15-second shutdown-save deadline configurable; runtime-check 0.4.69's sweep pacing
 line and the P3 after-comparison; winter temporal convergence. The owner deferred overlap/speed
-optimization on 2026-09-14. Silhouette P3/P4 runtime gates remain open: the cached join and weather
-look, scale controls, shader compilation, GPU/off A/B, restart read-back and dedicated multiplayer.
+optimization on 2026-09-14. Farseer P3/P4 runtime debt remains: weather look, shader compilation,
+GPU/off A/B, cold restart/full-disc read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.101] - 2026-09-17
+
+**Farseer edge and ownership corrections (0.4.95–0.4.101).**
+
+- Removed the visible bands introduced by the 0.4.94 buried join. The fallback terrain now keeps
+  its distant height and slopes only its near edge down toward replacement terrain.
+- Replaced exact-contact joins with an adjustable buried apron; its width defaults to 384 blocks.
+  The apron is a frontier fallback, not a reason to lower the whole Farseer field.
+- Made suppression over ready vanilla and LOD terrain mandatory, including below excavated vanilla
+  ground. Farseer remains visible until replacement geometry is actually ready, preventing an
+  early handoff from exposing sky.
+- Removed the current frustum and camera direction from ownership. The handoff no longer changes
+  merely because the player turns.
+- Every installed LOD mesh from L0 through L6 now carries a compact 32-block coverage mask derived
+  from the opaque top surfaces it actually contains. The stable selector uses the desired resident
+  level, then a coarser parent, then finer descendants; unknown or partial coverage leaves Farseer
+  present instead of overclaiming replacement.
+- Farseer terrain now has camera-independent slope lighting and gentle distance-depth shading so
+  overlapping hills and ridges do not collapse into one identical flat colour.
+
+The changes respond to three observed regressions: 0.4.94's bands, 0.4.99's camera-yaw shifting and
+gap, and 0.4.100's Farseer geometry drawn broadly over coarser LOD terrain. 0.4.101 has not yet been
+run in game, so the visual result and runtime GLSL compilation remain open. Protocol/blob/schema
+remain `1 / 4 / 6`; both silhouette stores remain schema `1`. Release and benchmark builds have
+zero warnings/errors; 25,137 assertions pass. The verified/copy-installed 41-entry package has
+SHA-256 `14CAC44C0C41DC26F48155DC2352A22E90EF123CE0C5B72F21B4734A99C8B392`.
+
+## [0.4.94] - 2026-09-16
+
+**Farseer persistence, tuning and lightweight rendering (0.4.88–0.4.94).**
+
+- Clients keep authoritative Farseer tiles in a lazy per-world store and read the nearest stored
+  terrain first on rejoin. Replies that arrive before the store path are backfilled after opening.
+- The visible Settings tab is now **Farseer**. The threshold scale has more vertical room, uses the
+  vanilla tab typography, puts distances below `L1`–`L6`, and applies reach changes live.
+- Saved **Outline detail** and **Hill softness** controls now materially change geometry selection
+  and broad worker-side feathering.
+- Farseer tiles use extremely lightweight 16/8/4-quad meshes. Frustum and back-face culling remain;
+  decode, meshing, publication, pruning, coverage checks and shape remeshing are bounded, and reach
+  changes retain useful work rather than rebuilding the disc.
+- Cached ownership is exact per 32-block chunk. At the join, the Farseer surface is buried 32
+  blocks, overlaps four blocks under real terrain, and uses a minimal skirt to prevent sky slits.
+  Only join tiles select the exact 32-block tier.
+
+The owner saw instant terrain after leave/rejoin and no visual loss from the large geometry cut.
+The final 0.4.94 join and shader have not yet been run; final GPU/FPS and hitch measurements remain
+open. Protocol/blob/schema remain `1 / 4 / 6`; both silhouette stores remain schema `1`. Release
+build: zero warnings/errors; fast tier: 25,115 assertions. The verified/copy-installed 41-entry
+package has SHA-256 `718D8EFD656CE1AB186A374539A52CA426AD637C8E33DF48ACD581C65A0B56C4`.
 
 ## [0.4.87] - 2026-09-15
 
