@@ -190,7 +190,15 @@ public partial class LodTerrainRenderer
             GL.Disable(EnableCap.ScissorTest);
             // Primary alpha is owned by the later OIT/water composition. Fog changes RGB only.
             GL.ColorMask(true, true, true, false);
-            capi.Render.GlToggleBlend(true);
+            // This framebuffer has only ColorAttachment0. The engine blend helper also
+            // configures the SSAO attachments when SSAO is enabled, which is invalid here.
+            GL.Enable(EnableCap.Blend);
+            GL.BlendEquationSeparate(BlendEquationMode.FuncAdd, BlendEquationMode.FuncAdd);
+            GL.BlendFuncSeparate(
+                BlendingFactorSrc.SrcAlpha,
+                BlendingFactorDest.OneMinusSrcAlpha,
+                BlendingFactorSrc.One,
+                BlendingFactorDest.OneMinusSrcAlpha);
 
             Vec3d cam = capi.World.Player.Entity.CameraPos;
             IShaderProgram p = silhouetteFogVolumeProg;
