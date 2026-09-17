@@ -29,7 +29,7 @@ public static class SilhouetteChecks
         MeshSeaAndCoverage(c);
         MeshResolutionsAndUnderlay(c);
         StableReplacementLevelSelection(c);
-        SeamFogMaskAndRamp(c);
+        SeamFogMaskAndVolume(c);
         ClientSettingsArithmetic(c);
         FeatureGate(c);
         GeneratorStallWatch(c);
@@ -62,7 +62,7 @@ public static class SilhouetteChecks
             "a cell with no resident level remains Farseer-owned");
     }
 
-    static void SeamFogMaskAndRamp(Check c)
+    static void SeamFogMaskAndVolume(Check c)
     {
         var replacements = LodSilhouetteCoverage.Empty;
         for (int z = 0; z < LodSilhouetteField.CoverageCellsPerEdge; z++)
@@ -91,24 +91,27 @@ public static class SilhouetteChecks
         c.Eq((byte)0, mask.StateAt(minX - 1, minZ + 5),
             "a missing neighbour tile is not invented as a Farseer/LOD seam");
 
-        float atSeamLod = LodSilhouetteSeamMask.FogWeight(lodSide, 32f, 16f);
-        float atSeamFarseer = LodSilhouetteSeamMask.FogWeight(farseerSide, 0f, 16f);
-        float halfway = LodSilhouetteSeamMask.FogWeight(farseerSide, 16f, 16f);
-        float outerEdge = LodSilhouetteSeamMask.FogWeight(farseerSide, 32f, 16f);
-        c.Near(1f, atSeamLod, 0.0001f,
-            "LOD terrain is fully fogged at the ownership edge");
-        c.Near(1f, atSeamFarseer, 0.0001f,
-            "Farseer is fully fogged at the same ownership edge");
-        c.True(halfway > 0.6f && halfway < 0.7f,
-            "heavy fog remains through the middle of each one-chunk spill");
-        c.Near(0f, outerEdge, 0.0001f,
-            "the fog fades completely at the far edge of the adjacent chunk");
+        c.Eq(LodSilhouetteField.CoverageCellsPerEdge, mask.Boundaries.Count,
+            "one unique vertical centreline edge is emitted for each chunk along the join");
+        LodSilhouetteFogMeshArrays volume = LodSilhouetteFogVolume.Build(mask, (_, _) => 100f);
+        c.Eq(mask.Boundaries.Count * LodSilhouetteFogVolume.VerticesPerEdge,
+            volume.VertexCount, "the fog volume has a bounded number of layered vertices per edge");
+        c.Eq(mask.Boundaries.Count * LodSilhouetteFogVolume.IndicesPerEdge,
+            volume.IndexCount, "the fog volume has a bounded number of layered indices per edge");
+        c.True(volume.FogWeights.Where((_, i) => (i & 1) == 0).Max() >= 0.30f,
+            "the ownership centreline carries the densest fog layer");
+        c.Near(0f, volume.FogWeights.Where((_, i) => (i & 1) == 0).Min(), 0.0001f,
+            "outer, lower and upper volume vertices fade completely instead of ending in walls");
+        float minY = Enumerable.Range(0, volume.VertexCount).Min(i => volume.Xyz[i * 3 + 1]);
+        float maxY = Enumerable.Range(0, volume.VertexCount).Max(i => volume.Xyz[i * 3 + 1]);
+        c.Near(84f, minY, 0.0001f, "fog begins below the sampled handoff ground");
+        c.Near(188f, maxY, 0.0001f, "fog hangs well above the sampled handoff ground");
 
         mask.MarkUploaded();
         c.False(mask.BeginBuild(-2, 3, -2, 3, 17),
-            "unchanged ownership reuses the uploaded packed mask");
+            "unchanged ownership reuses the uploaded fog volume");
         c.False(mask.Dirty,
-            "an unchanged frame does not upload the seam-fog texture again");
+            "an unchanged frame does not upload the seam-fog geometry again");
     }
 
     public static void RunWiring(Check c)
@@ -1443,13 +1446,15 @@ public static class SilhouetteChecks
 
     static void UploadedUniformsAreDeclared(Check c)
     {
-        string pass = Source("src", "Render", "LodTerrainRenderer.Silhouette.cs");
+        string pass = Source("src", "Render", "LodTerrainRenderer.Silhouette.cs")
+            + Source("src", "Render", "LodTerrainRenderer.SilhouetteFog.cs");
         List<string> names = Regex.Matches(pass, @"\bp\.Uniform(?:Matrix)?\(""(\w+)""")
             .Select(m => m.Groups[1].Value).Distinct().ToList();
         string engine = Path.Combine(GameAssemblies.GamePath, "assets", "game", "shaderincludes");
         string declared = Source("assets", "vintagehorizons", "shaders", "lodsilhouette.vsh")
             + Source("assets", "vintagehorizons", "shaders", "lodsilhouette.fsh")
-            + Source("assets", "vintagehorizons", "shaderincludes", "lodsilhouettefog.fsh")
+            + Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogvolume.vsh")
+            + Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogvolume.fsh")
             + File.ReadAllText(Path.Combine(engine, "fogandlight.vsh"))
             + File.ReadAllText(Path.Combine(engine, "fogandlight.fsh"));
         c.True(names.Count >= 15, $"found the silhouette pass's uniform uploads ({names.Count})");
@@ -1505,9 +1510,12 @@ public static class SilhouetteChecks
         }
 
         string pass = Source("src", "Render", "LodTerrainRenderer.Silhouette.cs").Replace("\r\n", "\n");
-        c.True(pass.Contains("silhouetteShaderOk = silhouetteProg.Compile();\n        if (silhouetteShaderOk) "
-                + "LodTerrainSamplerLayout.Configure(silhouetteProg);", StringComparison.Ordinal),
-            "the silhouette program is configured before its first use");
+        c.True(pass.Contains("bool terrainOk = silhouetteProg.Compile();", StringComparison.Ordinal)
+                && pass.Contains("bool fogOk = silhouetteFogVolumeProg.Compile();",
+                    StringComparison.Ordinal)
+                && pass.Contains("if (terrainOk) LodTerrainSamplerLayout.Configure(silhouetteProg);",
+                    StringComparison.Ordinal),
+            "both silhouette programs compile and the sampler-using terrain program is configured before use");
     }
 
     static void OffStateIsTheOldBehaviour(Check c)
@@ -1530,12 +1538,15 @@ public static class SilhouetteChecks
         string pass = Source("src", "Render", "LodTerrainRenderer.Silhouette.cs");
         string renderer = Source("src", "Render", "LodTerrainRenderer.cs");
         string waterDepth = Source("src", "Render", "LodTerrainRenderer.WaterDepth.cs");
+        string fogPass = Source("src", "Render", "LodTerrainRenderer.SilhouetteFog.cs");
+        string fogVolume = Source("src", "Render", "LodSilhouetteFogVolume.cs");
         string vertex = Source("assets", "vintagehorizons", "shaders", "lodsilhouette.vsh");
         string fragment = Source("assets", "vintagehorizons", "shaders", "lodsilhouette.fsh");
         string inputs = Source("assets", "vintagehorizons", "shaderincludes", "lodfragmentinputs.fsh");
         string finish = Source("assets", "vintagehorizons", "shaderincludes", "lodsurfacefinish.fsh");
         string color = Source("assets", "vintagehorizons", "shaderincludes", "lodsilhouettecolor.fsh");
-        string fog = Source("assets", "vintagehorizons", "shaderincludes", "lodsilhouettefog.fsh");
+        string fogVertex = Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogvolume.vsh");
+        string fogFragment = Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogvolume.fsh");
         string dialog = Source("src", "Gui", "VintageHorizonsConfigDialog.cs");
         string scale = Source("src", "Gui", "LodThresholdScaleElement.cs");
         string mod = Source("src", "VintageHorizonsModSystem.cs")
@@ -1576,15 +1587,20 @@ public static class SilhouetteChecks
             "Farseer separates overlapping ridges with camera-independent slope and depth contrast");
         c.True(waterDepth.Contains("PrepareSilhouetteFrame();", StringComparison.Ordinal)
                 && pass.Contains("silhouetteSeamMask.SetTile(", StringComparison.Ordinal)
-                && pass.Contains("ApplySilhouetteSeamFogUniforms(p);", StringComparison.Ordinal)
-                && inputs.Contains("#include lodsilhouettefog.fsh", StringComparison.Ordinal)
-                && fragment.Contains("#include lodsilhouettefog.fsh", StringComparison.Ordinal)
-                && finish.Contains("vhSilhouetteSeamFogAt(terrainPos.xz)", StringComparison.Ordinal)
-                && fragment.Contains("vhSilhouetteSeamFog(", StringComparison.Ordinal)
-                && fog.Contains("pow(clamp(ramp, 0.0, 1.0), 0.60)", StringComparison.Ordinal)
-                && fog.Contains("surfaceColor.a = mix(surfaceColor.a, 1.0, fog);",
-                    StringComparison.Ordinal),
-            "one packed ownership edge drives dense one-chunk fog on both LOD and Farseer surfaces");
+                && pass.Contains("UploadSilhouetteFogVolume(silhouettes);", StringComparison.Ordinal)
+                && renderer.Contains("DrawSilhouetteFogVolume();", StringComparison.Ordinal)
+                && fogPass.Contains("LodSilhouetteFogVolume.Build(", StringComparison.Ordinal)
+                && fogPass.Contains("GL.DepthMask(false);", StringComparison.Ordinal)
+                && fogPass.Contains("GlToggleBlend(true);", StringComparison.Ordinal)
+                && fogVolume.Contains("SpillBlocks = 48f", StringComparison.Ordinal)
+                && fogVolume.Contains("TopBlocks = 88f", StringComparison.Ordinal)
+                && fogVertex.Contains("out float fogWeight", StringComparison.Ordinal)
+                && fogFragment.Contains("vhFogFbm", StringComparison.Ordinal)
+                && fogFragment.Contains("mix(0.62, 1.42, billow)", StringComparison.Ordinal)
+                && !inputs.Contains("lodsilhouettefog.fsh", StringComparison.Ordinal)
+                && !fragment.Contains("vhSilhouetteSeamFog", StringComparison.Ordinal)
+                && !finish.Contains("vhSilhouetteSeamFog", StringComparison.Ordinal),
+            "the exact ownership edge now drives a tall noisy volume instead of painting chunk-shaped surfaces");
         c.True(field.Contains("DefaultUnderlayDepthBlocks = 64f", StringComparison.Ordinal)
                 && field.Contains("DefaultUnderlayWidthBlocks = 384f", StringComparison.Ordinal)
                 && field.Contains("EdgeDistance(", StringComparison.Ordinal)
@@ -1609,8 +1625,9 @@ public static class SilhouetteChecks
                 && pass.IndexOf("silhouetteMeshes[result.Key] = next;", StringComparison.Ordinal)
                     < pass.IndexOf("old?.Dispose();", StringComparison.Ordinal),
             "silhouette uploads have count, byte and time bounds, cull hidden back faces, and publish before disposal");
-        c.True(pass.Contains("silhouetteMeshes.Count > 0 || silhouetteSeamMaskTexture != null",
+        c.True(pass.Contains("silhouetteMeshes.Count > 0 || silhouetteFogVolumeMesh != null",
                     StringComparison.Ordinal)
+                && pass.Contains("silhouetteFogFramebuffer != 0", StringComparison.Ordinal)
                 && pass.Contains("ReleaseSilhouetteMeshes();", StringComparison.Ordinal)
                 && client.Contains("Clear();", StringComparison.Ordinal),
             "switching silhouettes off releases GPU meshes and seam fog, then drops client tile state");

@@ -2,13 +2,17 @@ using VintageHorizons.Silhouette;
 
 namespace VintageHorizons;
 
+/// <summary>One unique 32-block edge on the Farseer/real-terrain ownership frontier.</summary>
+internal readonly record struct LodSilhouetteBoundaryEdge(
+    int StartGridX, int StartGridZ, int EndGridX, int EndGridZ);
+
 /// <summary>
-/// One byte per 32-block Farseer ownership cell, packed four cells into each BGRA texel.
+/// One byte per 32-block Farseer ownership cell, packed four cells into each integer.
 ///
 /// Bit zero says a drawable Farseer tile describes the cell, bit one says ready real terrain
 /// replaces it, and bits two through five mark a west/east/north/south edge against the other
-/// owner. The fragment shader therefore needs one point sample to find the exact handoff and can
-/// fade fog through the whole cell on either side without walking neighbouring texels per pixel.
+/// owner. The unique edge list is the centreline for the layered fog volume; ownership remains
+/// exact while the visible fog can spill softly and irregularly beyond the chunk grid.
 /// </summary>
 internal sealed class LodSilhouetteSeamMask
 {
@@ -24,6 +28,7 @@ internal sealed class LodSilhouetteSeamMask
 
     int[] texels = Array.Empty<int>();
     readonly List<(int CellX, int CellZ)> tiles = new();
+    readonly List<LodSilhouetteBoundaryEdge> boundaries = new();
     ulong signature;
     bool hasSignature;
 
@@ -38,7 +43,8 @@ internal sealed class LodSilhouetteSeamMask
     public bool Dirty { get; private set; }
     public bool TextureSizeChanged { get; private set; }
     public int BoundaryCells { get; private set; }
-    public bool HasEdges => BoundaryCells > 0;
+    public IReadOnlyList<LodSilhouetteBoundaryEdge> Boundaries => boundaries;
+    public bool HasEdges => boundaries.Count > 0;
 
     /// <summary>
     /// Starts a complete visible-window rebuild. False means the exact same tile set and
@@ -84,6 +90,7 @@ internal sealed class LodSilhouetteSeamMask
         signature = contentSignature;
         hasSignature = true;
         tiles.Clear();
+        boundaries.Clear();
         BoundaryCells = 0;
         Active = true;
         Dirty = true;
@@ -134,6 +141,14 @@ internal sealed class LodSilhouetteSeamMask
                     if (OppositeOwner(cellX, cellZ + 1, replaced)) state |= SouthEdge;
                     if ((state & EdgeMask) != 0) BoundaryCells++;
                     WriteState(cellX, cellZ, state);
+                    // Keep one copy of each shared edge. Its opposite cell carries the matching
+                    // west/north flag, so east and south are sufficient for the complete set.
+                    if ((state & EastEdge) != 0)
+                        boundaries.Add(new LodSilhouetteBoundaryEdge(
+                            cellX + 1, cellZ, cellX + 1, cellZ + 1));
+                    if ((state & SouthEdge) != 0)
+                        boundaries.Add(new LodSilhouetteBoundaryEdge(
+                            cellX, cellZ + 1, cellX + 1, cellZ + 1));
                 }
             }
         }
@@ -166,22 +181,6 @@ internal sealed class LodSilhouetteSeamMask
         texels[index] = (texels[index] & ~(0xFF << shift)) | (state << shift);
     }
 
-    /// <summary>CPU mirror of the GLSL ramp, used by focused checks.</summary>
-    public static float FogWeight(byte state, float localX, float localZ,
-        float widthBlocks = CellBlocks)
-    {
-        if ((state & Available) == 0 || (state & EdgeMask) == 0) return 0f;
-        float width = Math.Max(1f, widthBlocks);
-        float distance = width;
-        if ((state & WestEdge) != 0) distance = Math.Min(distance, localX);
-        if ((state & EastEdge) != 0) distance = Math.Min(distance, CellBlocks - localX);
-        if ((state & NorthEdge) != 0) distance = Math.Min(distance, localZ);
-        if ((state & SouthEdge) != 0) distance = Math.Min(distance, CellBlocks - localZ);
-        float t = Math.Clamp(distance / width, 0f, 1f);
-        float smooth = t * t * (3f - 2f * t);
-        return MathF.Pow(Math.Clamp(1f - smooth, 0f, 1f), 0.60f);
-    }
-
     public void MarkUploaded()
     {
         Dirty = false;
@@ -194,6 +193,7 @@ internal sealed class LodSilhouetteSeamMask
         Dirty = false;
         hasSignature = false;
         tiles.Clear();
+        boundaries.Clear();
     }
 
     public void Clear()

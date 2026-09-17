@@ -27,8 +27,6 @@ uniform vec4 silhouetteColorTint;
 uniform float silhouetteLightLevelBias;
 uniform float silhouetteFadeBias;
 uniform int silhouetteSeaLevel;
-uniform int tileMinCellX;
-uniform int tileMinCellZ;
 uniform vec4 replacementCells0;
 uniform vec4 replacementCells1;
 uniform vec4 replacementCells2;
@@ -47,7 +45,6 @@ layout(location = 3) out vec4 outGPosition;
 #include skycolor.fsh
 #include underwatereffects.fsh
 #include lodsilhouettecolor.fsh
-#include lodsilhouettefog.fsh
 
 bool vhSilhouetteReplaced(ivec2 cell)
 {
@@ -106,14 +103,6 @@ void main()
     float fade = min(1.0, vhSilhouetteBias(dist, silhouetteFadeBias));
     outColor = mix(terraColor, skyColor, fade);
     outGlow = mix(terraGlow, skyGlow, fade);
-
-    ivec2 localCell = clamp(
-        ivec2(floor(tilePos / 32.0)), ivec2(0), ivec2(15));
-    float silhouetteSeamFog = vhSilhouetteSeamFog(
-        ivec2(tileMinCellX, tileMinCellZ) + localCell,
-        clamp(tilePos - vec2(localCell) * 32.0, 0.0, 32.0));
-    vhApplySilhouetteSeamFog(
-        silhouetteSeamFog, rgbaFog.rgb, outColor, outGlow);
 
 #if SSAOLEVEL > 0
     outGPosition = vec4(0.0);

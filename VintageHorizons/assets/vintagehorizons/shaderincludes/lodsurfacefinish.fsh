@@ -160,13 +160,6 @@
         outGlow = vec4(0.0);
     }
 
-    // Fog the exact Farseer handoff after every ordinary terrain, water, atmospheric-fog and
-    // outer-fade operation. Both owners therefore converge on one opaque fog colour at the
-    // boundary, then recover over exactly one 32-block chunk on their respective sides.
-    float silhouetteSeamFog = vhSilhouetteSeamFogAt(terrainPos.xz);
-    vhApplySilhouetteSeamFog(
-        silhouetteSeamFog, rgbaFog.rgb, outColor, outGlow);
-
 #if SSAOLEVEL > 0
     outGPosition = vec4(0.0);
     outGNormal = vec4(0.0);

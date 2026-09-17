@@ -29,6 +29,7 @@ public partial class LodTerrainRenderer
         public required float MinY;
         public required float MaxY;
         public required LodSilhouetteCoverage ApronCells;
+        public required float[] FogHeightGrid;
 
         public MeshRef At(int quadsPerEdge) => quadsPerEdge switch
         {
@@ -60,20 +61,14 @@ public partial class LodTerrainRenderer
     readonly List<SilhouetteFrameDraw> silhouetteFrameDraws = new();
     readonly LodFrustum silhouetteFrustum = new();
     readonly LodSilhouetteSeamMask silhouetteSeamMask = new();
-    LoadedTexture? silhouetteSeamMaskTexture;
     IShaderProgram? silhouetteProg;
     bool silhouetteShaderOk;
     bool silhouetteShaderWanted;
-    bool silhouetteSeamFogActive;
-    bool silhouetteSeamFogFailed;
     int silhouetteMeshEpoch = -1;
 
     const int SilhouetteUploadsPerFrame = 4;
     const long SilhouetteUploadBytesPerFrame = 2 * 1024 * 1024;
     const double SilhouetteUploadMillisecondsPerFrame = 2.0;
-    const float SilhouetteSeamFogWidthBlocks = LodSilhouetteSeamMask.CellBlocks;
-    const float SilhouetteSeamFogStrength = 1f;
-
     // Farseer 1.4.0's client defaults: the classic look (owner decision D11) until they are tuned.
     internal float SilhouetteSkyTint = 5.0f;
     internal Vec4f SilhouetteColorTint = new(0.26f, 0.29f, 0.45f, 0.40f);
@@ -98,7 +93,7 @@ public partial class LodTerrainRenderer
 
     internal string SilhouetteShaderState => !silhouetteShaderWanted
         ? "not compiled (never switched on)"
-        : silhouetteSeamFogFailed ? "FAILED to upload seam fog, silhouettes are off for this session"
+        : silhouetteFogVolumeFailed ? "FAILED to draw seam fog, silhouettes are off for this session"
         : silhouetteShaderOk ? "ok" : "FAILED to compile, silhouettes are off for this session";
 
     /// <summary>
@@ -120,8 +115,15 @@ public partial class LodTerrainRenderer
         silhouetteProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         silhouetteProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram("lodsilhouette", silhouetteProg);
-        silhouetteShaderOk = silhouetteProg.Compile();
-        if (silhouetteShaderOk) LodTerrainSamplerLayout.Configure(silhouetteProg);
+        silhouetteFogVolumeProg = capi.Shader.NewShaderProgram();
+        silhouetteFogVolumeProg.AssetDomain = "vintagehorizons";
+        silhouetteFogVolumeProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
+        silhouetteFogVolumeProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
+        capi.Shader.RegisterFileShaderProgram("lodsilhouettefogvolume", silhouetteFogVolumeProg);
+        bool terrainOk = silhouetteProg.Compile();
+        bool fogOk = silhouetteFogVolumeProg.Compile();
+        silhouetteShaderOk = terrainOk && fogOk;
+        if (terrainOk) LodTerrainSamplerLayout.Configure(silhouetteProg);
         if (silhouetteShaderOk)
         {
             capi.Logger.Notification(
@@ -138,8 +140,8 @@ public partial class LodTerrainRenderer
 
     /// <summary>
     /// Uploads and selects the Farseer tiles before cached terrain draws, then publishes one
-    /// packed ownership-edge texture shared by both shaders. Preparing first is what lets the
-    /// LOD side receive the same fog as the Farseer side in the current frame.
+    /// layered fog mesh over the exact current ownership edge. Preparing first keeps the fog
+    /// centreline synchronized with the geometry that will draw later in the same frame.
     /// </summary>
     void PrepareSilhouetteFrame()
     {
@@ -147,7 +149,8 @@ public partial class LodTerrainRenderer
         LodSilhouetteClient? silhouettes = Silhouettes;
         if (silhouettes == null || !silhouettes.Enabled)
         {
-            if (silhouetteMeshes.Count > 0 || silhouetteSeamMaskTexture != null)
+            if (silhouetteMeshes.Count > 0 || silhouetteFogVolumeMesh != null
+                || silhouetteFogFramebuffer != 0)
                 ReleaseSilhouetteMeshes();
             return;
         }
@@ -162,7 +165,7 @@ public partial class LodTerrainRenderer
         if (silhouetteMeshes.Count == 0)
         {
             silhouetteSeamMask.Deactivate();
-            silhouetteSeamFogActive = false;
+            DisposeSilhouetteFogMesh();
             return;
         }
         if (!silhouetteShaderWanted)
@@ -171,7 +174,8 @@ public partial class LodTerrainRenderer
             LoadSilhouetteShader();
         }
         if (!silhouetteShaderOk || silhouetteProg == null || silhouetteProg.LoadError
-            || silhouetteSeamFogFailed)
+            || silhouetteFogVolumeProg == null || silhouetteFogVolumeProg.LoadError
+            || silhouetteFogVolumeFailed)
         {
             ReleaseSilhouetteMeshes();
             // A compile/load/fog failure is a session failure, not a plausible no-fog fallback.
@@ -184,7 +188,7 @@ public partial class LodTerrainRenderer
         if (rapi.FrameWidth == 0)
         {
             silhouetteSeamMask.Deactivate();
-            silhouetteSeamFogActive = false;
+            DisposeSilhouetteFogMesh();
             return;
         }
 
@@ -229,7 +233,7 @@ public partial class LodTerrainRenderer
         if (silhouetteFrameDraws.Count == 0)
         {
             silhouetteSeamMask.Deactivate();
-            silhouetteSeamFogActive = false;
+            DisposeSilhouetteFogMesh();
             return;
         }
 
@@ -242,8 +246,10 @@ public partial class LodTerrainRenderer
                 silhouetteSeamMask.SetTile(
                     draw.Mesh.TileX, draw.Mesh.TileZ, draw.Replacements);
             silhouetteSeamMask.CompleteBuild();
+            UploadSilhouetteFogVolume(silhouettes);
         }
-        UploadSilhouetteSeamMask(silhouettes);
+        else if (silhouetteSeamMask.HasEdges && silhouetteFogVolumeMesh == null)
+            UploadSilhouetteFogVolume(silhouettes);
     }
 
     void DrawSilhouettes()
@@ -290,16 +296,11 @@ public partial class LodTerrainRenderer
         p.Uniform("silhouetteLightLevelBias", SilhouetteLightLevelBias);
         p.Uniform("silhouetteFadeBias", SilhouetteFadeBias);
         p.Uniform("silhouetteSeaLevel", capi.World.SeaLevel);
-        ApplySilhouetteSeamFogUniforms(p);
 
         foreach (SilhouetteFrameDraw draw in silhouetteFrameDraws)
         {
             SilhouetteGpuMesh mesh = draw.Mesh;
             p.Uniform("tileOrigin", new Vec3f(draw.RelX, (float)-cam.Y, draw.RelZ));
-            p.Uniform("tileMinCellX",
-                mesh.TileX * LodSilhouetteField.CoverageCellsPerEdge);
-            p.Uniform("tileMinCellZ",
-                mesh.TileZ * LodSilhouetteField.CoverageCellsPerEdge);
             p.Uniform("replacementCells0", CoverageWords(draw.Replacements, 0));
             p.Uniform("replacementCells1", CoverageWords(draw.Replacements, 4));
             p.Uniform("replacementCells2", CoverageWords(draw.Replacements, 8));
@@ -345,78 +346,6 @@ public partial class LodTerrainRenderer
     static ulong RotateLeft(ulong value, int bits) =>
         (value << bits) | (value >> (64 - bits));
 
-    void UploadSilhouetteSeamMask(LodSilhouetteClient silhouettes)
-    {
-        if (!silhouetteSeamMask.Active)
-        {
-            silhouetteSeamFogActive = false;
-            return;
-        }
-        if (!silhouetteSeamMask.HasEdges)
-        {
-            if (silhouetteSeamMask.TextureSizeChanged)
-                DisposeSilhouetteSeamMaskTexture();
-            silhouetteSeamMask.MarkUploaded();
-            silhouetteSeamFogActive = false;
-            return;
-        }
-
-        try
-        {
-            if (silhouetteSeamMask.TextureSizeChanged)
-                DisposeSilhouetteSeamMaskTexture();
-            if (silhouetteSeamMask.Dirty || silhouetteSeamMaskTexture == null)
-            {
-                LoadedTexture texture = silhouetteSeamMaskTexture
-                    ?? new LoadedTexture(capi, 0,
-                        silhouetteSeamMask.TextureWidth, silhouetteSeamMask.TextureHeight);
-                UploadOwnTexture(silhouetteSeamMask.Texels,
-                    SilhouetteSeamMaskUnit, ref texture);
-                if (texture.TextureId <= 0)
-                    throw new InvalidOperationException(
-                        "Farseer seam fog texture was not created.");
-                silhouetteSeamMaskTexture = texture;
-                silhouetteSeamMask.MarkUploaded();
-            }
-            silhouetteSeamFogActive = true;
-        }
-        catch (Exception e)
-        {
-            silhouetteSeamFogFailed = true;
-            capi.Logger.Error(
-                "[VintageHorizons] Farseer seam fog failed; Farseer is off for this session "
-                + "instead of drawing an exposed join: {0}", e.Message);
-            silhouettes.SetEnabled(false);
-            ReleaseSilhouetteMeshes();
-        }
-    }
-
-    void ApplySilhouetteSeamFogUniforms(IShaderProgram p)
-    {
-        bool active = silhouetteSeamFogActive && silhouetteSeamMask.Active
-            && silhouetteSeamMaskTexture != null;
-        p.Uniform("silhouetteSeamFogEnabled", active ? 1 : 0);
-        p.Uniform("silhouetteSeamMinCellX", silhouetteSeamMask.MinCellX);
-        p.Uniform("silhouetteSeamMinCellZ", silhouetteSeamMask.MinCellZ);
-        p.Uniform("silhouetteSeamWidthCells", silhouetteSeamMask.WidthCells);
-        p.Uniform("silhouetteSeamDepthCells", silhouetteSeamMask.DepthCells);
-        p.Uniform("silhouetteSeamTextureWidth", silhouetteSeamMask.TextureWidth);
-        p.Uniform("silhouetteSeamFogWidthBlocks", SilhouetteSeamFogWidthBlocks);
-        p.Uniform("silhouetteSeamFogStrength", SilhouetteSeamFogStrength);
-        if (active)
-            p.BindTexture2D("silhouetteSeamMask",
-                silhouetteSeamMaskTexture!.TextureId, SilhouetteSeamMaskUnit);
-    }
-
-    void DisposeSilhouetteSeamMaskTexture()
-    {
-        if (silhouetteSeamMaskTexture == null) return;
-        try { capi.Render.GLDeleteTexture(silhouetteSeamMaskTexture.TextureId); }
-        catch { /* teardown must not throw over a texture the driver already released */ }
-        silhouetteSeamMaskTexture = null;
-        silhouetteSeamFogActive = false;
-    }
-
     void UploadSilhouetteMeshes(LodSilhouetteClient silhouettes)
     {
         long start = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -461,6 +390,7 @@ public partial class LodTerrainRenderer
                     MinY = result.Meshes.MinY,
                     MaxY = result.Meshes.MaxY,
                     ApronCells = result.Meshes.CoveredCells,
+                    FogHeightGrid = ExtractSilhouetteFogHeights(result.Meshes.High),
                 };
             }
             catch (Exception e)
@@ -491,6 +421,17 @@ public partial class LodTerrainRenderer
         data.Uv = mesh.EdgeDistanceUv;
         data.Indices = mesh.Indices;
         return capi.Render.UploadMesh(data);
+    }
+
+    static float[] ExtractSilhouetteFogHeights(LodSilhouetteMeshArrays high)
+    {
+        int edge = LodSilhouetteField.CoverageCellsPerEdge + 1;
+        if (high.QuadsPerEdge != LodSilhouetteField.HighQuadsPerEdge
+            || high.VertexCount != edge * edge)
+            throw new InvalidOperationException("Farseer high mesh no longer matches its 32-block grid.");
+        var heights = new float[high.VertexCount];
+        for (int i = 0; i < heights.Length; i++) heights[i] = high.Xyz[i * 3 + 1];
+        return heights;
     }
 
     // GLSL integer-vector uniforms are unsafe through this engine API (G16). Four exact 16-bit
@@ -637,6 +578,6 @@ public partial class LodTerrainRenderer
         silhouetteMeshes.Clear();
         silhouetteFrameDraws.Clear();
         silhouetteSeamMask.Clear();
-        DisposeSilhouetteSeamMaskTexture();
+        ReleaseSilhouetteFogVolume();
     }
 }
