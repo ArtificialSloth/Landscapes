@@ -160,6 +160,14 @@ public class VintageHorizonsConfig
         Silhouette.LodSilhouetteField.DefaultUnderlayWidthBlocks;
     public float SilhouetteOutlineDetail = Silhouette.LodSilhouetteField.DefaultOutlineDetail;
     public float SilhouetteHillSoftness = Silhouette.LodSilhouetteField.DefaultHillSoftness;
+    public float SilhouetteFogStrength = LodSilhouetteFogVolume.DefaultStrength;
+    public float SilhouetteFogCoverage = LodSilhouetteFogVolume.DefaultCoverage;
+    public float SilhouetteFogSpillBlocks = LodSilhouetteFogVolume.DefaultSpillBlocks;
+    public float SilhouetteFogHeightBlocks = LodSilhouetteFogVolume.DefaultHeightBlocks;
+    public float SilhouetteFogFloorDepthBlocks = LodSilhouetteFogVolume.DefaultFloorDepthBlocks;
+    public float SilhouetteFogBillowSizeBlocks = LodSilhouetteFogVolume.DefaultBillowSizeBlocks;
+    public float SilhouetteFogDriftSpeed = LodSilhouetteFogVolume.DefaultDriftSpeed;
+    public float SilhouetteFogLayerDetail = LodSilhouetteFogVolume.DefaultLayerDetail;
 
     /// <summary>
     /// Choose L1-L6 from the field of view and render resolution instead of the fixed

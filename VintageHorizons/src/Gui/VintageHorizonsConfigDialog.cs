@@ -360,6 +360,38 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("sil-softness", "Hill softness", "Rounds and feathers the distant height profile. Higher produces broader rolling hills; regeneration is gradual and runs off-thread.",
             0, 100, 1, s => (int)MathF.Round(s.HillSoftness * 100),
             (s, v) => s with { HillSoftness = v / 100f }, HillSoftnessLabel),
+        new("sil-fog-strength", "Fog density", "Overall opacity of the fog hiding the Farseer/LOD ownership seam. Zero disables the fog pass.",
+            0, 200, 5, s => (int)MathF.Round(s.FogStrength * 100),
+            (s, v) => s with { FogStrength = v / 100f }, v => $"{v}%"),
+        new("sil-fog-coverage", "Fog coverage", "Minimum veil left inside low-density noise pockets. Lower makes more open gaps; higher hides the seam more continuously.",
+            0, 100, 5, s => (int)MathF.Round(s.FogCoverage * 100),
+            (s, v) => s with { FogCoverage = v / 100f }, v => $"{v}%"),
+        new("sil-fog-spill", "Fog spread", "How far the fog spills across both Farseer and real LOD terrain from the ownership seam.",
+            (int)LodSilhouetteFogVolume.MinSpillBlocks,
+            (int)LodSilhouetteFogVolume.MaxSpillBlocks, 4,
+            s => (int)MathF.Round(s.FogSpillBlocks),
+            (s, v) => s with { FogSpillBlocks = v }, v => $"{v} blocks"),
+        new("sil-fog-height", "Fog height", "How high the seam fog hangs above the sampled terrain surface.",
+            (int)LodSilhouetteFogVolume.MinHeightBlocks,
+            (int)LodSilhouetteFogVolume.MaxHeightBlocks, 4,
+            s => (int)MathF.Round(s.FogHeightBlocks),
+            (s, v) => s with { FogHeightBlocks = v }, v => $"{v} blocks"),
+        new("sil-fog-floor", "Fog floor depth", "How far the fog extends below the sampled terrain surface to cover cliffs, shores and vertical gaps.",
+            (int)LodSilhouetteFogVolume.MinFloorDepthBlocks,
+            (int)LodSilhouetteFogVolume.MaxFloorDepthBlocks, 2,
+            s => (int)MathF.Round(s.FogFloorDepthBlocks),
+            (s, v) => s with { FogFloorDepthBlocks = v }, v => $"{v} blocks"),
+        new("sil-fog-billow", "Fog billow size", "World-space size of the broad cloud shapes. Higher gives larger, slower-changing banks; lower gives smaller wisps.",
+            (int)LodSilhouetteFogVolume.MinBillowSizeBlocks,
+            (int)LodSilhouetteFogVolume.MaxBillowSizeBlocks, 4,
+            s => (int)MathF.Round(s.FogBillowSizeBlocks),
+            (s, v) => s with { FogBillowSizeBlocks = v }, v => $"{v} blocks"),
+        new("sil-fog-drift", "Fog drift speed", "How quickly the world-anchored billows move. Zero keeps their shape stationary.",
+            0, 300, 5, s => (int)MathF.Round(s.FogDriftSpeed * 100),
+            (s, v) => s with { FogDriftSpeed = v / 100f }, v => $"{v}%"),
+        new("sil-fog-detail", "Fog layer detail", "Number of crossing layers used to give the fog depth. Higher hides individual planes better but costs more geometry and blending.",
+            0, 100, 1, s => (int)MathF.Round(s.FogLayerDetail * 100),
+            (s, v) => s with { FogLayerDetail = v / 100f }, FogLayerDetailLabel),
     };
 
     static string OutlineDetailLabel(int value) => $"{value}% " + (value switch
@@ -377,6 +409,14 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         <= 45 => "Gentle",
         <= 75 => "Rolling",
         _ => "Very soft",
+    });
+
+    static string FogLayerDetailLabel(int value) => $"{value}% " + (value switch
+    {
+        <= 20 => "Low",
+        <= 55 => "Medium",
+        <= 80 => "High",
+        _ => "Highest",
     });
 
     void ComposeDialog()
@@ -633,15 +673,17 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddDynamicText(SilhouetteReachLabel(), CairoFont.WhiteSmallText(),
             ElementBounds.Fixed(700, Y(122), 160, 24), "silhouette-reach-label");
 
-        const double columnWidth = 400;
-        const double sliderWidth = 280;
+        const double columnWidth = 250;
+        const double columnGap = 29;
+        const double sliderWidth = 160;
+        const double rowHeight = 78;
         for (int i = 0; i < SilhouetteRows.Length; i++)
         {
             SilhouetteRow row = SilhouetteRows[i];
-            int column = i & 1;
-            int line = i / 2;
-            double x = Margin + column * (columnWidth + 28);
-            double y = 172 + line * 94;
+            int column = i % 3;
+            int line = i / 3;
+            double x = Margin + column * (columnWidth + columnGap);
+            double y = 172 + line * rowHeight;
             composer.AddStaticText(row.Title, CairoFont.WhiteSmallishText(),
                 ElementBounds.Fixed(x, Y(y), columnWidth, 26));
             composer.AddHoverText(row.Tip, CairoFont.WhiteSmallText(), 330,
@@ -655,7 +697,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         composer.AddStaticText(
             "Changes on this tab show immediately. Off releases received tiles and all Farseer GPU meshes.",
-            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(714), Width - 2 * Margin, 28));
+            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(724), Width - 2 * Margin, 28));
     }
 
     void SetSilhouetteValues()

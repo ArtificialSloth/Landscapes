@@ -94,11 +94,13 @@ public static class SilhouetteChecks
         c.Eq(LodSilhouetteField.CoverageCellsPerEdge, mask.Boundaries.Count,
             "one unique vertical centreline edge is emitted for each chunk along the join");
         LodSilhouetteFogMeshArrays volume = LodSilhouetteFogVolume.Build(mask, (_, _) => 100f);
-        c.Eq(mask.Boundaries.Count * LodSilhouetteFogVolume.VerticesPerEdge,
+        c.Eq(mask.Boundaries.Count * volume.VerticesPerEdge,
             volume.VertexCount, "the fog volume has a bounded number of layered vertices per edge");
-        c.Eq(mask.Boundaries.Count * LodSilhouetteFogVolume.IndicesPerEdge,
+        c.Eq(mask.Boundaries.Count * volume.IndicesPerEdge,
             volume.IndexCount, "the fog volume has a bounded number of layered indices per edge");
-        c.True(volume.FogWeights.Where((_, i) => (i & 1) == 0).Max() >= 0.30f,
+        c.True(volume.VerticalLayers >= 7 && volume.HorizontalLayers >= 5,
+            "the default fog has enough crossing layers to avoid five obvious vertical cards");
+        c.True(volume.FogWeights.Where((_, i) => (i & 1) == 0).Max() >= 0.15f,
             "the ownership centreline carries the densest fog layer");
         c.Near(0f, volume.FogWeights.Where((_, i) => (i & 1) == 0).Min(), 0.0001f,
             "outer, lower and upper volume vertices fade completely instead of ending in walls");
@@ -1403,6 +1405,14 @@ public static class SilhouetteChecks
             UnderlayWidthBlocks = float.PositiveInfinity,
             OutlineDetail = float.PositiveInfinity,
             HillSoftness = float.NaN,
+            FogStrength = float.NaN,
+            FogCoverage = -1,
+            FogSpillBlocks = float.PositiveInfinity,
+            FogHeightBlocks = -1,
+            FogFloorDepthBlocks = float.NaN,
+            FogBillowSizeBlocks = float.PositiveInfinity,
+            FogDriftSpeed = -1,
+            FogLayerDetail = 2,
         }).Normalize();
         c.Eq(32768, repaired.ReachBlocks, "a hand-edited reach is normalized");
         c.Near(defaults.SkyTint, repaired.SkyTint, 1e-6, "a non-finite dial returns to its default");
@@ -1414,6 +1424,15 @@ public static class SilhouetteChecks
                 repaired.UnderlayDepthBlocks, repaired.UnderlayWidthBlocks,
                 repaired.OutlineDetail, repaired.HillSoftness),
             "bias, underlay, geometry and softness settings avoid invalid inputs and curves");
+        c.Eq((defaults.FogStrength, 0f, defaults.FogSpillBlocks,
+                LodSilhouetteFogVolume.MinHeightBlocks, defaults.FogFloorDepthBlocks,
+                defaults.FogBillowSizeBlocks,
+                LodSilhouetteFogVolume.MinDriftSpeed, LodSilhouetteFogVolume.MaxLayerDetail),
+            (repaired.FogStrength, repaired.FogCoverage, repaired.FogSpillBlocks,
+                repaired.FogHeightBlocks, repaired.FogFloorDepthBlocks,
+                repaired.FogBillowSizeBlocks, repaired.FogDriftSpeed,
+                repaired.FogLayerDetail),
+            "all fog dials repair non-finite values and clamp hand-edited config ranges");
     }
 
     static string Source(params string[] parts) => File.ReadAllText(
@@ -1592,11 +1611,15 @@ public static class SilhouetteChecks
                 && fogPass.Contains("LodSilhouetteFogVolume.Build(", StringComparison.Ordinal)
                 && fogPass.Contains("GL.DepthMask(false);", StringComparison.Ordinal)
                 && fogPass.Contains("GlToggleBlend(true);", StringComparison.Ordinal)
-                && fogVolume.Contains("SpillBlocks = 48f", StringComparison.Ordinal)
-                && fogVolume.Contains("TopBlocks = 88f", StringComparison.Ordinal)
+                && fogPass.Contains("GL.ColorMask(true, true, true, false);", StringComparison.Ordinal)
+                && fogPass.Contains("p.BindTexture2D(\"sceneDepth\"", StringComparison.Ordinal)
+                && !fogPass.Contains("FramebufferAttachment.DepthAttachment", StringComparison.Ordinal)
+                && fogVolume.Contains("DefaultSpillBlocks = 48f", StringComparison.Ordinal)
+                && fogVolume.Contains("DefaultHeightBlocks = 88f", StringComparison.Ordinal)
                 && fogVertex.Contains("out float fogWeight", StringComparison.Ordinal)
                 && fogFragment.Contains("vhFogFbm", StringComparison.Ordinal)
-                && fogFragment.Contains("mix(0.62, 1.42, billow)", StringComparison.Ordinal)
+                && fogFragment.Contains("uniform sampler2D sceneDepth", StringComparison.Ordinal)
+                && fogFragment.Contains("fogCoverage", StringComparison.Ordinal)
                 && !inputs.Contains("lodsilhouettefog.fsh", StringComparison.Ordinal)
                 && !fragment.Contains("vhSilhouetteSeamFog", StringComparison.Ordinal)
                 && !finish.Contains("vhSilhouetteSeamFog", StringComparison.Ordinal),
@@ -1649,8 +1672,16 @@ public static class SilhouetteChecks
                 && dialog.Contains("LOD edge depth", StringComparison.Ordinal)
                 && dialog.Contains("LOD edge width", StringComparison.Ordinal)
                 && dialog.Contains("Geometry detail", StringComparison.Ordinal)
-                && dialog.Contains("Hill softness", StringComparison.Ordinal),
-            "the settings editor names the feature for Farseer and separates geometry cost from hill softness");
+                && dialog.Contains("Hill softness", StringComparison.Ordinal)
+                && dialog.Contains("Fog density", StringComparison.Ordinal)
+                && dialog.Contains("Fog coverage", StringComparison.Ordinal)
+                && dialog.Contains("Fog spread", StringComparison.Ordinal)
+                && dialog.Contains("Fog height", StringComparison.Ordinal)
+                && dialog.Contains("Fog floor depth", StringComparison.Ordinal)
+                && dialog.Contains("Fog billow size", StringComparison.Ordinal)
+                && dialog.Contains("Fog drift speed", StringComparison.Ordinal)
+                && dialog.Contains("Fog layer detail", StringComparison.Ordinal),
+            "the Farseer editor exposes every seam-fog appearance and layer dial");
         c.True(scale.Contains("DrawMarker", StringComparison.Ordinal)
                 && scale.Contains("SilhouetteMarker", StringComparison.Ordinal)
                 && scale.Contains("silhouettesEnabled", StringComparison.Ordinal)
@@ -1674,6 +1705,10 @@ public static class SilhouetteChecks
             "SilhouetteGlobeEffect", "SilhouetteUnderlayDepthBlocks",
             "SilhouetteUnderlayWidthBlocks",
             "SilhouetteOutlineDetail", "SilhouetteHillSoftness",
+            "SilhouetteFogStrength", "SilhouetteFogCoverage", "SilhouetteFogSpillBlocks",
+            "SilhouetteFogHeightBlocks", "SilhouetteFogFloorDepthBlocks",
+            "SilhouetteFogBillowSizeBlocks", "SilhouetteFogDriftSpeed",
+            "SilhouetteFogLayerDetail",
         })
             c.True(mod.Contains(name, StringComparison.Ordinal), name + " is persisted in client config");
     }

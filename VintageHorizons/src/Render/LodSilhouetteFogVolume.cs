@@ -11,6 +11,13 @@ internal sealed class LodSilhouetteFogMeshArrays
     public required int OriginBlockX;
     public required int OriginBlockZ;
     public required int BoundaryEdges;
+    public required int VerticalLayers;
+    public required int HorizontalLayers;
+
+    public int VerticesPerEdge =>
+        (VerticalLayers + HorizontalLayers) * LodSilhouetteFogVolume.VerticesPerLayer;
+    public int IndicesPerEdge =>
+        (VerticalLayers + HorizontalLayers) * LodSilhouetteFogVolume.IndicesPerLayer;
 }
 
 /// <summary>
@@ -21,30 +28,54 @@ internal sealed class LodSilhouetteFogMeshArrays
 /// </summary>
 internal static class LodSilhouetteFogVolume
 {
-    public const int VerticalLayers = 5;
-    public const int HorizontalLayers = 4;
     public const int VerticesPerLayer = 6;
     public const int IndicesPerLayer = 12;
-    public const int VerticesPerEdge =
-        (VerticalLayers + HorizontalLayers) * VerticesPerLayer;
-    public const int IndicesPerEdge =
-        (VerticalLayers + HorizontalLayers) * IndicesPerLayer;
-    public const float SpillBlocks = 48f;
-    public const float TopBlocks = 88f;
 
-    static readonly float[] VerticalOffsets = [-36f, -18f, 0f, 18f, 36f];
-    static readonly float[] VerticalWeights = [0.04f, 0.14f, 0.30f, 0.14f, 0.04f];
-    static readonly float[] HorizontalHeights = [0f, 16f, 38f, 68f];
-    static readonly float[] HorizontalWeights = [0.20f, 0.14f, 0.08f, 0.035f];
+    public const float MinStrength = 0f;
+    public const float MaxStrength = 2f;
+    public const float DefaultStrength = 1f;
+    public const float MinCoverage = 0f;
+    public const float MaxCoverage = 1f;
+    public const float DefaultCoverage = 0.25f;
+    public const float MinSpillBlocks = 8f;
+    public const float MaxSpillBlocks = 128f;
+    public const float DefaultSpillBlocks = 48f;
+    public const float MinHeightBlocks = 16f;
+    public const float MaxHeightBlocks = 192f;
+    public const float DefaultHeightBlocks = 88f;
+    public const float MinFloorDepthBlocks = 0f;
+    public const float MaxFloorDepthBlocks = 64f;
+    public const float DefaultFloorDepthBlocks = 16f;
+    public const float MinBillowSizeBlocks = 12f;
+    public const float MaxBillowSizeBlocks = 160f;
+    public const float DefaultBillowSizeBlocks = 50f;
+    public const float MinDriftSpeed = 0f;
+    public const float MaxDriftSpeed = 3f;
+    public const float DefaultDriftSpeed = 1f;
+    public const float MinLayerDetail = 0f;
+    public const float MaxLayerDetail = 1f;
+    public const float DefaultLayerDetail = 0.67f;
 
     public static LodSilhouetteFogMeshArrays Build(
-        LodSilhouetteSeamMask mask, Func<int, int, float> heightAtGrid)
+        LodSilhouetteSeamMask mask, Func<int, int, float> heightAtGrid,
+        float spillBlocks = DefaultSpillBlocks,
+        float heightBlocks = DefaultHeightBlocks,
+        float floorDepthBlocks = DefaultFloorDepthBlocks,
+        float layerDetail = DefaultLayerDetail)
     {
         ArgumentNullException.ThrowIfNull(mask);
         ArgumentNullException.ThrowIfNull(heightAtGrid);
+        spillBlocks = Dial(spillBlocks, DefaultSpillBlocks, MinSpillBlocks, MaxSpillBlocks);
+        heightBlocks = Dial(heightBlocks, DefaultHeightBlocks, MinHeightBlocks, MaxHeightBlocks);
+        floorDepthBlocks = Dial(floorDepthBlocks, DefaultFloorDepthBlocks,
+            MinFloorDepthBlocks, MaxFloorDepthBlocks);
+        layerDetail = Dial(layerDetail, DefaultLayerDetail, MinLayerDetail, MaxLayerDetail);
+        (int verticalLayers, int horizontalLayers) = LayerCounts(layerDetail);
+        int verticesPerEdge = checked((verticalLayers + horizontalLayers) * VerticesPerLayer);
+        int indicesPerEdge = checked((verticalLayers + horizontalLayers) * IndicesPerLayer);
         int edges = mask.Boundaries.Count;
-        int vertexCount = checked(edges * VerticesPerEdge);
-        int indexCount = checked(edges * IndicesPerEdge);
+        int vertexCount = checked(edges * verticesPerEdge);
+        int indexCount = checked(edges * indicesPerEdge);
         var xyz = new float[checked(vertexCount * 3)];
         var weights = new float[checked(vertexCount * 2)];
         var indices = new int[indexCount];
@@ -64,41 +95,49 @@ internal static class LodSilhouetteFogVolume
             float normalX = alongZ ? 1f : 0f;
             float normalZ = alongZ ? 0f : 1f;
 
-            for (int layer = 0; layer < VerticalLayers; layer++)
+            for (int layer = 0; layer < verticalLayers; layer++)
             {
-                float offset = VerticalOffsets[layer];
-                float density = VerticalWeights[layer];
+                float across = verticalLayers == 1
+                    ? 0f : layer / (verticalLayers - 1f) * 2f - 1f;
+                float offset = across * spillBlocks * 0.78f;
+                // More cards reduce the per-card weight. Their sum stays nearly stable while
+                // higher detail makes individual planes much harder to perceive.
+                float density = 0.16f * MathF.Exp(-2.4f * across * across)
+                    * 7f / verticalLayers;
                 int first = vertex;
-                AddVertex(startX + normalX * offset, startY - 16f,
+                AddVertex(startX + normalX * offset, startY - floorDepthBlocks,
                     startZ + normalZ * offset, 0f);
-                AddVertex(endX + normalX * offset, endY - 16f,
+                AddVertex(endX + normalX * offset, endY - floorDepthBlocks,
                     endZ + normalZ * offset, 0f);
-                AddVertex(startX + normalX * offset, startY + 8f,
+                float innerHeight = Math.Min(8f, heightBlocks * 0.16f);
+                AddVertex(startX + normalX * offset, startY + innerHeight,
                     startZ + normalZ * offset, density);
-                AddVertex(endX + normalX * offset, endY + 8f,
+                AddVertex(endX + normalX * offset, endY + innerHeight,
                     endZ + normalZ * offset, density);
-                AddVertex(startX + normalX * offset, startY + TopBlocks,
+                AddVertex(startX + normalX * offset, startY + heightBlocks,
                     startZ + normalZ * offset, 0f);
-                AddVertex(endX + normalX * offset, endY + TopBlocks,
+                AddVertex(endX + normalX * offset, endY + heightBlocks,
                     endZ + normalZ * offset, 0f);
                 AddStrip(first);
             }
 
-            for (int layer = 0; layer < HorizontalLayers; layer++)
+            for (int layer = 0; layer < horizontalLayers; layer++)
             {
-                float height = HorizontalHeights[layer];
-                float density = HorizontalWeights[layer];
+                float up = horizontalLayers == 1 ? 0f : layer / (horizontalLayers - 1f);
+                float height = up * up * heightBlocks * 0.80f;
+                float density = (0.18f * MathF.Pow(1f - up, 1.2f) + 0.025f)
+                    * 5f / horizontalLayers;
                 int first = vertex;
-                AddVertex(startX - normalX * SpillBlocks, startY + height,
-                    startZ - normalZ * SpillBlocks, 0f);
-                AddVertex(endX - normalX * SpillBlocks, endY + height,
-                    endZ - normalZ * SpillBlocks, 0f);
+                AddVertex(startX - normalX * spillBlocks, startY + height,
+                    startZ - normalZ * spillBlocks, 0f);
+                AddVertex(endX - normalX * spillBlocks, endY + height,
+                    endZ - normalZ * spillBlocks, 0f);
                 AddVertex(startX, startY + height, startZ, density);
                 AddVertex(endX, endY + height, endZ, density);
-                AddVertex(startX + normalX * SpillBlocks, startY + height,
-                    startZ + normalZ * SpillBlocks, 0f);
-                AddVertex(endX + normalX * SpillBlocks, endY + height,
-                    endZ + normalZ * SpillBlocks, 0f);
+                AddVertex(startX + normalX * spillBlocks, startY + height,
+                    startZ + normalZ * spillBlocks, 0f);
+                AddVertex(endX + normalX * spillBlocks, endY + height,
+                    endZ + normalZ * spillBlocks, 0f);
                 AddStrip(first);
             }
         }
@@ -113,6 +152,8 @@ internal static class LodSilhouetteFogVolume
             OriginBlockX = originX,
             OriginBlockZ = originZ,
             BoundaryEdges = edges,
+            VerticalLayers = verticalLayers,
+            HorizontalLayers = horizontalLayers,
         };
 
         void AddVertex(float x, float y, float z, float fogWeight)
@@ -142,6 +183,17 @@ internal static class LodSilhouetteFogVolume
             indices[index++] = d;
         }
     }
+
+    internal static (int Vertical, int Horizontal) LayerCounts(float detail)
+    {
+        detail = Dial(detail, DefaultLayerDetail, MinLayerDetail, MaxLayerDetail);
+        int vertical = 3 + 2 * (int)MathF.Round(detail * 3f);
+        int horizontal = 2 + (int)MathF.Round(detail * 4f);
+        return (vertical, horizontal);
+    }
+
+    static float Dial(float value, float fallback, float min, float max) =>
+        Math.Clamp(float.IsFinite(value) ? value : fallback, min, max);
 
     static float FiniteHeight(float value) => float.IsFinite(value) ? value : 0f;
 }

@@ -248,7 +248,8 @@ public partial class LodTerrainRenderer
             silhouetteSeamMask.CompleteBuild();
             UploadSilhouetteFogVolume(silhouettes);
         }
-        else if (silhouetteSeamMask.HasEdges && silhouetteFogVolumeMesh == null)
+        else if (silhouetteSeamMask.HasEdges
+            && (silhouetteFogVolumeMesh == null || silhouetteFogGeometryDirty))
             UploadSilhouetteFogVolume(silhouettes);
     }
 

@@ -18,7 +18,15 @@ internal readonly record struct LodSilhouetteSettings(
     float UnderlayDepthBlocks,
     float UnderlayWidthBlocks,
     float OutlineDetail,
-    float HillSoftness)
+    float HillSoftness,
+    float FogStrength,
+    float FogCoverage,
+    float FogSpillBlocks,
+    float FogHeightBlocks,
+    float FogFloorDepthBlocks,
+    float FogBillowSizeBlocks,
+    float FogDriftSpeed,
+    float FogLayerDetail)
 {
     public const int MinReachBlocks = 1024;
     public const int MaxReachBlocks = 32768;
@@ -38,7 +46,15 @@ internal readonly record struct LodSilhouetteSettings(
         UnderlayDepthBlocks: Silhouette.LodSilhouetteField.DefaultUnderlayDepthBlocks,
         UnderlayWidthBlocks: Silhouette.LodSilhouetteField.DefaultUnderlayWidthBlocks,
         OutlineDetail: Silhouette.LodSilhouetteField.DefaultOutlineDetail,
-        HillSoftness: Silhouette.LodSilhouetteField.DefaultHillSoftness);
+        HillSoftness: Silhouette.LodSilhouetteField.DefaultHillSoftness,
+        FogStrength: LodSilhouetteFogVolume.DefaultStrength,
+        FogCoverage: LodSilhouetteFogVolume.DefaultCoverage,
+        FogSpillBlocks: LodSilhouetteFogVolume.DefaultSpillBlocks,
+        FogHeightBlocks: LodSilhouetteFogVolume.DefaultHeightBlocks,
+        FogFloorDepthBlocks: LodSilhouetteFogVolume.DefaultFloorDepthBlocks,
+        FogBillowSizeBlocks: LodSilhouetteFogVolume.DefaultBillowSizeBlocks,
+        FogDriftSpeed: LodSilhouetteFogVolume.DefaultDriftSpeed,
+        FogLayerDetail: LodSilhouetteFogVolume.DefaultLayerDetail);
 
     public static int ClampReach(int blocks)
     {
@@ -65,7 +81,25 @@ internal readonly record struct LodSilhouetteSettings(
             Silhouette.LodSilhouetteField.MinUnderlayWidthBlocks,
             Silhouette.LodSilhouetteField.MaxUnderlayWidthBlocks),
         Silhouette.LodSilhouetteField.NormalizeOutlineDetail(OutlineDetail),
-        Silhouette.LodSilhouetteField.NormalizeHillSoftness(HillSoftness));
+        Silhouette.LodSilhouetteField.NormalizeHillSoftness(HillSoftness),
+        Dial(FogStrength, Default.FogStrength,
+            LodSilhouetteFogVolume.MinStrength, LodSilhouetteFogVolume.MaxStrength),
+        Dial(FogCoverage, Default.FogCoverage,
+            LodSilhouetteFogVolume.MinCoverage, LodSilhouetteFogVolume.MaxCoverage),
+        Dial(FogSpillBlocks, Default.FogSpillBlocks,
+            LodSilhouetteFogVolume.MinSpillBlocks, LodSilhouetteFogVolume.MaxSpillBlocks),
+        Dial(FogHeightBlocks, Default.FogHeightBlocks,
+            LodSilhouetteFogVolume.MinHeightBlocks, LodSilhouetteFogVolume.MaxHeightBlocks),
+        Dial(FogFloorDepthBlocks, Default.FogFloorDepthBlocks,
+            LodSilhouetteFogVolume.MinFloorDepthBlocks,
+            LodSilhouetteFogVolume.MaxFloorDepthBlocks),
+        Dial(FogBillowSizeBlocks, Default.FogBillowSizeBlocks,
+            LodSilhouetteFogVolume.MinBillowSizeBlocks,
+            LodSilhouetteFogVolume.MaxBillowSizeBlocks),
+        Dial(FogDriftSpeed, Default.FogDriftSpeed,
+            LodSilhouetteFogVolume.MinDriftSpeed, LodSilhouetteFogVolume.MaxDriftSpeed),
+        Dial(FogLayerDetail, Default.FogLayerDetail,
+            LodSilhouetteFogVolume.MinLayerDetail, LodSilhouetteFogVolume.MaxLayerDetail));
 
     static float Dial(float value, float fallback, float min, float max) =>
         Math.Clamp(float.IsFinite(value) ? value : fallback, min, max);

@@ -16,7 +16,17 @@ public partial class LodTerrainRenderer
     int silhouetteFogBoundaryEdges;
     int silhouetteFogFramebuffer;
     int silhouetteFogAttachedColor;
-    int silhouetteFogAttachedDepth;
+    bool silhouetteFogGeometryDirty;
+    int silhouetteFogErrorChecksLeft = 240;
+    bool silhouetteFogReportedPendingError;
+    internal float SilhouetteFogStrength = LodSilhouetteFogVolume.DefaultStrength;
+    internal float SilhouetteFogCoverage = LodSilhouetteFogVolume.DefaultCoverage;
+    internal float SilhouetteFogSpillBlocks = LodSilhouetteFogVolume.DefaultSpillBlocks;
+    internal float SilhouetteFogHeightBlocks = LodSilhouetteFogVolume.DefaultHeightBlocks;
+    internal float SilhouetteFogFloorDepthBlocks = LodSilhouetteFogVolume.DefaultFloorDepthBlocks;
+    internal float SilhouetteFogBillowSizeBlocks = LodSilhouetteFogVolume.DefaultBillowSizeBlocks;
+    internal float SilhouetteFogDriftSpeed = LodSilhouetteFogVolume.DefaultDriftSpeed;
+    internal float SilhouetteFogLayerDetail = LodSilhouetteFogVolume.DefaultLayerDetail;
     readonly LodOpenGlStateApi silhouetteFogStateApi = new();
     readonly int[] silhouetteFogViewport = new int[4];
     readonly bool[] silhouetteFogColorMask = new bool[4];
@@ -33,13 +43,16 @@ public partial class LodTerrainRenderer
         try
         {
             LodSilhouetteFogMeshArrays arrays = LodSilhouetteFogVolume.Build(
-                silhouetteSeamMask, SilhouetteFogHeightAtGrid);
+                silhouetteSeamMask, SilhouetteFogHeightAtGrid,
+                SilhouetteFogSpillBlocks, SilhouetteFogHeightBlocks,
+                SilhouetteFogFloorDepthBlocks, SilhouetteFogLayerDetail);
             MeshRef next = UploadSilhouetteFogMesh(arrays);
             MeshRef? old = silhouetteFogVolumeMesh;
             silhouetteFogVolumeMesh = next;
             silhouetteFogOriginX = arrays.OriginBlockX;
             silhouetteFogOriginZ = arrays.OriginBlockZ;
             silhouetteFogBoundaryEdges = arrays.BoundaryEdges;
+            silhouetteFogGeometryDirty = false;
             silhouetteSeamMask.MarkUploaded();
             old?.Dispose();
         }
@@ -52,6 +65,25 @@ public partial class LodTerrainRenderer
             silhouettes.SetEnabled(false);
             ReleaseSilhouetteMeshes();
         }
+    }
+
+    internal void SetSilhouetteFogSettings(
+        float strength, float coverage, float spillBlocks, float heightBlocks,
+        float floorDepthBlocks, float billowSizeBlocks, float driftSpeed, float layerDetail)
+    {
+        bool geometryChanged = SilhouetteFogSpillBlocks != spillBlocks
+            || SilhouetteFogHeightBlocks != heightBlocks
+            || SilhouetteFogFloorDepthBlocks != floorDepthBlocks
+            || SilhouetteFogLayerDetail != layerDetail;
+        SilhouetteFogStrength = strength;
+        SilhouetteFogCoverage = coverage;
+        SilhouetteFogSpillBlocks = spillBlocks;
+        SilhouetteFogHeightBlocks = heightBlocks;
+        SilhouetteFogFloorDepthBlocks = floorDepthBlocks;
+        SilhouetteFogBillowSizeBlocks = billowSizeBlocks;
+        SilhouetteFogDriftSpeed = driftSpeed;
+        SilhouetteFogLayerDetail = layerDetail;
+        silhouetteFogGeometryDirty |= geometryChanged;
     }
 
     MeshRef UploadSilhouetteFogMesh(LodSilhouetteFogMeshArrays mesh)
@@ -105,19 +137,36 @@ public partial class LodTerrainRenderer
         LodSilhouetteClient? silhouettes = Silhouettes;
         if (silhouettes == null || !silhouettes.Enabled || silhouetteFogVolumeFailed
             || silhouetteFogVolumeMesh == null || silhouetteFogBoundaryEdges == 0
-            || silhouetteFogVolumeProg == null || silhouetteFogVolumeProg.LoadError) return;
+            || silhouetteFogVolumeProg == null || silhouetteFogVolumeProg.LoadError
+            || SilhouetteFogStrength <= 0f) return;
         FrameBufferRef? primary = PrimaryFrameBuffer();
         if (primary == null) return;
 
+        bool checkErrors = silhouetteFogErrorChecksLeft > 0;
+        string advisory = "";
+        if (checkErrors && !LodGlErrorIsolation.TryEstablishBaseline(
+                () => (int)GL.GetError(), out advisory, out string baselineFailure))
+        {
+            StopSilhouetteFog(silhouettes, baselineFailure);
+            return;
+        }
+        if (checkErrors && advisory.Length > 0 && !silhouetteFogReportedPendingError)
+        {
+            silhouetteFogReportedPendingError = true;
+            capi.Logger.Warning(
+                "[VintageHorizons] {0} before volumetric seam fog; those errors came from an "
+                + "earlier renderer.", advisory);
+        }
+
         LodGlStateSnapshot state = LodGlStateGuard.Capture(silhouetteFogStateApi,
-            LodGlStateMask.Program | LodGlStateMask.Framebuffers);
+            LodGlStateMask.Program | LodGlStateMask.Framebuffers
+            | LodGlStateMask.Texture2DUnit0);
         IShaderProgram? incoming = ShaderProgramBase.CurrentShaderProgram;
         bool depthTest = GL.IsEnabled(EnableCap.DepthTest);
         bool depthWrite = GL.GetBoolean(GetPName.DepthWritemask);
         bool blend = GL.IsEnabled(EnableCap.Blend);
         bool cull = GL.IsEnabled(EnableCap.CullFace);
         bool scissor = GL.IsEnabled(EnableCap.ScissorTest);
-        int depthFunc = GL.GetInteger(GetPName.DepthFunc);
         int blendSrcRgb = GL.GetInteger(GetPName.BlendSrcRgb);
         int blendDstRgb = GL.GetInteger(GetPName.BlendDstRgb);
         int blendSrcAlpha = GL.GetInteger(GetPName.BlendSrcAlpha);
@@ -132,12 +181,15 @@ public partial class LodTerrainRenderer
             incoming?.Stop();
             AttachSilhouetteFogFramebuffer(primary);
             GL.Viewport(0, 0, primary.Width, primary.Height);
-            GL.Enable(EnableCap.DepthTest);
-            GL.DepthFunc(DepthFunction.Lequal);
+            // This target deliberately has no depth attachment. Sampling the engine's depth
+            // texture keeps it read-only and avoids attaching live engine storage to a second
+            // framebuffer, which raised InvalidOperation every frame in 0.4.103.
+            GL.Disable(EnableCap.DepthTest);
             GL.DepthMask(false);
             GL.Disable(EnableCap.CullFace);
             GL.Disable(EnableCap.ScissorTest);
-            GL.ColorMask(true, true, true, true);
+            // Primary alpha is owned by the later OIT/water composition. Fog changes RGB only.
+            GL.ColorMask(true, true, true, false);
             capi.Render.GlToggleBlend(true);
 
             Vec3d cam = capi.World.Player.Entity.CameraPos;
@@ -155,7 +207,11 @@ public partial class LodTerrainRenderer
             p.Uniform("globeEffect", SilhouetteGlobeEffect);
             p.Uniform("rgbaFogIn", capi.Ambient.BlendedFogColor);
             p.Uniform("fogTime", (capi.World.ElapsedMilliseconds % 1_000_000L) / 1000f);
-            p.Uniform("fogStrength", 1f);
+            p.Uniform("fogStrength", SilhouetteFogStrength);
+            p.Uniform("fogCoverage", SilhouetteFogCoverage);
+            p.Uniform("fogBillowSizeBlocks", SilhouetteFogBillowSizeBlocks);
+            p.Uniform("fogDriftSpeed", SilhouetteFogDriftSpeed);
+            p.BindTexture2D("sceneDepth", primary.DepthTextureId, 0);
             capi.Render.RenderMesh(silhouetteFogVolumeMesh);
             p.Stop();
         }
@@ -174,7 +230,6 @@ public partial class LodTerrainRenderer
                 (BlendingFactorSrc)blendSrcAlpha, (BlendingFactorDest)blendDstAlpha);
             if (blend) GL.Enable(EnableCap.Blend); else GL.Disable(EnableCap.Blend);
             if (depthTest) GL.Enable(EnableCap.DepthTest); else GL.Disable(EnableCap.DepthTest);
-            GL.DepthFunc((DepthFunction)depthFunc);
             GL.DepthMask(depthWrite);
             if (cull) GL.Enable(EnableCap.CullFace); else GL.Disable(EnableCap.CullFace);
             if (scissor) GL.Enable(EnableCap.ScissorTest); else GL.Disable(EnableCap.ScissorTest);
@@ -192,11 +247,25 @@ public partial class LodTerrainRenderer
             }
         }
 
+        if (checkErrors)
+        {
+            silhouetteFogErrorChecksLeft--;
+            ErrorCode error = GL.GetError();
+            if (error != ErrorCode.NoError)
+                failure ??= new InvalidOperationException(
+                    "volumetric seam fog raised OpenGL " + error);
+        }
+
         if (failure == null) return;
+        StopSilhouetteFog(silhouettes, failure.Message);
+    }
+
+    void StopSilhouetteFog(LodSilhouetteClient silhouettes, string reason)
+    {
         silhouetteFogVolumeFailed = true;
         capi.Logger.Error(
             "[VintageHorizons] volumetric Farseer seam fog stopped; Farseer is off for this "
-            + "session instead of drawing an exposed join: {0}", failure.Message);
+            + "session instead of corrupting later render stages: {0}", reason);
         silhouettes.SetEnabled(false);
         ReleaseSilhouetteMeshes();
     }
@@ -206,19 +275,17 @@ public partial class LodTerrainRenderer
         if (silhouetteFogFramebuffer == 0) silhouetteFogFramebuffer = GL.GenFramebuffer();
         GL.BindFramebuffer(FramebufferTarget.Framebuffer, silhouetteFogFramebuffer);
         int color = primary.ColorTextureIds[0];
-        int depth = primary.DepthTextureId;
-        if (silhouetteFogAttachedColor == color && silhouetteFogAttachedDepth == depth) return;
+        // Reattach every frame. The engine can delete and recreate a target with the same name;
+        // an old FBO attachment does not follow a recycled integer name to the new texture.
         GL.FramebufferTexture2D(FramebufferTarget.Framebuffer,
             FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, color, 0);
-        GL.FramebufferTexture2D(FramebufferTarget.Framebuffer,
-            FramebufferAttachment.DepthAttachment, TextureTarget.Texture2D, depth, 0);
+        if (silhouetteFogAttachedColor == color) return;
         GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
         GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
         FramebufferErrorCode status = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
         if (status != FramebufferErrorCode.FramebufferComplete)
             throw new InvalidOperationException("volumetric seam fog framebuffer incomplete: " + status);
         silhouetteFogAttachedColor = color;
-        silhouetteFogAttachedDepth = depth;
     }
 
     void DisposeSilhouetteFogMesh()
@@ -240,6 +307,6 @@ public partial class LodTerrainRenderer
             // Teardown must continue over objects the driver already released.
         }
         silhouetteFogFramebuffer = 0;
-        silhouetteFogAttachedColor = silhouetteFogAttachedDepth = 0;
+        silhouetteFogAttachedColor = 0;
     }
 }

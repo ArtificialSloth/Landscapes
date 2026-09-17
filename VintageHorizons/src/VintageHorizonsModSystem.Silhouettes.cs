@@ -122,7 +122,10 @@ public partial class VintageHorizonsModSystem
             + $"{renderer.SilhouetteOutlineDetail * 100f:0}% geometry detail, "
             + $"{s.HillSoftness * 100f:0}% hill softness, "
             + $"{renderer.SilhouetteUnderlayDepthBlocks:0} deep/"
-            + $"{renderer.SilhouetteUnderlayWidthBlocks:0} wide edge apron). "
+            + $"{renderer.SilhouetteUnderlayWidthBlocks:0} wide edge apron; fog "
+            + $"{renderer.SilhouetteFogStrength * 100f:0}% density, "
+            + $"{renderer.SilhouetteFogSpillBlocks:0} blocks each side, "
+            + $"{renderer.SilhouetteFogHeightBlocks:0} blocks high). "
             + $"Shader: {renderer.SilhouetteShaderState}.";
     }
 
@@ -140,7 +143,15 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteUnderlayDepthBlocks,
         config.SilhouetteUnderlayWidthBlocks,
         config.SilhouetteOutlineDetail,
-        config.SilhouetteHillSoftness).Normalize();
+        config.SilhouetteHillSoftness,
+        config.SilhouetteFogStrength,
+        config.SilhouetteFogCoverage,
+        config.SilhouetteFogSpillBlocks,
+        config.SilhouetteFogHeightBlocks,
+        config.SilhouetteFogFloorDepthBlocks,
+        config.SilhouetteFogBillowSizeBlocks,
+        config.SilhouetteFogDriftSpeed,
+        config.SilhouetteFogLayerDetail).Normalize();
 
     LodSilhouetteSettings CurrentSilhouetteSettings()
     {
@@ -159,7 +170,15 @@ public partial class VintageHorizonsModSystem
             renderer.SilhouetteUnderlayDepthBlocks,
             renderer.SilhouetteUnderlayWidthBlocks,
             renderer.SilhouetteOutlineDetail,
-            silhouettes.HillSoftness).Normalize();
+            silhouettes.HillSoftness,
+            renderer.SilhouetteFogStrength,
+            renderer.SilhouetteFogCoverage,
+            renderer.SilhouetteFogSpillBlocks,
+            renderer.SilhouetteFogHeightBlocks,
+            renderer.SilhouetteFogFloorDepthBlocks,
+            renderer.SilhouetteFogBillowSizeBlocks,
+            renderer.SilhouetteFogDriftSpeed,
+            renderer.SilhouetteFogLayerDetail).Normalize();
     }
 
     void PreviewSilhouetteSettings(LodSilhouetteSettings value)
@@ -180,6 +199,10 @@ public partial class VintageHorizonsModSystem
         renderer.SilhouetteUnderlayDepthBlocks = value.UnderlayDepthBlocks;
         renderer.SilhouetteUnderlayWidthBlocks = value.UnderlayWidthBlocks;
         renderer.SilhouetteOutlineDetail = value.OutlineDetail;
+        renderer.SetSilhouetteFogSettings(
+            value.FogStrength, value.FogCoverage, value.FogSpillBlocks,
+            value.FogHeightBlocks, value.FogFloorDepthBlocks,
+            value.FogBillowSizeBlocks, value.FogDriftSpeed, value.FogLayerDetail);
         silhouettes.SetReachBlocks(value.ReachBlocks);
         silhouettes.SetHillSoftness(value.HillSoftness);
         silhouettes.SetEnabled(value.Enabled);
@@ -203,5 +226,13 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteUnderlayWidthBlocks = value.UnderlayWidthBlocks;
         config.SilhouetteOutlineDetail = value.OutlineDetail;
         config.SilhouetteHillSoftness = value.HillSoftness;
+        config.SilhouetteFogStrength = value.FogStrength;
+        config.SilhouetteFogCoverage = value.FogCoverage;
+        config.SilhouetteFogSpillBlocks = value.FogSpillBlocks;
+        config.SilhouetteFogHeightBlocks = value.FogHeightBlocks;
+        config.SilhouetteFogFloorDepthBlocks = value.FogFloorDepthBlocks;
+        config.SilhouetteFogBillowSizeBlocks = value.FogBillowSizeBlocks;
+        config.SilhouetteFogDriftSpeed = value.FogDriftSpeed;
+        config.SilhouetteFogLayerDetail = value.FogLayerDetail;
     }
 }
