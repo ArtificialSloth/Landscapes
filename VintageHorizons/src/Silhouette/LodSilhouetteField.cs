@@ -4,7 +4,7 @@ namespace VintageHorizons.Silhouette;
 public sealed class LodSilhouetteMeshArrays
 {
     public required float[] Xyz;
-    public required float[] UnderlayUv;
+    public required float[] EdgeDistanceUv;
     public required int[] Indices;
     public required int VertexCount;
     public required int IndexCount;
@@ -12,7 +12,7 @@ public sealed class LodSilhouetteMeshArrays
     public required float MinY;
     public required float MaxY;
 
-    public long ByteCount => ((long)Xyz.Length + UnderlayUv.Length) * sizeof(float)
+    public long ByteCount => ((long)Xyz.Length + EdgeDistanceUv.Length) * sizeof(float)
         + (long)Indices.Length * sizeof(int);
 }
 
@@ -81,6 +81,7 @@ public sealed class LodSilhouetteMeshSet
     public required LodSilhouetteMeshArrays High;
     public required LodSilhouetteMeshArrays Medium;
     public required LodSilhouetteMeshArrays Low;
+    public required LodSilhouetteCoverage CoveredCells;
 
     public long ByteCount => High.ByteCount + Medium.ByteCount + Low.ByteCount;
     public float MinY => Math.Min(High.MinY, Math.Min(Medium.MinY, Low.MinY));
@@ -131,7 +132,9 @@ public static class LodSilhouetteField
     public const float MinUnderlayDepthBlocks = 0f;
     public const float MaxUnderlayDepthBlocks = 128f;
     public const float DefaultUnderlayDepthBlocks = 64f;
-    public const float UnderlaySlopeWidthBlocks = 384f;
+    public const float MinUnderlayWidthBlocks = 32f;
+    public const float MaxUnderlayWidthBlocks = 1024f;
+    public const float DefaultUnderlayWidthBlocks = 384f;
 
     public static bool IsLatticeChunk(int cx, int cz) =>
         Mod(cx, LatticeChunks) == LatticeOffsetChunks && Mod(cz, LatticeChunks) == LatticeOffsetChunks;
@@ -223,6 +226,7 @@ public static class LodSilhouetteField
             High = high,
             Medium = medium,
             Low = low,
+            CoveredCells = coveredCells,
         };
     }
 
@@ -249,7 +253,7 @@ public static class LodSilhouetteField
         int spacing = cellStep * LodSilhouetteTile.CellBlocks;
         int verts = quadsPerEdge + 1;
         var xyz = new float[verts * verts * 3];
-        var underlayUv = new float[verts * verts * 2];
+        var edgeDistanceUv = new float[verts * verts * 2];
         var valid = new bool[verts * verts];
 
         float RawHeight(int a, int b)
@@ -299,7 +303,7 @@ public static class LodSilhouetteField
                 xyz[v * 3] = blockX;
                 xyz[v * 3 + 1] = y;
                 xyz[v * 3 + 2] = blockZ;
-                underlayUv[v * 2] = UnderlayWeight(
+                edgeDistanceUv[v * 2] = EdgeDistance(
                     coverageNeighbourhood, blockX, blockZ);
                 minY = Math.Min(minY, y);
                 maxY = Math.Max(maxY, y);
@@ -329,7 +333,7 @@ public static class LodSilhouetteField
         return new LodSilhouetteMeshArrays
         {
             Xyz = xyz,
-            UnderlayUv = underlayUv,
+            EdgeDistanceUv = edgeDistanceUv,
             Indices = indices,
             VertexCount = verts * verts,
             IndexCount = indices.Length,
@@ -354,10 +358,10 @@ public static class LodSilhouetteField
     }
 
     /// <summary>
-    /// One at the cached frontier and zero outside its short apron. The shader multiplies this
-    /// stable per-vertex shape by the player's live depth dial, so adjusting it does not remesh.
+    /// Distance from the cached frontier, capped at the widest permitted apron. The shader turns
+    /// it into a slope using the player's live width and depth dials, so neither one remeshes.
     /// </summary>
-    static float UnderlayWeight(LodSilhouetteCoverage[,] masks, int blockX, int blockZ)
+    static float EdgeDistance(LodSilhouetteCoverage[,] masks, int blockX, int blockZ)
     {
         float nearestSquared = float.MaxValue;
         for (int tileZ = 0; tileZ < 3; tileZ++)
@@ -388,10 +392,8 @@ public static class LodSilhouetteField
             }
         }
 
-        if (nearestSquared == float.MaxValue) return 0f;
-        float t = Math.Clamp(MathF.Sqrt(nearestSquared) / UnderlaySlopeWidthBlocks, 0f, 1f);
-        float smooth = t * t * (3f - 2f * t);
-        return 1f - smooth;
+        if (nearestSquared == float.MaxValue) return MaxUnderlayWidthBlocks;
+        return Math.Min(MaxUnderlayWidthBlocks, MathF.Sqrt(nearestSquared));
     }
 
     static void VertexCoverage(LodSilhouetteCoverage mask, int blockX, int blockZ,

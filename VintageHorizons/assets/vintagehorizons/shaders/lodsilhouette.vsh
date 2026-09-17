@@ -26,6 +26,7 @@ uniform float farViewDistance;
 uniform float globeStart;
 uniform float globeEffect;
 uniform float underlaySinkBlocks;
+uniform float underlayWidthBlocks;
 
 out vec4 worldPos;
 out float yLevel;
@@ -33,6 +34,7 @@ out vec4 rgbaFog;
 out float dist;
 out float fogAmount;
 out float nightVisionStrengthv;
+out vec2 tilePos;
 
 #include vertexflagbits.ash
 #include colorutil.ash
@@ -43,16 +45,21 @@ out float nightVisionStrengthv;
 void main()
 {
     yLevel = vertexPositionIn.y;
+    tilePos = vertexPositionIn.xz;
     worldPos = vec4(vertexPositionIn + tileOrigin, 1.0);
     worldPos = applyGlobalWarping(worldPos);
 
     float horizontal = length(worldPos.xz);
-    float distStart = viewDistance * 0.785;
+    // Farseer has no draw authority anywhere vanilla terrain can draw. Starting at the full
+    // approved view distance also prevents excavation from exposing a second surface below it.
+    float distStart = viewDistance;
     dist = (horizontal - distStart) / max(1.0, farViewDistance - distStart - 512.0);
 
     // Only the apron next to actual cached coverage slopes down. The rest of the Farseer surface
     // stays at its sampled height instead of becoming a camera-centred sunken plateau.
-    worldPos.y -= underlaySinkBlocks * clamp(underlayDataIn.x, 0.0, 1.0);
+    float underlay = 1.0 - smoothstep(
+        0.0, max(1.0, underlayWidthBlocks), underlayDataIn.x);
+    worldPos.y -= underlaySinkBlocks * underlay;
 
     // Farseer's original near sink: five blocks at the start of the fade, none past 2% of it.
     worldPos.y -= max(0.0, mix(5.0, 0.0, dist * 50.0));

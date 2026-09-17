@@ -28,6 +28,10 @@ public partial class LodTerrainRenderer
         public required int TileZ;
         public required float MinY;
         public required float MaxY;
+        public required Vec4f CoveredCells0;
+        public required Vec4f CoveredCells1;
+        public required Vec4f CoveredCells2;
+        public required Vec4f CoveredCells3;
 
         public MeshRef At(int quadsPerEdge) => quadsPerEdge switch
         {
@@ -69,6 +73,7 @@ public partial class LodTerrainRenderer
     internal float SilhouetteFadeBias = 0.4f;
     internal float SilhouetteGlobeEffect = 0.05f;
     internal float SilhouetteUnderlayDepthBlocks = LodSilhouetteField.DefaultUnderlayDepthBlocks;
+    internal float SilhouetteUnderlayWidthBlocks = LodSilhouetteField.DefaultUnderlayWidthBlocks;
     internal float SilhouetteOutlineDetail = LodSilhouetteField.DefaultOutlineDetail;
 
     internal int SilhouetteDrawsLastFrame { get; private set; }
@@ -190,6 +195,7 @@ public partial class LodTerrainRenderer
         p.Uniform("globeStart", EffectiveFarDistance);
         p.Uniform("globeEffect", SilhouetteGlobeEffect);
         p.Uniform("underlaySinkBlocks", SilhouetteUnderlayDepthBlocks);
+        p.Uniform("underlayWidthBlocks", SilhouetteUnderlayWidthBlocks);
         p.Uniform("silhouetteSkyTint", SilhouetteSkyTint);
         p.Uniform("silhouetteColorTint", SilhouetteColorTint);
         p.Uniform("silhouetteLightLevelBias", SilhouetteLightLevelBias);
@@ -208,6 +214,10 @@ public partial class LodTerrainRenderer
             if (!silhouetteFrustum.BoxInView(relX, mesh.MinY - drop - cam.Y, relZ,
                 relX + tileBlocks, mesh.MaxY - cam.Y, relZ + tileBlocks)) continue;
             p.Uniform("tileOrigin", new Vec3f((float)relX, (float)-cam.Y, (float)relZ));
+            p.Uniform("coveredCells0", mesh.CoveredCells0);
+            p.Uniform("coveredCells1", mesh.CoveredCells1);
+            p.Uniform("coveredCells2", mesh.CoveredCells2);
+            p.Uniform("coveredCells3", mesh.CoveredCells3);
             int resolution = LodSilhouetteField.ResolutionFor(
                 ScreenBlockScale, Math.Max(1.0, Math.Sqrt(nearestDistanceSq)),
                 SilhouetteOutlineDetail);
@@ -264,6 +274,10 @@ public partial class LodTerrainRenderer
                     TileZ = result.TileZ,
                     MinY = result.Meshes.MinY,
                     MaxY = result.Meshes.MaxY,
+                    CoveredCells0 = CoverageWords(result.Meshes.CoveredCells, 0),
+                    CoveredCells1 = CoverageWords(result.Meshes.CoveredCells, 4),
+                    CoveredCells2 = CoverageWords(result.Meshes.CoveredCells, 8),
+                    CoveredCells3 = CoverageWords(result.Meshes.CoveredCells, 12),
                 };
             }
             catch (Exception e)
@@ -291,10 +305,16 @@ public partial class LodTerrainRenderer
         data.SetVerticesCount(mesh.VertexCount);
         data.SetIndicesCount(mesh.IndexCount);
         data.xyz = mesh.Xyz;
-        data.Uv = mesh.UnderlayUv;
+        data.Uv = mesh.EdgeDistanceUv;
         data.Indices = mesh.Indices;
         return capi.Render.UploadMesh(data);
     }
+
+    // GLSL integer-vector uniforms are unsafe through this engine API (G16). Four exact 16-bit
+    // values fit losslessly in one float vector, cutting 16 scalar uploads down to four calls.
+    static Vec4f CoverageWords(LodSilhouetteCoverage coverage, int first) => new(
+        coverage.ShortWord(first), coverage.ShortWord(first + 1),
+        coverage.ShortWord(first + 2), coverage.ShortWord(first + 3));
 
     /// <summary>Main thread. Frees every silhouette mesh on the GPU.</summary>
     internal void ReleaseSilhouetteMeshes()

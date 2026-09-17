@@ -16,6 +16,7 @@ internal readonly record struct LodSilhouetteSettings(
     float FadeBias,
     float GlobeEffect,
     float UnderlayDepthBlocks,
+    float UnderlayWidthBlocks,
     float OutlineDetail,
     float HillSoftness)
 {
@@ -35,6 +36,7 @@ internal readonly record struct LodSilhouetteSettings(
         FadeBias: 0.40f,
         GlobeEffect: 0.05f,
         UnderlayDepthBlocks: Silhouette.LodSilhouetteField.DefaultUnderlayDepthBlocks,
+        UnderlayWidthBlocks: Silhouette.LodSilhouetteField.DefaultUnderlayWidthBlocks,
         OutlineDetail: Silhouette.LodSilhouetteField.DefaultOutlineDetail,
         HillSoftness: Silhouette.LodSilhouetteField.DefaultHillSoftness);
 
@@ -59,6 +61,9 @@ internal readonly record struct LodSilhouetteSettings(
         Dial(UnderlayDepthBlocks, Default.UnderlayDepthBlocks,
             Silhouette.LodSilhouetteField.MinUnderlayDepthBlocks,
             Silhouette.LodSilhouetteField.MaxUnderlayDepthBlocks),
+        Dial(UnderlayWidthBlocks, Default.UnderlayWidthBlocks,
+            Silhouette.LodSilhouetteField.MinUnderlayWidthBlocks,
+            Silhouette.LodSilhouetteField.MaxUnderlayWidthBlocks),
         Silhouette.LodSilhouetteField.NormalizeOutlineDetail(OutlineDetail),
         Silhouette.LodSilhouetteField.NormalizeHillSoftness(HillSoftness));
 

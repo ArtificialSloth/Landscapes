@@ -1224,21 +1224,28 @@ public static class SilhouetteChecks
             "the lightweight mesh set contains 32-, 64- and 128-block quads");
         c.True(set.ByteCount > set.High.ByteCount,
             "the upload budget accounts for all three arrays rather than only the selected one");
+        c.Eq(covered, set.CoveredCells,
+            "the GPU receives the exact cached-cell mask used to shape the frontier");
 
         foreach (LodSilhouetteMeshArrays mesh in new[] { set.High, set.Medium, set.Low })
         {
             c.Eq((float)(sea - 20), mesh.Xyz[1],
                 $"the covered interior of the {mesh.QuadsPerEdge}-quad mesh keeps raw seabed height");
-            c.Eq(1f, mesh.UnderlayUv[0],
-                $"the {mesh.QuadsPerEdge}-quad mesh sinks exactly at the cached frontier");
-            c.Eq(0f, mesh.UnderlayUv[^2],
-                $"the {mesh.QuadsPerEdge}-quad mesh returns to real height away from that edge");
+            c.Eq(0f, mesh.EdgeDistanceUv[0],
+                $"the {mesh.QuadsPerEdge}-quad mesh records zero distance at the cached frontier");
+            c.True(mesh.EdgeDistanceUv[^2] > LodSilhouetteField.DefaultUnderlayWidthBlocks,
+                $"the {mesh.QuadsPerEdge}-quad mesh records the far corner outside the default apron");
         }
         c.Eq(64f, LodSilhouetteField.DefaultUnderlayDepthBlocks,
             "the default underlay is less sunken than the original 96-block trial");
         c.True(LodSilhouetteField.MinUnderlayDepthBlocks == 0f
                 && LodSilhouetteField.MaxUnderlayDepthBlocks >= 96f,
             "the underlay dial spans raw Farseer height through the original trial depth");
+        c.Eq(384f, LodSilhouetteField.DefaultUnderlayWidthBlocks,
+            "the accepted apron width remains the width dial's default");
+        c.True(LodSilhouetteField.MinUnderlayWidthBlocks <= 32f
+                && LodSilhouetteField.MaxUnderlayWidthBlocks >= 512f,
+            "the width dial can make the apron much shorter or longer");
 
         var neighbourCoverage = new LodSilhouetteCoverage[3, 3];
         neighbourCoverage[1, 0] = LodSilhouetteCoverage.Full;
@@ -1250,10 +1257,10 @@ public static class SilhouetteChecks
             int middleLeft = LodSilhouetteField.HighQuadsPerEdge / 2
                 * (LodSilhouetteField.HighQuadsPerEdge + 1) * 2;
             int middleRight = middleLeft + LodSilhouetteField.HighQuadsPerEdge * 2;
-            c.Eq(1f, besideCache.High.UnderlayUv[middleLeft],
-                "the Farseer edge slopes down where the neighbouring cached tile ends");
-            c.Eq(0f, besideCache.High.UnderlayUv[middleRight],
-                "the far side of that tile remains at its real sampled height");
+            c.Eq(0f, besideCache.High.EdgeDistanceUv[middleLeft],
+                "the Farseer edge begins where the neighbouring cached tile ends");
+            c.Eq(512f, besideCache.High.EdgeDistanceUv[middleRight],
+                "the far side records its true distance so the live width dial can reshape it");
         }
 
         c.Eq(LodSilhouetteField.HighQuadsPerEdge,
@@ -1310,6 +1317,7 @@ public static class SilhouetteChecks
             FadeBias = 2,
             GlobeEffect = float.PositiveInfinity,
             UnderlayDepthBlocks = float.NegativeInfinity,
+            UnderlayWidthBlocks = float.PositiveInfinity,
             OutlineDetail = float.PositiveInfinity,
             HillSoftness = float.NaN,
         }).Normalize();
@@ -1318,9 +1326,10 @@ public static class SilhouetteChecks
         c.Eq((0f, 1f), (repaired.TintRed, repaired.TintStrength),
             "colour settings stay inside their shader range");
         c.Eq((0.51f, 0.95f, defaults.GlobeEffect, defaults.UnderlayDepthBlocks,
-                defaults.OutlineDetail, defaults.HillSoftness),
+                defaults.UnderlayWidthBlocks, defaults.OutlineDetail, defaults.HillSoftness),
             (repaired.LightLevelBias, repaired.FadeBias, repaired.GlobeEffect,
-                repaired.UnderlayDepthBlocks, repaired.OutlineDetail, repaired.HillSoftness),
+                repaired.UnderlayDepthBlocks, repaired.UnderlayWidthBlocks,
+                repaired.OutlineDetail, repaired.HillSoftness),
             "bias, underlay, geometry and softness settings avoid invalid inputs and curves");
     }
 
@@ -1465,20 +1474,27 @@ public static class SilhouetteChecks
                 && pass.Contains("silhouetteFrustum.BoxInView", StringComparison.Ordinal),
             "the draw pass frustum-culls and chooses one of three meshes from screen scale and the geometry dial");
 
-        c.True(!fragment.Contains("coveredCells", StringComparison.Ordinal)
-                && !fragment.Contains("tilePos", StringComparison.Ordinal)
-                && !pass.Contains("CoveredCells", StringComparison.Ordinal),
-            "partial Farseer tiles continue behind cached terrain instead of ending at its mask");
+        c.True(fragment.Contains("if (vhSilhouetteCovered(coveredCell)) discard;",
+                    StringComparison.Ordinal)
+                && fragment.Contains("tilePos", StringComparison.Ordinal)
+                && pass.Contains("CoveredCells0", StringComparison.Ordinal)
+                && field.Contains("CoveredCells = coveredCells", StringComparison.Ordinal),
+            "Farseer fragments are suppressed in exact cache-owned 32-block cells");
         c.True(field.Contains("DefaultUnderlayDepthBlocks = 64f", StringComparison.Ordinal)
-                && field.Contains("UnderlaySlopeWidthBlocks = 384f", StringComparison.Ordinal)
-                && field.Contains("UnderlayWeight(", StringComparison.Ordinal)
+                && field.Contains("DefaultUnderlayWidthBlocks = 384f", StringComparison.Ordinal)
+                && field.Contains("EdgeDistance(", StringComparison.Ordinal)
                 && vertex.Contains("uniform float underlaySinkBlocks", StringComparison.Ordinal)
+                && vertex.Contains("uniform float underlayWidthBlocks", StringComparison.Ordinal)
                 && vertex.Contains("underlayDataIn.x", StringComparison.Ordinal)
+                && vertex.Contains("float distStart = viewDistance;", StringComparison.Ordinal)
+                && !vertex.Contains("viewDistance * 0.785", StringComparison.Ordinal)
                 && !vertex.Contains("cacheFadeStart", StringComparison.Ordinal)
                 && pass.Contains("SilhouetteUnderlayDepthBlocks", StringComparison.Ordinal)
-                && pass.Contains("data.Uv = mesh.UnderlayUv", StringComparison.Ordinal)
-                && pass.Contains("p.Uniform(\"underlaySinkBlocks\"", StringComparison.Ordinal),
-            "only Farseer's cached-terrain edge slopes down by the live underlay depth");
+                && pass.Contains("SilhouetteUnderlayWidthBlocks", StringComparison.Ordinal)
+                && pass.Contains("data.Uv = mesh.EdgeDistanceUv", StringComparison.Ordinal)
+                && pass.Contains("p.Uniform(\"underlaySinkBlocks\"", StringComparison.Ordinal)
+                && pass.Contains("p.Uniform(\"underlayWidthBlocks\"", StringComparison.Ordinal),
+            "Farseer starts beyond vanilla and its cached-terrain edge has live depth and width");
         c.True(pass.Contains("SilhouetteUploadBytesPerFrame", StringComparison.Ordinal)
                 && pass.Contains("SilhouetteUploadMillisecondsPerFrame", StringComparison.Ordinal)
                 && pass.Contains("rapi.GlEnableCullFace();", StringComparison.Ordinal)
@@ -1506,6 +1522,7 @@ public static class SilhouetteChecks
                 && dialog.Contains("ComposeSilhouettes", StringComparison.Ordinal)
                 && dialog.Contains("SilhouetteRows", StringComparison.Ordinal)
                 && dialog.Contains("LOD edge depth", StringComparison.Ordinal)
+                && dialog.Contains("LOD edge width", StringComparison.Ordinal)
                 && dialog.Contains("Geometry detail", StringComparison.Ordinal)
                 && dialog.Contains("Hill softness", StringComparison.Ordinal),
             "the settings editor names the feature for Farseer and separates geometry cost from hill softness");
@@ -1530,6 +1547,7 @@ public static class SilhouetteChecks
             "SilhouetteTintRed", "SilhouetteTintGreen", "SilhouetteTintBlue",
             "SilhouetteTintStrength", "SilhouetteLightLevelBias", "SilhouetteFadeBias",
             "SilhouetteGlobeEffect", "SilhouetteUnderlayDepthBlocks",
+            "SilhouetteUnderlayWidthBlocks",
             "SilhouetteOutlineDetail", "SilhouetteHillSoftness",
         })
             c.True(mod.Contains(name, StringComparison.Ordinal), name + " is persisted in client config");
