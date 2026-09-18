@@ -2,6 +2,28 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-17 - Volumetric Farseer seam fog (0.4.102-0.4.108)
+
+- Derived one exact ownership frontier from the stable 32-block Farseer/installed-LOD handoff;
+  missing neighbour tiles create no invented fog seam and unchanged masks are reused.
+- Rejected the first surface-colour treatment after it looked flat and angular, then replaced it
+  with one layered translucent mesh: vertical sheets, horizontal sheets, world-anchored drifting
+  billows, and zero-density lateral/upper/lower rims.
+- Added eight bounded persisted controls for density, coverage, spread, height, floor depth, billow
+  size, drift speed and layer detail, all with live preview.
+- Isolated the pass from primary alpha/depth, replaced the SSAO-aware blend helper on its
+  single-color framebuffer, corrected an integer upload to a GLSL float uniform, and guarded early
+  frames against GL errors. The owner then reported that 0.4.106 looked very good.
+- Moved the veil after OIT so fog overlays water instead of water repainting the seam. Added caps at
+  perpendicular turns, then extended those caps to the full square spill footprint while keeping a
+  zero-density perimeter. The owner called 0.4.107 excellent; 0.4.108's final corner shape remains
+  the focused visual gate.
+
+Source, builds, checks and artifact verification are complete at 0.4.108 / `6708b19`: 25,168
+assertions pass and the verified 43-entry package is installed beside rollback builds. The current
+corner verdict, a clean current log, controlled fog cost and the broader Farseer runtime matrix
+remain open in TODO.
+
 ## 2026-09-17 - Farseer edge, suppression handoff and ridge contrast (0.4.95-0.4.101)
 
 - Removed 0.4.94's visible join bands, replaced them with an adjustable buried apron and then kept

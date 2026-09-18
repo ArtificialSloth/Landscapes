@@ -4118,3 +4118,97 @@ camera yaw.
 
 **Found:** 2026-09-17, Session 98 (flat ridges human-observed; world-directed slope/depth fix is
 source/static-tested in 0.4.101 and awaits visual acceptance).
+
+### G217 - Fog painted into terrain surfaces stays flat and exposes the ownership grid
+
+**Trigger:** concealing the Farseer/LOD join by blending a fog colour directly into each terrain
+surface near the exact ownership mask.
+
+**Trap:** the colour can soften a line but cannot hang above the surface, spill down a cliff or
+occupy empty air. Its shape inherits the 32-block cells and terrain triangles, so a heavy treatment
+looks like bright angular paint rather than atmospheric fog.
+
+**Safer action:** keep the exact ownership mask, but use it to build separate translucent geometry.
+Cross vertical sheets with horizontal sheets, put the greatest density on the real boundary, and
+fade every exposed outer, upper and lower vertex to zero. Use world-space noise to break up the
+remaining regular layers.
+
+**Found:** 2026-09-17, Session 99 (human-observed in 0.4.102; replaced in 0.4.103).
+
+### G218 - A seam veil drawn before OIT cannot reliably conceal water
+
+**Trigger:** drawing translucent seam fog during the opaque callback and expecting later water to
+remain both intact and hidden by that fog.
+
+**Trap:** primary alpha belongs to later water/OIT composition. Writing alpha or depth can remove
+or blacken water; even an RGB-only opaque-stage fog draw is earlier than water, so OIT can repaint a
+sharp water/chunk edge over the veil afterward.
+
+**Safer action:** treat the fog as a final atmospheric overlay. Sample primary depth read-only,
+preserve primary alpha and depth, and composite the fog after OIT. Keep water shaders, liquid depth,
+revealage, ownership and the shared terrain readiness mask out of a fog-only correction.
+
+**Found:** 2026-09-17, Session 99 (black/missing water human-observed in 0.4.103; post-OIT result
+human-positive in 0.4.107).
+
+### G219 - The engine blend helper may configure attachments a custom framebuffer does not own
+
+**Trigger:** calling `GlToggleBlend(true)` while a custom framebuffer exposes only
+`ColorAttachment0`.
+
+**Trap:** with SSAO enabled, the helper also configures indexed blend outputs used by the engine's
+other attachments. Those attachment indices do not exist on the one-color fog framebuffer, so the
+first otherwise valid draw raises OpenGL `InvalidOperation`.
+
+**Safer action:** on a custom single-attachment pass, enable blend directly and set its blend
+equation/function explicitly. Capture and restore the surrounding GL state, and keep a static check
+that the general helper is not reintroduced.
+
+**Found:** 2026-09-17, Session 99 (production-observed in the 0.4.104 client log; source-traced and
+fixed in 0.4.105).
+
+### G220 - Shader compilation does not validate the type of a later uniform upload
+
+**Trigger:** uploading an integer C# value to a GLSL uniform declared as `float` and assuming the
+runtime will convert it because the shader compiled.
+
+**Trap:** the shader program compiles successfully, then the typed OpenGL uniform call raises
+`InvalidOperation` on the first draw. The failure looks like a framebuffer or blend problem because
+it occurs in the same guarded pass.
+
+**Safer action:** match the C# upload overload to the declared GLSL type explicitly. When an integer
+domain value feeds a float uniform, cast at the call site and protect the call with a source/static
+regression check.
+
+**Found:** 2026-09-17, Session 99 (production-observed in the 0.4.105 client log; fixed in 0.4.106,
+whose fog the owner then reported as very good).
+
+### G221 - Independent seam strips leave a diagonal hole at a turn
+
+**Trigger:** building a fog strip per straight ownership edge and ending each one at its grid
+vertex.
+
+**Trap:** at a ninety-degree turn, the two rectangular strips cover their own axes but not the
+diagonally adjacent quadrant. From above, the gap looks exactly like a missing fog chunk even
+though both incident edges are present.
+
+**Safer action:** detect vertices with both a horizontal and vertical incident boundary and add one
+layered low-density cap there. Straight vertices need no cap, so do not thicken every segment to
+solve a corner-only topology problem.
+
+**Found:** 2026-09-17, Session 99 (human-observed in 0.4.106; first filled in 0.4.107).
+
+### G222 - A circular cap does not fill the square footprint of intersecting fog bands
+
+**Trigger:** covering G221's turn with an octagonal/radial cap whose diagonal coordinates are
+`spill × 0.7071`.
+
+**Trap:** each straight strip reaches the full spill distance on its axis, but the radial cap
+reaches only 70.7% on each diagonal axis. The remaining square corners still read as a rounded bite
+or missing adjacent fog section.
+
+**Safer action:** extend the cap to `spill` on both diagonal axes. Keep all perimeter weights zero,
+so interpolation still fades organically and the larger footprint does not become a hard square.
+
+**Found:** 2026-09-17, Session 99 (human-observed in 0.4.107; source/harness-fixed in 0.4.108 and
+awaiting focused visual acceptance).

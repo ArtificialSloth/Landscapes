@@ -2,37 +2,46 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.101 and the mesh-exact Farseer handoff gate
+## Start here: 0.4.108 and the final seam-fog corner gate
 
 Read [the Farseer handoff](plans/HANDOFF_HORIZON_SILHOUETTES.md) and
-[Session 98](sessions/SESSION_98.md), then
+[Session 99](sessions/SESSION_99.md), then
 [the horizon-silhouette and Terrain Ahead plan](plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
-P1-P4 are built and most P5 persistence/tuning work is complete through 0.4.101. The owner saw
-instant rejoin terrain, accepted the 0.4.93 geometry simplification visually, rejected 0.4.94's
-bands and global sinking, reported 0.4.99's camera-yaw regression, and showed the L0-only overlap
-left by 0.4.100. The 0.4.101 all-level mesh-exact handoff and ridge contrast have not run. The
-absence of another player still defers the dedicated/multiplayer gate.
+P1-P4 are built and most P5 persistence/tuning work is complete through 0.4.108. The owner has
+human-seen instant client rejoin, accepted the coarse 0.4.93 geometry, rejected visible join bands,
+required exact no-overlap ownership, and selected a heavy atmospheric veil for the residual visual
+handoff. The 0.4.106 volume looked “very good”; the post-water 0.4.107 result was called excellent.
+Only 0.4.108's expanded corner footprint is still unrun. The absence of another player continues
+to defer the dedicated/multiplayer gate.
 
 Open, in the order they block further work:
 
-- **Final ownership/join gate.** Use 0.4.101 at the same screenshot locations and test each case
-  separately:
+- **Focused 0.4.108 corner acceptance.** Revisit screenshot `2026-09-17_20-02-06.png` and one other
+  ninety-degree ownership turn:
+  - the fog should sweep continuously through the turn, with no rounded bite, square missing
+    adjacent section or hard square outer perimeter;
+  - water must remain visible and the fog must stay over its chunk edge rather than letting water
+    repaint the seam;
+  - inspect `client-main.log` after the view: Farseer must remain enabled and there must be no
+    seam-fog shader/draw `InvalidOperation`.
+  Do not retune density or geometry until this isolated cap change has a visual verdict.
+- **Complete the underlying ownership/motion matrix.** Fog intentionally conceals the transition,
+  but must not become an excuse to regress correctness:
   - hold position and turn through the whole scene; Farseer ownership must not shift with yaw;
   - approach vanilla and LOD edges from oblique angles; no Farseer may appear over ready terrain;
   - move quickly enough to watch replacement load and unload; Farseer must remain until the
-    replacement draws, with no sky flash or gap;
+    replacement draws, with no sky flash or gap outside the veil;
   - look into excavated vanilla ground; no Farseer may show beneath it;
-  - compare overlapping hills; slope/depth contrast should separate ridges without bands or
-    camera-relative lighting changes.
-  This run also proves the changed GLSL compiles.
+  - compare overlapping hills; slope/depth contrast should remain stable as the camera turns.
 - **Complete the remaining P4/P5 observations:**
-  - look once at night, in rain/fog and in winter;
+  - look once at night, in rain/natural fog and in winter;
   - verify the final scale typography/spacing and that the reach handle changes actual reach;
-  - tune Outline detail, Hill softness, Apron width (384-block default) and apron depth only after
-    exact suppression is accepted;
-  - take a controlled off/on A/B and record FPS/GPU time and reach/softness-change hitches. The
-    owner's earlier 550→450 observation was informal and predates the major simplification. Also
-    watch the 0.4.101 all-level coverage lookup and derivative/depth shading cost;
+  - tune Outline detail, Hill softness, Apron width/depth and the eight fog controls only after the
+    0.4.108 corner is accepted. Fog density, coverage, spread, height, floor depth, billow size,
+    drift speed and layer detail already persist and preview live;
+  - take a controlled off/on A/B and record FPS/GPU time and reach/shape-change hitches. The
+    owner's earlier 550→450 observation was informal and predates the geometry simplification,
+    exact all-level coverage and fog pass. Separately report fog layer-detail cost;
   - compare islands/inlets only after the join is accepted; refine low/coastal sampling only if the
     picture still needs it.
 - **Finish Farseer credit deliberately.** Rename remaining player-facing “Silhouette” labels,

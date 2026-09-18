@@ -1,6 +1,6 @@
 # Plan - Horizon silhouettes and terrain ahead
 
-**Status:** Active. Reconciled 2026-09-17 through 0.4.101 (`a137181`), Session 98.
+**Status:** Active. Reconciled 2026-09-17 through 0.4.108 (`6708b19`), Session 99.
 - P1, the first look, landed in 0.4.77 (`4c7720c`). The owner accepted the classic look apart from
   the joins.
 - P2 landed in 0.4.79-0.4.80, with a stall guard and an error brake in 0.4.78 and 0.4.81 (Session
@@ -8,14 +8,16 @@
 - P3 source is complete through 0.4.86: the owner accepted both accelerators, 0.4.85 added live
   sampling/refinement, and 0.4.86 added bounded manifest/request transport and dedicated opt-in.
   Its singleplayer/dedicated integration gate remains open.
-- P4 landed in 0.4.87 and was iterated by the owner through 0.4.101: the visible tab is Farseer,
+- P4 landed in 0.4.87 and was iterated by the owner through 0.4.108: the visible tab is Farseer,
   scale/reach were repaired, geometry is 16/8/4 quads, only the near edge slopes through an
   adjustable apron, and ready vanilla/LOD geometry owns exact suppression. 0.4.99's
-  frustum-dependent handoff and 0.4.100's L0-only handoff were rejected; 0.4.101's all-level
-  installed-mesh coverage, no-gap behavior and ridge contrast are the next human gate.
+  frustum-dependent handoff and 0.4.100's L0-only handoff were rejected. The remaining visual seam
+  now has a layered fog volume over the exact ownership boundary. 0.4.106 was reported very good
+  and 0.4.107 excellent; 0.4.108's full corner footprint is the next human gate.
 - Most P5 work is built: lazy client persistence is human-seen on rejoin, and Outline detail/Hill
-  softness plus bounded regeneration are present. Final tuning, controlled cost evidence, optional
-  island/inlet refinement and complete Farseer naming/license credit remain.
+  softness plus bounded regeneration are present. Eight persisted fog dials are also built. Final
+  tuning, controlled cost evidence, optional island/inlet refinement and complete Farseer
+  naming/license credit remain.
 - [The silhouette handoff](HANDOFF_HORIZON_SILHOUETTES.md) is the exact continuation point.
 - Silhouettes come first (D14).
 - Terrain Ahead is a separate, later feature (D15).
@@ -139,6 +141,8 @@ is hidden.
 | D21 | 2026-09-17 | **Farseer suppression over ready vanilla or LOD terrain is non-negotiable**, including below excavated vanilla ground. It must remain until replacement geometry is drawable so the handoff cannot reveal sky. |
 | D22 | 2026-09-17 | **Ownership may not depend on camera direction and must recognize every resident LOD level.** Exact suppression proof comes from opaque top surfaces carried with the installed mesh; the target level, coarser parents and finer descendants are considered in stable order. |
 | D23 | 2026-09-17 | Overlapping Farseer hills need readable contrast without more geometry. Use **world-directed slope light and gentle depth shading**, never camera-relative light that changes as the player turns. |
+| D24 | 2026-09-17 | Conceal the remaining Farseer/LOD join with **heavy volumetric fog centred on the exact ownership seam**. It spills across both sides, fades away over roughly a chunk, hangs above/below the surface and must look organic rather than flat or angular. Its material dimensions are player dials. |
+| D25 | 2026-09-17 | The seam fog must **cover water and sweep uniformly through corners** without removing water, exposing a hard line, or leaving a missing adjacent fog section. Water and terrain ownership remain unchanged. |
 
 Standing rules that apply throughout:
 - No hard-coded rendering distances: key rendering to on-screen size, pixel ownership, or the
@@ -590,6 +594,10 @@ does (`OpenPipeline()`), so it works in singleplayer with the sweep off.
   through an adjustable buried apron. The broad field keeps its representative height. At 60
   degrees and 1,080 rows, a 20-block error costs about 2.6 px at 8,000 blocks and about 41 px at
   500 blocks, so the edge treatment is still where looseness matters.
+- **Seam-fog boundary (D24-D25).** The same stable 32-block replacement answer emits unique cardinal
+  edges only where two drawable Farseer cells have opposite owners. Missing neighbour tiles do not
+  invent a seam. The edge set is a visual input only: fog may spill over both sides, but it never
+  expands or contracts ownership.
 - **Mesher.** Arrays only, built on a worker thread and uploaded on the render thread within the
   existing completed-work budget (settled decisions 5 and 16).
   - Three resolutions per tile: 128, 32 and 8 cells per edge, chosen by on-screen cell size against
@@ -599,14 +607,18 @@ does (`OpenPipeline()`), so it works in singleplayer with the sweep off.
   - Only cells in the adjustable apron slope downward; the whole Farseer field never sinks.
   - Replacement suppression is a fragment decision from live installed coverage, not a geometry
     rebuild or a separately visible band.
+  - The seam-fog arrays are one bounded mesh, with crossing vertical/horizontal layers and one
+    horizontal cap at each perpendicular turn. Every lateral, upper, lower and corner perimeter
+    has zero density; the cap covers the full square spill footprint.
 
 ### 4.8 Rendering and the handoff
 
-- **Where it draws:** inside `LodTerrainRenderer`'s existing Opaque callback, after cached opaque
-  terrain.
-  - Water and OIT are unchanged.
-  - Not a separate `IRenderer`: no second render-order registration and no second far-plane
-    writer.
+- **Where terrain draws:** Farseer terrain remains inside `LodTerrainRenderer`'s existing Opaque
+  callback after cached opaque terrain. It is not a second `IRenderer` and has no second far-plane
+  writer.
+- **Where seam fog draws:** one lightweight renderer wrapper calls the shared renderer's fog pass
+  at `AfterOIT` order 1.0, after Vintage Horizons' water capture at 0.99. The fog therefore covers
+  already-composited water without changing water shaders, depth, revealage or ownership.
 - **Per visible tile:** a frustum test on its box (real height span), one draw at the chosen
   resolution, and a camera-relative transform.
 - **Shaders:** `lodsilhouette.vsh` and `lodsilhouette.fsh`, with a shared include
@@ -637,11 +649,17 @@ does (`OpenPipeline()`), so it works in singleplayer with the sweep off.
   over ready real terrain.
   - `lodsurfacefinish.fsh` is shared by the terrain and water programs. Every program that
     includes it must gain the new include and declare its uniforms (G161, G174).
+- **Atmospheric veil.** The exact ownership boundary drives a separate fog mesh. Vertical and
+  horizontal sheets make it occupy air instead of tinting terrain; world-space drifting billows
+  break up the layers. A color-only framebuffer samples primary depth read-only, writes RGB only,
+  preserves primary alpha/depth, and uses explicit standard blending for its sole attachment. The
+  engine's SSAO-aware blend helper is forbidden on this target (G217-G220).
 - **Far plane:** projection distance = max(cached far extent, silhouette extent), through the
   existing stepped policy (G5). The cached shader's far edge stays the cached distance, so the
   accepted cached fade does not move.
 - **Failure:** a compile or draw failure disables silhouettes for the session, with a named log
-  line. Nothing plausible is drawn in their place (settled decision 26, G160).
+  line. The guarded fog pass also checks its early frames for GL errors. Nothing plausible is drawn
+  in their place (settled decision 26, G160).
 - **Distant anti-aliasing:** silhouette pixels are drawn after the pre-cached depth snapshot, so
   they fall under settled decision 34. Verify in P4; do not assume.
 - **Deferral** to another LOD mod is unchanged: if one draws, this mod is idle, silhouettes
@@ -672,6 +690,8 @@ scale:
   edge slope (384-block default width).
 - **Look dials,** in the style of the anti-aliasing tab: tint colour and strength, sky tint, light
   bias, fade bias, globe curve. Defaults began from Farseer 1.4.0's terms (D11).
+- **Seam-fog dials:** density, coverage floor, lateral spread, height, floor depth, billow size,
+  drift speed and layer detail. All persist and preview live; density zero disables the fog pass.
 - **Status line:** server availability, tiles held, fill ratio, active height source.
 
 **Terrain Ahead tab** (separate, D15):
@@ -914,11 +934,12 @@ reach arrives complete, and the log reports counts, sources and fill ratio.
 
 ### P4 - Drawing, the handoff and settings
 
-**Source/harness status:** complete and iterated through 0.4.101. The owner has seen the feature,
+**Source/harness status:** complete and iterated through 0.4.108. The owner has seen the feature,
 client rejoin and the 0.4.93 geometry reduction; rejected 0.4.94's bands, 0.4.99's camera-yaw
 ownership and 0.4.100's L0-only suppression; and made suppression over ready real terrain
-mandatory. The 0.4.101 all-level mesh-exact handoff, ridge contrast, final GLSL, controlled cost
-and weather checks remain open (Session 98).
+mandatory. 0.4.102's surface fog was rejected as flat/angular. The 0.4.106 volume was reported very
+good and the post-water 0.4.107 result excellent; 0.4.108's full corner sweep is the remaining
+focused visual gate. Controlled cost, motion/excavation and weather checks remain open (Session 99).
 
 **Deliver:**
 - the mesher: three resolutions, sea rule, stitching and the adjustable edge apron;
@@ -926,6 +947,7 @@ and weather checks remain open (Session 98).
 - stable target/parent/descendant replacement selection independent of view direction;
 - the draw pass;
 - shaders and sampler layout, with lazy compilation and world-directed ridge contrast;
+- the exact seam mask, layered fog volume, post-OIT RGB-only composition and guarded failure path;
 - the fade-target switch in the cached shader;
 - the combined far projection;
 - the scale's draw-distance and Farseer handles;
@@ -940,6 +962,10 @@ and weather checks remain open (Session 98).
 - GPU tile buffers are released on switch-off;
 - the coverage and discard rule, including target/parent/descendant ordering, as pure functions;
 - resolution choice by on-screen size;
+- seam uniqueness, bounded volume geometry, zero-density rims, turn-only corner caps and full
+  square diagonal reach;
+- post-OIT order after water capture, explicit one-attachment blend state and typed uniform uploads;
+- normalization/persistence of all eight fog controls;
 - the projection policy does not reset on ordinary movement (G5);
 - scale handles map to the right values and colours (G184).
 
@@ -957,18 +983,20 @@ and weather checks remain open (Session 98).
 - g. The scale reads correctly with both new handles.
 - h. Overlapping hills retain readable slope/depth contrast while the camera turns, without bands
   or camera-relative lighting changes.
+- i. The fog hangs in the air, spills across both owners and covers water without card lines. Every
+  ninety-degree turn is one continuous sweep, with no missing adjacent quadrant or hard square rim.
 
 **Fallback if (c) cannot be met:** the other D1 option, silhouettes only beyond the draw distance.
 That is an owner decision, not a quiet change.
 
 ### P5 - Tuning and persistence
 
-**Status through 0.4.101:** client persistence is built and human-seen across leave/rejoin;
+**Status through 0.4.108:** client persistence is built and human-seen across leave/rejoin;
 effective Outline detail, Hill softness and apron controls are built; regeneration is worker-owned
-and bounded; the owner accepted the large geometry reduction visually. Exact ownership and ridge
-contrast now await human acceptance. Final defaults/cost evidence and optional island/inlet
-refinement remain. Complete player-facing Farseer naming and bundle its MIT notice before closing
-the phase.
+and bounded; the owner accepted the large geometry reduction visually. Eight fog controls are
+built, persisted and live-previewed, and the 0.4.106–0.4.107 fog/water result is human-positive.
+The final corner shape, defaults/cost evidence and optional island/inlet refinement remain.
+Complete player-facing Farseer naming and bundle its MIT notice before closing the phase.
 
 **Deliver:**
 - islands and inlets measured against real terrain on the owner's world (a dense `/vhworldgen`
@@ -1043,6 +1071,9 @@ Not started before P6 is accepted.
 | A coarser resident parent is visible while L0 is absent | L0-L6 masks plus target/parent/descendant selection; unit fixtures and P4 observation |
 | A resident coarse mesh only partly covers its footprint | mask the emitted opaque top surfaces at 32-block resolution; fail open elsewhere |
 | Silhouette plane visible through cached water in the fade band | exact live replacement coverage plus buried edge apron; P4 observation |
+| Fog looks like flat/angular surface paint | separate vertical/horizontal volume with zero-density rims and world-space billows; P4 observation |
+| Fog breaks or fails to cover water | preserve primary alpha/depth and composite RGB after OIT; guarded GL failure; P4 observation |
+| Straight seam strips leave a corner quadrant empty | turn-only caps with full square spill footprint and zero-density perimeter; P4 observation |
 | Silhouette pass too expensive at long reach | culling and on-screen resolution; P4 budget; P5 GPU path |
 | Many players multiply the server cost | per-player share; admin opt-in; caps |
 | Engine change to peek areas or message numbering | fast-tier checks pin what can be pinned; a mixed-version run each release |
@@ -1087,6 +1118,8 @@ Not started before P6 is accepted.
   edge slopes through an adjustable apron.
 - **44-46** - Farseer remains coarse and incrementally regenerated; exact installed-mesh coverage
   at every level owns suppression; ridge contrast is world-directed and geometry-free.
+- **47-48** - The seam veil derives from exact ownership but never changes it, and composites after
+  water as a single-attachment RGB overlay with read-only primary depth.
 
 ## 10. Files expected to change
 

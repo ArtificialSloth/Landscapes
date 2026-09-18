@@ -210,6 +210,15 @@ water shader selector is retired. When a requested surface, liquid-depth, juncti
 stage is unavailable or fails, cached water and thin cover are suppressed and the required-path
 failure is logged. No older water renderer is selected automatically.
 
+Farseer terrain remains opaque fallback scenery, but its ownership seam has a separate
+atmospheric volume. The stable 32-block replacement proof emits the exact boundary; one bounded
+mesh crosses that line with layered vertical and horizontal sheets plus caps at perpendicular
+turns. Density is greatest at the line and reaches zero at every lateral, upper, lower and corner
+perimeter. The veil draws at `AfterOIT` order 1.0, after the water capture at 0.99, into a
+single-color framebuffer attached to primary RGB. It samples primary depth read-only and never
+writes primary alpha or depth. Its explicit single-attachment blend state must not be replaced by
+the engine's SSAO-aware general helper (G217-G222).
+
 The settled near handoff is exclusive per-vanilla-render-chunk ownership. Cached terrain
 covers uncertain/unready cells, vanilla owns confirmed render-ready cells, fully replaced
 cached meshes are skipped before submission, and only mixed frontier meshes pay for a GPU
@@ -586,6 +595,20 @@ live until the exact replacement persistence revision is acknowledged.
     reconstructs the coarse surface's geometric normal, shades it from a world/sun direction and
     adds gentle world-distance depth separation. Contrast may not depend on camera yaw, and it may
     not add terrain detail merely to distinguish overlapping hills (G216).
+47. **The Farseer/LOD seam veil is derived from ownership but never changes it.** The exact stable
+    32-block replacement answer emits a unique boundary, and a separate translucent mesh crosses
+    it with vertical and horizontal layers. The fog is densest at the real handoff, spills across
+    both owners, and fades to zero at every exposed edge. Perpendicular turns receive one layered
+    cap covering the full square spill footprint; straight vertices receive none. Surface paint,
+    invented boundaries at missing tiles, hard outer walls and ownership dilation are rejected
+    designs (G217, G221-G222).
+48. **Seam fog is a post-water RGB overlay with read-only depth.** It draws at `AfterOIT` order
+    1.0, after the water capture at 0.99, so water cannot repaint the seam over it. Its custom
+    framebuffer owns only `ColorAttachment0`; the pass samples primary depth, writes RGB only,
+    preserves primary alpha/depth, and configures standard blending explicitly. A shader/draw/GL
+    failure disables Farseer for the session rather than continuing with a plausible no-fog
+    fallback. Fog work may not change water shaders, water depth/revealage, water ownership or the
+    shared terrain readiness mask (G218-G220).
 
 ## Concurrency invariants
 

@@ -19,19 +19,49 @@ changed thousands of chunk rows that agreed between the one-thread controls. The
 therefore keeps only its Balanced behavior and does not expose thread controls or Fast/Maximum
 presets.
 
-**Known open:** human-check 0.4.101's mesh-exact Farseer suppression, no-gap loading handoff,
-camera stability, new ridge contrast and GLSL; measure its controlled GPU/off cost and
-reach/softness hitching; finish the deliberate player-facing Farseer rename and bundle its MIT
+**Known open:** human-check 0.4.108's full corner sweep and preserve a clean client log; complete
+the rapid-loading/excavation/weather Farseer matrix; measure controlled Farseer/fog GPU cost and
+reach/shape hitching; finish the deliberate player-facing Farseer rename and bundle its MIT
 license; let a
 small `/vhworldgen` job reach final durable completion; exercise offered resume
 across a real server restart; check dedicated-server permissions and long-run memory/disk behavior;
 make the fixed 15-second shutdown-save deadline configurable; runtime-check 0.4.69's sweep pacing
 line and the P3 after-comparison; winter temporal convergence. The owner deferred overlap/speed
-optimization on 2026-09-14. Farseer P3/P4 runtime debt remains: weather look, shader compilation,
-GPU/off A/B, cold restart/full-disc read-back and dedicated multiplayer.
+optimization on 2026-09-14. Farseer P3/P4 runtime debt remains: GPU/off A/B, cold restart/full-disc
+read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.108] - 2026-09-17
+
+**Volumetric fog over the exact Farseer/LOD seam (0.4.102–0.4.108).**
+
+- Built an exact 32-block ownership-edge mask from live Farseer and installed LOD coverage. Missing
+  neighbour tiles do not invent a seam, and an unchanged boundary is neither rebuilt nor uploaded.
+- Replaced the rejected flat surface tint with one translucent volume made from crossing vertical
+  and horizontal layers. Density is strongest on the ownership line and fades to zero at the
+  lateral, upper and lower rim; world-anchored drifting billows hide repeated planes.
+- Added eight persisted, live-previewed Farseer controls: fog density, coverage, spread, height,
+  floor depth, billow size, drift speed and layer detail. Setting density to zero disables the fog
+  pass.
+- Isolated fog from the water pipeline: it samples primary depth read-only, writes RGB without
+  changing primary alpha, configures ordinary blending explicitly for its one color attachment,
+  and fails the Farseer session visibly if guarded GL drawing fails.
+- Corrected the final runtime `InvalidOperation`: the shader's float reach uniform had been uploaded
+  through the integer overload. The owner then described the volumetric result as “very good.”
+- Moved the atmospheric veil after water/OIT so transparent water cannot repaint a sharp chunk edge
+  over it. Water shaders, depth, revealage, ownership and shared terrain readiness are unchanged.
+- Added layered caps at real ninety-degree turns. 0.4.108 extends them through the full square spill
+  footprint while keeping every outer vertex at zero density, removing the rounded missing quadrant
+  without adding a hard square edge.
+
+The owner called 0.4.107 excellent and confirmed the general fog/water result, but its final corner
+taper still looked like a missing adjacent section. The 0.4.108 corner expansion is built and
+harness-tested but not yet seen in game. Protocol/blob/schema remain `1 / 4 / 6`; both silhouette
+stores remain schema `1`. Release builds have zero warnings/errors; 25,168 assertions pass. The
+verified/copy-installed 43-entry 0.4.108 package has SHA-256
+`3ADAB55D48C80E173400A9F690C6146FF9EB282A26DA2E000155D6FA217A088E`.
 
 ## [0.4.101] - 2026-09-17
 

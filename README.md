@@ -33,7 +33,9 @@ client capture, and players without the mod are unaffected.
   field shows the broad shape of land beyond cached terrain and across unexplored gaps. It yields
   cell by cell only when ready vanilla or LOD geometry can replace it, slopes its edge down to hide
   unresolved gaps, and uses gentle slope/depth contrast to keep overlapping distant ridges
-  readable. It is independent of the real 3D cache and can be switched off completely.
+  readable. A layered, billowing fog bank follows the exact Farseer/LOD boundary, spilling across
+  both sides and over water to conceal the remaining visual handoff. It is independent of the real
+  3D cache and can be switched off completely.
 
 ## What it cannot do
 
@@ -56,11 +58,11 @@ in advance.
 | --- | --- |
 | `.vhinfo` | Status: cached/resident sections, meshes, current far edge, settings |
 | `.vhdiag [on\|off]` | Show or hide the diagnostics side panel for this session. Off by default. |
-| `.vhconfig` | Open the settings window. **General** holds distance and visual settings; **Anti-Aliasing** holds every `.vhtaa` dial; **Farseer** holds reach, outline, hill-softness, edge-apron and classic-look controls; **Generate** prepares and controls permanent world generation. Changes preview live where applicable, Save keeps them and Cancel restores the previous values. If ordinary in-game Settings has paused an integrated server, Generate offers **Open live controls** and hands off to this standalone window before sending server actions. |
+| `.vhconfig` | Open the settings window. **General** holds distance and visual settings; **Anti-Aliasing** holds every `.vhtaa` dial; **Farseer** holds reach, outline, hill-softness, edge-apron, classic-look and seam-fog controls; **Generate** prepares and controls permanent world generation. Changes preview live where applicable, Save keeps them and Cancel restores the previous values. If ordinary in-game Settings has paused an integrated server, Generate offers **Open live controls** and hands off to this standalone window before sending server actions. |
 | `.vhdetail [auto\|manual\|target <px>\|<blocks>]` | Without an argument, report the six transition distances and where they come from. `auto` (the default) chooses them from your field of view and render resolution so every level hands over at the same size on screen, and `target <px>` sets that size (1.5 by default); `manual` returns to your own distances; a number sets a doubling sequence beginning there and switches automatic off. Saved; `.vhconfig` edits them individually. |
 | `.vhfar <blocks>` | Cap the LOD render distance. `0` means unlimited, which is the default. |
 | `.vhtaa [on\|off\|show\|reach\|nudge\|sharpen\|blend\|still\|clip\|reset]` | Distant anti-aliasing: stops distant terrain shimmering as you move by nudging it a fraction of a pixel each frame and blending frames together, on cached terrain only. On by default and saved; also a switch in `.vhconfig`. `reach <px>` sets where it begins as the on-screen width of one block; `nudge`, `sharpen`, `blend` (memory while turning), `still` (memory when still) and `clip` (how strictly old frames must match) tune it. All are saved and all are sliders on the `.vhconfig` Anti-Aliasing tab; `reset` restores the defaults, `show` tints what it touches for the session. With no argument it reports its settings and GPU cost to chat and the client log. |
-| `.vhsilhouette [on\|off\|log\|stats]` | Session-only Farseer override and status. The saved enable switch, 1,024–32,768-block reach, outline, hill-softness, edge-apron and colour/look dials are on `.vhconfig`'s Farseer tab. `off` drops the server demand and releases client tile, worker and GPU state; it does not rewrite the saved choice. |
+| `.vhsilhouette [on\|off\|log\|stats]` | Session-only Farseer override and status. The saved enable switch, 1,024–32,768-block reach, outline, hill-softness, edge-apron, colour/look and eight seam-fog dials are on `.vhconfig`'s Farseer tab. `off` drops the server demand and releases client tile, worker and GPU state; it does not rewrite the saved choice. |
 | `.vhmask [on\|off]` | Hand each loaded vanilla chunk its own ground instead of using one distance, and skip cached terrain that is entirely replaced. On by default since 0.3.17; the setting is saved. Turn it off to fall back to a single measured distance. |
 | `.vhpaint [on\|off]` | Diagnostic. Paints the terrain the mask is hiding magenta instead of hiding it. A gap that turns magenta is the mask's doing; a gap that stays empty is not. Magenta can also show where distant terrain stands in front of the game's own, which is harmless. |
 | `.vhskip [on\|off]` | Only matters with `.vhmask on`. On (the default) lets the mod drop a whole cached piece when the game covers all of it. Off keeps the per-pixel masking but never drops a whole piece. |
@@ -180,6 +182,13 @@ Farseer is fallback scenery, not a second copy of loaded ground. It stays presen
 terrain is still being prepared, then yields on the exact 32-block cells covered by ready vanilla
 or LOD geometry at any LOD level. Its edge apron is adjustable (384 blocks wide by default); it
 slopes only the nearby edge instead of lowering the entire distant field.
+
+The remaining handoff is concealed by a separate atmospheric volume centred on that exact
+ownership line. It has real height, extends below the sampled surface for cliffs and shores, spills
+across both terrain systems, fades away at its outer edge, and composites after water so the veil
+also covers a shoreline or water-chunk boundary. The Farseer tab exposes fog density, coverage,
+spread, height, floor depth, billow size, drift speed and layer detail; density zero disables only
+the fog pass.
 
 ## Building
 

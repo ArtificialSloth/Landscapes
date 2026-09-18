@@ -4,18 +4,18 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-17`
-**Mod version:** `0.4.101` — current private test build (Farseer P1-P4 and most P5 work), verified, copy-installed and checkpointed; the all-level mesh-exact handoff and ridge contrast have not run in game
+**Mod version:** `0.4.108` — current private test build, verified, copy-installed and checkpointed; the owner called 0.4.107's post-water volumetric fog excellent, and 0.4.108's expanded corner footprint is the focused unrun change
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.95 `020f3e5`, 0.4.96 `8cb90e7`, 0.4.97 `62d5f29`, 0.4.98 `d6aae26`, 0.4.99 `85b7f20`, 0.4.100 `df4bf43`, 0.4.101 `a137181`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.102 `fe60a69`, 0.4.103 `bf0bd4b`, 0.4.104 `23bfb30`, 0.4.105 `3d0298c`, 0.4.106 `0257a0f`, 0.4.107 `3ba4a1e`, 0.4.108 `6708b19`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `131` C# files under `VintageHorizons/src`
+**Source files:** `134` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
 
 ## Current result
 
-**Farseer: P1-P4 and most P5 built (0.4.77–0.4.101).** Sessions 92–98.
+**Farseer: P1-P4 and most P5 built (0.4.77–0.4.108).** Sessions 92–99.
 - **Availability and switches.** The saved client choice defaults on. Integrated/LAN servers offer
   silhouettes automatically unless `EnableSilhouettes = false`; dedicated servers default off and
   require `EnableSilhouettes = true`. Their requested reach is clamped by
@@ -40,12 +40,16 @@
   stable vanilla readiness suppress Farseer only where replacement can draw; unknown coverage
   leaves the fallback present. World-directed slope shading and gentle depth shading separate
   overlapping ridges. The pass follows cached opaque terrain through the existing far-plane policy
-  and shared classic colour.
+  and shared classic colour. The exact replacement frontier also emits one layered atmospheric
+  volume: vertical and horizontal sheets peak at the seam, spill across both owners and fade to
+  zero at their perimeter. Turn caps cover the full square spill footprint. The veil draws after
+  water/OIT, sampling primary depth read-only and preserving primary alpha/depth.
 - **Persistence, scheduling and settings.** A lazy client store reads nearest saved tiles for
   instant rejoin and closes when off. Decode/mesh work is capped off-thread; owner publication,
   coverage, pruning, remesh and upload are bounded. The **Farseer** tab persists enable, reach,
-  Outline detail, Hill softness, apron width/depth and classic-look dials; cached draw and reach
-  remain scale handles.
+  Outline detail, Hill softness, apron width/depth, classic-look dials and eight fog controls:
+  density, coverage, spread, height, floor depth, billow size, drift speed and layer detail; cached
+  draw and reach remain scale handles.
   Performance turns it off;
   Balanced/Quality turn it on. Off sends one final demand and clears network, RAM, workers, GPU
   meshes and projection extent. The shader is compiled only after a drawable tile arrives.
@@ -71,9 +75,15 @@
 | 0.4.98 suppression | Substantially more stable than 0.4.99, but broad suppression could precede replacement readiness | Human comparison; superseded |
 | 0.4.99 readiness handoff | Farseer shifted as the camera turned and a gap reopened beside LOD terrain because ownership came from current-frame/frustum selection | Human-observed; source-traced; superseded |
 | 0.4.100 stable handoff | Camera reaction fixed, but broad Farseer geometry remained over visible LOD because only L0 resident meshes were recognized | Human-observed in screenshots; source-traced; superseded |
-| Final checks | 25,137 assertions pass; Release mod and benchmark projects have zero warnings/errors | Harness-/build-tested at 0.4.101 |
-| 0.4.101 artifact | 41 root-relative entries, one DLL, no PDB/wrapper, matching installed copy; SHA-256 `14CAC44C0C41DC26F48155DC2352A22E90EF123CE0C5B72F21B4734A99C8B392` | Artifact-verified |
-| 0.4.101 exact suppression, no-gap loading handoff, ridge contrast, final GLSL, weather look, controlled GPU/off A/B, cold/full-disc read-back, dedicated players and mixed versions | Not observed or measured | — |
+| 0.4.102 surface fog | Exact boundary location worked, but the visible result was bright, flat and angular with chunk-shaped outlines | Human-observed in screenshots; design rejected |
+| 0.4.103 volumetric fog | The layered mesh occupied air, but cards stayed visible and broad water became a near-black void; the client logged repeated OpenGL `InvalidOperation` | Human-observed and production-observed; superseded |
+| 0.4.104–0.4.105 guarded draw | Shader compiled, then the first fog draw still failed. The single-attachment blend-helper error was fixed first; the next log proved a second error remained | Production-observed; source-traced; superseded |
+| 0.4.106 typed-uniform fix | Corrected integer upload to a declared float uniform. The owner reported that the fog looked “very good” | Human-tested; source/static regression-tested |
+| 0.4.107 post-water fog and radial corners | Fog composites after OIT and water stays visible; the owner called the result excellent. Screenshots still showed a rounded/missing diagonal quadrant at turns | Human-tested; corner limitation human-observed |
+| Final checks | 25,168 assertions pass; Release mod build has zero warnings/errors | Harness-/build-tested at 0.4.108 |
+| 0.4.108 artifact | 43 root-relative entries, one DLL, fog shaders present, no PDB/wrapper, matching installed copy; SHA-256 `3ADAB55D48C80E173400A9F690C6146FF9EB282A26DA2E000155D6FA217A088E` | Artifact-verified |
+| 0.4.108 full square corner cap | Source/harness-tested only; focused in-game corner verdict and clean current log remain open | Not human-tested |
+| Rapid handoff/excavation, weather look, controlled GPU/off A/B, cold/full-disc read-back, dedicated players and mixed versions | Not completed | — |
 
 **The core world-generation/LOD-coverage plan is complete.**
 - P1–P5 and P7 landed in 0.4.66–0.4.76.
@@ -437,9 +447,9 @@ to the server log.
 
 ## Performance and artifact evidence
 
-**Checks and builds.** The final fast tier passed **25,137 assertions with zero failures** at
-0.4.101. The Release mod build and benchmark project build completed with zero warnings and zero
-errors.
+**Checks and builds.** The final fast tier passed **25,168 assertions with zero failures** at
+0.4.108. The Release mod build completed with zero warnings and zero errors. The benchmark project
+was not changed or rebuilt during the 0.4.102–0.4.108 fog iteration.
 
 Measured costs, and what is not measured:
 - **Sibling-cache scanner.** Its cost is in the current-result table. Merging into held sections
@@ -468,16 +478,22 @@ Measured costs, and what is not measured:
     geometry, add a render pass or read back the GPU. Live cost is unmeasured.
   - Slope contrast reconstructs the geometric normal with shader derivatives and adds one gentle
     depth term. It adds no terrain geometry; live shader/GPU cost is unmeasured.
+  - Seam fog is one post-OIT draw. At default layer detail, each unique boundary edge contributes
+    seven vertical plus five horizontal crossing sheets; only perpendicular turns add five
+    horizontal caps. Boundary/mask changes rebuild the arrays and upload once, not per frame.
+  - The fog pass is fill/blend work across its visible volume. No controlled GPU timing or
+    low/default/high layer-detail comparison exists yet; its cost must not be inferred from the old
+    pre-simplification 550→450 FPS observation.
   - Render upload is bounded to four tiles, 2 MiB and 2 ms per frame; live GPU time is unmeasured.
   - An accelerator height took 0.01–0.02 ms in freshly generated land (Session 94). On land nobody
     had generated it took under 0.01 ms, and under 1 ms for a new region's first sample (Session 95).
     Sampling beside real generation is not measured.
 
-**The 0.4.101 artifact.** The verified `dist/vintagehorizons_0.4.101.zip` is 654,148 bytes and has
-SHA-256 `14CAC44C0C41DC26F48155DC2352A22E90EF123CE0C5B72F21B4734A99C8B392`. Its 41 root-relative file
-entries are readable, its DLL matches Release, `modinfo.json` reports 0.4.101, it contains no PDB or
-wrapper directory, and it was copy-installed with a matching hash. Older test zips remain in that
-folder.
+**The 0.4.108 artifact.** The verified `dist/vintagehorizons_0.4.108.zip` is 666,934 bytes and has
+SHA-256 `3ADAB55D48C80E173400A9F690C6146FF9EB282A26DA2E000155D6FA217A088E`. Its 43 root-relative file
+entries are readable, its DLL matches Release, `modinfo.json` reports 0.4.108, both fog shaders are
+present, it contains no PDB or wrapper directory, and it was copy-installed with a matching hash.
+The 0.4.101–0.4.107 zips and every older test build remain in the Mods folder as rollback artifacts.
 
 **Checkpoints.** Every incremented private test build receives an exact Git checkpoint after
 verification and installation. This does not authorize a push, tag, publication or public release.
@@ -491,9 +507,11 @@ verification and installation. This does not authorize a push, tag, publication 
   visual/performance observations recorded above.
 - Session 98 launched no server or game client. The owner supplied the handoff and contrast
   observations; 0.4.101 remains unrun.
+- Session 99 launched no server or game client. The owner ran the fog builds and supplied the
+  screenshots, logs and visual verdicts recorded above; 0.4.108 remains unrun.
 - Session 91's controlled servers ran only after the owner's approval.
 
-**Documentation.** Validation passed **10,664 checks** with no failures at the Session 98 doc pass.
+**Documentation.** Validation passed **10,673 checks** with no failures at the Session 99 doc pass.
 It covers:
 - current version and changelog coverage;
 - source count;
@@ -533,45 +551,50 @@ It covers:
   proven. The proof comes from stable vanilla readiness and exact all-level installed-mesh
   coverage, never cached data alone, the current frustum or camera yaw (settled decisions 42 and
   45–46).
+- **Farseer seam fog.** The veil is separate translucent geometry derived from the exact ownership
+  boundary; it never changes ownership. It crosses the seam in both directions, fades to zero on
+  every exposed perimeter and fills the full square footprint at perpendicular turns. It draws
+  after OIT as an RGB-only overlay with read-only primary depth, so a fog correction cannot rewrite
+  water or terrain ownership (settled decisions 47–48).
 - **Thread count.** Multi-thread generation is not a player option. The engine setting was active in
   P0, but failed both the material-speedup and terrain-identity gates (G198).
 
 ## Next work
 
 Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
-[Session 98](dev/sessions/SESSION_98.md), the top of [TODO](dev/TODO.md), and
+[Session 99](dev/sessions/SESSION_99.md), the top of [TODO](dev/TODO.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. **Run 0.4.101's focused ownership gate:** at the same screenshot locations, turn in place,
-   approach vanilla/LOD edges obliquely, watch rapid loading/unloading and look into excavated
-   vanilla ground. There must be no view-dependent shift, Farseer over ready terrain, or sky gap
-   before replacement. Judge whether the new contrast separates overlapping ridges naturally.
-   This also proves the changed shader compiles.
+1. **Run 0.4.108's focused corner gate:** revisit the `20-02-06` screenshot viewpoint and one other
+   ninety-degree turn. The fog must form one continuous sweep with no rounded bite, missing adjacent
+   square or hard outer rim. Include water, then confirm the current client log has no seam-fog
+   compile/draw failure and Farseer remained enabled.
 2. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
-3. **Finish P5 evidence/credit:** after suppression is accepted, tune final Outline detail, Hill
-   softness and apron defaults; measure controlled GPU/off and regeneration hitches; refine
-   islands/inlets only if needed; finish the deliberate player-facing Farseer rename plus bundled
-   MIT notice.
-4. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
-5. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
+3. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
+   observations beneath the veil; tune Outline detail, Hill softness, apron and the eight fog dials
+   only after the corner is accepted; measure controlled Farseer off/on and fog-detail cost.
+4. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
+   player-facing Farseer rename plus bundled MIT notice.
+5. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
+6. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
    offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
-6. **Older TODO debt:** runtime-check the 0.4.69 sweep pacing and drop line, and keep the debt
+7. **Older TODO debt:** runtime-check the 0.4.69 sweep pacing and drop line, and keep the debt
    including:
    - P3's after-comparison;
    - winter convergence;
    - pause loading;
    - Session 84 diagnostic cleanup.
 
-[Session 98](dev/sessions/SESSION_98.md) is the authoritative continuation point, and
+[Session 99](dev/sessions/SESSION_99.md) is the authoritative continuation point, and
 [the silhouette handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md) orients a new agent.
-- Sessions 97-82 retain Farseer persistence/tuning, the silhouette comparison, P2 and the first
+- Sessions 98-82 retain ownership/persistence/tuning, the silhouette comparison, P2 and the first
   look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G216 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
-  buried joins, bounded regeneration and the stable all-level Farseer handoff.
+- G166-G222 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+  buried joins, bounded regeneration, stable all-level ownership and post-water volumetric fog.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work
