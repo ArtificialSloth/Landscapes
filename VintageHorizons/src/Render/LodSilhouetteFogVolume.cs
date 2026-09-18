@@ -154,14 +154,13 @@ internal static class LodSilhouetteFogVolume
 
         // Edge strips end exactly at their grid vertex. At a ninety-degree turn their union
         // therefore misses the diagonally adjacent quadrant and reveals one square chunk corner.
-        // A low-density radial cap at each real turn fills that notch without thickening every
-        // straight segment or producing a hard square extension.
+        // A low-density square-footprint cap fills the whole notch. Its perimeter remains at zero
+        // density, so the extra reach blends away instead of exposing a hard square extension.
         foreach ((int gridX, int gridZ) in corners)
         {
             float centreX = gridX * LodSilhouetteSeamMask.CellBlocks;
             float centreZ = gridZ * LodSilhouetteSeamMask.CellBlocks;
             float centreY = FiniteHeight(heightAtGrid(gridX, gridZ));
-            float diagonal = spillBlocks * 0.70710677f;
             for (int layer = 0; layer < horizontalLayers; layer++)
             {
                 float up = horizontalLayers == 1 ? 0f : layer / (horizontalLayers - 1f);
@@ -171,13 +170,17 @@ internal static class LodSilhouetteFogVolume
                 int first = vertex;
                 AddVertex(centreX, centreY + height, centreZ, density);
                 AddVertex(centreX, centreY + height, centreZ - spillBlocks, 0f);
-                AddVertex(centreX + diagonal, centreY + height, centreZ - diagonal, 0f);
+                AddVertex(centreX + spillBlocks, centreY + height,
+                    centreZ - spillBlocks, 0f);
                 AddVertex(centreX + spillBlocks, centreY + height, centreZ, 0f);
-                AddVertex(centreX + diagonal, centreY + height, centreZ + diagonal, 0f);
+                AddVertex(centreX + spillBlocks, centreY + height,
+                    centreZ + spillBlocks, 0f);
                 AddVertex(centreX, centreY + height, centreZ + spillBlocks, 0f);
-                AddVertex(centreX - diagonal, centreY + height, centreZ + diagonal, 0f);
+                AddVertex(centreX - spillBlocks, centreY + height,
+                    centreZ + spillBlocks, 0f);
                 AddVertex(centreX - spillBlocks, centreY + height, centreZ, 0f);
-                AddVertex(centreX - diagonal, centreY + height, centreZ - diagonal, 0f);
+                AddVertex(centreX - spillBlocks, centreY + height,
+                    centreZ - spillBlocks, 0f);
                 for (int ring = 0; ring < 8; ring++)
                     AddTriangle(first, first + 1 + ring, first + 1 + ((ring + 1) & 7));
             }

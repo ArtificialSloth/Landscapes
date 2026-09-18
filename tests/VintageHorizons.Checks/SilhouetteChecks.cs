@@ -122,7 +122,7 @@ public static class SilhouetteChecks
         LodSilhouetteFogMeshArrays cornerVolume =
             LodSilhouetteFogVolume.Build(cornerMask, (_, _) => 100f);
         c.Eq(1, cornerVolume.CornerCaps,
-            "one L-shaped ownership turn emits one radial fog cap for its diagonal chunk");
+            "one L-shaped ownership turn emits one fog cap for its diagonal chunk");
         c.Eq(cornerMask.Boundaries.Count * cornerVolume.VerticesPerEdge
                 + cornerVolume.VerticesPerCorner,
             cornerVolume.VertexCount,
@@ -133,12 +133,14 @@ public static class SilhouetteChecks
             "corner-cap triangles are bounded separately from ordinary edge strips");
         int firstCornerVertex = cornerMask.Boundaries.Count * cornerVolume.VerticesPerEdge;
         c.True(cornerVolume.FogWeights[firstCornerVertex * 2] > 0f,
-            "the centre of a turn stays fog-dense while its radial cap fades outward");
+            "the centre of a turn stays fog-dense while its corner cap fades outward");
         float corner = 8f * LodSilhouetteSeamMask.CellBlocks;
         c.True(Enumerable.Range(firstCornerVertex, cornerVolume.VerticesPerCorner)
-                .Any(i => cornerVolume.Xyz[i * 3] > corner
-                    && cornerVolume.Xyz[i * 3 + 2] > corner),
-            "the radial cap reaches into the diagonal quadrant that edge strips leave empty");
+                .Any(i => Math.Abs(cornerVolume.Xyz[i * 3]
+                            - (corner + LodSilhouetteFogVolume.DefaultSpillBlocks)) < 0.0001f
+                    && Math.Abs(cornerVolume.Xyz[i * 3 + 2]
+                            - (corner + LodSilhouetteFogVolume.DefaultSpillBlocks)) < 0.0001f),
+            "the corner cap reaches the full square diagonal that edge strips leave empty");
 
         mask.MarkUploaded();
         c.False(mask.BeginBuild(-2, 3, -2, 3, 17),
