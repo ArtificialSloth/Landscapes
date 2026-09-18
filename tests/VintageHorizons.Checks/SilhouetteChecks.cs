@@ -94,12 +94,14 @@ public static class SilhouetteChecks
         c.Eq(LodSilhouetteField.CoverageCellsPerEdge, mask.Boundaries.Count,
             "one unique vertical centreline edge is emitted for each chunk along the join");
         LodSilhouetteFogMeshArrays volume = LodSilhouetteFogVolume.Build(mask, (_, _) => 100f);
-        c.Eq(mask.Boundaries.Count * volume.VerticesPerEdge,
+        c.Eq(mask.Boundaries.Count * volume.VerticesPerEdge
+                + volume.TaperedEnds * volume.VerticesPerTaper,
             volume.VertexCount, "the fog volume has a bounded number of layered vertices per edge");
-        c.Eq(mask.Boundaries.Count * volume.IndicesPerEdge,
+        c.Eq(mask.Boundaries.Count * volume.IndicesPerEdge
+                + volume.TaperedEnds * volume.IndicesPerTaper,
             volume.IndexCount, "the fog volume has a bounded number of layered indices per edge");
-        c.Eq(0, volume.CornerCaps,
-            "a straight ownership frontier does not spend geometry on corner caps");
+        c.Eq(2, volume.TaperedEnds,
+            "a straight frontier fades only at the two ends of its run, never between its edges");
         c.True(volume.VerticalLayers >= 7 && volume.HorizontalLayers >= 5,
             "the default fog has enough crossing layers to avoid five obvious vertical cards");
         c.True(volume.FogWeights.Where((_, i) => (i & 1) == 0).Max() >= 0.15f,
@@ -121,32 +123,99 @@ public static class SilhouetteChecks
         cornerMask.CompleteBuild();
         LodSilhouetteFogMeshArrays cornerVolume =
             LodSilhouetteFogVolume.Build(cornerMask, (_, _) => 100f);
-        c.Eq(1, cornerVolume.CornerCaps,
-            "one L-shaped ownership turn emits one fog cap for its diagonal chunk");
+        c.Eq(4, cornerVolume.TaperedEnds,
+            "an L-shaped turn supports neither run, so both fade past it and past their far ends");
         c.Eq(cornerMask.Boundaries.Count * cornerVolume.VerticesPerEdge
-                + cornerVolume.VerticesPerCorner,
+                + cornerVolume.TaperedEnds * cornerVolume.VerticesPerTaper,
             cornerVolume.VertexCount,
-            "corner-cap vertices are bounded separately from ordinary edge strips");
+            "faded end cross-sections are bounded separately from ordinary edge strips");
         c.Eq(cornerMask.Boundaries.Count * cornerVolume.IndicesPerEdge
-                + cornerVolume.IndicesPerCorner,
+                + cornerVolume.TaperedEnds * cornerVolume.IndicesPerTaper,
             cornerVolume.IndexCount,
-            "corner-cap triangles are bounded separately from ordinary edge strips");
-        int firstCornerVertex = cornerMask.Boundaries.Count * cornerVolume.VerticesPerEdge;
-        c.True(cornerVolume.FogWeights[firstCornerVertex * 2] > 0f,
-            "the centre of a turn stays fog-dense while its corner cap fades outward");
+            "faded end triangles are bounded separately from ordinary edge strips");
         float corner = 8f * LodSilhouetteSeamMask.CellBlocks;
-        c.True(Enumerable.Range(firstCornerVertex, cornerVolume.VerticesPerCorner)
-                .Any(i => Math.Abs(cornerVolume.Xyz[i * 3]
-                            - (corner + LodSilhouetteFogVolume.DefaultSpillBlocks)) < 0.0001f
-                    && Math.Abs(cornerVolume.Xyz[i * 3 + 2]
-                            - (corner + LodSilhouetteFogVolume.DefaultSpillBlocks)) < 0.0001f),
-            "the corner cap reaches the full square diagonal that edge strips leave empty");
+        float spill = LodSilhouetteFogVolume.DefaultSpillBlocks;
+        c.True(CornerFogWeightAt(cornerVolume, corner, corner + spill) == 0f
+                && CornerFogWeightAt(cornerVolume, corner + spill, corner) == 0f,
+            "both runs sweep a full spill past the turn and reach zero density there");
+        c.True(CornerFogWeightAt(cornerVolume, corner + spill, corner + spill) == 0f,
+            "the swept ends reach the far corner of the quadrant the strips leave empty");
+        c.True(Enumerable.Range(0, cornerVolume.VertexCount).All(i =>
+                cornerVolume.Xyz[i * 3] <= corner + spill + 0.0001f
+                && cornerVolume.Xyz[i * 3 + 2] <= corner + spill + 0.0001f),
+            "no fog reaches further than one spill beyond the last known ownership edge");
+        c.True(Enumerable.Range(0, cornerVolume.VertexCount).Any(i =>
+                Math.Abs(cornerVolume.Xyz[i * 3 + 1] - 108f) < 0.0001f
+                && Math.Abs(cornerVolume.Xyz[i * 3 + 2] - (corner + spill)) < 0.0001f
+                && cornerVolume.FogWeights[i * 2] == 0f),
+            "a swept end carries the vertical sheets too, not only a flat aerial cap");
+
+        // The empty quadrant sits outside the L, beyond both runs. Measured straight down, the
+        // two swept ends have to leave it reading like band, not like a thin patch: at least
+        // one straight seam's fog at the same offset, and no more than the two runs crossing.
+        float straightBand = PlanFogWeight(cornerVolume, corner - spill * 0.5f, corner - 100f);
+        float quadrant = PlanFogWeight(cornerVolume, corner + spill / 3f, corner + spill * 0.5f);
+        c.True(quadrant >= straightBand && quadrant <= straightBand * 2.2f,
+            "the diagonal quadrant carries a crossing band's fog at the same offset");
+        c.True(PlanFogWeight(cornerVolume, corner + spill * 5f / 6f, corner + spill * 2f / 3f) > 0f,
+            "the far half of the quadrant fills too, instead of being bitten off diagonally");
+        float insideOldWall = PlanFogWeight(cornerVolume, corner + spill * 0.5f, corner - 8f);
+        float outsideOldWall = PlanFogWeight(cornerVolume, corner + spill * 0.5f, corner + 8f);
+        c.True(outsideOldWall > insideOldWall * 0.85f,
+            "fog no longer steps down at the turn where the strips used to end");
 
         mask.MarkUploaded();
         c.False(mask.BeginBuild(-2, 3, -2, 3, 17),
             "unchanged ownership reuses the uploaded fog volume");
         c.False(mask.Dirty,
             "an unchanged frame does not upload the seam-fog geometry again");
+    }
+
+    /// <summary>
+    /// The heaviest fog weight the volume carries at one ground-plan position, or NaN when the
+    /// mesh never reaches it. NaN fails an equality check, so an absent position cannot pass as
+    /// a faded one.
+    /// </summary>
+    static float CornerFogWeightAt(LodSilhouetteFogMeshArrays volume, float x, float z)
+    {
+        float heaviest = float.NaN;
+        for (int i = 0; i < volume.VertexCount; i++)
+        {
+            if (Math.Abs(volume.Xyz[i * 3] - x) > 0.0001f) continue;
+            if (Math.Abs(volume.Xyz[i * 3 + 2] - z) > 0.0001f) continue;
+            float weight = volume.FogWeights[i * 2];
+            heaviest = float.IsNaN(heaviest) ? weight : Math.Max(heaviest, weight);
+        }
+
+        return heaviest;
+    }
+
+    /// <summary>
+    /// Fog thickness looking straight down at one ground-plan position: every horizontal sheet
+    /// the column passes through, at its interpolated density. Vertical sheets stand edge-on and
+    /// enclose no plan area, so they drop out - which is what an aerial screenshot of the seam
+    /// actually measures.
+    /// </summary>
+    static float PlanFogWeight(LodSilhouetteFogMeshArrays volume, float x, float z)
+    {
+        float total = 0f;
+        for (int at = 0; at + 2 < volume.IndexCount; at += 3)
+        {
+            int a = volume.Indices[at], b = volume.Indices[at + 1], c = volume.Indices[at + 2];
+            float ax = volume.Xyz[a * 3], az = volume.Xyz[a * 3 + 2];
+            float bx = volume.Xyz[b * 3], bz = volume.Xyz[b * 3 + 2];
+            float cx = volume.Xyz[c * 3], cz = volume.Xyz[c * 3 + 2];
+            float area = (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
+            if (Math.Abs(area) < 0.0001f) continue;
+            float u = ((bx - x) * (cz - z) - (bz - z) * (cx - x)) / area;
+            float v = ((cx - x) * (az - z) - (cz - z) * (ax - x)) / area;
+            float w = 1f - u - v;
+            if (u < 0f || v < 0f || w < 0f) continue;
+            total += u * volume.FogWeights[a * 2] + v * volume.FogWeights[b * 2]
+                + w * volume.FogWeights[c * 2];
+        }
+
+        return total;
     }
 
     public static void RunWiring(Check c)

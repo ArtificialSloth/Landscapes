@@ -11,18 +11,19 @@ internal sealed class LodSilhouetteFogMeshArrays
     public required int OriginBlockX;
     public required int OriginBlockZ;
     public required int BoundaryEdges;
-    public required int CornerCaps;
+    public required int TaperedEnds;
     public required int VerticalLayers;
     public required int HorizontalLayers;
 
-    public int VerticesPerEdge =>
-        (VerticalLayers + HorizontalLayers) * LodSilhouetteFogVolume.VerticesPerLayer;
-    public int IndicesPerEdge =>
-        (VerticalLayers + HorizontalLayers) * LodSilhouetteFogVolume.IndicesPerLayer;
-    public int VerticesPerCorner =>
-        HorizontalLayers * LodSilhouetteFogVolume.VerticesPerCornerLayer;
-    public int IndicesPerCorner =>
-        HorizontalLayers * LodSilhouetteFogVolume.IndicesPerCornerLayer;
+    public int Layers => VerticalLayers + HorizontalLayers;
+
+    /// <summary>One edge strip whose two ends are both continued by a straight neighbour.</summary>
+    public int VerticesPerEdge => Layers * 2 * LodSilhouetteFogVolume.VerticesPerColumn;
+    public int IndicesPerEdge => Layers * LodSilhouetteFogVolume.IndicesPerSpan;
+
+    /// <summary>The one extra faded cross-section a strip grows past an unsupported end.</summary>
+    public int VerticesPerTaper => Layers * LodSilhouetteFogVolume.VerticesPerColumn;
+    public int IndicesPerTaper => Layers * LodSilhouetteFogVolume.IndicesPerSpan;
 }
 
 /// <summary>
@@ -30,13 +31,25 @@ internal sealed class LodSilhouetteFogMeshArrays
 /// fog depth from ordinary ground-level views; horizontal sheets give it body from hills and
 /// aerial views. Their outer and upper vertices carry zero density, so the mesh itself has no
 /// opaque chunk-shaped wall for the fragment noise to reveal.
+///
+/// A strip is described as a short run of cross-sections along its own edge. Where the frontier
+/// carries straight on, the neighbouring strip continues the fog and the shared cross-section
+/// keeps full density. Where it does not - a ninety-degree turn, or the last known edge of a
+/// chain - the strip grows one more cross-section a spill distance further on and fades it to
+/// zero, so the veil sweeps over the adjacent terrain instead of ending in a wall.
 /// </summary>
 internal static class LodSilhouetteFogVolume
 {
-    public const int VerticesPerLayer = 6;
-    public const int IndicesPerLayer = 12;
-    public const int VerticesPerCornerLayer = 9;
-    public const int IndicesPerCornerLayer = 24;
+    /// <summary>Lower rim, dense middle and upper rim of one cross-section.</summary>
+    public const int VerticesPerColumn = 3;
+
+    /// <summary>Two quads bridge one cross-section to the next.</summary>
+    public const int IndicesPerSpan = 12;
+
+    const byte WestLeaves = 1 << 0;
+    const byte EastLeaves = 1 << 1;
+    const byte NorthLeaves = 1 << 2;
+    const byte SouthLeaves = 1 << 3;
 
     public const float MinStrength = 0f;
     public const float MaxStrength = 2f;
@@ -78,23 +91,44 @@ internal static class LodSilhouetteFogVolume
             MinFloorDepthBlocks, MaxFloorDepthBlocks);
         layerDetail = Dial(layerDetail, DefaultLayerDetail, MinLayerDetail, MaxLayerDetail);
         (int verticalLayers, int horizontalLayers) = LayerCounts(layerDetail);
-        int verticesPerEdge = checked((verticalLayers + horizontalLayers) * VerticesPerLayer);
-        int indicesPerEdge = checked((verticalLayers + horizontalLayers) * IndicesPerLayer);
-        int edges = mask.Boundaries.Count;
-        List<(int GridX, int GridZ)> corners = FindCorners(mask.Boundaries);
-        int cornerVertices = checked(corners.Count * horizontalLayers * VerticesPerCornerLayer);
-        int cornerIndices = checked(corners.Count * horizontalLayers * IndicesPerCornerLayer);
-        int vertexCount = checked(edges * verticesPerEdge + cornerVertices);
-        int indexCount = checked(edges * indicesPerEdge + cornerIndices);
+        int layers = checked(verticalLayers + horizontalLayers);
+        IReadOnlyList<LodSilhouetteBoundaryEdge> edgeList = mask.Boundaries;
+        int edges = edgeList.Count;
+
+        // One pass to learn which ends the frontier itself continues, so the arrays below are
+        // sized exactly and no strip has to guess at build time.
+        Dictionary<(int X, int Z), byte> leaving = LeavingDirections(edgeList);
+        var taperStart = new bool[edges];
+        var taperEnd = new bool[edges];
+        int taperedEnds = 0;
+        for (int i = 0; i < edges; i++)
+        {
+            LodSilhouetteBoundaryEdge edge = edgeList[i];
+            int stepX = Math.Sign(edge.EndGridX - edge.StartGridX);
+            int stepZ = Math.Sign(edge.EndGridZ - edge.StartGridZ);
+            taperStart[i] = !Continues(leaving, edge.StartGridX, edge.StartGridZ, -stepX, -stepZ);
+            taperEnd[i] = !Continues(leaving, edge.EndGridX, edge.EndGridZ, stepX, stepZ);
+            if (taperStart[i]) taperedEnds++;
+            if (taperEnd[i]) taperedEnds++;
+        }
+
+        int columnsTotal = checked(edges * 2 + taperedEnds);
+        int spansTotal = checked(edges + taperedEnds);
+        int vertexCount = checked(layers * columnsTotal * VerticesPerColumn);
+        int indexCount = checked(layers * spansTotal * IndicesPerSpan);
         var xyz = new float[checked(vertexCount * 3)];
         var weights = new float[checked(vertexCount * 2)];
         var indices = new int[indexCount];
         int originX = checked(mask.MinCellX * LodSilhouetteSeamMask.CellBlocks);
         int originZ = checked(mask.MinCellZ * LodSilhouetteSeamMask.CellBlocks);
         int vertex = 0, index = 0;
+        float innerHeight = Math.Min(8f, heightBlocks * 0.16f);
+        // Four is the maximum: an optional faded cross-section at each end of the two real ones.
+        var columns = new (float X, float Z, float Y, float Scale)[4];
 
-        foreach (LodSilhouetteBoundaryEdge edge in mask.Boundaries)
+        for (int i = 0; i < edges; i++)
         {
+            LodSilhouetteBoundaryEdge edge = edgeList[i];
             float startX = edge.StartGridX * LodSilhouetteSeamMask.CellBlocks;
             float startZ = edge.StartGridZ * LodSilhouetteSeamMask.CellBlocks;
             float endX = edge.EndGridX * LodSilhouetteSeamMask.CellBlocks;
@@ -104,6 +138,20 @@ internal static class LodSilhouetteFogVolume
             bool alongZ = edge.StartGridX == edge.EndGridX;
             float normalX = alongZ ? 1f : 0f;
             float normalZ = alongZ ? 0f : 1f;
+            float stepX = alongZ ? 0f : MathF.Sign(endX - startX);
+            float stepZ = alongZ ? MathF.Sign(endZ - startZ) : 0f;
+
+            // A taper keeps its neighbour's sampled ground height. Reading one cell further
+            // would leave the mask and drop the whole cross-section to sea level.
+            int columnCount = 0;
+            if (taperStart[i])
+                columns[columnCount++] = (startX - stepX * spillBlocks,
+                    startZ - stepZ * spillBlocks, startY, 0f);
+            columns[columnCount++] = (startX, startZ, startY, 1f);
+            columns[columnCount++] = (endX, endZ, endY, 1f);
+            if (taperEnd[i])
+                columns[columnCount++] = (endX + stepX * spillBlocks,
+                    endZ + stepZ * spillBlocks, endY, 0f);
 
             for (int layer = 0; layer < verticalLayers; layer++)
             {
@@ -115,20 +163,17 @@ internal static class LodSilhouetteFogVolume
                 float density = 0.16f * MathF.Exp(-2.4f * across * across)
                     * 7f / verticalLayers;
                 int first = vertex;
-                AddVertex(startX + normalX * offset, startY - floorDepthBlocks,
-                    startZ + normalZ * offset, 0f);
-                AddVertex(endX + normalX * offset, endY - floorDepthBlocks,
-                    endZ + normalZ * offset, 0f);
-                float innerHeight = Math.Min(8f, heightBlocks * 0.16f);
-                AddVertex(startX + normalX * offset, startY + innerHeight,
-                    startZ + normalZ * offset, density);
-                AddVertex(endX + normalX * offset, endY + innerHeight,
-                    endZ + normalZ * offset, density);
-                AddVertex(startX + normalX * offset, startY + heightBlocks,
-                    startZ + normalZ * offset, 0f);
-                AddVertex(endX + normalX * offset, endY + heightBlocks,
-                    endZ + normalZ * offset, 0f);
-                AddStrip(first);
+                for (int c = 0; c < columnCount; c++)
+                {
+                    (float x, float z, float y, float scale) = columns[c];
+                    AddVertex(x + normalX * offset, y - floorDepthBlocks,
+                        z + normalZ * offset, 0f);
+                    AddVertex(x + normalX * offset, y + innerHeight,
+                        z + normalZ * offset, density * scale);
+                    AddVertex(x + normalX * offset, y + heightBlocks,
+                        z + normalZ * offset, 0f);
+                }
+                Stitch(first, columnCount);
             }
 
             for (int layer = 0; layer < horizontalLayers; layer++)
@@ -138,51 +183,16 @@ internal static class LodSilhouetteFogVolume
                 float density = (0.18f * MathF.Pow(1f - up, 1.2f) + 0.025f)
                     * 5f / horizontalLayers;
                 int first = vertex;
-                AddVertex(startX - normalX * spillBlocks, startY + height,
-                    startZ - normalZ * spillBlocks, 0f);
-                AddVertex(endX - normalX * spillBlocks, endY + height,
-                    endZ - normalZ * spillBlocks, 0f);
-                AddVertex(startX, startY + height, startZ, density);
-                AddVertex(endX, endY + height, endZ, density);
-                AddVertex(startX + normalX * spillBlocks, startY + height,
-                    startZ + normalZ * spillBlocks, 0f);
-                AddVertex(endX + normalX * spillBlocks, endY + height,
-                    endZ + normalZ * spillBlocks, 0f);
-                AddStrip(first);
-            }
-        }
-
-        // Edge strips end exactly at their grid vertex. At a ninety-degree turn their union
-        // therefore misses the diagonally adjacent quadrant and reveals one square chunk corner.
-        // A low-density square-footprint cap fills the whole notch. Its perimeter remains at zero
-        // density, so the extra reach blends away instead of exposing a hard square extension.
-        foreach ((int gridX, int gridZ) in corners)
-        {
-            float centreX = gridX * LodSilhouetteSeamMask.CellBlocks;
-            float centreZ = gridZ * LodSilhouetteSeamMask.CellBlocks;
-            float centreY = FiniteHeight(heightAtGrid(gridX, gridZ));
-            for (int layer = 0; layer < horizontalLayers; layer++)
-            {
-                float up = horizontalLayers == 1 ? 0f : layer / (horizontalLayers - 1f);
-                float height = up * up * heightBlocks * 0.80f;
-                float density = (0.117f * MathF.Pow(1f - up, 1.2f) + 0.016f)
-                    * 5f / horizontalLayers;
-                int first = vertex;
-                AddVertex(centreX, centreY + height, centreZ, density);
-                AddVertex(centreX, centreY + height, centreZ - spillBlocks, 0f);
-                AddVertex(centreX + spillBlocks, centreY + height,
-                    centreZ - spillBlocks, 0f);
-                AddVertex(centreX + spillBlocks, centreY + height, centreZ, 0f);
-                AddVertex(centreX + spillBlocks, centreY + height,
-                    centreZ + spillBlocks, 0f);
-                AddVertex(centreX, centreY + height, centreZ + spillBlocks, 0f);
-                AddVertex(centreX - spillBlocks, centreY + height,
-                    centreZ + spillBlocks, 0f);
-                AddVertex(centreX - spillBlocks, centreY + height, centreZ, 0f);
-                AddVertex(centreX - spillBlocks, centreY + height,
-                    centreZ - spillBlocks, 0f);
-                for (int ring = 0; ring < 8; ring++)
-                    AddTriangle(first, first + 1 + ring, first + 1 + ((ring + 1) & 7));
+                for (int c = 0; c < columnCount; c++)
+                {
+                    (float x, float z, float y, float scale) = columns[c];
+                    AddVertex(x - normalX * spillBlocks, y + height,
+                        z - normalZ * spillBlocks, 0f);
+                    AddVertex(x, y + height, z, density * scale);
+                    AddVertex(x + normalX * spillBlocks, y + height,
+                        z + normalZ * spillBlocks, 0f);
+                }
+                Stitch(first, columnCount);
             }
         }
 
@@ -196,7 +206,7 @@ internal static class LodSilhouetteFogVolume
             OriginBlockX = originX,
             OriginBlockZ = originZ,
             BoundaryEdges = edges,
-            CornerCaps = corners.Count,
+            TaperedEnds = taperedEnds,
             VerticalLayers = verticalLayers,
             HorizontalLayers = horizontalLayers,
         };
@@ -212,16 +222,34 @@ internal static class LodSilhouetteFogVolume
             vertex++;
         }
 
-        void AddStrip(int first)
+        void Stitch(int first, int columnCount)
         {
-            AddQuad(first, first + 1, first + 2, first + 3);
-            AddQuad(first + 2, first + 3, first + 4, first + 5);
+            for (int c = 0; c + 1 < columnCount; c++)
+            {
+                int near = first + c * VerticesPerColumn;
+                int far = first + (c + 1) * VerticesPerColumn;
+                AddQuad(near, far, near + 1, far + 1);
+                AddQuad(near + 1, far + 1, near + 2, far + 2);
+            }
         }
 
+        // Split along the diagonal that joins the two heavier corners. Where a strip fades to
+        // nothing, its one dense corner then lies on both triangles and the density decays over
+        // the whole quad; the other diagonal would cut the far triangle off at a flat zero and
+        // leave a diagonal bite out of the swept corner. An ordinary strip has equal weights on
+        // both diagonals and keeps its original split.
         void AddQuad(int a, int b, int c, int d)
         {
-            AddTriangle(a, b, c);
-            AddTriangle(c, b, d);
+            if (weights[b * 2] + weights[c * 2] >= weights[a * 2] + weights[d * 2])
+            {
+                AddTriangle(a, b, c);
+                AddTriangle(c, b, d);
+            }
+            else
+            {
+                AddTriangle(a, b, d);
+                AddTriangle(a, d, c);
+            }
         }
 
         void AddTriangle(int a, int b, int c)
@@ -232,10 +260,14 @@ internal static class LodSilhouetteFogVolume
         }
     }
 
-    static List<(int GridX, int GridZ)> FindCorners(
+    /// <summary>
+    /// The set of directions in which a boundary edge leaves each frontier vertex. An edge only
+    /// records the direction of its own far end, so a vertex knows exactly which of its four
+    /// neighbours the frontier actually reaches.
+    /// </summary>
+    static Dictionary<(int X, int Z), byte> LeavingDirections(
         IReadOnlyList<LodSilhouetteBoundaryEdge> edges)
     {
-        const byte west = 1 << 0, east = 1 << 1, north = 1 << 2, south = 1 << 3;
         var directions = new Dictionary<(int X, int Z), byte>();
         foreach (LodSilhouetteBoundaryEdge edge in edges)
         {
@@ -247,22 +279,23 @@ internal static class LodSilhouetteFogVolume
                 Math.Sign(edge.StartGridZ - edge.EndGridZ));
         }
 
-        return directions
-            .Where(pair => (pair.Value & (west | east)) != 0
-                && (pair.Value & (north | south)) != 0)
-            .Select(pair => (GridX: pair.Key.X, GridZ: pair.Key.Z))
-            .OrderBy(point => point.GridZ)
-            .ThenBy(point => point.GridX)
-            .ToList();
+        return directions;
 
         void Add(int x, int z, int dx, int dz)
         {
-            byte direction = dx < 0 ? west : dx > 0 ? east
-                : dz < 0 ? north : south;
             directions.TryGetValue((x, z), out byte present);
-            directions[(x, z)] = (byte)(present | direction);
+            directions[(x, z)] = (byte)(present | Leaving(dx, dz));
         }
     }
+
+    /// <summary>True when another boundary edge carries the frontier straight on past a vertex.</summary>
+    static bool Continues(
+        Dictionary<(int X, int Z), byte> leaving, int gridX, int gridZ, int dx, int dz) =>
+        leaving.TryGetValue((gridX, gridZ), out byte present)
+        && (present & Leaving(dx, dz)) != 0;
+
+    static byte Leaving(int dx, int dz) =>
+        dx < 0 ? WestLeaves : dx > 0 ? EastLeaves : dz < 0 ? NorthLeaves : SouthLeaves;
 
     internal static (int Vertical, int Horizontal) LayerCounts(float detail)
     {
