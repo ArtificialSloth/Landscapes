@@ -3836,8 +3836,9 @@ peek queue, with capacity `RequestChunkColumnsQueueSize / 5`. A producer braked 
 as Farseer's is, never slows itself however many peeks it has queued.
 
 **Safer action:** count your own peeks in flight and cap them. Read the counter only as the "real
-loads are pending" signal, and yield to it. The silhouette builder does both: 16 in flight, and it
-holds while 8 or more real chunks are pending.
+loads are pending" signal, and yield to it. The silhouette builder does both: `MaxPeeksInFlight` 4
+at a rate of `PreviewsPerSecond` 16, and it holds while 8 or more real chunks are pending. (The
+in-flight cap was recorded here as 16 until Session 100; 16 is the per-second rate.)
 
 **Found:** 2026-09-13/14, silhouette preparation and Session 92 (decompiled 1.22.x).
 
@@ -4198,6 +4199,12 @@ solve a corner-only topology problem.
 
 **Found:** 2026-09-17, Session 99 (human-observed in 0.4.106; first filled in 0.4.107).
 
+**Superseded by G223, 2026-09-18, Session 100.** The requirement stands - a turn must not leave a
+missing adjacent quadrant - but a separate cap is the wrong remedy, because it is a second body at a
+different density and its join stays visible however large it is. Each strip now fades its own
+geometry one spill past any end the frontier does not continue collinearly, and two swept ends fill
+the quadrant between them.
+
 ### G222 - A circular cap does not fill the square footprint of intersecting fog bands
 
 **Trigger:** covering G221's turn with an octagonal/radial cap whose diagonal coordinates are
@@ -4212,3 +4219,96 @@ so interpolation still fades organically and the larger footprint does not becom
 
 **Found:** 2026-09-17, Session 99 (human-observed in 0.4.107; source/harness-fixed in 0.4.108 and
 awaiting focused visual acceptance).
+
+**Reversed by G223, 2026-09-18, Session 100.** The square footprint this prescribes is itself the
+sharp corner: it reaches `spill x 1.414` on the diagonal while the straight bands reach `spill`, so
+it protrudes at every turn. Neither the circle nor the square is right; the footprint wanted is the
+segment dilated by the spill, which reaches `spill` in every direction.
+
+### G223 - A square swept end grows a tooth at every turn of a staircase frontier
+
+**Trigger:** giving a fog strip a full square footprint wherever the ownership frontier does not
+carry straight on, after G221/G222.
+
+**Trap:** the frontier is normally a 32-block chunk-grid staircase, so every vertex is a turn and
+every strip is swept at both ends. Each square corner reaches `spill x 1.414` diagonally, past the
+reach of the neighbouring strips, and their union becomes a regular sawtooth along both rims. It is
+correct only for the rare isolated turn between two long straight runs, which is the case a single
+annotated screenshot happened to show.
+
+**Safer action:** close a swept end as an arc, so a strip's footprint is its segment dilated by the
+spill - a stadium, reaching one spill in every direction. Two cross-sections at `(0.556, 0.831)` and
+`(1.0, 0.12)` in along/half-width fractions of the spill approximate it well enough. Judge such a
+change on a staircase fixture, never on one isolated turn.
+
+**Found:** 2026-09-18, Session 100 (human-observed in 0.4.109; reproduced offline from the real mesh
+and fixed in 0.4.110).
+
+### G224 - A fixed quad diagonal cuts the far triangle off from a lone dense corner
+
+**Trigger:** stitching a strip's cross-sections into quads with a constant triangulation, where one
+end of the strip fades to zero.
+
+**Trap:** a quad whose only non-zero weight is at one corner has that corner on just one of its two
+triangles under a fixed diagonal. The other triangle interpolates flat zero, so the fade loses half
+its quad and the shape gains a diagonal bite.
+
+**Safer action:** split along the diagonal joining the two heavier corners. An ordinary quad has
+equal sums on both diagonals and keeps its original split, so nothing else moves.
+
+**Found:** 2026-09-18, Session 100 (measured offline while building 0.4.109).
+
+### G225 - Shading does not move an outline that geometry put there
+
+**Trigger:** trying to soften a hard-edged translucent volume by curving its density profile or by
+warping its noise.
+
+**Trap:** two independent failures, both of which look right on paper:
+
+- a smooth curve through zero, such as `smoothstep`, leaves the zero-crossing exactly where it was.
+  Only the gradient's shape changes, and the silhouette does not move at all.
+- a domain warp whose wavelength is larger than the features being hidden translates them instead of
+  dissolving them. A warp at 1.6x the billow size slid a 32-block sawtooth sideways, intact.
+
+**Safer action:** fix the geometry first and use noise to disguise what remains, not to fix it. Give
+a warp at least one octave at or below the feature size, and displace the profile coordinate before
+shaping it rather than after. Render the outcome before shipping it: a plan-view rasterization of the
+real mesh reproduces this in seconds.
+
+**Found:** 2026-09-18, Session 100 (two rejected 0.4.110 attempts, rendered offline).
+
+### G226 - A drift dial must be integrated, and its rate must be in world units
+
+**Trigger:** animating a world-anchored noise pattern under a player-adjustable speed.
+
+**Trap:** two mistakes that combine into "the dial does nothing":
+
+- offsetting by elapsed time multiplied by the live speed is not a rate. Every change to the dial
+  displaces the whole pattern by the elapsed time, so it lurches while the slider is dragged and
+  sits still afterwards, which reads as the dial being the only thing that moves it.
+- expressing the rate in noise units multiplies it by the noise scale. 0.006 noise units per second
+  is 0.6 blocks per second at a 100-block billow size, and invisible at seam distance.
+
+**Safer action:** integrate the speed into an accumulated phase from the frame delta, clamp each
+frame's step so a pause cannot teleport the pattern, and wrap the accumulation so a long session
+keeps its interpolation precision. Express the rate in world units, applied before the noise
+scaling, so a size dial changes size and not pace.
+
+**Found:** 2026-09-18, Session 100 (human-observed through 0.4.109; fixed in 0.4.110).
+
+### G227 - The savegame sweep does not yield to the engine's chunk queue
+
+**Trigger:** attributing slow terrain loading to whichever Vintage Horizons feature is under
+development.
+
+**Trap:** `LodSavegameSweep.ObserveOtherGenerationQueue` records `CurrentGeneratingChunkCount` for
+absence classification only. `StepLoad`'s allowance is its configured rate and the capture backlog
+and nothing else, so it keeps issuing `LoadChunkColumnPriority` while a player waits for chunks,
+where the silhouette builder holds at 8 pending (G199). It is also centred on spawn, not on the
+player. Measured on the owner's machine it ran 7-14 columns/s for its whole load pass, pinned at its
+capture-backlog ceiling, while Farseer managed 2 previews in eight minutes.
+
+**Safer action:** before blaming a feature, read the periodic status line of every producer over the
+same log window and compare their rates. The counters are already there.
+
+**Found:** 2026-09-18, Session 100 (log-measured from the owner's `server-main.log`; source-traced).

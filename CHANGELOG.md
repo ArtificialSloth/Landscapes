@@ -19,7 +19,8 @@ changed thousands of chunk rows that agreed between the one-thread controls. The
 therefore keeps only its Balanced behavior and does not expose thread controls or Fast/Maximum
 presets.
 
-**Known open:** human-check 0.4.108's full corner sweep and preserve a clean client log; complete
+**Known open:** human-check 0.4.110's rounded, wobbled fog outline and its drift rate, and preserve a
+clean client log; run the savegame-sweep A/B before changing the sweep; complete
 the rapid-loading/excavation/weather Farseer matrix; measure controlled Farseer/fog GPU cost and
 reach/shape hitching; finish the deliberate player-facing Farseer rename and bundle its MIT
 license; let a
@@ -32,6 +33,48 @@ read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.110] - 2026-09-18
+
+**The seam fog reaches past its ends, and its corners are round (0.4.109-0.4.110).**
+
+- Each fog strip used to stop at its own grid vertex at full density, so wherever the ownership
+  frontier did not carry straight on it ended in a wall, and a ninety-degree turn left one empty
+  quadrant beside it. A strip now fades its own geometry one spill past any end no boundary edge
+  continues collinearly, in its upright sheets as well as its flat ones. Straight runs are
+  untouched. The separate corner cap is gone: two swept ends fill the quadrant between them with
+  real volume instead of a thinner flat patch whose join stayed visible.
+- Quads are split along the diagonal joining their two heavier corners, so a fading end's one dense
+  corner lies on both triangles and its density decays over the whole quad. Ordinary strips have
+  equal weights on both diagonals and keep their original split.
+- A swept end is closed as an arc rather than squared off, so a strip's footprint is its segment
+  dilated by the spill. The square footprint 0.4.108 and 0.4.109 used protrudes past the
+  neighbouring strips at every turn, and on the chunk-grid staircase the frontier normally follows
+  that produced a regular sawtooth along both rims. This reverses the "full spill-by-spill square
+  footprint" decision recorded for 0.4.108.
+- The fog's crossing profile now travels separately from its density, so the shader bends it into a
+  smooth shoulder and pushes the rim in and out with a two-octave world-anchored wobble. The fine
+  octave, near the 32-block cell size, is what dissolves the grid's teeth; a broad octave alone only
+  slides them sideways. Removing the spikes also thins the rim; **Fog spread** is the dial for that.
+- **New control, Fog edge softness** on the Farseer page: how far that wobble moves the rim. Zero
+  restores the bare geometric edge. It persists and previews live like the other fog dials.
+- **Fog drift speed now works.** The shader offset its noise by elapsed time multiplied by the live
+  dial, at 0.006 noise units per second — under a block per second at ordinary billow sizes, and
+  invisible at seam distance. Because the offset was time times speed, every change to the dial
+  displaced the whole pattern by the elapsed time, which was the only motion the fog ever showed and
+  it stopped the moment the slider did. Drift is now integrated from the frame delta and applied as
+  a world distance, 6 blocks per second at speed one, so the dial sets a rate and the billow-size
+  dial changes the billows' size rather than their pace.
+
+**Farseer was cleared of the exploring-is-slow report.** Measured from the owner's own server log:
+2 lattice probes and 2 previews in eight minutes, standing aside on about 73% of its ticks, about
+0.3 tiles/s of traffic, its whole 4,096-block disc already exhausted with 1,086 tiles in the store,
+and its height intake a free by-product of columns the server was loading anyway. Moving re-centres
+the demand every 256 blocks and restarts the scan, but already-probed positions are skipped, so the
+new work is only the leading crescent — about nine tiles per 256 blocks travelled. The savegame
+sweep was the producer loading 7-14 columns/s in that window; unlike Farseer it does not yield to
+the engine's pending-chunk count, and it is centred on spawn rather than the player. Nothing was
+changed there; `dev/TODO.md` records it and the A/B to run first.
 
 ## [0.4.108] - 2026-09-17
 

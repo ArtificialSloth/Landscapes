@@ -3,10 +3,10 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-09-17`
-**Mod version:** `0.4.108` — current private test build, verified, copy-installed and checkpointed; the owner called 0.4.107's post-water volumetric fog excellent, and 0.4.108's expanded corner footprint is the focused unrun change
+**Status date:** `2026-09-18`
+**Mod version:** `0.4.110` — current private test build, verified, copy-installed and checkpointed; the owner called 0.4.109's swept fog ends excellent but reported a sawtooth at every staircase turn, and 0.4.110's rounded ends, wobbled rim and corrected drift rate are the unrun changes
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.102 `fe60a69`, 0.4.103 `bf0bd4b`, 0.4.104 `23bfb30`, 0.4.105 `3d0298c`, 0.4.106 `0257a0f`, 0.4.107 `3ba4a1e`, 0.4.108 `6708b19`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.106 `0257a0f`, 0.4.107 `3ba4a1e`, 0.4.108 `6708b19`, 0.4.109 `3b0bed0`, 0.4.110 `2fbf2d1`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
 **Source files:** `134` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
@@ -15,7 +15,7 @@
 
 ## Current result
 
-**Farseer: P1-P4 and most P5 built (0.4.77–0.4.108).** Sessions 92–99.
+**Farseer: P1-P4 and most P5 built (0.4.77–0.4.110).** Sessions 92–100.
 - **Availability and switches.** The saved client choice defaults on. Integrated/LAN servers offer
   silhouettes automatically unless `EnableSilhouettes = false`; dedicated servers default off and
   require `EnableSilhouettes = true`. Their requested reach is clamped by
@@ -42,14 +42,20 @@
   overlapping ridges. The pass follows cached opaque terrain through the existing far-plane policy
   and shared classic colour. The exact replacement frontier also emits one layered atmospheric
   volume: vertical and horizontal sheets peak at the seam, spill across both owners and fade to
-  zero at their perimeter. Turn caps cover the full square spill footprint. The veil draws after
-  water/OIT, sampling primary depth read-only and preserving primary alpha/depth.
+  zero at their perimeter. A strip fades its own geometry one spill past any end no boundary edge
+  continues collinearly, and that end is closed as an arc, so its footprint is the segment dilated
+  by the spill and a turn rounds off rather than growing a tooth; there is no separate corner cap.
+  The layer's density and the position across it travel in separate vertex channels, so the shader
+  bends the crossing profile into a smooth shoulder and pushes the rim in and out with a two-octave
+  world-anchored wobble under Fog edge softness. Billow drift is an integrated world distance, 6
+  blocks per second at speed one. The veil draws after water/OIT, sampling primary depth read-only
+  and preserving primary alpha/depth.
 - **Persistence, scheduling and settings.** A lazy client store reads nearest saved tiles for
   instant rejoin and closes when off. Decode/mesh work is capped off-thread; owner publication,
   coverage, pruning, remesh and upload are bounded. The **Farseer** tab persists enable, reach,
-  Outline detail, Hill softness, apron width/depth, classic-look dials and eight fog controls:
-  density, coverage, spread, height, floor depth, billow size, drift speed and layer detail; cached
-  draw and reach remain scale handles.
+  Outline detail, Hill softness, apron width/depth, classic-look dials and nine fog controls:
+  density, coverage, spread, height, floor depth, billow size, drift speed, layer detail and edge
+  softness; cached draw and reach remain scale handles.
   Performance turns it off;
   Balanced/Quality turn it on. Off sends one final demand and clears network, RAM, workers, GPU
   meshes and projection extent. The shader is compiled only after a drawable tile arrives.
@@ -80,9 +86,13 @@
 | 0.4.104–0.4.105 guarded draw | Shader compiled, then the first fog draw still failed. The single-attachment blend-helper error was fixed first; the next log proved a second error remained | Production-observed; source-traced; superseded |
 | 0.4.106 typed-uniform fix | Corrected integer upload to a declared float uniform. The owner reported that the fog looked “very good” | Human-tested; source/static regression-tested |
 | 0.4.107 post-water fog and radial corners | Fog composites after OIT and water stays visible; the owner called the result excellent. Screenshots still showed a rounded/missing diagonal quadrant at turns | Human-tested; corner limitation human-observed |
-| Final checks | 25,168 assertions pass; Release mod build has zero warnings/errors | Harness-/build-tested at 0.4.108 |
-| 0.4.108 artifact | 43 root-relative entries, one DLL, fog shaders present, no PDB/wrapper, matching installed copy; SHA-256 `3ADAB55D48C80E173400A9F690C6146FF9EB282A26DA2E000155D6FA217A088E` | Artifact-verified |
-| 0.4.108 full square corner cap | Source/harness-tested only; focused in-game corner verdict and clean current log remain open | Not human-tested |
+| 0.4.109 swept ends | The owner called the fog's ends excellent, then reported sharp corners everywhere. The square swept end protrudes at every turn of a staircase frontier | Human-tested; the sawtooth is human-observed and reproduced offline |
+| 0.4.110 rounded ends and rim wobble | Plan-view rasterization of the real mesh over a staircase seam: the regular sawtooth is gone and the outline is irregular and continuous. Peak plan density falls 2.71 to 1.50 as the spikes go, so the core still saturates and only the rim thins | Measured offline from the real mesh; not human-tested |
+| 0.4.110 drift rate | The previous 0.006 noise-units/second offset is 0.6 blocks/s at a 100-block billow size, and was time multiplied by the live dial, so only a dial change moved it. Drift is now integrated and applied as 6 blocks/s at speed one | Source-traced and static-checked; not human-tested |
+| Final checks | 25,183 assertions pass; Release mod build has zero warnings/errors | Harness-/build-tested at 0.4.110 |
+| 0.4.110 artifact | 43 root-relative entries, one DLL, fog shaders present, no PDB/wrapper, matching installed copy; SHA-256 `E3DD28E214B303CF85110065B1E1AB995D58D9B8F75E63AAFAB7ABD434E66584` | Artifact-verified |
+| 0.4.109 and 0.4.110 in game | Neither has run. The shape, drift rate, edge-softness default and thinner rim all await a visual verdict | Not human-tested |
+| Farseer's exploring cost | 2 lattice probes and 2 previews in eight minutes, standing aside on about 73% of its ticks, about 0.3 tiles/s, its 4,096-block disc already exhausted with 1,086 stored tiles. The savegame sweep was loading 7-14 columns/s in the same window | Log-measured from the owner's `server-main.log`; covered-terrain case only |
 | Rapid handoff/excavation, weather look, controlled GPU/off A/B, cold/full-disc read-back, dedicated players and mixed versions | Not completed | — |
 
 **The core world-generation/LOD-coverage plan is complete.**
@@ -447,9 +457,9 @@ to the server log.
 
 ## Performance and artifact evidence
 
-**Checks and builds.** The final fast tier passed **25,168 assertions with zero failures** at
-0.4.108. The Release mod build completed with zero warnings and zero errors. The benchmark project
-was not changed or rebuilt during the 0.4.102–0.4.108 fog iteration.
+**Checks and builds.** The final fast tier passed **25,183 assertions with zero failures** at
+0.4.110. The Release mod build completed with zero warnings and zero errors. The benchmark project
+was not changed or rebuilt during the 0.4.102–0.4.110 fog iteration.
 
 Measured costs, and what is not measured:
 - **Sibling-cache scanner.** Its cost is in the current-result table. Merging into held sections
@@ -489,11 +499,14 @@ Measured costs, and what is not measured:
     had generated it took under 0.01 ms, and under 1 ms for a new region's first sample (Session 95).
     Sampling beside real generation is not measured.
 
-**The 0.4.108 artifact.** The verified `dist/vintagehorizons_0.4.108.zip` is 666,934 bytes and has
-SHA-256 `3ADAB55D48C80E173400A9F690C6146FF9EB282A26DA2E000155D6FA217A088E`. Its 43 root-relative file
-entries are readable, its DLL matches Release, `modinfo.json` reports 0.4.108, both fog shaders are
+**The 0.4.110 artifact.** The verified `dist/vintagehorizons_0.4.110.zip` is 668,091 bytes and has
+SHA-256 `E3DD28E214B303CF85110065B1E1AB995D58D9B8F75E63AAFAB7ABD434E66584`. Its 43 root-relative file
+entries are readable, its DLL matches Release, `modinfo.json` reports 0.4.110, both fog shaders are
 present, it contains no PDB or wrapper directory, and it was copy-installed with a matching hash.
-The 0.4.101–0.4.107 zips and every older test build remain in the Mods folder as rollback artifacts.
+`dist/vintagehorizons_0.4.109.zip` is 666,759 bytes with SHA-256
+`09D19B3E7443870EAC3E10519DFF83DF63B118A6D248014A6CD3A08C76B63FFE`, verified and installed the same
+way. The 0.4.101–0.4.108 zips and every older test build remain in the Mods folder as rollback
+artifacts.
 
 **Checkpoints.** Every incremented private test build receives an exact Git checkpoint after
 verification and installation. This does not authorize a push, tag, publication or public release.
@@ -509,9 +522,12 @@ verification and installation. This does not authorize a push, tag, publication 
   observations; 0.4.101 remains unrun.
 - Session 99 launched no server or game client. The owner ran the fog builds and supplied the
   screenshots, logs and visual verdicts recorded above; 0.4.108 remains unrun.
+- Session 100 launched no server or game client. The owner supplied both screenshots and the server
+  log that cleared Farseer; 0.4.109 and 0.4.110 remain unrun. The fog's before/after outline was
+  rasterized offline from the real mesh instead.
 - Session 91's controlled servers ran only after the owner's approval.
 
-**Documentation.** Validation passed **10,673 checks** with no failures at the Session 99 doc pass.
+**Documentation.** Validation passed **10,675 checks** with no failures at the Session 100 doc pass.
 It covers:
 - current version and changelog coverage;
 - source count;
@@ -562,19 +578,23 @@ It covers:
 ## Next work
 
 Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
-[Session 99](dev/sessions/SESSION_99.md), the top of [TODO](dev/TODO.md), and
+[Session 100](dev/sessions/SESSION_100.md), the top of [TODO](dev/TODO.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. **Run 0.4.108's focused corner gate:** revisit the `20-02-06` screenshot viewpoint and one other
-   ninety-degree turn. The fog must form one continuous sweep with no rounded bite, missing adjacent
-   square or hard outer rim. Include water, then confirm the current client log has no seam-fog
-   compile/draw failure and Farseer remained enabled.
+1. **Run 0.4.110's shape and drift gate:** one aerial view of a staircase stretch of the frontier and
+   one isolated ninety-degree turn. The regular sawtooth must be gone, the outline must wander rather
+   than follow the chunk grid, and a turn must still sweep continuously. Judge the thinner rim
+   against Fog spread and the 50% Fog edge softness default. Separately set Fog drift speed to 0%
+   then 300%, waiting several seconds at each, and report whether the billows visibly move. Include
+   water, then confirm the current client log has no seam-fog compile/draw failure and Farseer
+   remained enabled.
 2. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
 3. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
-   observations beneath the veil; tune Outline detail, Hill softness, apron and the eight fog dials
-   only after the corner is accepted; measure controlled Farseer off/on and fog-detail cost.
+   observations beneath the veil; tune Outline detail, Hill softness, apron and the nine fog dials
+   only after the shape is accepted; measure controlled Farseer off/on and fog-detail cost,
+   including the swept arc's extra cross-section per end.
 4. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
    player-facing Farseer rename plus bundled MIT notice.
 5. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
@@ -587,7 +607,7 @@ Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
    - pause loading;
    - Session 84 diagnostic cleanup.
 
-[Session 99](dev/sessions/SESSION_99.md) is the authoritative continuation point, and
+[Session 100](dev/sessions/SESSION_100.md) is the authoritative continuation point, and
 [the silhouette handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md) orients a new agent.
 - Sessions 98-82 retain ownership/persistence/tuning, the silhouette comparison, P2 and the first
   look, and the Generate,

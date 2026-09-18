@@ -2,29 +2,36 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.108 and the final seam-fog corner gate
+## Start here: 0.4.110 and the seam fog's shape gate
 
 Read [the Farseer handoff](plans/HANDOFF_HORIZON_SILHOUETTES.md) and
-[Session 99](sessions/SESSION_99.md), then
+[Session 100](sessions/SESSION_100.md), then
 [the horizon-silhouette and Terrain Ahead plan](plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
-P1-P4 are built and most P5 persistence/tuning work is complete through 0.4.108. The owner has
+P1-P4 are built and most P5 persistence/tuning work is complete through 0.4.110. The owner has
 human-seen instant client rejoin, accepted the coarse 0.4.93 geometry, rejected visible join bands,
 required exact no-overlap ownership, and selected a heavy atmospheric veil for the residual visual
-handoff. The 0.4.106 volume looked “very good”; the post-water 0.4.107 result was called excellent.
-Only 0.4.108's expanded corner footprint is still unrun. The absence of another player continues
-to defer the dedicated/multiplayer gate.
+handoff. The 0.4.106 volume looked “very good”; the post-water 0.4.107 result was called excellent;
+0.4.109's swept ends were called excellent for the fog's ends but exposed a sawtooth at every
+staircase turn, which 0.4.110 rounds off. Neither 0.4.109 nor 0.4.110 has run in game. The absence
+of another player continues to defer the dedicated/multiplayer gate.
 
 Open, in the order they block further work:
 
-- **Focused 0.4.108 corner acceptance.** Revisit screenshot `2026-09-17_20-02-06.png` and one other
-  ninety-degree ownership turn:
-  - the fog should sweep continuously through the turn, with no rounded bite, square missing
-    adjacent section or hard square outer perimeter;
+- **0.4.110 shape and drift acceptance.** One aerial view of a staircase stretch of the frontier and
+  one isolated ninety-degree turn:
+  - the regular sawtooth must be gone and the outline must wander rather than follow the chunk grid;
+  - a turn must still sweep continuously, with no missing adjacent section;
+  - judge whether the thinner rim that came with removing the spikes wants more Fog spread, and
+    whether the Fog edge softness default of 50% is right;
+  - set Fog drift speed to 0% and then 300%, waiting several seconds at each, and report whether the
+    billows visibly move. The dial is now a rate, so adjusting it no longer produces an instant jump;
   - water must remain visible and the fog must stay over its chunk edge rather than letting water
     repaint the seam;
   - inspect `client-main.log` after the view: Farseer must remain enabled and there must be no
     seam-fog shader/draw `InvalidOperation`.
-  Do not retune density or geometry until this isolated cap change has a visual verdict.
+  Do not retune density or geometry until this has a visual verdict. The owner's Fog coverage is at
+  100%, which leaves the billow noise unable to open any gap; whether that is the intended look now
+  that the outline is irregular is part of this gate.
 - **Complete the underlying ownership/motion matrix.** Fog intentionally conceals the transition,
   but must not become an excuse to regress correctness:
   - hold position and turn through the whole scene; Farseer ownership must not shift with yaw;
@@ -36,9 +43,9 @@ Open, in the order they block further work:
 - **Complete the remaining P4/P5 observations:**
   - look once at night, in rain/natural fog and in winter;
   - verify the final scale typography/spacing and that the reach handle changes actual reach;
-  - tune Outline detail, Hill softness, Apron width/depth and the eight fog controls only after the
-    0.4.108 corner is accepted. Fog density, coverage, spread, height, floor depth, billow size,
-    drift speed and layer detail already persist and preview live;
+  - tune Outline detail, Hill softness, Apron width/depth and the nine fog controls only after the
+    0.4.110 shape is accepted. Fog density, coverage, spread, height, floor depth, billow size,
+    drift speed, layer detail and edge softness already persist and preview live;
   - take a controlled off/on A/B and record FPS/GPU time and reach/shape-change hitches. The
     owner's earlier 550→450 observation was informal and predates the geometry simplification,
     exact all-level coverage and fog pass. Separately report fog layer-detail cost;
@@ -115,6 +122,9 @@ Open, in the order they block further work:
 - **Run the sweep A/B first.** Set `SweepSavegame` false (or `SweepColumnsPerSecond` to 2) in
   `ModConfig/vintagehorizons-server.json`, repeat one exploring route, and compare how fast terrain
   keeps up. Nothing should be changed in the sweep before that comparison exists.
+- **Count the swept arc's cost.** Each swept end now emits two cross-sections instead of one, and on
+  a staircase frontier every strip is swept at both ends. The vertex/index budget is exact and
+  harness-checked, but it has not been counted against a real frontier or measured on the GPU.
 - **Split the Farseer yield counter by reason.** `LodSilhouetteBuilder.YieldTicks` is one number, so
   the log cannot say whether Farseer held for the engine's pending chunks, for a held generation
   authority, or for Vintage Horizons' own capture/save backlog. In the measured window the cache
@@ -124,10 +134,6 @@ Open, in the order they block further work:
   owner's base. Riding into genuinely unexplored land has not been measured; the design should yield
   harder there, because that is exactly when the engine's queue is full, but that is source-traced
   reasoning, not evidence.
-- **Stale gotcha text.** G199 says the silhouette builder keeps "16 in flight"; the code caps
-  `MaxPeeksInFlight` at 4 and uses 16 as `PreviewsPerSecond`. Correct it when that file is next
-  edited.
-
 ## Distant structures and block-entity colours: what 0.4.62 leaves open
 
 The white ruins are fixed and human-tested ([Session 87](sessions/SESSION_87.md), G180-G182).
