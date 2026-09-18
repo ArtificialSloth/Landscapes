@@ -2059,6 +2059,7 @@ public partial class LodTerrainRenderer : IRenderer
         LoadShader();
         RegisterRenderer();
         RegisterWaterDepthStages();
+        RegisterSilhouetteFogStage();
     }
 
     void RegisterRenderer()
@@ -5552,7 +5553,6 @@ public partial class LodTerrainRenderer : IRenderer
         {
             RenderFrame(deltaTime, stage);
             DrawSilhouettes();
-            DrawSilhouetteFogVolume();
         }
         finally
         {
@@ -8758,6 +8758,7 @@ public partial class LodTerrainRenderer : IRenderer
         DisposeBlockTableTexture();
         DisposeSkyWitnessResources();
         DisposeTaaResources();
+        UnregisterSilhouetteFogStage();
         ReleaseSilhouetteMeshes();
         world.SectionBecameResident -= OnSectionBecameResident;
         capi.Event.ChunkDirty -= OnReadinessChunkDirty;

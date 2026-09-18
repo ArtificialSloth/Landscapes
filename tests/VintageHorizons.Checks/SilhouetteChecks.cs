@@ -98,6 +98,8 @@ public static class SilhouetteChecks
             volume.VertexCount, "the fog volume has a bounded number of layered vertices per edge");
         c.Eq(mask.Boundaries.Count * volume.IndicesPerEdge,
             volume.IndexCount, "the fog volume has a bounded number of layered indices per edge");
+        c.Eq(0, volume.CornerCaps,
+            "a straight ownership frontier does not spend geometry on corner caps");
         c.True(volume.VerticalLayers >= 7 && volume.HorizontalLayers >= 5,
             "the default fog has enough crossing layers to avoid five obvious vertical cards");
         c.True(volume.FogWeights.Where((_, i) => (i & 1) == 0).Max() >= 0.15f,
@@ -108,6 +110,35 @@ public static class SilhouetteChecks
         float maxY = Enumerable.Range(0, volume.VertexCount).Max(i => volume.Xyz[i * 3 + 1]);
         c.Near(84f, minY, 0.0001f, "fog begins below the sampled handoff ground");
         c.Near(188f, maxY, 0.0001f, "fog hangs well above the sampled handoff ground");
+
+        var cornerReplacements = LodSilhouetteCoverage.Empty;
+        for (int z = 0; z < 8; z++)
+            for (int x = 0; x < 8; x++)
+                cornerReplacements = cornerReplacements.WithCovered(x, z);
+        var cornerMask = new LodSilhouetteSeamMask();
+        cornerMask.BeginBuild(0, 0, 0, 0, 18);
+        cornerMask.SetTile(0, 0, cornerReplacements);
+        cornerMask.CompleteBuild();
+        LodSilhouetteFogMeshArrays cornerVolume =
+            LodSilhouetteFogVolume.Build(cornerMask, (_, _) => 100f);
+        c.Eq(1, cornerVolume.CornerCaps,
+            "one L-shaped ownership turn emits one radial fog cap for its diagonal chunk");
+        c.Eq(cornerMask.Boundaries.Count * cornerVolume.VerticesPerEdge
+                + cornerVolume.VerticesPerCorner,
+            cornerVolume.VertexCount,
+            "corner-cap vertices are bounded separately from ordinary edge strips");
+        c.Eq(cornerMask.Boundaries.Count * cornerVolume.IndicesPerEdge
+                + cornerVolume.IndicesPerCorner,
+            cornerVolume.IndexCount,
+            "corner-cap triangles are bounded separately from ordinary edge strips");
+        int firstCornerVertex = cornerMask.Boundaries.Count * cornerVolume.VerticesPerEdge;
+        c.True(cornerVolume.FogWeights[firstCornerVertex * 2] > 0f,
+            "the centre of a turn stays fog-dense while its radial cap fades outward");
+        float corner = 8f * LodSilhouetteSeamMask.CellBlocks;
+        c.True(Enumerable.Range(firstCornerVertex, cornerVolume.VerticesPerCorner)
+                .Any(i => cornerVolume.Xyz[i * 3] > corner
+                    && cornerVolume.Xyz[i * 3 + 2] > corner),
+            "the radial cap reaches into the diagonal quadrant that edge strips leave empty");
 
         mask.MarkUploaded();
         c.False(mask.BeginBuild(-2, 3, -2, 3, 17),
@@ -1607,8 +1638,12 @@ public static class SilhouetteChecks
         c.True(waterDepth.Contains("PrepareSilhouetteFrame();", StringComparison.Ordinal)
                 && pass.Contains("silhouetteSeamMask.SetTile(", StringComparison.Ordinal)
                 && pass.Contains("UploadSilhouetteFogVolume(silhouettes);", StringComparison.Ordinal)
-                && renderer.Contains("DrawSilhouetteFogVolume();", StringComparison.Ordinal)
+                && !renderer.Contains("DrawSilhouetteFogVolume();", StringComparison.Ordinal)
                 && fogPass.Contains("LodSilhouetteFogVolume.Build(", StringComparison.Ordinal)
+                && fogPass.Contains("SilhouetteFogAfterOitOrder = 1.0", StringComparison.Ordinal)
+                && fogPass.Contains("EnumRenderStage.AfterOIT", StringComparison.Ordinal)
+                && renderer.Contains("RegisterSilhouetteFogStage();", StringComparison.Ordinal)
+                && waterDepth.Contains("FinishWaterFrame, 0.99", StringComparison.Ordinal)
                 && fogPass.Contains("GL.DepthMask(false);", StringComparison.Ordinal)
                 && fogPass.Contains("GL.Enable(EnableCap.Blend);", StringComparison.Ordinal)
                 && fogPass.Contains("GL.BlendEquationSeparate(", StringComparison.Ordinal)
@@ -1630,7 +1665,7 @@ public static class SilhouetteChecks
                 && !inputs.Contains("lodsilhouettefog.fsh", StringComparison.Ordinal)
                 && !fragment.Contains("vhSilhouetteSeamFog", StringComparison.Ordinal)
                 && !finish.Contains("vhSilhouetteSeamFog", StringComparison.Ordinal),
-            "the exact ownership edge now drives a tall noisy volume instead of painting chunk-shaped surfaces");
+            "the exact ownership edge drives a corner-filled noisy volume after water composition");
         c.True(field.Contains("DefaultUnderlayDepthBlocks = 64f", StringComparison.Ordinal)
                 && field.Contains("DefaultUnderlayWidthBlocks = 384f", StringComparison.Ordinal)
                 && field.Contains("EdgeDistance(", StringComparison.Ordinal)

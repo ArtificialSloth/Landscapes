@@ -11,6 +11,7 @@ internal sealed class LodSilhouetteFogMeshArrays
     public required int OriginBlockX;
     public required int OriginBlockZ;
     public required int BoundaryEdges;
+    public required int CornerCaps;
     public required int VerticalLayers;
     public required int HorizontalLayers;
 
@@ -18,6 +19,10 @@ internal sealed class LodSilhouetteFogMeshArrays
         (VerticalLayers + HorizontalLayers) * LodSilhouetteFogVolume.VerticesPerLayer;
     public int IndicesPerEdge =>
         (VerticalLayers + HorizontalLayers) * LodSilhouetteFogVolume.IndicesPerLayer;
+    public int VerticesPerCorner =>
+        HorizontalLayers * LodSilhouetteFogVolume.VerticesPerCornerLayer;
+    public int IndicesPerCorner =>
+        HorizontalLayers * LodSilhouetteFogVolume.IndicesPerCornerLayer;
 }
 
 /// <summary>
@@ -30,6 +35,8 @@ internal static class LodSilhouetteFogVolume
 {
     public const int VerticesPerLayer = 6;
     public const int IndicesPerLayer = 12;
+    public const int VerticesPerCornerLayer = 9;
+    public const int IndicesPerCornerLayer = 24;
 
     public const float MinStrength = 0f;
     public const float MaxStrength = 2f;
@@ -74,8 +81,11 @@ internal static class LodSilhouetteFogVolume
         int verticesPerEdge = checked((verticalLayers + horizontalLayers) * VerticesPerLayer);
         int indicesPerEdge = checked((verticalLayers + horizontalLayers) * IndicesPerLayer);
         int edges = mask.Boundaries.Count;
-        int vertexCount = checked(edges * verticesPerEdge);
-        int indexCount = checked(edges * indicesPerEdge);
+        List<(int GridX, int GridZ)> corners = FindCorners(mask.Boundaries);
+        int cornerVertices = checked(corners.Count * horizontalLayers * VerticesPerCornerLayer);
+        int cornerIndices = checked(corners.Count * horizontalLayers * IndicesPerCornerLayer);
+        int vertexCount = checked(edges * verticesPerEdge + cornerVertices);
+        int indexCount = checked(edges * indicesPerEdge + cornerIndices);
         var xyz = new float[checked(vertexCount * 3)];
         var weights = new float[checked(vertexCount * 2)];
         var indices = new int[indexCount];
@@ -142,6 +152,37 @@ internal static class LodSilhouetteFogVolume
             }
         }
 
+        // Edge strips end exactly at their grid vertex. At a ninety-degree turn their union
+        // therefore misses the diagonally adjacent quadrant and reveals one square chunk corner.
+        // A low-density radial cap at each real turn fills that notch without thickening every
+        // straight segment or producing a hard square extension.
+        foreach ((int gridX, int gridZ) in corners)
+        {
+            float centreX = gridX * LodSilhouetteSeamMask.CellBlocks;
+            float centreZ = gridZ * LodSilhouetteSeamMask.CellBlocks;
+            float centreY = FiniteHeight(heightAtGrid(gridX, gridZ));
+            float diagonal = spillBlocks * 0.70710677f;
+            for (int layer = 0; layer < horizontalLayers; layer++)
+            {
+                float up = horizontalLayers == 1 ? 0f : layer / (horizontalLayers - 1f);
+                float height = up * up * heightBlocks * 0.80f;
+                float density = (0.117f * MathF.Pow(1f - up, 1.2f) + 0.016f)
+                    * 5f / horizontalLayers;
+                int first = vertex;
+                AddVertex(centreX, centreY + height, centreZ, density);
+                AddVertex(centreX, centreY + height, centreZ - spillBlocks, 0f);
+                AddVertex(centreX + diagonal, centreY + height, centreZ - diagonal, 0f);
+                AddVertex(centreX + spillBlocks, centreY + height, centreZ, 0f);
+                AddVertex(centreX + diagonal, centreY + height, centreZ + diagonal, 0f);
+                AddVertex(centreX, centreY + height, centreZ + spillBlocks, 0f);
+                AddVertex(centreX - diagonal, centreY + height, centreZ + diagonal, 0f);
+                AddVertex(centreX - spillBlocks, centreY + height, centreZ, 0f);
+                AddVertex(centreX - diagonal, centreY + height, centreZ - diagonal, 0f);
+                for (int ring = 0; ring < 8; ring++)
+                    AddTriangle(first, first + 1 + ring, first + 1 + ((ring + 1) & 7));
+            }
+        }
+
         return new LodSilhouetteFogMeshArrays
         {
             Xyz = xyz,
@@ -152,6 +193,7 @@ internal static class LodSilhouetteFogVolume
             OriginBlockX = originX,
             OriginBlockZ = originZ,
             BoundaryEdges = edges,
+            CornerCaps = corners.Count,
             VerticalLayers = verticalLayers,
             HorizontalLayers = horizontalLayers,
         };
@@ -175,12 +217,47 @@ internal static class LodSilhouetteFogVolume
 
         void AddQuad(int a, int b, int c, int d)
         {
+            AddTriangle(a, b, c);
+            AddTriangle(c, b, d);
+        }
+
+        void AddTriangle(int a, int b, int c)
+        {
             indices[index++] = a;
             indices[index++] = b;
             indices[index++] = c;
-            indices[index++] = c;
-            indices[index++] = b;
-            indices[index++] = d;
+        }
+    }
+
+    static List<(int GridX, int GridZ)> FindCorners(
+        IReadOnlyList<LodSilhouetteBoundaryEdge> edges)
+    {
+        const byte west = 1 << 0, east = 1 << 1, north = 1 << 2, south = 1 << 3;
+        var directions = new Dictionary<(int X, int Z), byte>();
+        foreach (LodSilhouetteBoundaryEdge edge in edges)
+        {
+            Add(edge.StartGridX, edge.StartGridZ,
+                Math.Sign(edge.EndGridX - edge.StartGridX),
+                Math.Sign(edge.EndGridZ - edge.StartGridZ));
+            Add(edge.EndGridX, edge.EndGridZ,
+                Math.Sign(edge.StartGridX - edge.EndGridX),
+                Math.Sign(edge.StartGridZ - edge.EndGridZ));
+        }
+
+        return directions
+            .Where(pair => (pair.Value & (west | east)) != 0
+                && (pair.Value & (north | south)) != 0)
+            .Select(pair => (GridX: pair.Key.X, GridZ: pair.Key.Z))
+            .OrderBy(point => point.GridZ)
+            .ThenBy(point => point.GridX)
+            .ToList();
+
+        void Add(int x, int z, int dx, int dz)
+        {
+            byte direction = dx < 0 ? west : dx > 0 ? east
+                : dz < 0 ? north : south;
+            directions.TryGetValue((x, z), out byte present);
+            directions[(x, z)] = (byte)(present | direction);
         }
     }
 

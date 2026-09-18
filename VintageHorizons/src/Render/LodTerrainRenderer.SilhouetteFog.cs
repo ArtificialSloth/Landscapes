@@ -8,6 +8,8 @@ namespace VintageHorizons;
 
 public partial class LodTerrainRenderer
 {
+    internal const double SilhouetteFogAfterOitOrder = 1.0;
+    BeforeStageRenderer? silhouetteFogStageRenderer;
     IShaderProgram? silhouetteFogVolumeProg;
     MeshRef? silhouetteFogVolumeMesh;
     bool silhouetteFogVolumeFailed;
@@ -30,6 +32,21 @@ public partial class LodTerrainRenderer
     readonly LodOpenGlStateApi silhouetteFogStateApi = new();
     readonly int[] silhouetteFogViewport = new int[4];
     readonly bool[] silhouetteFogColorMask = new bool[4];
+
+    void RegisterSilhouetteFogStage()
+    {
+        silhouetteFogStageRenderer = new BeforeStageRenderer(
+            _ => DrawSilhouetteFogVolume(), SilhouetteFogAfterOitOrder);
+        capi.Event.RegisterRenderer(silhouetteFogStageRenderer, EnumRenderStage.AfterOIT,
+            "vintagehorizons-silhouettefog");
+    }
+
+    void UnregisterSilhouetteFogStage()
+    {
+        if (silhouetteFogStageRenderer == null) return;
+        capi.Event.UnregisterRenderer(silhouetteFogStageRenderer, EnumRenderStage.AfterOIT);
+        silhouetteFogStageRenderer = null;
+    }
 
     void UploadSilhouetteFogVolume(LodSilhouetteClient silhouettes)
     {

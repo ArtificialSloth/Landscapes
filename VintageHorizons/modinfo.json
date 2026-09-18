@@ -2,7 +2,7 @@
   "type": "code",
   "modid": "vintagehorizons",
   "name": "Vintage Horizons",
-  "version": "0.4.106",
+  "version": "0.4.107",
   "side": "Universal",
   "requiredOnClient": false,
   "requiredOnServer": false,
