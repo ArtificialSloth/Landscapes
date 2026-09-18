@@ -89,6 +89,45 @@ not a gate for silhouette work:
   unchanged pre-join row, and snow refreshes do not directly transfer far parents; clients rebuild
   parents from newer L0 where a durable refresh exists.
 
+## The savegame sweep does not yield to the player the way Farseer does
+
+Owner-reported 2026-09-18: terrain feels slower to load while exploring. Measured from the owner's
+own `server-main.log` of 2026-09-17 20:37-20:45, Farseer is not the cause and is cleared: it issued
+2 lattice probes and 2 previews in eight minutes, stood aside on about 73% of its ticks (5,100 yield
+ticks in ~470 s), sent about 0.3 tiles/s, and took its heights free from columns the server was
+loading anyway. Its 4,096-block disc was already exhausted ("every lattice position within 4,096
+blocks of Doden has been requested") with 1,086 tiles already in the store. Moving re-centres the
+demand every 256 blocks and restarts the spiral scan, but `attempted` and `TileHasHeights` skip
+everything already done, so the genuinely new work is only the leading crescent: about 9 tiles per
+256 blocks travelled, well under one preview per second even at a sprint against a 16/s ceiling.
+
+Open, in the order they block further work:
+
+- **Decide whether `LodSavegameSweep` should yield to the engine's chunk queue.** In that same
+  window the sweep loaded 7-14 columns/s continuously, sat pinned at its capture-backlog ceiling
+  (28-32 of `MaxCaptureBacklogForLoads` 32), and was only 50% through its load pass after seven and
+  a half minutes. `ObserveOtherGenerationQueue` records `CurrentGeneratingChunkCount` for absence
+  classification only; `StepLoad`'s allowance is the rate and the capture backlog, nothing else. So
+  it keeps issuing `LoadChunkColumnPriority` while the player waits for chunks, where Farseer holds
+  at 8 pending. The sweep is also centred on spawn, not the player, so a player exploring far from
+  spawn waits behind work nowhere near them. This is the priority question the owner raised; the
+  asymmetry is source-traced, its effect on player-visible chunk latency is not measured.
+- **Run the sweep A/B first.** Set `SweepSavegame` false (or `SweepColumnsPerSecond` to 2) in
+  `ModConfig/vintagehorizons-server.json`, repeat one exploring route, and compare how fast terrain
+  keeps up. Nothing should be changed in the sweep before that comparison exists.
+- **Split the Farseer yield counter by reason.** `LodSilhouetteBuilder.YieldTicks` is one number, so
+  the log cannot say whether Farseer held for the engine's pending chunks, for a held generation
+  authority, or for Vintage Horizons' own capture/save backlog. In the measured window the cache
+  save backlog was 80-390 s old against a `WorldGenOldestDirtySeconds` limit of 120, so
+  `EnumWorldGenGate.SaveBacklogAge` is a live suspect for much of that 73% and cannot be confirmed.
+- **Unmeasured case.** All of the above is Farseer idling in already-covered terrain near the
+  owner's base. Riding into genuinely unexplored land has not been measured; the design should yield
+  harder there, because that is exactly when the engine's queue is full, but that is source-traced
+  reasoning, not evidence.
+- **Stale gotcha text.** G199 says the silhouette builder keeps "16 in flight"; the code caps
+  `MaxPeeksInFlight` at 4 and uses 16 as `PreviewsPerSecond`. Correct it when that file is next
+  edited.
+
 ## Distant structures and block-entity colours: what 0.4.62 leaves open
 
 The white ruins are fixed and human-tested ([Session 87](sessions/SESSION_87.md), G180-G182).

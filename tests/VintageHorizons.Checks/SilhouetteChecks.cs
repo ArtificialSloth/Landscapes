@@ -106,7 +106,9 @@ public static class SilhouetteChecks
             "the default fog has enough crossing layers to avoid five obvious vertical cards");
         c.True(volume.FogWeights.Where((_, i) => (i & 1) == 0).Max() >= 0.15f,
             "the ownership centreline carries the densest fog layer");
-        c.Near(0f, volume.FogWeights.Where((_, i) => (i & 1) == 0).Min(), 0.0001f,
+        c.Near(1f, volume.FogWeights.Where((_, i) => (i & 1) == 1).Max(), 0.0001f,
+            "each layer's dense rail carries the full crossing profile");
+        c.Near(0f, volume.FogWeights.Where((_, i) => (i & 1) == 1).Min(), 0.0001f,
             "outer, lower and upper volume vertices fade completely instead of ending in walls");
         float minY = Enumerable.Range(0, volume.VertexCount).Min(i => volume.Xyz[i * 3 + 1]);
         float maxY = Enumerable.Range(0, volume.VertexCount).Max(i => volume.Xyz[i * 3 + 1]);
@@ -135,30 +137,40 @@ public static class SilhouetteChecks
             "faded end triangles are bounded separately from ordinary edge strips");
         float corner = 8f * LodSilhouetteSeamMask.CellBlocks;
         float spill = LodSilhouetteFogVolume.DefaultSpillBlocks;
-        c.True(CornerFogWeightAt(cornerVolume, corner, corner + spill) == 0f
-                && CornerFogWeightAt(cornerVolume, corner + spill, corner) == 0f,
+        c.True(CornerFogProfileAt(cornerVolume, corner, corner + spill) == 0f
+                && CornerFogProfileAt(cornerVolume, corner + spill, corner) == 0f,
             "both runs sweep a full spill past the turn and reach zero density there");
-        c.True(CornerFogWeightAt(cornerVolume, corner + spill, corner + spill) == 0f,
-            "the swept ends reach the far corner of the quadrant the strips leave empty");
+        // The end is closed as an arc, not squared off: a square corner stands out past the
+        // neighbouring strips and grows a tooth at every chunk-grid turn. So the footprint is a
+        // stadium - full spill along each axis, and no further on the diagonal.
+        c.True(float.IsNaN(CornerFogProfileAt(cornerVolume, corner + spill, corner + spill)),
+            "a swept end is rounded off instead of reaching the square diagonal corner");
         c.True(Enumerable.Range(0, cornerVolume.VertexCount).All(i =>
                 cornerVolume.Xyz[i * 3] <= corner + spill + 0.0001f
                 && cornerVolume.Xyz[i * 3 + 2] <= corner + spill + 0.0001f),
             "no fog reaches further than one spill beyond the last known ownership edge");
+        float reach = Enumerable.Range(0, cornerVolume.VertexCount)
+            .Where(i => cornerVolume.Xyz[i * 3] > corner && cornerVolume.Xyz[i * 3 + 2] > corner)
+            .Max(i => MathF.Sqrt(
+                (cornerVolume.Xyz[i * 3] - corner) * (cornerVolume.Xyz[i * 3] - corner)
+                + (cornerVolume.Xyz[i * 3 + 2] - corner) * (cornerVolume.Xyz[i * 3 + 2] - corner)));
+        c.True(reach <= spill * 1.06f,
+            "the swept ends hold one spill from the turn in every direction, not spill by spill");
         c.True(Enumerable.Range(0, cornerVolume.VertexCount).Any(i =>
                 Math.Abs(cornerVolume.Xyz[i * 3 + 1] - 108f) < 0.0001f
                 && Math.Abs(cornerVolume.Xyz[i * 3 + 2] - (corner + spill)) < 0.0001f
-                && cornerVolume.FogWeights[i * 2] == 0f),
+                && cornerVolume.FogWeights[i * 2 + 1] == 0f),
             "a swept end carries the vertical sheets too, not only a flat aerial cap");
 
         // The empty quadrant sits outside the L, beyond both runs. Measured straight down, the
         // two swept ends have to leave it reading like band, not like a thin patch: at least
         // one straight seam's fog at the same offset, and no more than the two runs crossing.
         float straightBand = PlanFogWeight(cornerVolume, corner - spill * 0.5f, corner - 100f);
-        float quadrant = PlanFogWeight(cornerVolume, corner + spill / 3f, corner + spill * 0.5f);
-        c.True(quadrant >= straightBand && quadrant <= straightBand * 2.2f,
+        float quadrant = PlanFogWeight(cornerVolume, corner + spill * 0.25f, corner + spill * 0.25f);
+        c.True(quadrant >= straightBand && quadrant <= straightBand * 2.6f,
             "the diagonal quadrant carries a crossing band's fog at the same offset");
-        c.True(PlanFogWeight(cornerVolume, corner + spill * 5f / 6f, corner + spill * 2f / 3f) > 0f,
-            "the far half of the quadrant fills too, instead of being bitten off diagonally");
+        c.True(PlanFogWeight(cornerVolume, corner + spill * 0.45f, corner + spill * 0.45f) > 0f,
+            "the quadrant fills out to the arc, instead of being bitten off diagonally");
         float insideOldWall = PlanFogWeight(cornerVolume, corner + spill * 0.5f, corner - 8f);
         float outsideOldWall = PlanFogWeight(cornerVolume, corner + spill * 0.5f, corner + 8f);
         c.True(outsideOldWall > insideOldWall * 0.85f,
@@ -172,19 +184,19 @@ public static class SilhouetteChecks
     }
 
     /// <summary>
-    /// The heaviest fog weight the volume carries at one ground-plan position, or NaN when the
-    /// mesh never reaches it. NaN fails an equality check, so an absent position cannot pass as
-    /// a faded one.
+    /// The largest crossing profile the volume carries at one ground-plan position, or NaN when
+    /// the mesh never reaches it. NaN fails an equality check, so an absent position cannot pass
+    /// as a faded one.
     /// </summary>
-    static float CornerFogWeightAt(LodSilhouetteFogMeshArrays volume, float x, float z)
+    static float CornerFogProfileAt(LodSilhouetteFogMeshArrays volume, float x, float z)
     {
         float heaviest = float.NaN;
         for (int i = 0; i < volume.VertexCount; i++)
         {
             if (Math.Abs(volume.Xyz[i * 3] - x) > 0.0001f) continue;
             if (Math.Abs(volume.Xyz[i * 3 + 2] - z) > 0.0001f) continue;
-            float weight = volume.FogWeights[i * 2];
-            heaviest = float.IsNaN(heaviest) ? weight : Math.Max(heaviest, weight);
+            float profile = volume.FogWeights[i * 2 + 1];
+            heaviest = float.IsNaN(heaviest) ? profile : Math.Max(heaviest, profile);
         }
 
         return heaviest;
@@ -211,8 +223,15 @@ public static class SilhouetteChecks
             float v = ((cx - x) * (az - z) - (cz - z) * (ax - x)) / area;
             float w = 1f - u - v;
             if (u < 0f || v < 0f || w < 0f) continue;
-            total += u * volume.FogWeights[a * 2] + v * volume.FogWeights[b * 2]
+            // The shader's own combination: interpolate the layer density and the crossing
+            // profile separately, then bend the profile into its smooth shoulder. Edge softness
+            // adds a zero-mean wobble on top, which a fixture cannot and should not predict.
+            float density = u * volume.FogWeights[a * 2] + v * volume.FogWeights[b * 2]
                 + w * volume.FogWeights[c * 2];
+            float profile = Math.Clamp(
+                u * volume.FogWeights[a * 2 + 1] + v * volume.FogWeights[b * 2 + 1]
+                    + w * volume.FogWeights[c * 2 + 1], 0f, 1f);
+            total += density * (profile * profile * (3f - 2f * profile));
         }
 
         return total;
@@ -1515,6 +1534,7 @@ public static class SilhouetteChecks
             FogBillowSizeBlocks = float.PositiveInfinity,
             FogDriftSpeed = -1,
             FogLayerDetail = 2,
+            FogEdgeSoftness = float.NaN,
         }).Normalize();
         c.Eq(32768, repaired.ReachBlocks, "a hand-edited reach is normalized");
         c.Near(defaults.SkyTint, repaired.SkyTint, 1e-6, "a non-finite dial returns to its default");
@@ -1529,11 +1549,12 @@ public static class SilhouetteChecks
         c.Eq((defaults.FogStrength, 0f, defaults.FogSpillBlocks,
                 LodSilhouetteFogVolume.MinHeightBlocks, defaults.FogFloorDepthBlocks,
                 defaults.FogBillowSizeBlocks,
-                LodSilhouetteFogVolume.MinDriftSpeed, LodSilhouetteFogVolume.MaxLayerDetail),
+                LodSilhouetteFogVolume.MinDriftSpeed, LodSilhouetteFogVolume.MaxLayerDetail,
+                defaults.FogEdgeSoftness),
             (repaired.FogStrength, repaired.FogCoverage, repaired.FogSpillBlocks,
                 repaired.FogHeightBlocks, repaired.FogFloorDepthBlocks,
                 repaired.FogBillowSizeBlocks, repaired.FogDriftSpeed,
-                repaired.FogLayerDetail),
+                repaired.FogLayerDetail, repaired.FogEdgeSoftness),
             "all fog dials repair non-finite values and clamp hand-edited config ranges");
     }
 
@@ -1737,6 +1758,39 @@ public static class SilhouetteChecks
                 && !fragment.Contains("vhSilhouetteSeamFog", StringComparison.Ordinal)
                 && !finish.Contains("vhSilhouetteSeamFog", StringComparison.Ordinal),
             "the exact ownership edge drives a corner-filled noisy volume after water composition");
+        // The drift dial has to be a rate. Multiplying elapsed time by the live speed displaces
+        // the whole pattern by that elapsed time the moment the dial moves, which is the only
+        // motion 0.4.109 and earlier ever showed, and none between adjustments.
+        c.True(fogPass.Contains("AdvanceSilhouetteFogDrift(deltaSeconds);", StringComparison.Ordinal)
+                && fogPass.Contains("silhouetteFogDriftBlocks + step", StringComparison.Ordinal)
+                && fogPass.Contains("SilhouetteFogDriftBlocksPerSecond", StringComparison.Ordinal)
+                && fogPass.Contains("SilhouetteFogMaxDriftStepSeconds", StringComparison.Ordinal)
+                && fogPass.Contains("p.Uniform(\"fogDriftBlocks\", silhouetteFogDriftBlocks);",
+                    StringComparison.Ordinal)
+                && !fogPass.Contains("fogTime", StringComparison.Ordinal)
+                && !fogPass.Contains("p.Uniform(\"fogDriftSpeed\"", StringComparison.Ordinal)
+                && !fogFragment.Contains("fogTime", StringComparison.Ordinal)
+                && !fogFragment.Contains("fogDriftSpeed", StringComparison.Ordinal)
+                && fogFragment.Contains("uniform float fogDriftBlocks;", StringComparison.Ordinal)
+                && fogFragment.Contains("(fogWorldPosition + drift)", StringComparison.Ordinal),
+            "billow drift is an integrated world-space distance, not elapsed time times the dial");
+        // Every uniform the draw uploads must be declared, or the engine throws at the call site.
+        foreach (string uniform in new[]
+        {
+            "fogStrength", "fogCoverage", "fogBillowSizeBlocks", "fogEdgeSoftness",
+            "fogDriftBlocks",
+        })
+            c.True(fogFragment.Contains("uniform float " + uniform + ";", StringComparison.Ordinal)
+                    && fogPass.Contains("p.Uniform(\"" + uniform + "\"", StringComparison.Ordinal),
+                uniform + " is both declared by the fog shader and uploaded by its draw");
+        c.True(fogVertex.Contains("out float fogProfile", StringComparison.Ordinal)
+                && fogVertex.Contains("fogProfile = fogDataIn.y;", StringComparison.Ordinal)
+                && fogFragment.Contains("in float fogProfile;", StringComparison.Ordinal)
+                && fogFragment.Contains("wobble * fogEdgeSoftness", StringComparison.Ordinal)
+                && fogFragment.Contains("across * across * (3.0 - 2.0 * across)",
+                    StringComparison.Ordinal)
+                && fogFragment.Contains("* shaped *", StringComparison.Ordinal),
+            "the crossing profile travels separately so the rim gets a shoulder and a wobble");
         c.True(field.Contains("DefaultUnderlayDepthBlocks = 64f", StringComparison.Ordinal)
                 && field.Contains("DefaultUnderlayWidthBlocks = 384f", StringComparison.Ordinal)
                 && field.Contains("EdgeDistance(", StringComparison.Ordinal)
@@ -1793,7 +1847,8 @@ public static class SilhouetteChecks
                 && dialog.Contains("Fog floor depth", StringComparison.Ordinal)
                 && dialog.Contains("Fog billow size", StringComparison.Ordinal)
                 && dialog.Contains("Fog drift speed", StringComparison.Ordinal)
-                && dialog.Contains("Fog layer detail", StringComparison.Ordinal),
+                && dialog.Contains("Fog layer detail", StringComparison.Ordinal)
+                && dialog.Contains("Fog edge softness", StringComparison.Ordinal),
             "the Farseer editor exposes every seam-fog appearance and layer dial");
         c.True(scale.Contains("DrawMarker", StringComparison.Ordinal)
                 && scale.Contains("SilhouetteMarker", StringComparison.Ordinal)
@@ -1821,7 +1876,7 @@ public static class SilhouetteChecks
             "SilhouetteFogStrength", "SilhouetteFogCoverage", "SilhouetteFogSpillBlocks",
             "SilhouetteFogHeightBlocks", "SilhouetteFogFloorDepthBlocks",
             "SilhouetteFogBillowSizeBlocks", "SilhouetteFogDriftSpeed",
-            "SilhouetteFogLayerDetail",
+            "SilhouetteFogLayerDetail", "SilhouetteFogEdgeSoftness",
         })
             c.True(mod.Contains(name, StringComparison.Ordinal), name + " is persisted in client config");
     }

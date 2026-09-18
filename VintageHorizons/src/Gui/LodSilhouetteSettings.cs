@@ -26,7 +26,8 @@ internal readonly record struct LodSilhouetteSettings(
     float FogFloorDepthBlocks,
     float FogBillowSizeBlocks,
     float FogDriftSpeed,
-    float FogLayerDetail)
+    float FogLayerDetail,
+    float FogEdgeSoftness)
 {
     public const int MinReachBlocks = 1024;
     public const int MaxReachBlocks = 32768;
@@ -54,7 +55,8 @@ internal readonly record struct LodSilhouetteSettings(
         FogFloorDepthBlocks: LodSilhouetteFogVolume.DefaultFloorDepthBlocks,
         FogBillowSizeBlocks: LodSilhouetteFogVolume.DefaultBillowSizeBlocks,
         FogDriftSpeed: LodSilhouetteFogVolume.DefaultDriftSpeed,
-        FogLayerDetail: LodSilhouetteFogVolume.DefaultLayerDetail);
+        FogLayerDetail: LodSilhouetteFogVolume.DefaultLayerDetail,
+        FogEdgeSoftness: LodSilhouetteFogVolume.DefaultEdgeSoftness);
 
     public static int ClampReach(int blocks)
     {
@@ -99,7 +101,9 @@ internal readonly record struct LodSilhouetteSettings(
         Dial(FogDriftSpeed, Default.FogDriftSpeed,
             LodSilhouetteFogVolume.MinDriftSpeed, LodSilhouetteFogVolume.MaxDriftSpeed),
         Dial(FogLayerDetail, Default.FogLayerDetail,
-            LodSilhouetteFogVolume.MinLayerDetail, LodSilhouetteFogVolume.MaxLayerDetail));
+            LodSilhouetteFogVolume.MinLayerDetail, LodSilhouetteFogVolume.MaxLayerDetail),
+        Dial(FogEdgeSoftness, Default.FogEdgeSoftness,
+            LodSilhouetteFogVolume.MinEdgeSoftness, LodSilhouetteFogVolume.MaxEdgeSoftness));
 
     static float Dial(float value, float fallback, float min, float max) =>
         Math.Clamp(float.IsFinite(value) ? value : fallback, min, max);

@@ -6,13 +6,16 @@
 
 in vec3 fogWorldPosition;
 in float fogWeight;
+in float fogProfile;
 
 uniform vec4 rgbaFogIn;
-uniform float fogTime;
 uniform float fogStrength;
 uniform float fogCoverage;
 uniform float fogBillowSizeBlocks;
-uniform float fogDriftSpeed;
+uniform float fogEdgeSoftness;
+// Distance the billows have already drifted, in blocks, integrated on the CPU. It is not time
+// multiplied by the live speed: that jumps the whole pattern whenever the dial moves.
+uniform float fogDriftBlocks;
 uniform sampler2D sceneDepth;
 
 layout(location = 0) out vec4 outColor;
@@ -63,18 +66,33 @@ void main()
     if (gl_FragCoord.z > opaqueDepth + 0.000001) discard;
 
     float broadScale = 1.0 / max(1.0, fogBillowSizeBlocks);
-    vec3 drift = vec3(fogTime * 0.006, 0.0, fogTime * -0.004) * fogDriftSpeed;
-    vec3 broadPoint = fogWorldPosition
-        * vec3(broadScale, broadScale * 1.40, broadScale) + drift;
+    // Drift is a real ground speed, so the billow-size dial changes their size and not their
+    // pace. Shearing the fine octave a little faster keeps the bank churning inside itself.
+    vec3 drift = vec3(fogDriftBlocks, 0.0, fogDriftBlocks * -0.67);
+    vec3 broadPoint = (fogWorldPosition + drift)
+        * vec3(broadScale, broadScale * 1.40, broadScale);
     float broad = vhFogFbm(broadPoint);
-    float detail = vhFogNoise(
-        fogWorldPosition * vec3(broadScale * 2.75, broadScale * 3.60,
-            broadScale * 2.75) + drift * 1.7);
-    float billow = smoothstep(0.34, 0.72, broad * 0.74 + detail * 0.26);
+    float detail = vhFogNoise((fogWorldPosition + drift * 1.35)
+        * vec3(broadScale * 2.75, broadScale * 3.60, broadScale * 2.75));
+    float billow = smoothstep(0.28, 0.80, broad * 0.74 + detail * 0.26);
+
+    // The mesh crosses each layer as a straight ramp between its rims, and the ownership frontier
+    // it follows is a chunk-grid staircase, so the bare geometry reads as a faceted ribbon with
+    // square corners. A broad world-anchored wobble pushes the rim in and out before the shoulder
+    // is applied: the outline wanders, the ninety-degree turns round off, and the stacked layers
+    // stop lining up into visible steps. Zero softness leaves the plain ramp.
+    // Two octaves: broad lobes that swell and pinch the whole bank, and a finer one near the
+    // 32-block cell size that is what actually dissolves the grid's teeth. One coarse octave
+    // alone just slides the sawtooth sideways.
+    vec3 wobblePoint = (fogWorldPosition + drift * 0.8) * broadScale;
+    float wobble = (vhFogNoise(wobblePoint * 1.10) - 0.5) * 0.80
+        + (vhFogNoise(wobblePoint * 2.60 + vec3(37.1, 11.9, 53.7)) - 0.5) * 0.80;
+    float across = clamp(fogProfile + wobble * fogEdgeSoftness * 1.20, 0.0, 1.0);
+    float shaped = across * across * (3.0 - 2.0 * across);
 
     // Coverage leaves only a controllable veil in the noise pockets. The old 0.62 floor made
     // every card visible as a bright slab; the layered volume now gets its body from billows.
-    float density = max(0.0, fogWeight) * max(0.0, fogStrength)
+    float density = max(0.0, fogWeight) * shaped * max(0.0, fogStrength)
         * mix(clamp(fogCoverage, 0.0, 1.0), 1.70, billow);
     float alpha = 1.0 - exp(-2.30 * density);
     if (alpha < 0.003) discard;

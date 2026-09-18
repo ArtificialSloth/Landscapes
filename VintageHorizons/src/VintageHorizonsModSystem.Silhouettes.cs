@@ -151,7 +151,8 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteFogFloorDepthBlocks,
         config.SilhouetteFogBillowSizeBlocks,
         config.SilhouetteFogDriftSpeed,
-        config.SilhouetteFogLayerDetail).Normalize();
+        config.SilhouetteFogLayerDetail,
+        config.SilhouetteFogEdgeSoftness).Normalize();
 
     LodSilhouetteSettings CurrentSilhouetteSettings()
     {
@@ -178,7 +179,8 @@ public partial class VintageHorizonsModSystem
             renderer.SilhouetteFogFloorDepthBlocks,
             renderer.SilhouetteFogBillowSizeBlocks,
             renderer.SilhouetteFogDriftSpeed,
-            renderer.SilhouetteFogLayerDetail).Normalize();
+            renderer.SilhouetteFogLayerDetail,
+            renderer.SilhouetteFogEdgeSoftness).Normalize();
     }
 
     void PreviewSilhouetteSettings(LodSilhouetteSettings value)
@@ -202,7 +204,8 @@ public partial class VintageHorizonsModSystem
         renderer.SetSilhouetteFogSettings(
             value.FogStrength, value.FogCoverage, value.FogSpillBlocks,
             value.FogHeightBlocks, value.FogFloorDepthBlocks,
-            value.FogBillowSizeBlocks, value.FogDriftSpeed, value.FogLayerDetail);
+            value.FogBillowSizeBlocks, value.FogDriftSpeed, value.FogLayerDetail,
+            value.FogEdgeSoftness);
         silhouettes.SetReachBlocks(value.ReachBlocks);
         silhouettes.SetHillSoftness(value.HillSoftness);
         silhouettes.SetEnabled(value.Enabled);
@@ -234,5 +237,6 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteFogBillowSizeBlocks = value.FogBillowSizeBlocks;
         config.SilhouetteFogDriftSpeed = value.FogDriftSpeed;
         config.SilhouetteFogLayerDetail = value.FogLayerDetail;
+        config.SilhouetteFogEdgeSoftness = value.FogEdgeSoftness;
     }
 }

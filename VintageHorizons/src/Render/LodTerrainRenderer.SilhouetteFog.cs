@@ -9,6 +9,20 @@ namespace VintageHorizons;
 public partial class LodTerrainRenderer
 {
     internal const double SilhouetteFogAfterOitOrder = 1.0;
+
+    /// <summary>
+    /// Ground speed of the billows at drift speed one. The pattern is anchored to the world, so
+    /// this is real blocks per second. 0.4.109 and earlier moved it by 0.006 noise units per
+    /// second, which at any usable billow size is under a block per second and invisible; the
+    /// only motion anyone ever saw was the pattern jumping as the dial itself moved.
+    /// </summary>
+    internal const float SilhouetteFogDriftBlocksPerSecond = 6f;
+
+    /// <summary>One frame may not teleport the billows after a pause, a load or an alt-tab.</summary>
+    internal const float SilhouetteFogMaxDriftStepSeconds = 0.25f;
+
+    /// <summary>Wrapped so a long session cannot erode the noise interpolation's precision.</summary>
+    internal const float SilhouetteFogDriftWrapBlocks = 1 << 20;
     BeforeStageRenderer? silhouetteFogStageRenderer;
     IShaderProgram? silhouetteFogVolumeProg;
     MeshRef? silhouetteFogVolumeMesh;
@@ -21,6 +35,7 @@ public partial class LodTerrainRenderer
     bool silhouetteFogGeometryDirty;
     int silhouetteFogErrorChecksLeft = 240;
     bool silhouetteFogReportedPendingError;
+    float silhouetteFogDriftBlocks;
     internal float SilhouetteFogStrength = LodSilhouetteFogVolume.DefaultStrength;
     internal float SilhouetteFogCoverage = LodSilhouetteFogVolume.DefaultCoverage;
     internal float SilhouetteFogSpillBlocks = LodSilhouetteFogVolume.DefaultSpillBlocks;
@@ -29,6 +44,7 @@ public partial class LodTerrainRenderer
     internal float SilhouetteFogBillowSizeBlocks = LodSilhouetteFogVolume.DefaultBillowSizeBlocks;
     internal float SilhouetteFogDriftSpeed = LodSilhouetteFogVolume.DefaultDriftSpeed;
     internal float SilhouetteFogLayerDetail = LodSilhouetteFogVolume.DefaultLayerDetail;
+    internal float SilhouetteFogEdgeSoftness = LodSilhouetteFogVolume.DefaultEdgeSoftness;
     readonly LodOpenGlStateApi silhouetteFogStateApi = new();
     readonly int[] silhouetteFogViewport = new int[4];
     readonly bool[] silhouetteFogColorMask = new bool[4];
@@ -36,7 +52,7 @@ public partial class LodTerrainRenderer
     void RegisterSilhouetteFogStage()
     {
         silhouetteFogStageRenderer = new BeforeStageRenderer(
-            _ => DrawSilhouetteFogVolume(), SilhouetteFogAfterOitOrder);
+            DrawSilhouetteFogVolume, SilhouetteFogAfterOitOrder);
         capi.Event.RegisterRenderer(silhouetteFogStageRenderer, EnumRenderStage.AfterOIT,
             "vintagehorizons-silhouettefog");
     }
@@ -86,7 +102,8 @@ public partial class LodTerrainRenderer
 
     internal void SetSilhouetteFogSettings(
         float strength, float coverage, float spillBlocks, float heightBlocks,
-        float floorDepthBlocks, float billowSizeBlocks, float driftSpeed, float layerDetail)
+        float floorDepthBlocks, float billowSizeBlocks, float driftSpeed, float layerDetail,
+        float edgeSoftness)
     {
         bool geometryChanged = SilhouetteFogSpillBlocks != spillBlocks
             || SilhouetteFogHeightBlocks != heightBlocks
@@ -100,6 +117,7 @@ public partial class LodTerrainRenderer
         SilhouetteFogBillowSizeBlocks = billowSizeBlocks;
         SilhouetteFogDriftSpeed = driftSpeed;
         SilhouetteFogLayerDetail = layerDetail;
+        SilhouetteFogEdgeSoftness = edgeSoftness;
         silhouetteFogGeometryDirty |= geometryChanged;
     }
 
@@ -149,8 +167,25 @@ public partial class LodTerrainRenderer
         return remainder < 0 ? quotient - 1 : quotient;
     }
 
-    void DrawSilhouetteFogVolume()
+    /// <summary>
+    /// Integrate the drift, never elapsed time multiplied by the live speed: multiplying moves the
+    /// whole pattern by the elapsed time every time the dial changes, so the fog lurches while the
+    /// slider is dragged and then sits still. Integrating makes the dial a rate.
+    /// </summary>
+    void AdvanceSilhouetteFogDrift(float deltaSeconds)
     {
+        if (!float.IsFinite(deltaSeconds) || deltaSeconds <= 0f) return;
+        float step = MathF.Min(deltaSeconds, SilhouetteFogMaxDriftStepSeconds)
+            * Math.Clamp(SilhouetteFogDriftSpeed,
+                LodSilhouetteFogVolume.MinDriftSpeed, LodSilhouetteFogVolume.MaxDriftSpeed)
+            * SilhouetteFogDriftBlocksPerSecond;
+        silhouetteFogDriftBlocks =
+            (silhouetteFogDriftBlocks + step) % SilhouetteFogDriftWrapBlocks;
+    }
+
+    void DrawSilhouetteFogVolume(float deltaSeconds)
+    {
+        AdvanceSilhouetteFogDrift(deltaSeconds);
         LodSilhouetteClient? silhouettes = Silhouettes;
         if (silhouettes == null || !silhouettes.Enabled || silhouetteFogVolumeFailed
             || silhouetteFogVolumeMesh == null || silhouetteFogBoundaryEdges == 0
@@ -231,11 +266,11 @@ public partial class LodTerrainRenderer
             p.Uniform("globeStart", EffectiveFarDistance);
             p.Uniform("globeEffect", SilhouetteGlobeEffect);
             p.Uniform("rgbaFogIn", capi.Ambient.BlendedFogColor);
-            p.Uniform("fogTime", (capi.World.ElapsedMilliseconds % 1_000_000L) / 1000f);
             p.Uniform("fogStrength", SilhouetteFogStrength);
             p.Uniform("fogCoverage", SilhouetteFogCoverage);
             p.Uniform("fogBillowSizeBlocks", SilhouetteFogBillowSizeBlocks);
-            p.Uniform("fogDriftSpeed", SilhouetteFogDriftSpeed);
+            p.Uniform("fogEdgeSoftness", SilhouetteFogEdgeSoftness);
+            p.Uniform("fogDriftBlocks", silhouetteFogDriftBlocks);
             p.BindTexture2D("sceneDepth", primary.DepthTextureId, 0);
             capi.Render.RenderMesh(silhouetteFogVolumeMesh);
             p.Stop();

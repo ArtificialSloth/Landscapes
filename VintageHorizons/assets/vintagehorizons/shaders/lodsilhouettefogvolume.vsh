@@ -18,6 +18,7 @@ uniform float globeEffect;
 
 out vec3 fogWorldPosition;
 out float fogWeight;
+out float fogProfile;
 
 #include vertexflagbits.ash
 #include colorutil.ash
@@ -32,6 +33,9 @@ void main()
         vertexPositionIn.y,
         vertexPositionIn.z + volumeWorldOriginZ);
     fogWeight = fogDataIn.x;
+    // How far across its layer this vertex sits: one at the dense rail, zero at every rim and
+    // along a swept end. The fragment shader shapes and wobbles it.
+    fogProfile = fogDataIn.y;
 
     vec4 relative = vec4(vertexPositionIn + volumeOrigin, 1.0);
     relative = applyGlobalWarping(relative);

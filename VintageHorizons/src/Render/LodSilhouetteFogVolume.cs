@@ -21,9 +21,11 @@ internal sealed class LodSilhouetteFogMeshArrays
     public int VerticesPerEdge => Layers * 2 * LodSilhouetteFogVolume.VerticesPerColumn;
     public int IndicesPerEdge => Layers * LodSilhouetteFogVolume.IndicesPerSpan;
 
-    /// <summary>The one extra faded cross-section a strip grows past an unsupported end.</summary>
-    public int VerticesPerTaper => Layers * LodSilhouetteFogVolume.VerticesPerColumn;
-    public int IndicesPerTaper => Layers * LodSilhouetteFogVolume.IndicesPerSpan;
+    /// <summary>The faded arc a strip grows past an unsupported end.</summary>
+    public int VerticesPerTaper => Layers * LodSilhouetteFogVolume.ColumnsPerTaper
+        * LodSilhouetteFogVolume.VerticesPerColumn;
+    public int IndicesPerTaper => Layers * LodSilhouetteFogVolume.ColumnsPerTaper
+        * LodSilhouetteFogVolume.IndicesPerSpan;
 }
 
 /// <summary>
@@ -45,6 +47,21 @@ internal static class LodSilhouetteFogVolume
 
     /// <summary>Two quads bridge one cross-section to the next.</summary>
     public const int IndicesPerSpan = 12;
+
+    /// <summary>
+    /// The cross-sections a strip grows past an unsupported end, as a fraction of the spill
+    /// along its own axis and of its normal half-width across it. A square end would stand out
+    /// past the neighbouring strips' own reach and read as a spike at every chunk-grid turn, so
+    /// the end is closed as an arc instead: the footprint becomes a stadium, and a ninety-degree
+    /// turn rounds off rather than growing a tooth.
+    /// </summary>
+    public static readonly (float Along, float Width)[] SweptEnd =
+    {
+        (0.556f, 0.831f),
+        (1f, 0.12f),
+    };
+
+    public static int ColumnsPerTaper => SweptEnd.Length;
 
     const byte WestLeaves = 1 << 0;
     const byte EastLeaves = 1 << 1;
@@ -72,6 +89,9 @@ internal static class LodSilhouetteFogVolume
     public const float MinDriftSpeed = 0f;
     public const float MaxDriftSpeed = 3f;
     public const float DefaultDriftSpeed = 1f;
+    public const float MinEdgeSoftness = 0f;
+    public const float MaxEdgeSoftness = 1f;
+    public const float DefaultEdgeSoftness = 0.5f;
     public const float MinLayerDetail = 0f;
     public const float MaxLayerDetail = 1f;
     public const float DefaultLayerDetail = 0.67f;
@@ -112,8 +132,8 @@ internal static class LodSilhouetteFogVolume
             if (taperEnd[i]) taperedEnds++;
         }
 
-        int columnsTotal = checked(edges * 2 + taperedEnds);
-        int spansTotal = checked(edges + taperedEnds);
+        int columnsTotal = checked(edges * 2 + taperedEnds * ColumnsPerTaper);
+        int spansTotal = checked(edges + taperedEnds * ColumnsPerTaper);
         int vertexCount = checked(layers * columnsTotal * VerticesPerColumn);
         int indexCount = checked(layers * spansTotal * IndicesPerSpan);
         var xyz = new float[checked(vertexCount * 3)];
@@ -123,8 +143,9 @@ internal static class LodSilhouetteFogVolume
         int originZ = checked(mask.MinCellZ * LodSilhouetteSeamMask.CellBlocks);
         int vertex = 0, index = 0;
         float innerHeight = Math.Min(8f, heightBlocks * 0.16f);
-        // Four is the maximum: an optional faded cross-section at each end of the two real ones.
-        var columns = new (float X, float Z, float Y, float Scale)[4];
+        // The two real cross-sections plus an optional swept arc at each end.
+        var columns = new (float X, float Z, float Y, float Scale, float Width)[
+            2 + 2 * ColumnsPerTaper];
 
         for (int i = 0; i < edges; i++)
         {
@@ -141,17 +162,23 @@ internal static class LodSilhouetteFogVolume
             float stepX = alongZ ? 0f : MathF.Sign(endX - startX);
             float stepZ = alongZ ? MathF.Sign(endZ - startZ) : 0f;
 
-            // A taper keeps its neighbour's sampled ground height. Reading one cell further
+            // A swept end keeps its neighbour's sampled ground height. Reading one cell further
             // would leave the mask and drop the whole cross-section to sea level.
             int columnCount = 0;
             if (taperStart[i])
-                columns[columnCount++] = (startX - stepX * spillBlocks,
-                    startZ - stepZ * spillBlocks, startY, 0f);
-            columns[columnCount++] = (startX, startZ, startY, 1f);
-            columns[columnCount++] = (endX, endZ, endY, 1f);
+                for (int a = ColumnsPerTaper - 1; a >= 0; a--)
+                    columns[columnCount++] = (
+                        startX - stepX * spillBlocks * SweptEnd[a].Along,
+                        startZ - stepZ * spillBlocks * SweptEnd[a].Along,
+                        startY, 0f, SweptEnd[a].Width);
+            columns[columnCount++] = (startX, startZ, startY, 1f, 1f);
+            columns[columnCount++] = (endX, endZ, endY, 1f, 1f);
             if (taperEnd[i])
-                columns[columnCount++] = (endX + stepX * spillBlocks,
-                    endZ + stepZ * spillBlocks, endY, 0f);
+                for (int a = 0; a < ColumnsPerTaper; a++)
+                    columns[columnCount++] = (
+                        endX + stepX * spillBlocks * SweptEnd[a].Along,
+                        endZ + stepZ * spillBlocks * SweptEnd[a].Along,
+                        endY, 0f, SweptEnd[a].Width);
 
             for (int layer = 0; layer < verticalLayers; layer++)
             {
@@ -165,13 +192,14 @@ internal static class LodSilhouetteFogVolume
                 int first = vertex;
                 for (int c = 0; c < columnCount; c++)
                 {
-                    (float x, float z, float y, float scale) = columns[c];
-                    AddVertex(x + normalX * offset, y - floorDepthBlocks,
-                        z + normalZ * offset, 0f);
-                    AddVertex(x + normalX * offset, y + innerHeight,
-                        z + normalZ * offset, density * scale);
-                    AddVertex(x + normalX * offset, y + heightBlocks,
-                        z + normalZ * offset, 0f);
+                    (float x, float z, float y, float scale, float width) = columns[c];
+                    float side = offset * width;
+                    AddVertex(x + normalX * side, y - floorDepthBlocks,
+                        z + normalZ * side, density, 0f);
+                    AddVertex(x + normalX * side, y + innerHeight,
+                        z + normalZ * side, density, scale);
+                    AddVertex(x + normalX * side, y + heightBlocks,
+                        z + normalZ * side, density, 0f);
                 }
                 Stitch(first, columnCount);
             }
@@ -185,12 +213,13 @@ internal static class LodSilhouetteFogVolume
                 int first = vertex;
                 for (int c = 0; c < columnCount; c++)
                 {
-                    (float x, float z, float y, float scale) = columns[c];
-                    AddVertex(x - normalX * spillBlocks, y + height,
-                        z - normalZ * spillBlocks, 0f);
-                    AddVertex(x, y + height, z, density * scale);
-                    AddVertex(x + normalX * spillBlocks, y + height,
-                        z + normalZ * spillBlocks, 0f);
+                    (float x, float z, float y, float scale, float width) = columns[c];
+                    float side = spillBlocks * width;
+                    AddVertex(x - normalX * side, y + height,
+                        z - normalZ * side, density, 0f);
+                    AddVertex(x, y + height, z, density, scale);
+                    AddVertex(x + normalX * side, y + height,
+                        z + normalZ * side, density, 0f);
                 }
                 Stitch(first, columnCount);
             }
@@ -211,14 +240,18 @@ internal static class LodSilhouetteFogVolume
             HorizontalLayers = horizontalLayers,
         };
 
-        void AddVertex(float x, float y, float z, float fogWeight)
+        // The layer's own density and, separately, how far across the layer this vertex sits: one
+        // at its dense rail, zero at every rim it fades into, and zero along a swept end. Keeping
+        // them apart lets the fragment shader bend the crossing profile into a soft shoulder and
+        // wobble the rim, instead of the mesh baking in a straight linear ramp.
+        void AddVertex(float x, float y, float z, float density, float profile)
         {
             int xyzAt = vertex * 3;
             xyz[xyzAt] = x - originX;
             xyz[xyzAt + 1] = y;
             xyz[xyzAt + 2] = z - originZ;
-            weights[vertex * 2] = fogWeight;
-            weights[vertex * 2 + 1] = 0f;
+            weights[vertex * 2] = density;
+            weights[vertex * 2 + 1] = profile;
             vertex++;
         }
 
@@ -233,14 +266,15 @@ internal static class LodSilhouetteFogVolume
             }
         }
 
-        // Split along the diagonal that joins the two heavier corners. Where a strip fades to
-        // nothing, its one dense corner then lies on both triangles and the density decays over
-        // the whole quad; the other diagonal would cut the far triangle off at a flat zero and
-        // leave a diagonal bite out of the swept corner. An ordinary strip has equal weights on
-        // both diagonals and keeps its original split.
+        // Split along the diagonal that joins the two corners furthest across the layer. Where a
+        // strip fades to nothing, its one dense corner then lies on both triangles and the profile
+        // decays over the whole quad; the other diagonal would cut the far triangle off at a flat
+        // zero and leave a diagonal bite out of the swept corner. An ordinary strip has equal
+        // profiles on both diagonals and keeps its original split.
         void AddQuad(int a, int b, int c, int d)
         {
-            if (weights[b * 2] + weights[c * 2] >= weights[a * 2] + weights[d * 2])
+            if (weights[b * 2 + 1] + weights[c * 2 + 1]
+                >= weights[a * 2 + 1] + weights[d * 2 + 1])
             {
                 AddTriangle(a, b, c);
                 AddTriangle(c, b, d);

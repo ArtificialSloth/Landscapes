@@ -167,6 +167,7 @@ public class VintageHorizonsConfig
     public float SilhouetteFogFloorDepthBlocks = LodSilhouetteFogVolume.DefaultFloorDepthBlocks;
     public float SilhouetteFogBillowSizeBlocks = LodSilhouetteFogVolume.DefaultBillowSizeBlocks;
     public float SilhouetteFogDriftSpeed = LodSilhouetteFogVolume.DefaultDriftSpeed;
+    public float SilhouetteFogEdgeSoftness = LodSilhouetteFogVolume.DefaultEdgeSoftness;
     public float SilhouetteFogLayerDetail = LodSilhouetteFogVolume.DefaultLayerDetail;
 
     /// <summary>
