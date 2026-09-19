@@ -12,13 +12,36 @@ public static class AllowanceChecks
 
         // A sweep loads only as fast as capture drains. Past the limit a swept column waits
         // longer than the engine keeps it loaded, and is dropped uncaptured.
-        c.Eq(1, LodSavegameSweep.LoadsAllowed(1, 0), "an idle capture queue lets the sweep load at its rate");
-        c.Eq(2, LodSavegameSweep.LoadsAllowed(4, LodSavegameSweep.MaxCaptureBacklogForLoads - 2),
+        c.Eq(1, LodSavegameSweep.LoadsAllowed(1, 0, 0),
+            "idle engine and capture queues let the sweep load at its rate");
+        c.Eq(2, LodSavegameSweep.LoadsAllowed(4,
+                LodSavegameSweep.MaxCaptureBacklogForLoads - 2, 0),
             "a nearly full capture queue admits only the loads it has room for");
-        c.Eq(0, LodSavegameSweep.LoadsAllowed(4, LodSavegameSweep.MaxCaptureBacklogForLoads),
+        c.Eq(0, LodSavegameSweep.LoadsAllowed(4,
+                LodSavegameSweep.MaxCaptureBacklogForLoads, 0),
             "a full capture queue holds the sweep");
-        c.Eq(0, LodSavegameSweep.LoadsAllowed(4, 792),
+        c.Eq(0, LodSavegameSweep.LoadsAllowed(4, 792, 0),
             "the owner's backed-up queue holds the sweep instead of going negative");
+        c.Eq(0, LodSavegameSweep.LoadsAllowed(
+                1, 0, LodSavegameSweep.YieldGeneratingChunks),
+            "any real engine terrain demand holds the background priority load");
+
+        var players = new LodPlayerTerrainActivity();
+        c.False(players.MustYield(0), "a server with no players does not hold the sweep");
+        players.BeginSample();
+        players.Observe("one", 10, 20, 1_000);
+        c.True(players.MustYield(1_000), "a joining player gets first claim on terrain loads");
+        players.BeginSample();
+        players.Observe("one", 10, 20, 5_999);
+        c.True(players.MustYield(5_999), "an idle player retains the original quiet window");
+        c.False(players.MustYield(6_000), "the sweep resumes after five quiet seconds");
+        players.BeginSample();
+        players.Observe("one", 11, 20, 7_000);
+        c.True(players.MustYield(11_999), "crossing a chunk boundary restarts the quiet window");
+        players.BeginSample();
+        players.BeginSample();
+        players.Observe("one", 11, 20, 13_000);
+        c.True(players.MustYield(13_000), "a rejoining player gets a fresh quiet window");
 
         var low = new LodTickAllowance();
         c.Eq(1, low.Available(0, 8), "a new low-rate queue can serve one item immediately");

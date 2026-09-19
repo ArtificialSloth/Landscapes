@@ -59,6 +59,7 @@ public class LodSavegameSweep
     readonly LodColumnMap exists = new();
     readonly LodTickAllowance loadAllowance = new();
     readonly LodTickAllowance refreshAllowance = new();
+    readonly LodPlayerTerrainActivity playerTerrainActivity = new();
     readonly LodSnowRefreshScheduler snowRefresh = new();
     readonly LodSnowActivityTracker snowActivity = new();
     readonly Queue<long> weatherPollQueue = new();
@@ -111,6 +112,15 @@ public class LodSavegameSweep
     /// <summary>Campaign recaptures requested since the startup sweep completed.</summary>
     public long Refreshed { get; private set; }
 
+    /// <summary>Load-phase ticks held so real engine terrain demand can drain first.</summary>
+    public long EnginePressureYieldTicks { get; private set; }
+
+    /// <summary>Largest real engine terrain queue observed during the load phase.</summary>
+    public int LoadEngineQueuePeak { get; private set; }
+
+    /// <summary>Load-phase ticks held while a player was introducing new terrain demand.</summary>
+    public long PlayerActivityYieldTicks { get; private set; }
+
     /// <summary>Dormant map regions woken since startup to reveal new vanilla snapshots.</summary>
     public long SnowProbes { get; private set; }
 
@@ -128,9 +138,20 @@ public class LodSavegameSweep
     /// </summary>
     internal const int MaxCaptureBacklogForLoads = 32;
 
-    /// <summary>Loads one tick may issue: the rate allowance, held back by the capture queue.</summary>
-    internal static int LoadsAllowed(int allowance, int captureBacklog) =>
-        Math.Max(0, Math.Min(allowance, MaxCaptureBacklogForLoads - captureBacklog));
+    /// <summary>
+    /// Real chunk generation already pending in the engine before the background sweep yields.
+    /// Existing saved-column loads do not remain visible in this counter long enough to schedule
+    /// against, but yielding at the first request still gives actual generation priority.
+    /// </summary>
+    internal const int YieldGeneratingChunks = 1;
+
+    /// <summary>
+    /// Loads one tick may issue: the rate allowance, held back by engine and capture pressure.
+    /// </summary>
+    internal static int LoadsAllowed(int allowance, int captureBacklog, int generatingChunks) =>
+        generatingChunks >= YieldGeneratingChunks
+            ? 0
+            : Math.Max(0, Math.Min(allowance, MaxCaptureBacklogForLoads - captureBacklog));
 
     /// <summary>Columns queued for capture or in the capture worker; see MaxCaptureBacklogForLoads.</summary>
     readonly Func<int> captureBacklog;
@@ -176,6 +197,8 @@ public class LodSavegameSweep
     void Step()
     {
         if (!active || verifying) return;
+        long now = sapi.World.ElapsedMilliseconds;
+        ObservePlayerTerrainActivity(now);
         ObserveOtherGenerationQueue();
         LodPhaseStart phaseStart = LodPhaseCost.Start(TrackPhaseAllocations);
         if (Done)
@@ -191,8 +214,20 @@ public class LodSavegameSweep
         }
         else
         {
-            StepLoad();
+            StepLoad(now);
             LoadIssueCost.Add(phaseStart);
+        }
+    }
+
+    void ObservePlayerTerrainActivity(long now)
+    {
+        playerTerrainActivity.BeginSample();
+        foreach (IPlayer player in sapi.World.AllOnlinePlayers)
+        {
+            if (player.Entity == null) continue;
+            playerTerrainActivity.Observe(player.PlayerUID,
+                (int)Math.Floor(player.Entity.Pos.X / GlobalConstants.ChunkSize),
+                (int)Math.Floor(player.Entity.Pos.Z / GlobalConstants.ChunkSize), now);
         }
     }
 
@@ -242,10 +277,20 @@ public class LodSavegameSweep
             + "complete neighbourhood.", exists.Count, ProbeTotal);
     }
 
-    void StepLoad()
+    void StepLoad(long now)
     {
+        int generatingChunks = sapi.WorldManager.CurrentGeneratingChunkCount;
+        LoadEngineQueuePeak = Math.Max(LoadEngineQueuePeak, generatingChunks);
         int allowance = LoadsAllowed(
-            loadAllowance.Available(sapi.World.ElapsedMilliseconds, perSecond), captureBacklog());
+            loadAllowance.Available(now, perSecond),
+            captureBacklog(), generatingChunks);
+        if (generatingChunks >= YieldGeneratingChunks) EnginePressureYieldTicks++;
+        if (playerTerrainActivity.MustYield(now))
+        {
+            PlayerActivityYieldTicks++;
+            allowance = 0;
+        }
+
         var tickBudget = new LodWorkBudget(TickWorkBudgetMs);
         int loaded = 0;
         while (loadIndex < LoadTotal && loaded < allowance && !tickBudget.Expired)
@@ -627,7 +672,9 @@ public class LodSavegameSweep
             ? $"savegame sweep verifying: re-probing {Loaded} loads' surroundings"
         : Probing
             ? $"sweeping savegame: examined {probeIndex}/{ProbeTotal}, {exists.Count} hold terrain"
-            : $"sweeping savegame: loaded {Loaded}, {SkippedEdge} skipped on the frontier";
+            : $"sweeping savegame: loaded {Loaded}, {SkippedEdge} skipped on the frontier; "
+                + $"held {PlayerActivityYieldTicks} ticks for player movement and "
+                + $"{EnginePressureYieldTicks} for engine terrain demand";
 
     public void ResetPhaseCosts()
     {
@@ -636,4 +683,39 @@ public class LodSavegameSweep
         LoadIssueCost.Reset();
         RefreshIssueCost.Reset();
     }
+}
+
+/// <summary>
+/// Tracks terrain-streaming activity without allocating per tick. A new/rejoining player or a
+/// chunk-boundary crossing gets a short quiet window in which the background sweep issues no
+/// priority loads. Multiple players naturally extend the window whenever any one keeps moving.
+/// </summary>
+internal sealed class LodPlayerTerrainActivity
+{
+    public const long QuietMilliseconds = 5_000;
+
+    readonly Dictionary<string, Observation> players = new();
+    long sample;
+    long lastActivityMilliseconds = long.MinValue;
+
+    public void BeginSample() => sample++;
+
+    public void Observe(string playerUid, int cx, int cz, long nowMilliseconds)
+    {
+        bool continuouslyPresent = players.TryGetValue(playerUid, out Observation previous)
+            && previous.Sample == sample - 1;
+        if (!continuouslyPresent || previous.Cx != cx || previous.Cz != cz)
+            lastActivityMilliseconds = nowMilliseconds;
+
+        players[playerUid] = new Observation(cx, cz, sample);
+    }
+
+    public bool MustYield(long nowMilliseconds)
+    {
+        if (lastActivityMilliseconds == long.MinValue) return false;
+        long elapsed = nowMilliseconds - lastActivityMilliseconds;
+        return elapsed >= 0 && elapsed < QuietMilliseconds;
+    }
+
+    readonly record struct Observation(int Cx, int Cz, long Sample);
 }

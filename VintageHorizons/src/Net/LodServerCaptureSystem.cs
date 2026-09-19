@@ -1397,12 +1397,14 @@ public class LodServerCaptureSystem : ModSystem
         Mod.Logger.Notification(
             "  {0} p95/p99/max us: probe issue {1:0}/{2:0}/{3:0} | probe publish "
             + "{4:0}/{5:0}/{6:0} | load issue {7:0}/{8:0}/{9:0} | refresh issue "
-            + "{10:0}/{11:0}/{12:0}",
+            + "{10:0}/{11:0}/{12:0} | load holds player {13}, engine {14}, engine peak {15}",
             label,
             work.ProbeIssueCost.P95Us, work.ProbeIssueCost.P99Us, work.ProbeIssueCost.MaxUs,
             work.ProbePublishCost.P95Us, work.ProbePublishCost.P99Us, work.ProbePublishCost.MaxUs,
             work.LoadIssueCost.P95Us, work.LoadIssueCost.P99Us, work.LoadIssueCost.MaxUs,
-            work.RefreshIssueCost.P95Us, work.RefreshIssueCost.P99Us, work.RefreshIssueCost.MaxUs);
+            work.RefreshIssueCost.P95Us, work.RefreshIssueCost.P99Us, work.RefreshIssueCost.MaxUs,
+            work.PlayerActivityYieldTicks, work.EnginePressureYieldTicks,
+            work.LoadEngineQueuePeak);
 
         Mod.Logger.Notification(
             "  {0} allocation interval MiB/max KiB: probe issue {1:0.00}/{2:0.0} | "
