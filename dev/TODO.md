@@ -98,6 +98,9 @@ not a gate for silhouette work:
 
 ## The savegame sweep does not yield to the player the way Farseer does
 
+Authoritative analysis, engine queue trace, invariants, alternatives and acceptance matrix:
+[`plans/ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md`](plans/ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md).
+
 Owner-reported 2026-09-18: terrain feels slower to load while exploring. Measured from the owner's
 own `server-main.log` of 2026-09-17 20:37-20:45, Farseer is not the cause and is cleared: it issued
 2 lattice probes and 2 previews in eight minutes, stood aside on about 73% of its ticks (5,100 yield
@@ -110,18 +113,31 @@ everything already done, so the genuinely new work is only the leading crescent:
 
 Open, in the order they block further work:
 
-- **Decide whether `LodSavegameSweep` should yield to the engine's chunk queue.** In that same
+- **Run the sweep A/B first.** Set `SweepSavegame` false in a clone of the same world and LOD-cache
+  state, repeat the same integrated-singleplayer exploration route in the same sweep phase, and
+  compare vanilla column-readiness time, frame times, engine queue depth, sweep rate, capture
+  backlog, oldest dirty age and unloaded-before-capture drops. A third 2/s run may distinguish
+  throughput from priority, but cannot replace the on/off control. Nothing should be changed in the
+  sweep before that comparison exists.
+- **Implement terrain change detection.** [The
+  plan](plans/PLAN_TERRAIN_CHANGE_DETECTION.md) (2026-09-18, owner-directed) answers the analysis's
+  open question about proving a cache row current, and no longer waits on the A/B: the waste it
+  removes exists whether or not the sweep measurably delays the player. Two independent halves -
+  savegame fingerprints so a start that changed nothing does no work, and section versions so a
+  returning client stops keeping stale sections. It also records a source-traced defect: a section
+  that changes while a player is offline is never re-offered, because the join manifest is filtered
+  by what the client already holds and a section carries no version at all.
+- **Then decide how `LodSavegameSweep` should yield to the engine's chunk queue.** In that same
   window the sweep loaded 7-14 columns/s continuously, sat pinned at its capture-backlog ceiling
   (28-32 of `MaxCaptureBacklogForLoads` 32), and was only 50% through its load pass after seven and
   a half minutes. `ObserveOtherGenerationQueue` records `CurrentGeneratingChunkCount` for absence
   classification only; `StepLoad`'s allowance is the rate and the capture backlog, nothing else. So
   it keeps issuing `LoadChunkColumnPriority` while the player waits for chunks, where Farseer holds
-  at 8 pending. The sweep is also centred on spawn, not the player, so a player exploring far from
-  spawn waits behind work nowhere near them. This is the priority question the owner raised; the
-  asymmetry is source-traced, its effect on player-visible chunk latency is not measured.
-- **Run the sweep A/B first.** Set `SweepSavegame` false (or `SweepColumnsPerSecond` to 2) in
-  `ModConfig/vintagehorizons-server.json`, repeat one exploring route, and compare how fast terrain
-  keeps up. Nothing should be changed in the sweep before that comparison exists.
+  at 8 pending. Installed-engine decompilation proves that the API aliases the fast queue and its
+  blocking load path, which runs before the ordinary bounded generation slice. The sweep is also
+  centred on spawn, not on the player. The queue asymmetry is established; its effect on
+  player-visible chunk latency is not yet measured. Evaluate the alternatives and invariants in the
+  formal analysis rather than selecting a rate or threshold from source inspection alone.
 - **Count the swept arc's cost.** Each swept end now emits two cross-sections instead of one, and on
   a staircase frontier every strip is swept at both ends. The vertex/index budget is exact and
   harness-checked, but it has not been counted against a real frontier or measured on the GPU.
