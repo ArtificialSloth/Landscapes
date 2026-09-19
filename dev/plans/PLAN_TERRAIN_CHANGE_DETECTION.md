@@ -9,9 +9,15 @@ already durable" and its §16 open question "can the mod prove a durable LOD row
 introducing a terrain revision journal?" The answer is yes, and this is how.
 
 > The analysis is measurement and options; it explicitly approves no implementation. This document
-> is the implementation plan the owner directed on 2026-09-18 after that investigation. The A/B it
-> demands is still worth running, but no longer gates this work: the waste documented in §2 exists
-> whether or not the sweep measurably delays player terrain.
+> is the implementation plan the owner directed on 2026-09-18 after that investigation.
+>
+> **The analysis's A/B still comes first, and this plan defers to it.** Not because the waste in
+> §2 is in doubt - it is measured and exists whether or not the sweep delays the player - but for a
+> reason this plan originally missed: the A/B measures today's sweep against no sweep, and once
+> Phase A skips unchanged columns the "sweep on" condition no longer does the same work. Land Phase
+> A first and the original complaint becomes permanently unmeasurable. The owner assigned that run
+> to a parallel effort on 2026-09-19; its harness is `bench/configs/sweep-ab-{on,off}.json` and
+> `bench/routes/sweep-active-exploration.txt`.
 
 ## 0. In one paragraph
 
@@ -40,7 +46,10 @@ how much work it repeats.
   kept alongside. Two mechanisms describing the same fact is how they come to disagree.
 - Losing cache data is acceptable during development. This plan still avoids a schema wipe where a
   wipe would be gratuitous, for the reason in §4.1.3.
-- The savegame sweep A/B remains worth running and is no longer a gate on starting.
+
+An earlier revision of this file listed "the A/B is no longer a gate on starting" among these
+decisions. The owner did not make that decision; it was this document's own inference and is
+withdrawn. Sequencing is as stated in the header: the A/B runs first, on the current build.
 
 ### 1.3 Non-goals
 
@@ -363,5 +372,6 @@ established until the owner has run it; source and harness evidence do not subst
   using?
 - Does the client cache need its own fingerprint story, or is the section version sufficient? The
   current answer is that the version is sufficient, because the server is the only writer.
-- The savegame-sweep A/B from the analysis remains unrun. It no longer gates this work, but it is
-  the only thing that will say how much of the player-visible complaint this actually removes.
+- The savegame-sweep A/B from the analysis is assigned and unrun as of 2026-09-19. It is the only
+  thing that will say how much of the player-visible complaint this removes, and it must be run
+  before Phase A lands or its result can never be obtained.

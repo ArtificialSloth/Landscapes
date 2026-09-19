@@ -121,8 +121,10 @@ Open, in the order they block further work:
   sweep before that comparison exists.
 - **Implement terrain change detection.** [The
   plan](plans/PLAN_TERRAIN_CHANGE_DETECTION.md) (2026-09-18, owner-directed) answers the analysis's
-  open question about proving a cache row current, and no longer waits on the A/B: the waste it
-  removes exists whether or not the sweep measurably delays the player. Two independent halves -
+  open question about proving a cache row current. Its Phase A waits on the A/B above - not because
+  the waste is in doubt, but because skipping unchanged columns changes what "sweep on" means, so
+  the comparison can never be made afterwards. Phase B shares no code with the sweep and does not
+  wait. Two independent halves -
   savegame fingerprints so a start that changed nothing does no work, and section versions so a
   returning client stops keeping stale sections. It also records a source-traced defect: a section
   that changes while a player is offline is never re-offered, because the join manifest is filtered
