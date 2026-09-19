@@ -2,18 +2,22 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.110 and the seam fog's shape gate
+## Start here: 0.4.111, the sweep frontier measurement and the seam fog's shape gate
 
 Read [the Farseer handoff](plans/HANDOFF_HORIZON_SILHOUETTES.md) and
 [Session 100](sessions/SESSION_100.md), then
 [the horizon-silhouette and Terrain Ahead plan](plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
-P1-P4 are built and most P5 persistence/tuning work is complete through 0.4.110. The owner has
+P1-P4 are built and most P5 persistence/tuning work is complete through 0.4.111. The owner has
 human-seen instant client rejoin, accepted the coarse 0.4.93 geometry, rejected visible join bands,
 required exact no-overlap ownership, and selected a heavy atmospheric veil for the residual visual
 handoff. The 0.4.106 volume looked “very good”; the post-water 0.4.107 result was called excellent;
 0.4.109's swept ends were called excellent for the fog's ends but exposed a sawtooth at every
 staircase turn, which 0.4.110 rounds off. Neither 0.4.109 nor 0.4.110 has run in game. The absence
 of another player continues to defer the dedicated/multiplayer gate.
+
+Separately, 0.4.111's player-aware savegame-sweep scheduler is measured, built, installed and
+checkpointed but has not received the owner's play verdict. Its remaining measurement and its
+relationship to the terrain-change plan are recorded below.
 
 Open, in the order they block further work:
 
@@ -88,58 +92,64 @@ not a gate for silhouette work:
 - **Deferred speed experiment.** Starting the next tile while the previous tile saves may remove a
   boundary bubble, using existing backlog gates as the brake. The owner said to hold off on
   2026-09-14; do not begin it without renewed direction.
-- **0.4.69 runtime line.** During the startup sweep, the once-a-minute cache-work line should keep
-  unloaded-before-capture drops near zero; expect the sweep to take longer.
 - **P3 after-comparison.** `siblingfield` was not re-run after the owner's revisit; the 80 finished
   but uncaptured columns of the 18:23 world are still missing from its server cache.
 - **Existing limits retained.** Dedicated servers cannot fill an already-held section from an
   unchanged pre-join row, and snow refreshes do not directly transfer far parents; clients rebuild
   parents from newer L0 where a durable refresh exists.
 
-## The savegame sweep does not yield to the player the way Farseer does
+## Savegame sweep after 0.4.111: frontier evidence and workload avoidance
 
 Authoritative analysis, engine queue trace, invariants, alternatives and acceptance matrix:
 [`plans/ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md`](plans/ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md).
 
-Owner-reported 2026-09-18: terrain feels slower to load while exploring. Measured from the owner's
-own `server-main.log` of 2026-09-17 20:37-20:45, Farseer is not the cause and is cleared: it issued
-2 lattice probes and 2 previews in eight minutes, stood aside on about 73% of its ticks (5,100 yield
-ticks in ~470 s), sent about 0.3 tiles/s, and took its heights free from columns the server was
-loading anyway. Its 4,096-block disc was already exhausted ("every lattice position within 4,096
-blocks of Doden has been requested") with 1,086 tiles already in the store. Moving re-centres the
-demand every 256 blocks and restarts the spiral scan, but `attempted` and `TileHasHeights` skip
-everything already done, so the genuinely new work is only the leading crescent: about 9 tiles per
-256 blocks travelled, well under one preview per second even at a sprint against a 16/s ceiling.
+The controlled frozen-profile A/B and 0.4.111 follow-up are complete; see
+[Session 102](sessions/SESSION_102.md) and §18 of the analysis. During the priority-load phase,
+sweep on and off had effectively identical average FPS, but the original sweep worsened the 1% low
+from 110.3 to 88.3 FPS, the 1% frame-time tail from 9.07 to 11.32 ms and RSS from 7,578 to 8,820 MB.
+Engine-counter-only gates at thresholds 8 and 1 failed to see ordinary saved-column demand.
+
+Version 0.4.111 instead pauses new startup-sweep priority loads for five seconds after any player
+joins or crosses a chunk boundary. Any player's movement extends the window; stationary players and
+no-player servers permit configured-rate progress. `CurrentGeneratingChunkCount >= 1` remains a
+secondary real-generation guard, and the capped allowance prevents a catch-up burst. The follow-up
+recovered 109.0 FPS / 9.17 ms tails, essentially the sweep-off control's 110.3 / 9.07, with no
+capture drops/errors. The original A/B, signal selection and 0.4.69 drop-line runtime debt are
+complete and live in `dev/history/DONE.md`.
 
 Open, in the order they block further work:
 
-- **Run the sweep A/B first.** Set `SweepSavegame` false in a clone of the same world and LOD-cache
-  state, repeat the same integrated-singleplayer exploration route in the same sweep phase, and
-  compare vanilla column-readiness time, frame times, engine queue depth, sweep rate, capture
-  backlog, oldest dirty age and unloaded-before-capture drops. A third 2/s run may distinguish
-  throughput from priority, but cannot replace the on/off control. Nothing should be changed in the
-  sweep before that comparison exists.
-- **Implement terrain change detection.** [The
-  plan](plans/PLAN_TERRAIN_CHANGE_DETECTION.md) (2026-09-18, owner-directed) answers the analysis's
-  open question about proving a cache row current. Its Phase A waits on the A/B above - not because
-  the waste is in doubt, but because skipping unchanged columns changes what "sweep on" means, so
-  the comparison can never be made afterwards. Phase B shares no code with the sweep and does not
-  wait. Two independent halves -
-  savegame fingerprints so a start that changed nothing does no work, and section versions so a
-  returning client stops keeping stale sections. It also records a source-traced defect: a section
-  that changes while a player is offline is never re-offered, because the join manifest is filtered
-  by what the client already holds and a section carries no version at all.
-- **Then decide how `LodSavegameSweep` should yield to the engine's chunk queue.** In that same
-  window the sweep loaded 7-14 columns/s continuously, sat pinned at its capture-backlog ceiling
-  (28-32 of `MaxCaptureBacklogForLoads` 32), and was only 50% through its load pass after seven and
-  a half minutes. `ObserveOtherGenerationQueue` records `CurrentGeneratingChunkCount` for absence
-  classification only; `StepLoad`'s allowance is the rate and the capture backlog, nothing else. So
-  it keeps issuing `LoadChunkColumnPriority` while the player waits for chunks, where Farseer holds
-  at 8 pending. Installed-engine decompilation proves that the API aliases the fast queue and its
-  blocking load path, which runs before the ordinary bounded generation slice. The sweep is also
-  centred on spawn, not on the player. The queue asymmetry is established; its effect on
-  player-visible chunk latency is not yet measured. Evaluate the alternatives and invariants in the
-  formal analysis rather than selecting a rate or threshold from source inspection alone.
+- **Run a sustained virgin-frontier A/B.** Every completed run used the same route and frozen seed.
+  Its centerline through chunk X 8050 was generated, but the endpoint's view-distance halo added
+  178 new map columns at X 8053–8062 and Z 7990–8012. The route was therefore mixed and proves that
+  0.4.111 yields when real generation appears; it does not isolate a long frontier crossing.
+  Restore the frozen profile, begin near X 8050 and continue through untouched terrain. Compare
+  sweep off, the original ungated scheduler and 0.4.111. Record per-waypoint readiness, frame and
+  server-tick tails, engine queue, save growth, sweep holds/rate, capture backlog, dirty age and
+  save backlog.
+- **Implement terrain change detection after review.** The original owner-directed
+  [plan](plans/PLAN_TERRAIN_CHANGE_DETECTION.md) remains intact. Phase A uses a private read-only
+  save path, fingerprints and a clean-shutdown/save-metadata fast path so an unchanged start does no
+  sweep work; Phase B versions sections so a returning client receives offline changes. The A/B
+  prerequisite is now satisfied. Codex appended a separately labelled recommendation section for
+  independent review: retain 0.4.111 for first adoption and true mismatches; B is independent; then
+  A1/A2, A3 with the scheduler, A4 and A5.
+- **Do not substitute time or population for change detection.** In-game time may pace an audit,
+  but it cannot prove a change. Singleplayer can change terrain immediately; many multiplayer users
+  may change nothing. Live hooks cover loaded changes while the mod is active, and fingerprints
+  cover disabled, crashed or externally changed intervals. Player movement/count is a scheduling
+  signal only.
+- **Choose any additional pressure gate from frontier evidence.** Dirty count/age and save backlog
+  may justify holding A3 loads and later A5 audits, but their player-facing contribution is not yet
+  isolated. Do not add a fairer load API or broader gate merely from source inspection. Preserve
+  the complete-neighbourhood rule, capture-before-unload brake, quiet-server progress and capped
+  no-catch-up allowance.
+- **Leave probe scheduling alone for now.** The probe on/off pair had a worse 1% tail with probes,
+  but average and median FPS moved the other way. Repeat or add waypoint evidence before changing
+  probe pacing.
+- **Apply fairness to later background work.** Once startup behavior is settled, use the same
+  activity/no-catch-up policy for fingerprint audits and assess snow canaries/campaigns separately
+  so winter convergence is not stranded.
 - **Count the swept arc's cost.** Each swept end now emits two cross-sections instead of one, and on
   a staircase frontier every strip is swept at both ends. The vertex/index budget is exact and
   harness-checked, but it has not been counted against a real frontier or measured on the GPU.
@@ -148,10 +158,6 @@ Open, in the order they block further work:
   authority, or for Vintage Horizons' own capture/save backlog. In the measured window the cache
   save backlog was 80-390 s old against a `WorldGenOldestDirtySeconds` limit of 120, so
   `EnumWorldGenGate.SaveBacklogAge` is a live suspect for much of that 73% and cannot be confirmed.
-- **Unmeasured case.** All of the above is Farseer idling in already-covered terrain near the
-  owner's base. Riding into genuinely unexplored land has not been measured; the design should yield
-  harder there, because that is exactly when the engine's queue is full, but that is source-traced
-  reasoning, not evidence.
 ## Distant structures and block-entity colours: what 0.4.62 leaves open
 
 The white ruins are fixed and human-tested ([Session 87](sessions/SESSION_87.md), G180-G182).

@@ -2,6 +2,28 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-19 - Savegame-sweep A/B and player-aware yielding (0.4.111)
+
+- Ran the required frozen-profile integrated-singleplayer on/off comparison during both probe and
+  priority-load phases. The probe result was noisy; during loads, average FPS was unchanged but the
+  original sweep worsened the 1% low from 110.3 to 88.3 FPS, the 1% frame-time tail from 9.07 to
+  11.32 ms and RSS from 7,578 to 8,820 MB.
+- Rejected `CurrentGeneratingChunkCount` as the primary signal after thresholds 8 and 1 failed to
+  observe ordinary saved-column pressure. It remains a secondary threshold-1 guard for actual
+  generation.
+- Added a five-second quiet window after any player joins or crosses a chunk boundary. Sweep work
+  resumes at its configured rate once players are stationary or absent, and the allowance remains
+  capped so there is no catch-up burst.
+- The follow-up recovered a 109.0 FPS 1% low and 9.17 ms tail, essentially matching the sweep-off
+  control, with no capture drops/errors and with useful quiet-time sweep progress.
+- Directly compared the seed and final saves. The repeated route was mostly already generated but
+  added 178 map columns in the endpoint's view-distance halo, so sustained virgin-frontier
+  measurement remains separate open work.
+
+Source, builds, checks and artifact verification are complete at 0.4.111 / `b2fe181`: 25,190
+assertions pass and the verified 43-entry package is installed beside rollback builds. Owner-human
+acceptance, the frontier-specific A/B and the terrain-change implementation remain open in TODO.
+
 ## 2026-09-17 - Volumetric Farseer seam fog (0.4.102-0.4.108)
 
 - Derived one exact ownership frontier from the stable 32-block Farseer/installed-LOD handoff;

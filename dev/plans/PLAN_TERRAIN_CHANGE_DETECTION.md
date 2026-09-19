@@ -1,9 +1,10 @@
 # Plan - Terrain change detection: savegame fingerprints and section versions
 
-**Status:** Proposed, not started. Written 2026-09-18 against `2fbf2d1` (`0.4.110`), owner-directed.
+**Status:** Original owner-directed plan proposed and not started. Written 2026-09-18 against
+`2fbf2d1` (`0.4.110`); its required scheduling A/B was completed on 2026-09-19 in 0.4.111.
 
 **Required reading first:** [the savegame-sweep scheduling
-analysis](ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md), then `dev/GOTCHAS.md` G190, G192, G199, G227-G228.
+analysis](ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md), then `dev/GOTCHAS.md` G190, G192, G199, G227-G230.
 This plan answers the analysis's §13 candidate "skip columns whose current terrain revision is
 already durable" and its §16 open question "can the mod prove a durable LOD row is current without
 introducing a terrain revision journal?" The answer is yes, and this is how.
@@ -18,6 +19,13 @@ introducing a terrain revision journal?" The answer is yes, and this is how.
 > A first and the original complaint becomes permanently unmeasurable. The owner assigned that run
 > to a parallel effort on 2026-09-19; its harness is `bench/configs/sweep-ab-{on,off}.json` and
 > `bench/routes/sweep-active-exploration.txt`.
+>
+> **2026-09-19 prerequisite result:** the A/B required by the preceding paragraph has now been run.
+> Load-phase average FPS was unchanged, but the original sweep worsened the 1% low from 110.3 to
+> 88.3 FPS and the 1% frame-time tail from 9.07 to 11.32 ms. Version 0.4.111 added a player-aware
+> load gate and recovered 109.0 FPS / 9.17 ms. See the analysis §18 and
+> [Session 102](../sessions/SESSION_102.md). The original phases and acceptance criteria below have
+> not been rewritten around that result.
 
 ## 0. In one paragraph
 
@@ -372,6 +380,86 @@ established until the owner has run it; source and harness evidence do not subst
   using?
 - Does the client cache need its own fingerprint story, or is the section version sufficient? The
   current answer is that the version is sufficient, because the server is the only writer.
-- The savegame-sweep A/B from the analysis is assigned and unrun as of 2026-09-19. It is the only
-  thing that will say how much of the player-visible complaint this removes, and it must be run
-  before Phase A lands or its result can never be obtained.
+- **Resolved prerequisite (originally “assigned and unrun”):** the savegame-sweep A/B was completed
+  on 2026-09-19 before Phase A landed. It established load-phase tail contention and produced the
+  0.4.111 player-aware scheduler. The repeated route was mostly saved terrain but generated 178 new
+  map columns near its endpoint; a sustained virgin-frontier comparison remains open as scheduling
+  evidence, not as a prerequisite for A1/A2.
+
+## 11. Codex recommendations after 0.4.111 — awaiting independent review
+
+> **Review status:** This section is a Codex recommendation added after the original plan. It is not
+> an owner decision and does not replace or silently amend §§0–10. Another AI and the owner should
+> evaluate it before these suggestions are accepted into the implementation plan.
+
+### 11.1 Keep “is work needed?” separate from “when may work run?”
+
+Retain 0.4.111's player-activity gate for first adoption and every column whose fingerprint really
+changed. Phase A should remove unnecessary work; the scheduler should make necessary work polite.
+Neither mechanism should substitute for the other.
+
+The proposed no-work decision order is:
+
+1. If the previous session closed cleanly, the mod watched changes continuously, and the savegame
+   file's size and modification time still match, skip the scan entirely as §4.1.5 specifies.
+2. If that cheap proof is unavailable, read the save privately and compare per-column fingerprints.
+3. Priority-load only missing fingerprints and actual mismatches, retaining snow-candidate
+   registration and the complete-neighbourhood rule.
+4. Apply the same player-activity, engine-generation and no-catch-up scheduling policy to those
+   remaining loads.
+
+### 11.2 Do not use elapsed game time or player count as invalidation proof
+
+Elapsed time is not evidence of a terrain change. Hours can pass without a relevant column changing,
+while a player, command, simulation step or mod can change one immediately. It is useful only for
+pacing, such as the minimum age before a background audit revisits a clean fingerprint.
+
+Singleplayer versus multiplayer is likewise a workload hint, not a truth test. A single local
+player can modify terrain. Many remote players need time to do work, but while Vintage Horizons is
+active its loaded-change hooks should record those changes directly. If the mod was disabled, the
+server crashed, or a different tool changed the save, fingerprints must discover the difference.
+Do not run a full sweep merely because a multiplayer world had many players, and do not skip one
+merely because a world was singleplayer.
+
+### 11.3 Add storage pressure only after the frontier measurement
+
+The controlled run establishes that player movement is a useful primary gate. It does not yet tell
+whether dirty-section count, oldest dirty age or storage backlog should also suppress loads. The
+recommended frontier A/B should compare:
+
+- sweep disabled;
+- the pre-0.4.111 ungated scheduler;
+- 0.4.111's player-aware scheduler.
+
+Restore the same frozen profile for each run, start near the generated endpoint around chunk X
+8050, and continue through untouched terrain. Record per-waypoint readiness, generation-queue
+history, frame and server-tick tails, new save rows, sweep hold reasons, effective rate, capture
+backlog, dirty count/age and save backlog. Add storage-pressure gates only when those measurements
+show that downstream persistence remains a player-facing source of contention.
+
+### 11.4 Preserve idle progress and fairness
+
+- A no-player server should use the configured sweep rate, subject to capture and storage safety.
+- Any moving player should extend the quiet window for everyone; do not let one player's sweep work
+  compete with another player's terrain demand.
+- A stationary player should permit progress after the quiet interval.
+- Every hold must preserve the capped allowance so resumption cannot burst.
+- Background audits and dormant-snow loads should eventually adopt the same fairness policy, while
+  retaining separate low rates and eventual-convergence tests.
+- `CurrentGeneratingChunkCount` should remain a secondary actual-generation guard. The A/B proved
+  it is blind to ordinary saved-column priority demand at scheduler cadence.
+
+### 11.5 Suggested implementation order
+
+1. Preserve the 0.4.111 scheduler and capture its sustained-frontier baseline before later work
+   changes the workload.
+2. Phase B may proceed independently because it fixes stale rejoin data and shares no Phase A code.
+3. Build A1 and A2: the private read-only path, schema guards, existence map and fingerprints.
+4. Build A3 on top of the existing scheduler: unchanged-column skip with snow and frontier safety
+   preserved.
+5. Add A4's live maintenance and clean-shutdown fast path.
+6. Add A5 auditing last, after its false-positive rate and fair scheduling are measurable.
+
+No probe-phase change is recommended from the current evidence. Its one on/off pair showed a worse
+tail with probes enabled but conflicting average/median movement. Revisit it only if repeated runs
+or waypoint readiness show a material probe-specific penalty.

@@ -8,19 +8,6 @@ first.
 
 ## [Unreleased]
 
-**The savegame sweep's scheduling risk is now formally source- and engine-traced.** The startup
-sweep runs again from zero on every enabled world start, and at the default radius submits 70,225
-existence probes before scanning 66,049 load candidates. Its 50 ms cadence, fractional 16/s load
-allowance, 1 ms issue budget and 32-column capture brake bound Vintage Horizons' submissions and
-protect capture correctness, but none yields to player chunk demand. In the installed engine,
-`LoadChunkColumnPriority` enters the fast queue and is processed through a blocking path before the
-ordinary bounded generation slice; existence tests are also drained before that slice. The owner's
-0.4.108 log shows 5m35s of probing and 11m18s to reach half of the load scan at roughly 7–14 actual
-loads/s. This establishes a credible contention mechanism, not the magnitude of player-visible
-delay: the controlled integrated sweep-on/sweep-off exploration A/B remains mandatory before any
-implementation choice. The authoritative analysis is
-[`dev/plans/ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md`](dev/plans/ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md).
-
 **Multi-thread generation was measured and rejected.** The benchmark did enable Vintage Story's
 real engine setting: each sandbox's `servermagicnumbers.json` held the requested
 `MaxWorldgenThreads`, no run used `--reducedthreads`, six-thread runs exposed named
@@ -33,19 +20,54 @@ therefore keeps only its Balanced behavior and does not expose thread controls o
 presets.
 
 **Known open:** human-check 0.4.110's rounded, wobbled fog outline and its drift rate, and preserve a
-clean client log; run the savegame-sweep A/B before changing the sweep; complete
+clean client log; human-check 0.4.111's player-aware sweep behavior and run the sustained
+virgin-frontier three-way comparison; independently review and then implement the terrain-change
+plan; complete
 the rapid-loading/excavation/weather Farseer matrix; measure controlled Farseer/fog GPU cost and
 reach/shape hitching; finish the deliberate player-facing Farseer rename and bundle its MIT
 license; let a
 small `/vhworldgen` job reach final durable completion; exercise offered resume
 across a real server restart; check dedicated-server permissions and long-run memory/disk behavior;
-make the fixed 15-second shutdown-save deadline configurable; runtime-check 0.4.69's sweep pacing
-line and the P3 after-comparison; winter temporal convergence. The owner deferred overlap/speed
+make the fixed 15-second shutdown-save deadline configurable; run the P3 after-comparison; winter
+temporal convergence. The owner deferred overlap/speed
 optimization on 2026-09-14. Farseer P3/P4 runtime debt remains: GPU/off A/B, cold restart/full-disc
 read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.111] - 2026-09-19
+
+**The startup savegame sweep now yields while players are streaming terrain.**
+
+- A controlled frozen-profile integrated-singleplayer A/B confirmed the risk traced in 0.4.110.
+  During the priority-load phase, sweep on and off averaged 315.5 and 316.4 FPS, but the sweep
+  worsened the 1% low from 110.3 to 88.3 FPS, the 1% frame-time tail from 9.07 to 11.32 ms and RSS
+  from 7,578 to 8,820 MB. Average FPS alone hid the player-facing tail cost.
+- `CurrentGeneratingChunkCount` was tested as the primary brake at thresholds 8 and 1. It did not
+  observe ordinary saved-column priority pressure at the scheduler's cadence, although it became
+  visible during real world generation. It remains a secondary threshold-1 guard.
+- A new/rejoining player or any player's chunk-boundary crossing now opens a five-second quiet
+  window in which the startup load pass issues no new priority loads. Movement by any player extends
+  the window. Stationary players and no-player servers still allow configured-rate progress.
+- The sweep retains its bounded fractional allowance, so a quiet window cannot produce a catch-up
+  burst. The 32-column capture brake, complete-neighbourhood safety rule and generates-nothing
+  promise are unchanged. Status and periodic telemetry report player holds, engine holds and the
+  observed engine-queue peak.
+- The follow-up measured 109.0 FPS 1% low and a 9.17 ms tail, effectively matching the sweep-off
+  control's 110.3 / 9.07, with no capture drops/errors. It recorded 1,621 player-activity holds and
+  209 engine-pressure holds while still doing useful sweep work during quiet startup time.
+- The same restored route was used throughout. A direct before/after save comparison showed that it
+  was mixed rather than purely generated terrain: its endpoint's view-distance halo added 178
+  `mapchunk` rows and 2,136 vertical `chunk` rows. This validates yielding during the late real
+  generation, but a sustained virgin-frontier comparison remains open.
+
+The probe-phase pair had a possible tail difference but conflicting average/median movement, so no
+probe scheduling change was made. The terrain-change plan remains separate: 0.4.111 decides when
+necessary loads may run; fingerprints and a clean marker are intended to decide whether they are
+needed at all. Protocol/blob/schema remain `1 / 4 / 6`; both silhouette stores remain schema `1`.
+The Release build is warning-free, 25,190 assertions pass, and the verified/copy-installed 43-entry
+package has SHA-256 `06BE22051686FF8F865B53557920D2037AB46141CA4B8D8541F36FAD2961D1AA`.
 
 ## [0.4.110] - 2026-09-18
 

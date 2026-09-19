@@ -3,10 +3,10 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-09-18`
-**Mod version:** `0.4.110` — current private test build, verified, copy-installed and checkpointed; the owner called 0.4.109's swept fog ends excellent but reported a sawtooth at every staircase turn, and 0.4.110's rounded ends, wobbled rim and corrected drift rate are the unrun changes
+**Status date:** `2026-09-19`
+**Mod version:** `0.4.111` — current private test build, measured, verified, copy-installed and checkpointed; its player-aware savegame-sweep scheduler has not received the owner's play verdict, and 0.4.110's rounded fog ends, wobbled rim and corrected drift rate remain visually unrun
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.106 `0257a0f`, 0.4.107 `3ba4a1e`, 0.4.108 `6708b19`, 0.4.109 `3b0bed0`, 0.4.110 `2fbf2d1`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.106 `0257a0f`, 0.4.107 `3ba4a1e`, 0.4.108 `6708b19`, 0.4.109 `3b0bed0`, 0.4.110 `2fbf2d1`, 0.4.111 `b2fe181`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
 **Source files:** `134` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
@@ -14,6 +14,36 @@
 **Database schema:** `6`
 
 ## Current result
+
+**Savegame-sweep load contention is measured and 0.4.111 yields to player terrain activity.**
+Session 102.
+
+- Every condition restored the same frozen `BodanBoys` save and client/server caches, then ran the
+  same deterministic integrated-singleplayer route.
+- During the priority-load phase, original sweep on versus sweep off had effectively equal average
+  FPS, 315.5 versus 316.4, but the 1% low fell from 110.3 to 88.3 FPS, the 1% frame-time tail rose
+  from 9.07 to 11.32 ms, and RSS rose from 7,578 to 8,820 MB.
+- Engine-counter-only gates at 8 and 1 did not see ordinary saved-column pressure. The counter did
+  see actual generation later and remains a secondary threshold-1 guard.
+- A new/rejoining player or any chunk-boundary crossing now pauses new startup-sweep priority loads
+  for five seconds. Activity by any player extends the window. Stationary players and no-player
+  servers permit progress; the capped allowance still prevents catch-up bursts.
+- The follow-up recovered a 109.0 FPS 1% low and 9.17 ms tail, effectively the sweep-off control,
+  with 1,621 player holds, 209 engine holds and no capture drops/errors.
+- The route was mixed. Its centerline through endpoint X 8050 existed, but the final save gained
+  178 map columns at X 8053–8062 / Z 7990–8012 through the view-distance halo. The test covers
+  saved-terrain streaming and a short real-generation tail, not sustained virgin-frontier travel.
+- The terrain-change plan remains unimplemented. Its clean marker and fingerprints decide whether
+  work is needed; 0.4.111 decides when necessary loads may run. Codex recommendations are separately
+  labelled in that plan and await independent review.
+
+| Sweep condition | Average FPS | Median FPS | 1% low | 1% frame-time tail | RSS |
+|---|---:|---:|---:|---:|---:|
+| Probe on | 487.5 | 525.9 | 136.0 | 7.35 ms | — |
+| Probe off | 476.2 | 507.1 | 159.3 | 6.28 ms | — |
+| Load, original on | 315.5 | 351.3 | 88.3 | 11.32 ms | 8,820 MB |
+| Load, off | 316.4 | 340.4 | 110.3 | 9.07 ms | 7,578 MB |
+| Load, 0.4.111 gate | 324.6 | 353.9 | 109.0 | 9.17 ms | 8,362 MB |
 
 **Farseer: P1-P4 and most P5 built (0.4.77–0.4.110).** Sessions 92–100.
 - **Availability and switches.** The saved client choice defaults on. Integrated/LAN servers offer
@@ -89,10 +119,10 @@
 | 0.4.109 swept ends | The owner called the fog's ends excellent, then reported sharp corners everywhere. The square swept end protrudes at every turn of a staircase frontier | Human-tested; the sawtooth is human-observed and reproduced offline |
 | 0.4.110 rounded ends and rim wobble | Plan-view rasterization of the real mesh over a staircase seam: the regular sawtooth is gone and the outline is irregular and continuous. Peak plan density falls 2.71 to 1.50 as the spikes go, so the core still saturates and only the rim thins | Measured offline from the real mesh; not human-tested |
 | 0.4.110 drift rate | The previous 0.006 noise-units/second offset is 0.6 blocks/s at a 100-block billow size, and was time multiplied by the live dial, so only a dial change moved it. Drift is now integrated and applied as 6 blocks/s at speed one | Source-traced and static-checked; not human-tested |
-| Final checks | 25,183 assertions pass; Release mod build has zero warnings/errors | Harness-/build-tested at 0.4.110 |
-| 0.4.110 artifact | 43 root-relative entries, one DLL, fog shaders present, no PDB/wrapper, matching installed copy; SHA-256 `E3DD28E214B303CF85110065B1E1AB995D58D9B8F75E63AAFAB7ABD434E66584` | Artifact-verified |
+| Final checks | 25,190 assertions pass; Release mod build has zero warnings/errors | Harness-/build-tested at 0.4.111 |
+| 0.4.111 artifact | 43 root-relative entries, one DLL, fog shaders present, no PDB/wrapper, matching installed copy; SHA-256 `06BE22051686FF8F865B53557920D2037AB46141CA4B8D8541F36FAD2961D1AA` | Artifact-verified |
 | 0.4.109 and 0.4.110 in game | Neither has run. The shape, drift rate, edge-softness default and thinner rim all await a visual verdict | Not human-tested |
-| Farseer's exploring cost | 2 lattice probes and 2 previews in eight minutes, standing aside on about 73% of its ticks, about 0.3 tiles/s, its 4,096-block disc already exhausted with 1,086 stored tiles. The savegame sweep was loading 7-14 columns/s in the same window | Log-measured from the owner's `server-main.log`; covered-terrain case only |
+| Farseer's exploring cost | 2 lattice probes and 2 previews in eight minutes, standing aside on about 73% of its ticks, about 0.3 tiles/s, its 4,096-block disc already exhausted with 1,086 stored tiles. The savegame sweep was loading 7-14 columns/s in the same window; 0.4.111 now gates new sweep loads on player terrain activity | Original production log plus controlled Session 102 follow-up |
 | Rapid handoff/excavation, weather look, controlled GPU/off A/B, cold/full-disc read-back, dedicated players and mixed versions | Not completed | — |
 
 **The core world-generation/LOD-coverage plan is complete.**
@@ -131,7 +161,9 @@
     choice). It never erases columns only the client holds, or replaces observed snow with a
     generated peek.
   - Merges are recorded in the additive `SiblingMerge` table once durable.
-- **0.4.69** paces the savegame sweep to the capture queue.
+- **0.4.69** paces the savegame sweep to the capture queue; **0.4.111** also yields its startup
+  priority loads for five seconds after player join/movement and at the first visible engine
+  generation request.
 - **0.4.70** retires the `.vhsnowline` comparison, fixing the current snow-line design in place.
 
 | Evidence | Result | Level |
@@ -457,9 +489,8 @@ to the server log.
 
 ## Performance and artifact evidence
 
-**Checks and builds.** The final fast tier passed **25,183 assertions with zero failures** at
-0.4.110. The Release mod build completed with zero warnings and zero errors. The benchmark project
-was not changed or rebuilt during the 0.4.102–0.4.110 fog iteration.
+**Checks and builds.** The final fast tier passed **25,190 assertions with zero failures** at
+0.4.111. The Release mod and benchmark builds completed with zero warnings and zero errors.
 
 Measured costs, and what is not measured:
 - **Sibling-cache scanner.** Its cost is in the current-result table. Merging into held sections
@@ -477,13 +508,14 @@ Measured costs, and what is not measured:
 - **Savegame sweep.** At the default/current 128-chunk radius it repeats on every enabled world
   start: 70,225 existence probes, then a 66,049-position candidate scan at up to 16 safe priority
   loads/s. Its 50 ms cadence, 1 ms cooperative issue budget and 32-column capture brake bound
-  submissions and protect capture correctness, but it does not yield to player chunk demand. The
-  installed engine sends those loads through its fast blocking lane before the ordinary bounded
-  generation slice and also drains existence tests before that slice. The owner's 0.4.108 log took
-  5m35s to probe and 11m18s to reach half of the load scan while sustaining roughly 7–14 loads/s;
-  the source is unchanged through 0.4.110. The contention mechanism is established, but its
-  player-visible magnitude is not: run the controlled integrated A/B in
-  [the formal analysis](dev/plans/ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md) before changing it.
+  submissions and protect capture correctness. The controlled load-phase A/B measured no average
+  FPS difference but a 19.9% worse 1% low, 24.8% worse frame-time tail and 16.4% higher RSS with the
+  original sweep. Version 0.4.111 pauses new loads for five seconds after any player joins or
+  crosses a chunk boundary and at the first visible engine generation request, while preserving the
+  capped no-catch-up allowance. Its 109.0 FPS / 9.17 ms tail result matched the sweep-off control's
+  110.3 / 9.07 within run variation. The route was mostly saved terrain but added 178 map columns
+  at its endpoint; a sustained virgin-frontier comparison remains open. See
+  [the formal analysis §18](dev/plans/ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md).
 - **Farseer:**
   - GPU cost and the off-state A/B are not measured.
   - Captured heights cost one 2 KB copy per column the server loads.
@@ -509,14 +541,11 @@ Measured costs, and what is not measured:
     had generated it took under 0.01 ms, and under 1 ms for a new region's first sample (Session 95).
     Sampling beside real generation is not measured.
 
-**The 0.4.110 artifact.** The verified `dist/vintagehorizons_0.4.110.zip` is 668,091 bytes and has
-SHA-256 `E3DD28E214B303CF85110065B1E1AB995D58D9B8F75E63AAFAB7ABD434E66584`. Its 43 root-relative file
-entries are readable, its DLL matches Release, `modinfo.json` reports 0.4.110, both fog shaders are
+**The 0.4.111 artifact.** The verified `dist/vintagehorizons_0.4.111.zip` is 668,783 bytes and has
+SHA-256 `06BE22051686FF8F865B53557920D2037AB46141CA4B8D8541F36FAD2961D1AA`. Its 43 root-relative file
+entries are readable, its DLL matches Release, `modinfo.json` reports 0.4.111, both fog shaders are
 present, it contains no PDB or wrapper directory, and it was copy-installed with a matching hash.
-`dist/vintagehorizons_0.4.109.zip` is 666,759 bytes with SHA-256
-`09D19B3E7443870EAC3E10519DFF83DF63B118A6D248014A6CD3A08C76B63FFE`, verified and installed the same
-way. The 0.4.101–0.4.108 zips and every older test build remain in the Mods folder as rollback
-artifacts.
+The 0.4.109–0.4.110 zips and every older test build remain in the Mods folder as rollback artifacts.
 
 **Checkpoints.** Every incremented private test build receives an exact Git checkpoint after
 verification and installation. This does not authorize a push, tag, publication or public release.
@@ -535,9 +564,14 @@ verification and installation. This does not authorize a push, tag, publication 
 - Session 100 launched no server or game client. The owner supplied both screenshots and the server
   log that cleared Farseer; 0.4.109 and 0.4.110 remain unrun. The fog's before/after outline was
   rasterized offline from the real mesh instead.
+- Session 101 launched no game. It formalized the scheduling analysis and built the seeded A/B
+  harness.
+- Session 102 launched the integrated client repeatedly after the owner's explicit authorization,
+  always through the isolated benchmark harness and a restored frozen profile. It measured probe,
+  load, engine-gate and player-aware conditions, then closed all test processes.
 - Session 91's controlled servers ran only after the owner's approval.
 
-**Documentation.** Validation passed **10,675 checks** with no failures at the Session 100 doc pass.
+**Documentation.** Validation passed **10,753 checks** with no failures at the Session 102 doc pass.
 It covers:
 - current version and changelog coverage;
 - source count;
@@ -572,6 +606,9 @@ It covers:
   the generates-nothing promise (settled decision 38).
 - **Yielding.** Automatic producers never monopolize generation authority; the frontier and the
   silhouette builder yield to explicit `/vhworldgen` and `/vhgen` work (settled decision 39).
+  Startup-sweep priority loads also yield for five seconds after any player joins or crosses a
+  chunk boundary, and at the first visible engine generation request, without accumulating a
+  catch-up burst (0.4.111; runtime-measured, not yet owner-human-tested).
 - **Farseer ownership.** Farseer is fallback scenery and may never show over ready vanilla or LOD
   terrain, including below excavated vanilla ground. It remains until live replacement coverage is
   proven. The proof comes from stable vanilla readiness and exact all-level installed-mesh
@@ -579,7 +616,8 @@ It covers:
   45–46).
 - **Farseer seam fog.** The veil is separate translucent geometry derived from the exact ownership
   boundary; it never changes ownership. It crosses the seam in both directions, fades to zero on
-  every exposed perimeter and fills the full square footprint at perpendicular turns. It draws
+  every exposed perimeter and closes swept ends as arcs, making each footprint the segment dilated
+  by the spill. It draws
   after OIT as an RGB-only overlay with read-only primary depth, so a fog correction cannot rewrite
   water or terrain ownership (settled decisions 47–48).
 - **Thread count.** Multi-thread generation is not a player option. The engine setting was active in
@@ -588,7 +626,7 @@ It covers:
 ## Next work
 
 Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
-[Session 101](dev/sessions/SESSION_101.md), the top of [TODO](dev/TODO.md), and
+[Session 102](dev/sessions/SESSION_102.md), the top of [TODO](dev/TODO.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
 1. **Run 0.4.110's shape and drift gate:** one aerial view of a staircase stretch of the frontier and
@@ -598,12 +636,13 @@ Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
    then 300%, waiting several seconds at each, and report whether the billows visibly move. Include
    water, then confirm the current client log has no seam-fog compile/draw failure and Farseer
    remained enabled.
-2. **Before any savegame-sweep change, run its controlled A/B:** same world and cache snapshot,
-   same integrated-singleplayer exploration route and same sweep phase, first at the current 16/s
-   and then with the sweep off. Measure vanilla chunk readiness, frame times, engine queue depth,
-   sweep phase/rate, capture backlog, dirty age and unloaded-before-capture drops. A 2/s third run is
-   optional. Use [the formal analysis](dev/plans/ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md) for the
-   evidence boundary, alternatives, invariants and acceptance matrix.
+2. **Measure sustained virgin-frontier scheduling:** restore the frozen sweep profile, begin near
+   endpoint chunk X 8050 and continue through untouched terrain. Compare sweep off, the original
+   ungated scheduler and 0.4.111. Capture waypoint readiness, frame/server-tick tails, generation
+   queue, save growth, sweep holds/rate and capture/storage pressure. Then independently review the
+   Codex recommendation appended to
+   [the terrain-change plan](dev/plans/PLAN_TERRAIN_CHANGE_DETECTION.md); its original phases remain
+   owner-directed and unimplemented.
 3. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
@@ -616,23 +655,24 @@ Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
 6. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
 7. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
    offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
-8. **Older TODO debt:** runtime-check the 0.4.69 sweep pacing and drop line, and keep the debt
-   including:
+8. **Older TODO debt:** keep the debt including:
    - P3's after-comparison;
    - winter convergence;
    - pause loading;
    - Session 84 diagnostic cleanup.
 
-[Session 101](dev/sessions/SESSION_101.md) is the authoritative documentation continuation point;
+[Session 102](dev/sessions/SESSION_102.md) is the authoritative documentation continuation point;
+[Session 101](dev/sessions/SESSION_101.md) retains the pre-measurement sweep analysis,
 [Session 100](dev/sessions/SESSION_100.md) retains the preceding fog and attribution work, and
 [the silhouette handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md) orients a new agent.
 - Sessions 98-82 retain ownership/persistence/tuning, the silhouette comparison, P2 and the first
   look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G228 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+- G166-G230 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
   buried joins, bounded regeneration, stable all-level ownership, post-water volumetric fog and the
-  distinction between pacing priority-load submissions and yielding their downstream engine work.
+  distinction between pacing priority-load submissions and yielding their downstream engine work,
+  plus the engine generation counter's saved-load blind spot and route-halo generation.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work

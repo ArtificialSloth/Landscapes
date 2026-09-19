@@ -4335,3 +4335,39 @@ invariants.
 
 **Found:** 2026-09-18, Session 101 (current 0.4.110 source, installed-engine decompilation and the
 owner's 0.4.108 production log; player-latency magnitude remains unmeasured).
+
+### G229 - The engine generation count misses ordinary saved-column terrain demand
+
+**Trigger:** using `CurrentGeneratingChunkCount` as the sole signal that the startup sweep should
+yield before issuing another saved-column priority load.
+
+**Trap:** the counter represents active generation, not every player-visible saved-column load. In
+the frozen-profile load-phase A/B, gates at 8 and then 1 recorded no useful holds during the
+saved-terrain portion and left the 1% low/tail near the ungated result. The counter rose only when
+the route reached genuinely new terrain. Sampling it every 50 ms makes short-lived states easier to
+miss as well.
+
+**Safer action:** use direct player terrain activity as the primary scheduling signal: join/rejoin
+and chunk-boundary crossings open a quiet window in which the background sweep submits no priority
+loads. Retain the engine count at threshold 1 as a secondary guard for real generation. Keep the
+allowance capped so a long hold cannot create a catch-up burst.
+
+**Found:** 2026-09-19, Session 102 (controlled integrated A/B; fixed and follow-up measured in
+0.4.111).
+
+### G230 - A generated route centerline can still generate a view-distance halo
+
+**Trigger:** calling a repeated route “previously generated terrain” because every waypoint or its
+centerline already exists in the frozen save.
+
+**Trap:** the player loads an area, not one line. Session 102's route ended at generated chunk X
+8050, but the final save gained 178 `mapchunk` rows at X 8053–8062 and Z 7990–8012. It also gained
+2,136 `chunk` rows, exactly 178 columns times 12 vertical chunks. The view-distance halo therefore
+crossed the frontier late in every otherwise-repeatable route.
+
+**Safer action:** compare the save's terrain row counts and coordinate set before and after a run.
+Describe the route as mixed unless the entire loaded halo was already present. For a sustained
+world-generation benchmark, start at a known frontier and route far enough into untouched terrain
+that the measured window is dominated by generation rather than saved-column streaming.
+
+**Found:** 2026-09-19, Session 102 (read-only before/after save-database comparison).

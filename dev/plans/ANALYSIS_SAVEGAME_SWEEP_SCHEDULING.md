@@ -2,13 +2,18 @@
 
 **Date:** `2026-09-18`
 **Source checkpoint:** `2fbf2d1` (`0.4.110`)
-**Status:** analysis complete; implementation is neither selected nor authorized
+**Status:** original analysis complete; the controlled measurement and 0.4.111 follow-up are
+recorded in §18
 **Primary question:** can the default savegame sweep slow vanilla terrain delivery while a player
 is exploring, how often does it run, and what does it currently do to yield?
 
 > This is the required starting point for future savegame-sweep scheduling work. It records the
 > current mechanism, the evidence behind the concern, the invariants a change must preserve, and
 > the experiment that must precede implementation. It is not an approved implementation plan.
+>
+> **2026-09-19 follow-up:** preserve §§1–17 as the pre-measurement analysis. The required A/B was
+> subsequently run, a player-aware load gate was implemented in 0.4.111, and the evidence boundary
+> was refined after a direct save diff. See §18 and [Session 102](../sessions/SESSION_102.md).
 
 ## 1. Executive conclusion
 
@@ -494,3 +499,80 @@ Measured artifacts and related records:
 - `dev/sessions/SESSION_100.md`;
 - `dev/GOTCHAS.md` G190, G192, G199, G227 and G228;
 - `dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md`.
+
+## 18. 2026-09-19 measured follow-up
+
+This section records what happened after the original analysis. It does not rewrite the original
+alternatives or turn them into retroactive decisions.
+
+### 18.1 Controlled result
+
+The required comparison used the same frozen `BodanBoys` save, client/server LOD caches, mod list
+and deterministic integrated-singleplayer route for every condition. The harness restores the seed
+profile for each run through `bench/configs/sweep-ab-{on,off}.json`,
+`bench/routes/sweep-active-exploration.txt` and the seeded-profile path in
+`scripts/bench-windows.ps1`.
+
+| Phase and condition | Average FPS | Median FPS | 1% low | 1% frame-time tail | Managed | RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| Probe, sweep on | 487.5 | 525.9 | 136.0 | 7.35 ms | — | — |
+| Probe, sweep off | 476.2 | 507.1 | 159.3 | 6.28 ms | — | — |
+| Load, original sweep on | 315.5 | 351.3 | 88.3 | 11.32 ms | 4,848 MB | 8,820 MB |
+| Load, sweep off | 316.4 | 340.4 | 110.3 | 9.07 ms | 4,510 MB | 7,578 MB |
+| Load, 0.4.111 player-aware gate | 324.6 | 353.9 | 109.0 | 9.17 ms | 5,696 MB | 8,362 MB |
+
+The probe pair's average moved against its tail result, so one pair is insufficient to change probe
+scheduling. The load pair is materially clearer: average FPS was effectively equal, while the
+original sweep worsened the 1% low by 19.9%, the frame-time tail by 24.8%, and RSS by 16.4%. This
+establishes load-phase contention in the measured route without claiming that the sweep explains
+every exploration slowdown.
+
+### 18.2 Rejected primary signal
+
+`CurrentGeneratingChunkCount` alone was tested first. A threshold of 8 recorded no useful holds and
+measured 89.3 FPS / 11.20 ms / 8,853 MB RSS. A threshold of 1 was still effectively blind to
+ordinary saved-column priority loads at the 50 ms scheduler cadence and measured 93.6 FPS /
+10.68 ms / 8,922 MB RSS. The counter did become visible during actual new generation late in the
+route. It is retained as a secondary guard at threshold 1, not as the primary saved-terrain signal.
+
+### 18.3 Selected 0.4.111 scheduler
+
+The startup load pass now observes online players without per-tick collection allocation. A new or
+rejoining player, or any player's chunk-boundary crossing, opens a five-second quiet window in
+which no new sweep priority load is submitted. Activity from any player extends the window. A
+no-player server and a stationary player permit configured-rate progress.
+
+The fractional allowance remains capped, so the quiet window cannot accumulate a catch-up burst.
+The capture-backlog brake and complete-neighbourhood rule remain unchanged. Telemetry distinguishes
+player holds, engine holds and the engine-queue peak. The measured follow-up recorded 1,621 player
+holds, 209 engine holds and no capture drops/errors; useful sweep work still ran during roughly one
+minute of quiet load time before movement began. Its 109.0 FPS / 9.17 ms tail result matches the
+sweep-off control within run variation.
+
+### 18.4 Route boundary corrected
+
+The route was repeated exactly, and its centerline through endpoint chunk X 8050 already existed.
+That did not make it a generated-only route. The final post-run save contained 62,276 `mapchunk`
+rows versus the frozen seed's 62,098, and 750,820 `chunk` rows versus 748,684. The 178 new map
+columns, with 12 vertical chunks each, occupied X 8053–8062 and Z 7990–8012 in the view-distance
+halo beyond and around the endpoint.
+
+The measured route is therefore mixed: mostly saved-terrain streaming, followed by genuine new
+generation. It supports the player-activity gate and proves that the secondary engine guard engages
+under real generation. It does not isolate sustained virgin-terrain travel. The remaining
+frontier-specific experiment should restore the frozen seed, start near X 8050, continue through
+untouched terrain, and compare sweep off, the original ungated scheduler and 0.4.111. Record
+per-waypoint readiness, generation-queue history, save growth, frame/tick tails, sweep holds and
+effective sweep rate.
+
+### 18.5 Consequence for the terrain-change plan
+
+Scheduling and invalidation remain separate. Version 0.4.111 protects current player demand when a
+load is necessary. `PLAN_TERRAIN_CHANGE_DETECTION.md` reduces how often such a load is necessary by
+using a clean marker and save metadata for the no-change fast path, then fingerprints for exact
+changed-column discovery. First adoption and real mismatches still need the scheduler.
+
+Elapsed game time and player population cannot prove that saved terrain is unchanged. They may pace
+background work, but correctness must come from live change hooks while the mod is active and
+savegame fingerprints after an unwatched, disabled or crashed interval. The Codex recommendations
+appended to that plan are explicitly proposals awaiting independent review.
