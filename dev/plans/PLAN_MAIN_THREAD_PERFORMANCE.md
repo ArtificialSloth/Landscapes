@@ -206,13 +206,19 @@ connection with ordered owning-thread publication. A repeated saturated run tran
 395/395 sections; one 17.481 ms reader call coincided with only 0.989 ms maximum assist
 service, directly proving separation. Integrated command generation and sibling adoption
 now have guarded runtime evidence; default savegame-sweep cadence in integrated
-singleplayer remains open.
+singleplayer remains open. The current source/engine investigation and the required controlled A/B
+are specified in
+[`ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md`](ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md); no new sweep
+scheduling design is selected there.
 
 ### Sweep and generation
 
 - Replace once-per-second batch callbacks with normal-tick servicing and token accumulation.
 - Limit issuance by elapsed time, outstanding work, and retained memory.
 - Spread main-thread callback publication rather than allowing hundreds of completions to land together.
+- Before changing the completed submission smoothing, measure the startup sweep's downstream engine
+  priority against player terrain using the phase-matched integrated A/B in the formal sweep
+  analysis. Its 1 ms issue budget does not bound the fast blocking engine load it submits.
 
 ### Server assist
 

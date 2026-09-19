@@ -117,7 +117,9 @@ $seedServerCachePath = if ($SeedServerCache) {
 
 function Assert-UnderSandbox {
     param([string]$Path)
-    $root = [IO.Path]::GetFullPath($sandbox).TrimEnd('\') + '\'
+    # Integrated profiles keep their immutable seed beside the working data directory,
+    # under the same named profile root. Validate both against that profile boundary.
+    $root = [IO.Path]::GetFullPath($sandboxRoot).TrimEnd('\') + '\'
     $full = [IO.Path]::GetFullPath($Path)
     if (-not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing filesystem operation outside the test sandbox: $full"
@@ -859,9 +861,6 @@ if ($IntegratedSingleplayer -and $ReuseServer) {
 if (($SeedSave -or $SeedClientCache -or $SeedServerCache) -and -not $SandboxProfile) {
     throw 'Seed files require -SandboxProfile so the default benchmark world is never replaced.'
 }
-if ($IntegratedSingleplayer -and ($SeedSave -or $SeedServerCache)) {
-    throw 'Seeded save/server-cache support currently targets the isolated dedicated-server path.'
-}
 if (($SeedClientCache -or $SeedServerCache) -and -not $SeedSave) {
     throw 'Seeded caches require -SeedSave so their world identity cannot be applied alone.'
 }
@@ -959,7 +958,12 @@ if (-not $seedSavePath -and $profileHasSeed) {
     $seedRecords = $savedSeedManifest.seedFiles
 }
 if ($null -ne $seedRecords.save) {
-    Restore-FrozenSeedFile $seedRecords.save (Join-Path $serverData 'Saves\default.vcdbs')
+    $workingSave = if ($IntegratedSingleplayer) {
+        Join-Path $sandbox ("Saves\{0}.vcdbs" -f $WorldName)
+    } else {
+        Join-Path $serverData 'Saves\default.vcdbs'
+    }
+    Restore-FrozenSeedFile $seedRecords.save $workingSave
 }
 if ($null -ne $seedRecords.clientCache) {
     Restore-FrozenSeedFile $seedRecords.clientCache `

@@ -4312,3 +4312,26 @@ capture-backlog ceiling, while Farseer managed 2 previews in eight minutes.
 same log window and compare their rates. The counters are already there.
 
 **Found:** 2026-09-18, Session 100 (log-measured from the owner's `server-main.log`; source-traced).
+
+### G228 - A one-millisecond issue budget does not make a priority chunk load background work
+
+**Trigger:** treating a small scheduler callback or a per-second item cap as proof that the work it
+submits cannot delay player terrain.
+
+**Trap:** the sweep's 1 ms budget stops only its own loop between submissions. In the installed
+engine, `WorldAPI.LoadChunkColumnPriority` aliases `ServerMain.LoadChunkColumnFast`, enters
+`fastChunkQueue`, and is drained through `loadChunkAreaBlocking` before the normal bounded
+`tryLoadOrGenerateChunkColumnsInQueue` slice. That blocking loop can advance player requests in the
+shared request set, but the outer scheduler does not regain control until the priority target
+finishes. Database load, chunk activation, main-thread callbacks, capture and storage are all
+outside the 1 ms issue budget. The existence-test queue is likewise drained before the normal
+slice.
+
+**Safer action:** measure downstream queue and player-readiness effects, not only enqueue duration.
+Background indexing must have an explicit player/engine-pressure yield in addition to its rate and
+capture-correctness brakes. Run the controlled integrated sweep-on/sweep-off route before choosing
+the signal, threshold or engine API; preserve the complete-neighbourhood and capture-before-unload
+invariants.
+
+**Found:** 2026-09-18, Session 101 (current 0.4.110 source, installed-engine decompilation and the
+owner's 0.4.108 production log; player-latency magnitude remains unmeasured).

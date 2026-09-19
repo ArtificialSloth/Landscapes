@@ -474,6 +474,16 @@ Measured costs, and what is not measured:
   player's block.
 - **Snow** adds 1,024 uncompressed bits-array bytes per resident section before compression. No
   paired large-world capture yet isolates winter campaign cost.
+- **Savegame sweep.** At the default/current 128-chunk radius it repeats on every enabled world
+  start: 70,225 existence probes, then a 66,049-position candidate scan at up to 16 safe priority
+  loads/s. Its 50 ms cadence, 1 ms cooperative issue budget and 32-column capture brake bound
+  submissions and protect capture correctness, but it does not yield to player chunk demand. The
+  installed engine sends those loads through its fast blocking lane before the ordinary bounded
+  generation slice and also drains existence tests before that slice. The owner's 0.4.108 log took
+  5m35s to probe and 11m18s to reach half of the load scan while sustaining roughly 7–14 loads/s;
+  the source is unchanged through 0.4.110. The contention mechanism is established, but its
+  player-visible magnitude is not: run the controlled integrated A/B in
+  [the formal analysis](dev/plans/ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md) before changing it.
 - **Farseer:**
   - GPU cost and the off-state A/B are not measured.
   - Captured heights cost one 2 KB copy per column the server loads.
@@ -578,7 +588,7 @@ It covers:
 ## Next work
 
 Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
-[Session 100](dev/sessions/SESSION_100.md), the top of [TODO](dev/TODO.md), and
+[Session 101](dev/sessions/SESSION_101.md), the top of [TODO](dev/TODO.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
 1. **Run 0.4.110's shape and drift gate:** one aerial view of a staircase stretch of the frontier and
@@ -588,33 +598,41 @@ Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
    then 300%, waiting several seconds at each, and report whether the billows visibly move. Include
    water, then confirm the current client log has no seam-fog compile/draw failure and Farseer
    remained enabled.
-2. **Close P3's deferred integration debt** when another player is available: a complete
+2. **Before any savegame-sweep change, run its controlled A/B:** same world and cache snapshot,
+   same integrated-singleplayer exploration route and same sweep phase, first at the current 16/s
+   and then with the sweep off. Measure vanilla chunk readiness, frame times, engine queue depth,
+   sweep phase/rate, capture backlog, dirty age and unloaded-before-capture drops. A 2/s third run is
+   optional. Use [the formal analysis](dev/plans/ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md) for the
+   evidence boundary, alternatives, invariants and acceptance matrix.
+3. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
-3. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
+4. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
    observations beneath the veil; tune Outline detail, Hill softness, apron and the nine fog dials
    only after the shape is accepted; measure controlled Farseer off/on and fog-detail cost,
    including the swept arc's extra cross-section per end.
-4. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
+5. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
    player-facing Farseer rename plus bundled MIT notice.
-5. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
-6. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
+6. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
+7. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
    offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
-7. **Older TODO debt:** runtime-check the 0.4.69 sweep pacing and drop line, and keep the debt
+8. **Older TODO debt:** runtime-check the 0.4.69 sweep pacing and drop line, and keep the debt
    including:
    - P3's after-comparison;
    - winter convergence;
    - pause loading;
    - Session 84 diagnostic cleanup.
 
-[Session 100](dev/sessions/SESSION_100.md) is the authoritative continuation point, and
+[Session 101](dev/sessions/SESSION_101.md) is the authoritative documentation continuation point;
+[Session 100](dev/sessions/SESSION_100.md) retains the preceding fog and attribution work, and
 [the silhouette handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md) orients a new agent.
 - Sessions 98-82 retain ownership/persistence/tuning, the silhouette comparison, P2 and the first
   look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G222 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
-  buried joins, bounded regeneration, stable all-level ownership and post-water volumetric fog.
+- G166-G228 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+  buried joins, bounded regeneration, stable all-level ownership, post-water volumetric fog and the
+  distinction between pacing priority-load submissions and yielding their downstream engine work.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work

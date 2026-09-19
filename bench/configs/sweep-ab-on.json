@@ -1,0 +1,12 @@
+{
+  "EnableCapture": true,
+  "EnableServing": false,
+  "SweepSavegame": true,
+  "SweepRadiusChunks": 128,
+  "SweepColumnsPerSecond": 16,
+  "RefreshColumnsPerSecond": 0,
+  "EnableGenerateCommand": false,
+  "EnableWorldGeneration": false,
+  "PregenRadiusChunks": 0,
+  "EnableSilhouettes": false
+}

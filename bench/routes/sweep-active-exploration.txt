@@ -1,0 +1,9 @@
+# Integrated-singleplayer savegame-sweep A/B route.
+#
+# Run against the same frozen BodanBoys save and matching client/server caches in both
+# conditions. The 1,600-block eastward trajectory starts near world spawn and streams
+# previously generated terrain at 13.3 blocks/s while rotating through four full turns.
+# A fixed pre-route settle selects the sweep phase: about 20 seconds exercises probing;
+# about 360 seconds lets the default-radius probe finish before the measured load pass.
+
+sweep-active-exploration  256000  280  256000  0  -12  ->  257600  280  256000  1440  -12

@@ -8,6 +8,19 @@ first.
 
 ## [Unreleased]
 
+**The savegame sweep's scheduling risk is now formally source- and engine-traced.** The startup
+sweep runs again from zero on every enabled world start, and at the default radius submits 70,225
+existence probes before scanning 66,049 load candidates. Its 50 ms cadence, fractional 16/s load
+allowance, 1 ms issue budget and 32-column capture brake bound Vintage Horizons' submissions and
+protect capture correctness, but none yields to player chunk demand. In the installed engine,
+`LoadChunkColumnPriority` enters the fast queue and is processed through a blocking path before the
+ordinary bounded generation slice; existence tests are also drained before that slice. The owner's
+0.4.108 log shows 5m35s of probing and 11m18s to reach half of the load scan at roughly 7–14 actual
+loads/s. This establishes a credible contention mechanism, not the magnitude of player-visible
+delay: the controlled integrated sweep-on/sweep-off exploration A/B remains mandatory before any
+implementation choice. The authoritative analysis is
+[`dev/plans/ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md`](dev/plans/ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md).
+
 **Multi-thread generation was measured and rejected.** The benchmark did enable Vintage Story's
 real engine setting: each sandbox's `servermagicnumbers.json` held the requested
 `MaxWorldgenThreads`, no run used `--reducedthreads`, six-thread runs exposed named
