@@ -59,6 +59,14 @@ public class LodStore : SQLiteDBConnection
                     SourceRowid INTEGER NOT NULL,
                     PRIMARY KEY (Detail, SX, SZ)
                 );
+                CREATE TABLE IF NOT EXISTS ColumnFingerprint (
+                    CX INTEGER NOT NULL,
+                    CZ INTEGER NOT NULL,
+                    Fingerprint INTEGER NOT NULL,
+                    Rows INTEGER NOT NULL,
+                    ModifiedMs INTEGER NOT NULL,
+                    PRIMARY KEY (CX, CZ)
+                );
                 CREATE TABLE IF NOT EXISTS Climate (
                     PX INTEGER NOT NULL,
                     PZ INTEGER NOT NULL,
@@ -159,6 +167,92 @@ public class LodStore : SQLiteDBConnection
         {
             logger.Warning("[VintageHorizons] could not store remembered climate at {0},{1}: {2}",
                 px, pz, e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Every column fingerprint this cache remembers, keyed by <see cref="Net.LodColumnMap.Key"/>.
+    ///
+    /// An old cache gains the table empty on first open, and a missing entry reads as
+    /// "assume changed", which is exactly today's behaviour. That is why this is a new table
+    /// rather than a schema bump: a bump would wipe the cache, and the cache is the baseline
+    /// any measurement of this feature has to be made against.
+    /// </summary>
+    public Dictionary<long, ulong> LoadColumnFingerprints()
+    {
+        var found = new Dictionary<long, ulong>();
+        try
+        {
+            using var cmd = sqliteConn.CreateCommand();
+            cmd.CommandText = "SELECT CX, CZ, Fingerprint FROM ColumnFingerprint";
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                found[Net.LodColumnMap.Key(reader.GetInt32(0), reader.GetInt32(1))] =
+                    unchecked((ulong)reader.GetInt64(2));
+            }
+        }
+        catch (Exception e)
+        {
+            logger.Warning("[VintageHorizons] could not read column fingerprints, so the sweep "
+                + "will examine every column as it did before: {0}", e.Message);
+            found.Clear();
+        }
+        return found;
+    }
+
+    /// <summary>
+    /// Remember that this column's savegame content is now captured.
+    ///
+    /// **Call this only once the column's capture has durably succeeded.** The fingerprint
+    /// records "we hold a correct capture of this", not "we have looked at this", and only
+    /// the first may cause a later sweep to skip the column. Writing it when the row was
+    /// merely read creates a permanent silent hole: a column whose capture then failed keeps
+    /// a fingerprint that still matches an unchanged file forever, so neither the next sweep
+    /// nor a background audit ever has a mismatch to act on.
+    /// </summary>
+    public void SaveColumnFingerprint(int cx, int cz, ulong fingerprint, int rows)
+    {
+        try
+        {
+            using var cmd = sqliteConn.CreateCommand();
+            cmd.CommandText =
+                "INSERT OR REPLACE INTO ColumnFingerprint (CX, CZ, Fingerprint, Rows, ModifiedMs) "
+                + "VALUES (@cx, @cz, @fp, @rows, @ms)";
+            cmd.Parameters.AddWithValue("@cx", cx);
+            cmd.Parameters.AddWithValue("@cz", cz);
+            cmd.Parameters.AddWithValue("@fp", unchecked((long)fingerprint));
+            cmd.Parameters.AddWithValue("@rows", rows);
+            cmd.Parameters.AddWithValue("@ms", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception e)
+        {
+            // Dropping one is safe in the direction that costs work rather than correctness:
+            // the column simply gets examined again next time.
+            logger.Warning("[VintageHorizons] could not store the column fingerprint at {0},{1}: "
+                + "{2}", cx, cz, e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Forget a column's fingerprint, so the next sweep examines it again. Used when a
+    /// capture is known to have failed after its fingerprint was already recorded.
+    /// </summary>
+    public void ForgetColumnFingerprint(int cx, int cz)
+    {
+        try
+        {
+            using var cmd = sqliteConn.CreateCommand();
+            cmd.CommandText = "DELETE FROM ColumnFingerprint WHERE CX=@cx AND CZ=@cz";
+            cmd.Parameters.AddWithValue("@cx", cx);
+            cmd.Parameters.AddWithValue("@cz", cz);
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception e)
+        {
+            logger.Warning("[VintageHorizons] could not clear the column fingerprint at {0},{1}: "
+                + "{2}", cx, cz, e.Message);
         }
     }
 

@@ -30,6 +30,54 @@ public static class StoreChecks
         InterruptionMarkerFollowsDurableMipWrite(c);
         Rejection(c);
         PurgeKeepsMatchingData(c);
+        ColumnFingerprintsSurviveAReopen(c);
+    }
+
+    /// <summary>
+    /// The fingerprint table is a new table rather than a schema bump, so an existing cache
+    /// gains it empty and keeps everything it already held. A missing entry means "assume
+    /// changed", which is today's behaviour, so there is no migration and nothing to undo.
+    /// </summary>
+    static void ColumnFingerprintsSurviveAReopen(Check c)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "vh-fingerprint-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string path = Path.Combine(dir, "cache.db");
+            var logger = new CaptureLogger();
+            var store = new LodStore(logger);
+            c.True(store.Open(path), "a cache with the fingerprint table opens");
+            c.Eq(0, store.LoadColumnFingerprints().Count,
+                "a new cache has no fingerprints, so every column reads as changed");
+
+            store.SaveColumnFingerprint(100, 200, 0xDEADBEEFCAFEF00DUL, 12);
+            store.SaveColumnFingerprint(-3, -4, 1, 1);
+            store.Dispose();
+
+            var reopenLogger = new CaptureLogger();
+            var reopened = new LodStore(reopenLogger);
+            c.True(reopened.Open(path), "the cache reopens");
+            Dictionary<long, ulong> found = reopened.LoadColumnFingerprints();
+            c.Eq(2, found.Count, "both fingerprints survived the reopen");
+            // A fingerprint uses the whole 64-bit range, and SQLite integers are signed, so
+            // the value has to survive the round trip through a negative stored number.
+            c.Eq(0xDEADBEEFCAFEF00DUL, found[LodColumnMap.Key(100, 200)],
+                "a fingerprint above long.MaxValue round-trips unchanged");
+            c.Eq(1UL, found[LodColumnMap.Key(-3, -4)],
+                "negative column coordinates key correctly");
+
+            reopened.ForgetColumnFingerprint(100, 200);
+            c.Eq(1, reopened.LoadColumnFingerprints().Count,
+                "forgetting a column removes exactly its own fingerprint");
+            c.False(reopened.LoadColumnFingerprints().ContainsKey(LodColumnMap.Key(100, 200)),
+                "the forgotten column is the one that went");
+            reopened.Dispose();
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch { /* a temp directory */ }
+        }
     }
 
     /// <summary>

@@ -39,6 +39,8 @@ public static class Program
         ("pure", "water footprint", WaterFootprintChecks.Run),
         ("pure", "water edge", WaterEdgeChecks.Run),
         ("pure", "phase timing", PhaseCostChecks.Run),
+        ("fixture", "savegame read path", SavegameReaderChecks.Run),
+        ("fixture", "savegame change detection", SavegameScanChecks.Run),
         ("pure", "vanilla horizon effects", HorizonEffectsChecks.Run),
         ("pure", "GPU renderer policy", GpuRendererChecks.Run),
         ("pure", "GPU regional arenas", GpuArenaChecks.Run),
