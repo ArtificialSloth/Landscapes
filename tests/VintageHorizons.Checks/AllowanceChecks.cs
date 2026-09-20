@@ -76,5 +76,29 @@ public static class AllowanceChecks
 
         c.Throws<ArgumentOutOfRangeException>(() => unused.Spend(3),
             "callers cannot overspend an allowance silently");
+
+        // The player hold is a floor, not a stop. A walking player renews the quiet window
+        // faster than it expires, so a hold that granted nothing would suspend the sweep for
+        // as long as they keep moving; measured at 7 sections/min on 2026-09-19 (G234).
+        c.Eq(2, LodSavegameSweep.FloorPerSecond(16),
+            "the default 16/s sweep keeps a 2/s floor while a player holds it");
+        c.Eq(1, LodSavegameSweep.FloorPerSecond(1),
+            "the slowest configured sweep still keeps a one-per-second floor");
+        c.Eq(8, LodSavegameSweep.FloorPerSecond(64),
+            "the floor scales with the configured rate rather than being a fixed constant");
+        c.True(LodSavegameSweep.FloorPerSecond(16) < 16,
+            "the floor is a reduction; a hold must still cost the sweep most of its rate");
+
+        // The floor is drawn from its own allowance, which only a held tick spends. A long
+        // hold must not let it accumulate into a burst when movement stops.
+        var floor = new LodTickAllowance();
+        int floorRate = LodSavegameSweep.FloorPerSecond(16);
+        c.Eq(1, floor.Available(0, floorRate), "a held tick may issue one column at the floor");
+        floor.Spend(1);
+        c.Eq(0, floor.Available(50, floorRate), "the floor does not grant on every 50ms tick");
+        c.Eq(1, floor.Available(500, floorRate), "the floor grants again at its own rate");
+        floor.Spend(1);
+        c.Eq(1, floor.Available(600_000, floorRate),
+            "ten minutes of holding cannot release a catch-up burst at the floor");
     }
 }

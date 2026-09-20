@@ -1,0 +1,19 @@
+# Integrated-singleplayer virgin-frontier route - above the gate's speed threshold.
+#
+# The companion to sweep-virgin-frontier.txt, and not a three-way comparison: this leg
+# exists to document what 0.4.111 does when a player moves faster than its gate's
+# threshold. One run on 0.4.111 is enough, because the expected result is that the sweep
+# is held for the whole window and its effective rate is zero.
+#
+# 1,200 blocks over -Measure 180 is 6.67 blocks/s, just above the 32 / 5 = 6.4 blocks/s
+# threshold derived in the companion file, so every chunk crossing lands inside the
+# previous crossing's five-second quiet window.
+#
+# It also crosses the real frontier: the seed holds chunk X up to 8053 along this
+# corridor, so the leg starts on saved terrain at chunk X 8050 - Session 102's endpoint -
+# and is virgin from its fourth chunk onward.
+#
+# Read PlayerActivityYieldTicks and the sweep's loaded count from the /vhserver status
+# line and server-main.log. The question is whether the sweep made any progress at all.
+
+sweep-frontier-crossing  257600  280  256000  0  -12  ->  258800  280  256000  1080  -12

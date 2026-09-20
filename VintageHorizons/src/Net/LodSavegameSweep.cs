@@ -59,6 +59,7 @@ public class LodSavegameSweep
     readonly LodColumnMap exists = new();
     readonly LodTickAllowance loadAllowance = new();
     readonly LodTickAllowance refreshAllowance = new();
+    readonly LodTickAllowance floorAllowance = new();
     readonly LodPlayerTerrainActivity playerTerrainActivity = new();
     readonly LodSnowRefreshScheduler snowRefresh = new();
     readonly LodSnowActivityTracker snowActivity = new();
@@ -121,6 +122,9 @@ public class LodSavegameSweep
     /// <summary>Load-phase ticks held while a player was introducing new terrain demand.</summary>
     public long PlayerActivityYieldTicks { get; private set; }
 
+    /// <summary>Columns the floor rate still issued while a player hold was in force.</summary>
+    public long PlayerHoldFloorLoads { get; private set; }
+
     /// <summary>Dormant map regions woken since startup to reveal new vanilla snapshots.</summary>
     public long SnowProbes { get; private set; }
 
@@ -144,6 +148,22 @@ public class LodSavegameSweep
     /// against, but yielding at the first request still gives actual generation priority.
     /// </summary>
     internal const int YieldGeneratingChunks = 1;
+
+    /// <summary>
+    /// The share of the configured rate a held sweep may still use, as a divisor. A player
+    /// hold must slow the sweep, not stop it forever: the hold is renewed by every
+    /// chunk-boundary crossing, so above 32 blocks per <see cref="LodPlayerTerrainActivity
+    /// .QuietMilliseconds"/> - 6.4 blocks/s - each crossing lands inside the previous
+    /// window and an ordinary moving player would suspend the sweep for as long as they
+    /// keep walking. Measured 2026-09-19 on a virgin frontier: 880 sections/min ungated,
+    /// 110/min held at 5.33 blocks/s, and one whole minute at 7/min at 6.67 blocks/s.
+    /// One eighth of the configured rate is 2/s at the default 16/s, close to what the
+    /// below-threshold case already delivered at a 4% cost to the 1% low.
+    /// </summary>
+    internal const int PlayerHoldRateDivisor = 8;
+
+    internal static int FloorPerSecond(int perSecond) =>
+        Math.Max(1, Math.Max(1, perSecond) / PlayerHoldRateDivisor);
 
     /// <summary>
     /// Loads one tick may issue: the rate allowance, held back by engine and capture pressure.
@@ -285,10 +305,17 @@ public class LodSavegameSweep
             loadAllowance.Available(now, perSecond),
             captureBacklog(), generatingChunks);
         if (generatingChunks >= YieldGeneratingChunks) EnginePressureYieldTicks++;
-        if (playerTerrainActivity.MustYield(now))
+
+        // A held sweep is slowed to a floor rather than stopped. The engine gate above stays
+        // absolute: it means real generation is in flight and there is nothing to be polite
+        // about. This one means a player is streaming saved terrain, which the engine counter
+        // cannot see (G229), and which a walking player renews indefinitely (G234).
+        bool playerHeld = playerTerrainActivity.MustYield(now);
+        if (playerHeld)
         {
             PlayerActivityYieldTicks++;
-            allowance = 0;
+            allowance = Math.Min(allowance,
+                floorAllowance.Available(now, FloorPerSecond(perSecond)));
         }
 
         var tickBudget = new LodWorkBudget(TickWorkBudgetMs);
@@ -326,6 +353,13 @@ public class LodSavegameSweep
             loaded++;
         }
         loadAllowance.Spend(loaded);
+        // Only a held tick draws on the floor. Leaving it untouched otherwise keeps its own
+        // credit capped at one tick's share, so resuming after a long hold cannot burst.
+        if (playerHeld)
+        {
+            floorAllowance.Spend(loaded);
+            PlayerHoldFloorLoads += loaded;
+        }
 
         int percent = loadIndex * 100 / LoadTotal;
         if (percent >= reported + 10)
@@ -673,7 +707,9 @@ public class LodSavegameSweep
         : Probing
             ? $"sweeping savegame: examined {probeIndex}/{ProbeTotal}, {exists.Count} hold terrain"
             : $"sweeping savegame: loaded {Loaded}, {SkippedEdge} skipped on the frontier; "
-                + $"held {PlayerActivityYieldTicks} ticks for player movement and "
+                + $"held {PlayerActivityYieldTicks} ticks for player movement "
+                + $"({PlayerHoldFloorLoads} columns still loaded at the "
+                + $"{FloorPerSecond(perSecond)}/s floor) and "
                 + $"{EnginePressureYieldTicks} for engine terrain demand";
 
     public void ResetPhaseCosts()
