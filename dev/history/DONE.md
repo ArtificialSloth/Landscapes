@@ -2,6 +2,37 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-20 - Terrain change detection phase A, and a dormant arm revived (0.4.112-0.4.116)
+
+- Reviewed the Codex section appended to the terrain-change plan and recorded the result as plan
+  §12. Three findings were errors or gaps in the plan proper and were corrected there: the
+  `GameWorldSave` ordering, when a fingerprint may be committed, and SQLite's header change counter
+  replacing file size and mtime. Five findings about §11's own text were left for the owner.
+- Ran the sustained virgin-frontier A/B Session 102 left open, with the route grounded in the frozen
+  seed rather than assumed. The pre-gate scheduler costs 22.3% of the 1% low and 28.7% of the frame
+  tail and ages the save queue from 57 to 171 seconds; 0.4.111 recovers most of it.
+- 0.4.112 gave the held sweep a rate floor. The 5 s quiet window is renewed by every chunk crossing,
+  so above 6.4 blocks/s it never lapsed - measured at 7 sections/min against 880 ungated. A hold now
+  clamps to one eighth of the configured rate from its own allowance. Same-session A/B: 1% low
+  104.6 to 103.2 and the tail 9.56 to 9.69 ms, both inside run variation, for 193 columns loaded
+  under hold where the control loaded none.
+- 0.4.113 replaced the sweep's existence probe pass with a private read-only savegame connection on
+  its own thread, and added per-column content fingerprints so a column already captured is skipped.
+  Sandbox: 62,098 columns read in 6.4 s with no probe lines at all, and a restart that skipped
+  exactly the 1,905 columns the first run had proved. A fingerprint is committed only once a
+  capture reaches the durable row.
+- 0.4.114 added the telemetry that makes the path diagnosable from the log; 0.4.115 moved the
+  snow-candidate rule out of a loop's ordering into an explicit rule checked over every outcome.
+- 0.4.116 added the background audit, which re-reads a rotating slice of the world and disputes only
+  the claims the cache makes. Building it uncovered that `verifying` was set and never cleared, so
+  every sweep tick after startup had done nothing since 2026-08-02 and automatic dormant-terrain
+  snow refresh had never run in any released build, including the accepted 0.4.64 baseline. Fixed,
+  and the revived arm was given the load pass's gates rather than switched on bare.
+- A4's clean-shutdown fast path was not built. Decompilation showed no hook exists after the
+  engine's final save, and the whole index measures 73.3 s on the owner's real world, so its payoff
+  no longer justifies the trust it requires.
+- 25,319 assertions and 10,775 documentation checks pass.
+
 ## 2026-09-19 - Savegame-sweep A/B and player-aware yielding (0.4.111)
 
 - Ran the required frozen-profile integrated-singleplayer on/off comparison during both probe and

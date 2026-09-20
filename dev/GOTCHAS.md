@@ -4466,3 +4466,44 @@ where the gate under test is the binding constraint. The sweep's telemetry print
 holds side by side for exactly this reason; equal counts mean the route cannot separate them.
 
 **Found:** 2026-09-19, while verifying 0.4.112.
+
+### G236 - There is no hook after the engine's final save
+
+**Trigger:** designing anything that must record the savegame's state once the last write of a
+session has landed - a clean-shutdown marker, a post-save re-read, a "nothing is pending" flag.
+
+**Trap:** no such moment is reachable from a mod. Decompiled 2026-09-20 from the installed engine:
+`ServerSystemLoadAndSaveGame` subscribes to `OnGameWorldBeingSaved` in `OnBeginRunGame`, while mods
+subscribe during world load, so mod handlers run first and the write follows (G231). At shutdown
+`OnBeginShutdown` triggers that same event and saves synchronously inside it. The only phase after
+everything is `EnumServerRunPhase.Exit`, and `ServerMain.EnterRunPhase` returns immediately for
+`Start` and `Exit` without notifying a single system or mod. `OnSeperateThreadShutDown` disposes
+the game database before that point anyway.
+
+**Safer action:** do not build on a post-save moment. Either record the state before the write and
+treat what the write will touch as unverified, or verify from the file at the next startup. The
+terrain-change plan's §4.1.5 fast path assumed this hook existed; it does not, which is one of the
+two reasons that fast path was not built.
+
+**Found:** 2026-09-20, Session 103 (engine decompilation).
+
+### G237 - A guard flag that is never cleared silences a whole periodic arm, silently
+
+**Trigger:** a tick handler that returns early on a state flag, where some later callback is
+supposed to clear it.
+
+**Trap:** `LodSavegameSweep.verifying` was set when the absence verifier started and never cleared.
+`Step()` begins with `if (!active || verifying) return;`, so every tick after the startup sweep
+completed did nothing at all - in every released build from `0596d30` (2026-08-02) onward, including
+the accepted 0.4.64 baseline. Automatic dormant-terrain snow refresh, its canary and its regional
+campaigns have therefore never run once. Nothing reported it, because the status line reads
+configured state - candidate counts, rates, campaign totals - rather than whether any work has
+happened, so it always printed as healthy.
+
+**Safer action:** clear a guard in the same commit that sets it, and prefer a counter of work done
+over a description of configuration in any status line that is meant to show a background arm is
+alive. A feature that reports its settings will look identical whether it is running or dead. When
+reviving such an arm, check what it does before letting it run: this one issued engine priority
+loads with none of the brakes the load pass had gained in the meantime.
+
+**Found:** 2026-09-20, Session 103, while building the audit into the same dead code path.

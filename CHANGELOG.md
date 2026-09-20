@@ -46,6 +46,72 @@ The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, st
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
 
+## [0.4.116] - 2026-09-20
+
+**A background audit, and a dormant arm revived after seven weeks.**
+
+- The audit re-reads a rotating slice of the world through the private savegame path and compares
+  it against what this cache proved it captured. Watching changes as they happen is not airtight: a
+  column can unload before its capture runs, a crash or a capture error loses one, and terrain
+  edited while the mod was disabled is invisible. Those failures are silent and permanent, and
+  nothing else in the design would ever notice them.
+- A mismatch drops the claim, forgets the stored fingerprint so nothing skips the column meanwhile,
+  and asks the engine for it through the ordinary load path. The audit only ever disputes claims
+  this cache makes: an uncaptured column is not an audit failure, or it would re-report the whole
+  uncaptured world forever.
+- `AuditColumnsPerSecond` defaults to 16, which walks a 57,600-column world about once an hour, and
+  0 disables it with no residual cost. It waits for the startup sweep to finish, which after first
+  adoption takes minutes because most columns are skipped.
+- **Automatic dormant-terrain snow refresh has never run.** `verifying` was set when the absence
+  verifier started and never cleared, and the sweep's tick handler returns immediately while it is
+  set, so every tick after the startup sweep has done nothing since `0596d30` (2026-08-02) -
+  including in the accepted 0.4.64 baseline. The snow canary and its regional campaigns have
+  therefore never executed once. Nothing reported it because the status line reads configured state
+  rather than whether work happened.
+- Reviving it switches on a path that issues engine priority loads with none of the brakes added
+  since, so the refresh arm now takes the same capture-backlog brake, engine-generation gate and
+  player-activity hold with its rate floor. Enabling it bare would have undone 0.4.111 and 0.4.112
+  where nobody was looking.
+
+## [0.4.115] - 2026-09-20
+
+**The sweep's snow-candidate rule is enforced in one place.** No behaviour change. The load pass's
+per-column outcome is now an explicit decision with the snow rule attached, rather than an ordering
+inside a loop that each new branch has to remember. 0.4.113 had added exactly such a branch, and its
+correctness rested on where one line sat. The rule is asserted over every outcome rather than the
+ones that exist today, along with the rule that only a real load spends the rate allowance.
+
+## [0.4.114] - 2026-09-20
+
+**Sweep telemetry for the savegame read path.** The periodic line reports columns loaded, columns
+already captured, fingerprints recorded and where existence came from, so the path can be diagnosed
+from the log rather than only through `/vhserver`. Also corrects the index's completion line, which
+quoted its own column count as though it were the number of engine probes replaced.
+
+## [0.4.113] - 2026-09-20
+
+**The startup sweep reads the savegame instead of probing the engine.**
+
+- The probe pass is gone when the read path is available. It asked the engine 70,225 times at about
+  320/s through the chunk thread that also loads terrain for players: 5m35s on the owner's world,
+  every start, capturing nothing while it ran, and on a short session the sweep never got past it.
+  The whole-world index replaces it and covers the whole world rather than the probe square, so edge
+  columns have better neighbour knowledge than before.
+- A column is skipped only when the savegame's content fingerprint and the cache's proven one are
+  both known and equal. Either being unknown means "assume changed", which is the prior behaviour.
+- A submitted column earns its fingerprint only once its capture has reached the durable row, never
+  when its savegame row was read. Recording the latter would leave a column whose capture failed
+  carrying a fingerprint that matches an unchanged file forever, invisible to both the next sweep
+  and the audit.
+- The rate allowance now bounds loads rather than decisions, so a world where nothing changed walks
+  its spiral at the tick budget instead of one allowance at a time.
+- Sandbox-verified: first adoption read 62,098 columns in 6.4 s with no probe lines at all and
+  recorded 1,905 fingerprints; the restart read them back and skipped exactly those columns.
+- Underneath it, a private read-only savegame connection on its own thread with journal-mode
+  detection, batch pacing, busy handling and self-disable, plus per-column content fingerprints and
+  a `ColumnFingerprint` table added to the cache with no schema bump. Any failure falls back to the
+  probe pass with a named line.
+
 ## [0.4.112] - 2026-09-19
 
 **A held savegame sweep is now slowed, not stopped.**

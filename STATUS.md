@@ -3,12 +3,12 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-09-19`
-**Mod version:** `0.4.112` — current private test build: the held savegame sweep now keeps a 2/s floor instead of stopping while a player walks. Measured, verified, copy-installed and checkpointed; no in-game play verdict yet. 0.4.111's fog work was accepted by the owner on 2026-09-19
+**Status date:** `2026-09-20`
+**Mod version:** `0.4.116` — current private test build: the startup sweep reads the savegame directly instead of probing the engine, skips columns it has already captured, and a background audit re-reads the world against those claims. Measured, verified, copy-installed and checkpointed. **0.4.113–0.4.116 have no in-game play verdict**; 0.4.111's fog work was accepted by the owner on 2026-09-19
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.106 `0257a0f`, 0.4.107 `3ba4a1e`, 0.4.108 `6708b19`, 0.4.109 `3b0bed0`, 0.4.110 `2fbf2d1`, 0.4.111 `b2fe181`, 0.4.112 `6f4aa42`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.110 `2fbf2d1`, 0.4.111 `b2fe181`, 0.4.112 `6f4aa42`, A1/A2 `611ce7a`, 0.4.113 `61ca662`, 0.4.114 `b513808`, 0.4.115 `2d9b25f`, 0.4.116 `d0a5dca`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `134` C# files under `VintageHorizons/src`
+**Source files:** `137` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6`
@@ -99,8 +99,56 @@ one session:
   is only the trickle it now permits.
 - The cost is inside run variation on both figures. The benefit is that the sweep converges while
   someone is walking around instead of waiting for them to stand still.
-- **Not measured:** whether the floor is the right size, multi-player fairness, and the snow
-  refresh arm, which still issues priority loads with no gate of any kind.
+- **Not measured:** whether the floor is the right size, and multi-player fairness.
+
+**Terrain change detection: phase A is built (0.4.113–0.4.116).** Session 103. Sandbox-verified;
+no in-game play verdict.
+
+- **The probe pass is gone.** The sweep reads the savegame itself through a private read-only
+  connection on its own thread, rather than asking the engine 70,225 times at ~320/s through the
+  chunk thread that also loads player terrain. Sandbox first adoption read 62,098 columns in 6.4 s
+  and emitted no probe progress lines at all. The index covers the whole world rather than the
+  probe square, so edge columns have better neighbour knowledge than before.
+- **The read path detects the journal mode and never sets it**, paces reads in short batches with
+  yields (relaxed under WAL), waits out `SQLITE_BUSY`, validates the schema rather than guessing at
+  an unexpected one, and disables itself for the session with one named line on any failure, after
+  which the sweep probes exactly as it did before. Its checks prove the connection cannot write.
+- **A column is skipped only when the savegame's content fingerprint and the cache's proven one are
+  both known and equal.** Either unknown means "assume changed". A submitted column earns its
+  fingerprint only once its capture reached the durable row, never when its savegame row was read
+  (G232). The sandbox restart skipped exactly the 1,905 columns the first run had proved.
+- **Fingerprints live in a new `ColumnFingerprint` table** created with `CREATE TABLE IF NOT
+  EXISTS`. No schema bump: an existing cache gains it empty, a missing entry reads as "assume
+  changed", and there is no migration.
+- **The background audit** re-reads a rotating slice against those claims and queues a mismatch for
+  recapture under the sweep's own safety and scheduling rules. It disputes only claims this cache
+  makes. `AuditColumnsPerSecond` defaults to 16, walks a 57,600-column world about once an hour and
+  0 disables it with no residual cost. Sandbox: 4,661 columns over 16 passes, no read-path failure.
+- **Not built: A4's clean-shutdown fast path**, and it should not be built as specified. There is no
+  hook after the engine's final save (G236), so its marker cannot record the file's post-save state,
+  and the whole index measures 73.3 s on the owner's real world — so it would trade an unverifiable
+  assumption for background file reading that does not compete with the player.
+
+| Read path, owner's real 3.22 GB world | Result |
+|---|---|
+| Journal mode, change counter | `delete`, 651 with version-valid-for 651 |
+| Existence map | 64,179 map columns |
+| Whole index | 73.3 s, of which fingerprints 73.0 s |
+
+**Dormant-terrain snow refresh has never run, and now does.** Found 2026-09-20 while building the
+audit into the same code path.
+
+- `verifying` was set when the absence verifier started and never cleared. The sweep's tick handler
+  returns immediately while it is set, so **every tick after the startup sweep completed has done
+  nothing since `0596d30` (2026-08-02)**, including in the accepted 0.4.64 baseline. Automatic snow
+  refresh, its canary and its regional campaigns have therefore never executed once.
+- Nothing reported it: the status line reads configured state — candidate counts, rates, campaign
+  totals — rather than whether any work happened, so it always printed as healthy (G237).
+- This is the likely reason winter convergence has sat in the debt list unresolved.
+- Reviving it switches on a path that issued engine priority loads with none of the brakes added
+  since, so the refresh arm now takes the capture-backlog brake, the engine-generation gate and the
+  player-activity hold with its rate floor. Sandbox-observed executing for the first time;
+  convergence is **not** demonstrated.
 
 **Farseer: P1-P4 and most P5 built (0.4.77–0.4.110).** Sessions 92–100.
 - **Availability and switches.** The saved client choice defaults on. Integrated/LAN servers offer
@@ -684,37 +732,45 @@ It covers:
 
 ## Next work
 
-Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
-[Session 102](dev/sessions/SESSION_102.md), the top of [TODO](dev/TODO.md), and
+Begin with [Session 103](dev/sessions/SESSION_103.md), the top of [TODO](dev/TODO.md),
+[the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. ~~Run 0.4.110's shape and drift gate.~~ **Closed 2026-09-19:** the owner accepted the fog work
-   after playing 0.4.111, and the client log for that session is clean. Fog dial tuning is now
-   unblocked. The per-dial observations the gate listed were never taken, so treat the drift rate
-   and the 50% Fog edge softness default as accepted-by-result, not individually judged.
-2. ~~Measure sustained virgin-frontier scheduling.~~ **Done 2026-09-19** and it produced 0.4.112's
-   rate floor; results above. What it leaves open: 0.4.112 has no play verdict, the floor's size
-   was chosen from a single A/B, multi-player fairness is unmeasured, per-waypoint readiness was
-   not captured, and the snow-refresh arm is still ungated.
-3. **Close P3's deferred integration debt** when another player is available: a complete
+1. **Play 0.4.116.** Four builds have landed with no in-game verdict, and two of them change what
+   happens at every world start: the sweep now reads the savegame instead of probing, and the
+   dormant snow-refresh arm runs for the first time in seven weeks. Watch the server log for the
+   savegame read path opening, the index time on the real world (73.3 s offline), and whether the
+   sweep reports columns already captured on a second start. Report any stutter at startup.
+2. **Decide A4's fate.** The clean-shutdown fast path cannot be built as specified — no hook exists
+   after the engine's final save (G236) — and with the probe pass gone it would save 73 s of
+   background reading for an unverifiable assumption. Recommendation: drop it, or rebuild it around
+   "record what the next save will touch, treat those as unverified". Owner's call.
+3. **Measure the audit's real false-positive rate.** 33 mismatches in the sandbox is not a rate for
+   the owner's setup: the sandbox lacks mods his world's block entities need, so the engine discards
+   them and rewrites those chunks. Volatile state (light, snow, block entities) may make more
+   columns look changed than truly are; this is plan §10's open question and is now measurable.
+4. **Prove the audit catches a real fault.** It is proven to run, not to catch anything: staging
+   genuine corruption was not possible in a live world. Its decision rules are covered offline.
+5. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
-4. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
+6. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
    observations beneath the veil; tune Outline detail, Hill softness, apron and the nine fog dials
    only after the shape is accepted; measure controlled Farseer off/on and fog-detail cost,
    including the swept arc's extra cross-section per end.
-5. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
+7. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
    player-facing Farseer rename plus bundled MIT notice.
-6. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
-7. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
+8. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
+9. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
    offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
-8. **Older TODO debt:** keep the debt including:
+10. **Older TODO debt:** keep the debt including:
    - P3's after-comparison;
-   - winter convergence;
+   - winter convergence, which G237 shows was never reachable; re-judge now the arm actually runs;
    - pause loading;
    - Session 84 diagnostic cleanup.
 
-[Session 102](dev/sessions/SESSION_102.md) is the authoritative documentation continuation point;
+[Session 103](dev/sessions/SESSION_103.md) is the authoritative documentation continuation point;
+[Session 102](dev/sessions/SESSION_102.md) retains the first sweep A/B and the 0.4.111 gate;
 [Session 101](dev/sessions/SESSION_101.md) retains the pre-measurement sweep analysis,
 [Session 100](dev/sessions/SESSION_100.md) retains the preceding fog and attribution work, and
 [the silhouette handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md) orients a new agent.
@@ -722,7 +778,7 @@ Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
   look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G235 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+- G166-G237 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
   buried joins, bounded regeneration, stable all-level ownership, post-water volumetric fog and the
   distinction between pacing priority-load submissions and yielding their downstream engine work,
   plus the engine generation counter's saved-load blind spot and route-halo generation.

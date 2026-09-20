@@ -2,9 +2,22 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.112 needs a play verdict; the fog is accepted and the frontier A/B is done
+## Start here: 0.4.113–0.4.116 need a play verdict, and phase A is built
 
-Read [the Farseer handoff](plans/HANDOFF_HORIZON_SILHOUETTES.md) and
+Read [Session 103](sessions/SESSION_103.md) first: four builds landed without an in-game verdict and
+two of them change what happens at every world start. The startup sweep now reads the savegame
+through a private read-only connection instead of probing the engine 70,225 times, skips columns it
+has already proved it captured, and runs a background audit against those claims. Separately,
+**automatic dormant-terrain snow refresh runs for the first time since 2026-08-02** — it was
+unreachable behind an uncleared flag in every released build including the accepted 0.4.64 baseline
+(G237), and reviving it required giving that arm the load pass's gates.
+
+A4's clean-shutdown fast path was **not** built and is recommended against as specified: no hook
+exists after the engine's final save (G236), and the whole index measures 73.3 s on the owner's real
+world, so it would trade an unverifiable assumption for background reading that does not compete
+with the player. That is the owner's call to confirm.
+
+Then read [the Farseer handoff](plans/HANDOFF_HORIZON_SILHOUETTES.md) and
 [Session 100](sessions/SESSION_100.md), then
 [the horizon-silhouette and Terrain Ahead plan](plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 P1-P4 are built and most P5 persistence/tuning work is complete through 0.4.111. The owner has
@@ -16,13 +29,29 @@ staircase turn, which 0.4.110 rounds off. **The owner played 0.4.111 on 2026-09-
 fog work**, so the shape gate is closed and dial tuning is unblocked. The absence of another player
 continues to defer the dedicated/multiplayer gate.
 
-Separately, 0.4.111's player-aware savegame-sweep scheduler is measured, built, installed and
-checkpointed. The owner played it and could not tell a difference — which the server log explains:
-that session spent all five minutes in the probe pass and never reached the load phase the gate
-guards. He has said play feedback on the sweep will not be substantial or reliable, so the
-sustained-frontier measurement is the deciding evidence, not a play verdict.
+Separately, 0.4.111's player-aware savegame-sweep scheduler was measured on a sustained virgin
+frontier and 0.4.112 gave its hold a rate floor, because the 5 s quiet window is renewed by every
+chunk crossing and so stopped the sweep outright above 6.4 blocks/s. The owner could not tell
+0.4.111 apart in play, which the server log explains: that session spent all five minutes in the
+probe pass and never reached the load phase the gate guards. He has said play feedback on the sweep
+will not be substantial or reliable, so measurement is the deciding evidence there, not a verdict.
 
 Open, in the order they block further work:
+
+- **Play 0.4.116 and report the startup.** The two things worth watching are whether the world start
+  feels different — the probe pass that used to take 5m35s on the owner's world is gone, replaced by
+  a 73.3 s off-thread file read — and whether anything stutters while the revived snow-refresh arm
+  runs for the first time. Afterwards the server log should show the savegame read path opening with
+  its journal mode, the index time, and on a second start a non-zero "already captured" count.
+- **Confirm or overturn the A4 recommendation.** See Session 103 §7. Either drop the fast path, or
+  rebuild it around "record what the next save will touch and treat those columns as unverified",
+  which is the only shape available without a post-save hook.
+- **Measure the audit's real false-positive rate.** The sandbox's 33 mismatches are not a rate for
+  the owner's setup: it lacks mods his world's block entities need, so the engine discards them and
+  rewrites those chunks. Volatile state — light, snow, block entities — may also make columns look
+  changed when terrain did not. Plan §10 asks this; it is now measurable offline in 73 s.
+- **Prove the audit catches a real fault.** It is proven to run, not to catch anything. Staging real
+  corruption was not possible in a live world; its decision rules are covered offline.
 
 - ~~**0.4.110 shape and drift acceptance.**~~ **Closed 2026-09-19.** The owner accepted the fog work
   after playing 0.4.111. The log half of the gate was verified offline from that session:
@@ -139,22 +168,20 @@ Open, in the order they block further work:
   gated loads since 0.4.68); §11.4 needs a starvation floor; the snow-refresh arm should be named
   as the known-open lane rather than an eventual nicety; §11.5's probe paragraph contradicts Phase
   A2/A3; §11.2 duplicates analysis §18.5.
-- **Give `StepRefresh` the same gates as `StepLoad`, or record why not.** Still open after 0.4.112, which changed `StepLoad` only. It issues
-  `LoadChunkColumnPriority` into the same fast lane with no player gate, no engine gate and no
-  capture-backlog brake. Default 1/s against the sweep's 16/s, so the magnitude is small — but the
-  startup pass terminates and snow campaigns do not, and this arm has never been in a measured
-  condition.
-- **Implement terrain change detection after review.** The original owner-directed
-  [plan](plans/PLAN_TERRAIN_CHANGE_DETECTION.md) remains intact. Phase A uses a private read-only
-  save path, fingerprints and a clean-shutdown/save-metadata fast path so an unchanged start does no
-  sweep work; Phase B versions sections so a returning client receives offline changes. The A/B
-  prerequisite is now satisfied. Codex appended a separately labelled recommendation section for
-  independent review: retain 0.4.111 for first adoption and true mismatches; B is independent; then
-  A1/A2, A3 with the scheduler, A4 and A5. **That review was done on 2026-09-19 (plan §12).** Three
-  things must be built the corrected way: re-fingerprint *after* the engine writes, not inside
-  `GameWorldSave`, which fires before it; commit a fingerprint only when the column's capture has
-  durably succeeded; and use SQLite's header change counter rather than file size and mtime, with a
-  WAL branch.
+- ~~**Give `StepRefresh` the same gates as `StepLoad`.**~~ **Done in 0.4.116**, and it became urgent
+  rather than optional: the arm had never run at all (G237), so reviving it would have put an
+  unmeasured ungated priority-load path into the world. It now takes the capture-backlog brake, the
+  engine-generation gate and the player-activity hold with its rate floor. **Its cost has never been
+  measured**, because until 0.4.116 there was nothing to measure.
+- **Implement terrain change detection.** ~~Phase A~~ **A1–A3 and A5 are built (0.4.113–0.4.116)**;
+  see Session 103 and `STATUS.md`. Phase B — section versions, so a returning client receives
+  changes made while it was offline — remains unstarted and is independent of A. **A4 was not built
+  and is recommended against as specified** (Session 103 §7): there is no hook after the engine's
+  final save, so its marker cannot record the file's post-save state, and the payoff fell from
+  5m35s of contention to 73.3 s of off-thread reading once A3 removed the probe pass.
+  The three corrections from the §12 review are implemented: a fingerprint is committed only once a
+  column's capture reached the durable row; the change counter replaces file size and mtime, with a
+  WAL branch; and nothing re-fingerprints inside `GameWorldSave`, which fires before the write.
 - **Do not substitute time or population for change detection.** In-game time may pace an audit,
   but it cannot prove a change. Singleplayer can change terrain immediately; many multiplayer users
   may change nothing. Live hooks cover loaded changes while the mod is active, and fingerprints
@@ -168,9 +195,11 @@ Open, in the order they block further work:
 - **Leave probe scheduling alone for now.** The probe on/off pair had a worse 1% tail with probes,
   but average and median FPS moved the other way. Repeat or add waypoint evidence before changing
   probe pacing.
-- **Apply fairness to later background work.** Once startup behavior is settled, use the same
-  activity/no-catch-up policy for fingerprint audits and assess snow canaries/campaigns separately
-  so winter convergence is not stranded.
+- ~~**Apply fairness to later background work.**~~ **Done in 0.4.116:** the audit and the snow
+  refresh arm both take the load pass's gates and the same capped no-catch-up allowance. What
+  remains is the assessment, not the policy: **winter convergence has never been demonstrated and
+  until 0.4.116 could not have been**, because the arm that performs it never ran (G237). Judge it
+  fresh rather than reading the old debt as a tuning problem.
 - **Count the swept arc's cost.** Each swept end now emits two cross-sections instead of one, and on
   a staircase frontier every strip is swept at both ends. The vertex/index budget is exact and
   harness-checked, but it has not been counted against a real frontier or measured on the GPU.

@@ -1,10 +1,29 @@
 # Plan - Terrain change detection: savegame fingerprints and section versions
 
-**Status:** Original owner-directed plan proposed and not started. Written 2026-09-18 against
-`2fbf2d1` (`0.4.110`); its required scheduling A/B was completed on 2026-09-19 in 0.4.111.
+**Status:** **A1, A2, A3 and A5 are built (0.4.113–0.4.116, Session 103). A4 was not built and is
+recommended against as specified. Phase B is unstarted.** Written 2026-09-18 against `2fbf2d1`
+(`0.4.110`); its required scheduling A/B was completed on 2026-09-19 in 0.4.111, and the sustained
+virgin-frontier follow-up on 2026-09-19 produced 0.4.112's rate floor.
+
+> **§4.1.5's fast path rests on a hook that does not exist.** Decompiling the installed engine on
+> 2026-09-20 showed `ServerMain.EnterRunPhase` returns immediately for `EnumServerRunPhase.Exit`
+> without notifying any system or mod, and the game database is disposed before that point. Combined
+> with `GameWorldSave` firing *before* the write (§4.1.4, G231), there is no moment at which a mod
+> can record the savegame's state after the final save (G236). A clean-shutdown marker as specified
+> cannot be written.
+>
+> Its payoff also fell. §4.1.5 was designed when a world start cost 5m35s of paced engine probes;
+> A3 removed that pass, and the whole index measures **73.3 s** on the owner's 3.22 GB world through
+> this plan's own code. The fast path would therefore trade an unverifiable assumption for 73
+> seconds of low-priority background reading that does not compete with the player.
+>
+> If A4 is revived, the only sound shape without a post-save hook is: record at `GameWorldSave`
+> which columns the imminent write will touch, treat exactly those as unverified, and keep the rest.
+> That still trusts that the mod saw every terrain change, which is what §4.3's audit exists to
+> recover from — so A5 belongs before it, not after, reversing §11.5's suggested order.
 
 **Required reading first:** [the savegame-sweep scheduling
-analysis](ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md), then `dev/GOTCHAS.md` G190, G192, G199, G227-G235.
+analysis](ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md), then `dev/GOTCHAS.md` G190, G192, G199, G227-G237.
 This plan answers the analysis's §13 candidate "skip columns whose current terrain revision is
 already durable" and its §16 open question "can the mod prove a durable LOD row is current without
 introducing a terrain revision journal?" The answer is yes, and this is how.
