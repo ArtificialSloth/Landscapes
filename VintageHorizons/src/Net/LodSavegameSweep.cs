@@ -60,6 +60,13 @@ public class LodSavegameSweep
 
     /// <summary>Which columns may be skipped, and when a capture has earned its fingerprint.</summary>
     readonly LodCaptureLedger ledger;
+
+    /// <summary>The audit's rotation over the claims this cache makes, and where it is.</summary>
+    readonly LodTickAllowance auditAllowance = new();
+    readonly List<LodAuditedColumn> auditScratch = new();
+    readonly List<long> auditRequestScratch = new();
+    List<long> auditOrder = new();
+    int auditCursor;
     readonly LodTickAllowance loadAllowance = new();
     readonly LodTickAllowance refreshAllowance = new();
     readonly LodTickAllowance floorAllowance = new();
@@ -140,6 +147,15 @@ public class LodSavegameSweep
     /// <summary>True when existence came from the savegame rather than from engine probes.</summary>
     public bool UsedSavegameIndex { get; private set; }
 
+    /// <summary>Columns the background audit has asked the savegame about.</summary>
+    public long AuditsRequested { get; private set; }
+
+    /// <summary>Audited columns whose savegame content no longer matched this cache.</summary>
+    public long AuditMismatches { get; private set; }
+
+    /// <summary>Completed rotations through everything this cache claims to hold.</summary>
+    public long AuditPasses { get; private set; }
+
     /// <summary>Dormant map regions woken since startup to reveal new vanilla snapshots.</summary>
     public long SnowProbes { get; private set; }
 
@@ -203,13 +219,22 @@ public class LodSavegameSweep
     /// <summary>The whole-world savegame index, when the read path is available.</summary>
     readonly LodSavegameIndex? savegameIndex;
 
+    /// <summary>Drops a column's stored fingerprint when the audit disproves it.</summary>
+    readonly Action<int, int>? forgetFingerprint;
+
+    /// <summary>Columns per second the background audit re-reads. 0 disables it entirely.</summary>
+    readonly int auditPerSecond;
+
     public LodSavegameSweep(ICoreServerAPI sapi, ILogger logger, int radiusChunks, int perSecond,
         int refreshPerSecond, WeatherSystemBase? weather, Action<int, int> queueColumn,
         Func<int> captureBacklog, LodSavegameIndex? savegameIndex = null,
         Dictionary<long, ulong>? capturedFingerprints = null,
         System.Func<int, int, bool>? columnDurable = null,
-        Action<int, int, ulong>? rememberFingerprint = null)
+        Action<int, int, ulong>? rememberFingerprint = null,
+        Action<int, int>? forgetFingerprint = null, int auditPerSecond = 0)
     {
+        this.forgetFingerprint = forgetFingerprint;
+        this.auditPerSecond = Math.Max(0, auditPerSecond);
         this.sapi = sapi;
         this.logger = logger;
         this.radiusChunks = radiusChunks;
@@ -250,12 +275,22 @@ public class LodSavegameSweep
             Probing = false;
             reported = 0;
 
+            // The audit checks the claims this cache makes, so its rotation is built once
+            // the savegame truth is known. It grows as the sweep proves more columns; a
+            // column captured after this is picked up on the next pass.
+            auditOrder = ledger.CapturedKeys();
+            auditCursor = 0;
+
             logger.Notification(
                 "Savegame sweep: {0} columns hold generated terrain, read from the savegame "
                 + "itself rather than by probing the engine. {1} carry a fingerprint this cache "
                 + "already matches and will be skipped. Loading the rest with a complete "
-                + "neighbourhood.",
-                exists.Count, ledger.AlreadyCapturedCount);
+                + "neighbourhood.{2}",
+                exists.Count, ledger.AlreadyCapturedCount,
+                auditPerSecond > 0
+                    ? $" Afterwards {auditPerSecond} columns/s are re-read in the background and "
+                        + "compared against what this cache proved it captured."
+                    : "");
             return;
         }
 
@@ -268,6 +303,102 @@ public class LodSavegameSweep
         logger.Notification(
             "Savegame sweep: reading the savegame directly was not available, so the engine is "
             + "probed for {0} positions as before.", ProbeTotal);
+    }
+
+    /// <summary>
+    /// The background audit: re-read a rotating slice of the world from the savegame and
+    /// compare it against what this cache proved it captured.
+    ///
+    /// Continuous watching is not airtight. The owner's 2026-09-17 log shows three columns
+    /// that unloaded before the capture queue reached them, and a crash, a capture error or
+    /// terrain edited while the mod was disabled does the same. Those failures are silent:
+    /// the cache simply holds terrain that is no longer true, and nothing else in the design
+    /// would ever notice. This is what notices.
+    ///
+    /// It yields to exactly the same gates as the load pass, because its recaptures are the
+    /// same priority loads. It never generates: a mismatch outside the complete-neighbourhood
+    /// rule is left alone, like any frontier column.
+    /// </summary>
+    void StepAudit(long now)
+    {
+        if (savegameIndex == null || auditPerSecond <= 0 || !UsedSavegameIndex) return;
+
+        // Collect whatever the read path finished since the last tick first, so a result is
+        // never stranded behind a gate that is holding the requests.
+        auditScratch.Clear();
+        if (savegameIndex.TakeAudited(auditScratch) > 0) ApplyAuditResults();
+
+        int allowance = LoadsAllowed(
+            auditAllowance.Available(now, auditPerSecond),
+            captureBacklog(), sapi.WorldManager.CurrentGeneratingChunkCount);
+        if (playerTerrainActivity.MustYield(now))
+        {
+            allowance = Math.Min(allowance,
+                floorAllowance.Available(now, FloorPerSecond(auditPerSecond)));
+        }
+        if (allowance <= 0) return;
+
+        if (auditOrder.Count == 0)
+        {
+            // Nothing proven yet, or the previous pass ended. Rebuilding here is what makes
+            // the rotation cover columns this session captured after it was first built.
+            auditOrder = ledger.CapturedKeys();
+            auditCursor = 0;
+            if (auditOrder.Count == 0) return;
+        }
+
+        auditRequestScratch.Clear();
+        while (auditRequestScratch.Count < allowance && auditCursor < auditOrder.Count)
+        {
+            auditRequestScratch.Add(auditOrder[auditCursor++]);
+        }
+
+        if (auditCursor >= auditOrder.Count)
+        {
+            // One pass complete. The world keeps changing, so an audit that ran once is a
+            // one-off check rather than a safety net: start again, over whatever the cache
+            // claims by then.
+            AuditPasses++;
+            auditOrder = new List<long>();
+            auditCursor = 0;
+        }
+
+        if (auditRequestScratch.Count == 0) return;
+        savegameIndex.RequestAudit(auditRequestScratch);
+        auditAllowance.Spend(auditRequestScratch.Count);
+        AuditsRequested += auditRequestScratch.Count;
+    }
+
+    /// <summary>
+    /// Acts on what the audit read back. A column whose savegame content no longer matches
+    /// the capture this cache proved is queued for recapture through the ordinary load path,
+    /// and its stale fingerprint is dropped so nothing skips it in the meantime.
+    /// </summary>
+    void ApplyAuditResults()
+    {
+        foreach (LodAuditedColumn audited in auditScratch)
+        {
+            if (!ledger.Disagrees(audited.Key, audited.Fingerprint)) continue;
+
+            int cx = LodColumnMap.KeyCx(audited.Key);
+            int cz = LodColumnMap.KeyCz(audited.Key);
+
+            // The safety rule is not negotiable for an audit either. A column whose
+            // neighbourhood is incomplete would make the engine generate terrain, which is
+            // the one thing the sweep promises never to do.
+            if (exists.Classify(cx, cz) != EnumColumnAction.Load) continue;
+
+            // Not QueueColumn: that serves a column the world already holds loaded, and an
+            // audited column is almost never near a player. The engine has to be asked for
+            // it exactly as the load pass asks, and the ordinary load hook then captures it.
+            ledger.UpdateSavegame(audited.Key, audited.Fingerprint);
+            ledger.Forget(audited.Key);
+            forgetFingerprint?.Invoke(cx, cz);
+            sapi.WorldManager.LoadChunkColumnPriority(cx, cz);
+            ledger.Submitted(audited.Key);
+            AuditMismatches++;
+        }
+        auditScratch.Clear();
     }
 
     /// <summary>
@@ -327,6 +458,7 @@ public class LodSavegameSweep
         {
             StepSnowSignals();
             StepRefresh();
+            StepAudit(now);
             RefreshIssueCost.Add(phaseStart);
         }
         else if (AwaitingSavegameIndex)
@@ -515,6 +647,13 @@ public class LodSavegameSweep
 
     void Finish(LodAbsenceVerifier verified)
     {
+        // Set when the absence verifier started, and until 2026-09-20 never cleared. Step()
+        // begins with `if (!active || verifying) return;`, so every tick after the startup
+        // sweep returned immediately and forever: automatic dormant-terrain snow refresh,
+        // its canary and its regional campaigns have never run once in any released build
+        // (introduced 0596d30, 2026-08-02, and present in the accepted 0.4.64 baseline).
+        // Nothing logged it, because the status line reads state rather than work.
+        verifying = false;
         Done = true;
         PrimeSnowActivity();
         nextSnowPollMs = sapi.World.ElapsedMilliseconds + SnowPollIntervalMs;
@@ -767,8 +906,20 @@ public class LodSavegameSweep
     {
         if (!AutomaticSnowRefresh || snowRefresh.Pending == 0) return;
 
-        int allowance = refreshAllowance.Available(
-            sapi.World.ElapsedMilliseconds, refreshPerSecond);
+        // The same gates as the load pass, and for the same reason: these are the same
+        // engine priority loads, in the same fast lane, competing with the same player
+        // terrain. This arm was never gated because it had never run - the bug fixed in
+        // Finish meant it could not - so enabling it without these would put an unmeasured
+        // ungated load path into the world (G227, G229).
+        long now = sapi.World.ElapsedMilliseconds;
+        int allowance = LoadsAllowed(
+            refreshAllowance.Available(now, refreshPerSecond),
+            captureBacklog(), sapi.WorldManager.CurrentGeneratingChunkCount);
+        if (playerTerrainActivity.MustYield(now))
+        {
+            allowance = Math.Min(allowance,
+                floorAllowance.Available(now, FloorPerSecond(refreshPerSecond)));
+        }
         if (allowance <= 0) return;
 
         var tickBudget = new LodWorkBudget(TickWorkBudgetMs);
@@ -837,8 +988,9 @@ public class LodSavegameSweep
                 + $"captured, {SkippedEdge} skipped on the frontier); "
                 + $"snow refresh {Refreshed} recaptures, {snowRefresh.Pending} pending from "
                 + $"{snowRefresh.Campaigns} regional campaigns, {SnowProbes} dormant-region "
-                + $"probes over {snowRefresh.Count} candidates at {refreshPerSecond}/s"
-            : $"savegame sweep complete ({Loaded} columns loaded, {SkippedUnchanged} already captured, {SkippedEdge} skipped on the frontier)"
+                + $"probes over {snowRefresh.Count} candidates at {refreshPerSecond}/s; "
+                + AuditStatus
+            : $"savegame sweep complete ({Loaded} columns loaded, {SkippedUnchanged} already captured, {SkippedEdge} skipped on the frontier); {AuditStatus}"
         : verifying
             ? $"savegame sweep verifying: re-probing {Loaded} loads' surroundings"
         : Probing
@@ -848,6 +1000,20 @@ public class LodSavegameSweep
                 + $"({PlayerHoldFloorLoads} columns still loaded at the "
                 + $"{FloorPerSecond(perSecond)}/s floor) and "
                 + $"{EnginePressureYieldTicks} for engine terrain demand";
+
+    /// <summary>One clause for the status line; says plainly when the audit is off.</summary>
+    string AuditStatus => auditPerSecond <= 0
+        ? "background audit off"
+        : !UsedSavegameIndex
+            ? "background audit unavailable: the savegame read path is not in use"
+            : !Done
+            // Deliberate: during first adoption almost nothing is captured yet, so there is
+            // little to audit and the load pass is doing the real work. Every later start
+            // skips most columns and reaches this point in minutes.
+            ? "background audit waiting for the startup sweep to finish"
+            : $"background audit {AuditsRequested} columns re-read at {auditPerSecond}/s, "
+                + $"{AuditMismatches} no longer matched and were queued for recapture, "
+                + $"{AuditPasses} full passes over {auditOrder.Count} claims";
 
     public void ResetPhaseCosts()
     {
@@ -970,6 +1136,36 @@ internal sealed class LodCaptureLedger
     {
         if (savegame.TryGetValue(key, out ulong print)) awaiting[key] = print;
     }
+
+    /// <summary>
+    /// Columns this cache currently claims to hold, in a stable order. These are exactly
+    /// the claims an audit exists to check: a column with no claim has nothing to disprove.
+    /// </summary>
+    public List<long> CapturedKeys()
+    {
+        var keys = new List<long>(captured.Keys);
+        keys.Sort();
+        return keys;
+    }
+
+    /// <summary>
+    /// True when this cache claims a proven capture and the savegame no longer agrees.
+    ///
+    /// A column with no claim is not a mismatch. It is simply uncaptured, which the ordinary
+    /// load pass already handles, and treating it as an audit failure would make the audit
+    /// re-report the entire uncaptured world forever.
+    /// </summary>
+    public bool Disagrees(long key, ulong current) =>
+        captured.TryGetValue(key, out ulong held) && held != current;
+
+    /// <summary>Record what the savegame holds now, after the audit re-read it.</summary>
+    public void UpdateSavegame(long key, ulong current) => savegame[key] = current;
+
+    /// <summary>
+    /// Drop a claim. The column stops being skippable immediately, so nothing relies on the
+    /// stale capture while its recapture is in flight.
+    /// </summary>
+    public void Forget(long key) => captured.Remove(key);
 
     /// <summary>
     /// Commits up to <paramref name="max"/> submitted columns whose capture is now durable.

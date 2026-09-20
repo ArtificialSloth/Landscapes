@@ -426,6 +426,13 @@ public class LodPipeline
         store?.SaveColumnFingerprint(cx, cz, fingerprint, 0);
 
     /// <summary>
+    /// Drop a column's claim, so nothing skips it until it has been captured again. Used
+    /// when the background audit finds the savegame no longer matches what was recorded.
+    /// </summary>
+    public void ForgetColumnFingerprint(int cx, int cz) =>
+        store?.ForgetColumnFingerprint(cx, cz);
+
+    /// <summary>
     /// Capture a chunk column the caller already holds, rather than one the world can
     /// be asked for. <see cref="QueueColumn"/> cannot serve a peeked column: a peek
     /// puts nothing in the loaded chunk list, so the BlockAccessor lookup in

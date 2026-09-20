@@ -135,6 +135,41 @@ public static class SavegameScanChecks
         c.Eq(3, trimmed[second].Rows, "the shortened column counts one layer fewer");
         c.True(LodSavegameScan.Seal(trimmed[second]) != LodSavegameScan.Seal(before[second]),
             "a column that lost a layer fingerprints differently");
+
+        SingleColumnMatchesTheFullScan(c, scan, trimmed);
+    }
+
+    /// <summary>
+    /// The audit re-reads one column at a time and compares the answer against a fingerprint
+    /// produced by the whole-world scan. If the two ever disagreed for identical content,
+    /// every audit would report a mismatch and the mod would reload the entire world on a
+    /// loop - so this is the property the audit rests on.
+    /// </summary>
+    static void SingleColumnMatchesTheFullScan(Check c, LodSavegameScan scan,
+        Dictionary<long, LodColumnFingerprint> fromFullScan)
+    {
+        const int ChunksY = 8;
+
+        c.True(scan.FingerprintColumn(100, 200, ChunksY, out LodColumnFingerprint one),
+            "a single column reads through the keyed path");
+        c.Eq(LodSavegameScan.Seal(fromFullScan[LodColumnMap.Key(100, 200)]),
+            LodSavegameScan.Seal(one),
+            "one column read by key fingerprints identically to the whole-world scan");
+
+        c.True(scan.FingerprintColumn(101, 200, ChunksY, out LodColumnFingerprint shortened),
+            "the shortened column reads through the keyed path");
+        c.Eq(LodSavegameScan.Seal(fromFullScan[LodColumnMap.Key(101, 200)]),
+            LodSavegameScan.Seal(shortened),
+            "a column that lost a layer also agrees between the two paths");
+        c.Eq(3, shortened.Rows, "and its layer count agrees too");
+
+        // A column the savegame does not hold reads as empty rather than failing, so the
+        // audit can tell "gone" apart from "could not read".
+        c.True(scan.FingerprintColumn(4242, 4242, ChunksY, out LodColumnFingerprint absent),
+            "a column with no rows still answers");
+        c.Eq(0, absent.Rows, "an absent column holds no layers");
+        c.True(LodSavegameScan.Seal(absent) != LodSavegameScan.Seal(one),
+            "an emptied column does not fingerprint like a populated one");
     }
 
     static ulong HashInPieces(byte[] payload, int piece)

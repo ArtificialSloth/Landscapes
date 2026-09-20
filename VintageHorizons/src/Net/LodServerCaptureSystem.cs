@@ -242,6 +242,7 @@ public class LodServerCaptureSystem : ModSystem
             if (!string.IsNullOrEmpty(savegamePath))
             {
                 index = new LodSavegameIndex(Mod.Logger, savegamePath);
+                index.SetWorldHeight(sapi.WorldManager.MapSizeY / GlobalConstants.ChunkSize);
                 savegameIndex = index;
             }
 
@@ -252,7 +253,9 @@ public class LodServerCaptureSystem : ModSystem
                 index,
                 pipeline!.LoadColumnFingerprints(),
                 (cx, cz) => pipeline?.IsAuthoritativeChunkDurable(cx, cz) == true,
-                (cx, cz, print) => pipeline?.RememberColumnFingerprint(cx, cz, print))
+                (cx, cz, print) => pipeline?.RememberColumnFingerprint(cx, cz, print),
+                (cx, cz) => pipeline?.ForgetColumnFingerprint(cx, cz),
+                Config.AuditEnabled ? Config.AuditColumnsPerSecond : 0)
             {
                 TrackPhaseAllocations = allocationTelemetryEnabled,
             };
@@ -1415,7 +1418,8 @@ public class LodServerCaptureSystem : ModSystem
             + "{4:0}/{5:0}/{6:0} | load issue {7:0}/{8:0}/{9:0} | refresh issue "
             + "{10:0}/{11:0}/{12:0} | load holds player {13} ({16} loaded at the floor), "
             + "engine {14}, engine peak {15} | {17} loaded, {18} already captured, {19} "
-            + "fingerprinted, existence from {20}",
+            + "fingerprinted, existence from {20} | audit {21} re-read, {22} mismatched, "
+            + "{23} passes",
             label,
             work.ProbeIssueCost.P95Us, work.ProbeIssueCost.P99Us, work.ProbeIssueCost.MaxUs,
             work.ProbePublishCost.P95Us, work.ProbePublishCost.P99Us, work.ProbePublishCost.MaxUs,
@@ -1425,7 +1429,8 @@ public class LodServerCaptureSystem : ModSystem
             work.LoadEngineQueuePeak, work.PlayerHoldFloorLoads,
             work.Loaded, work.SkippedUnchanged, work.FingerprintsRecorded,
             work.AwaitingSavegameIndex ? "the savegame, still reading"
-                : work.UsedSavegameIndex ? "the savegame" : "engine probes");
+                : work.UsedSavegameIndex ? "the savegame" : "engine probes",
+            work.AuditsRequested, work.AuditMismatches, work.AuditPasses);
 
         Mod.Logger.Notification(
             "  {0} allocation interval MiB/max KiB: probe issue {1:0.00}/{2:0.0} | "

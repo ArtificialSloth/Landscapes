@@ -213,7 +213,8 @@ public sealed class LodSavegameReader : IDisposable
     /// The caller supplies <paramref name="shouldStop"/> so a world shutting down does not
     /// have to wait for a whole-world scan to finish.
     /// </summary>
-    public bool Read(string sql, Action<SqliteDataReader> row, Func<bool>? shouldStop = null)
+    public bool Read(string sql, Action<SqliteDataReader> row, Func<bool>? shouldStop = null,
+        IReadOnlyList<(string Name, long Value)>? parameters = null)
     {
         SqliteConnection? live;
         lock (gate)
@@ -228,6 +229,13 @@ public sealed class LodSavegameReader : IDisposable
             using var command = live.CreateCommand();
             command.CommandText = sql;
             command.CommandTimeout = BusyTimeoutSeconds;
+            if (parameters != null)
+            {
+                foreach ((string name, long value) in parameters)
+                {
+                    command.Parameters.AddWithValue(name, value);
+                }
+            }
 
             using SqliteDataReader reader = command.ExecuteReader();
             var budget = new LodWorkBudget(BatchMilliseconds);

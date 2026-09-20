@@ -4,6 +4,12 @@ using Vintagestory.API.Common;
 
 namespace VintageHorizons;
 
+/// <summary>One column the background audit re-read, and what the savegame says it holds now.</summary>
+/// <param name="Key">Column key, as <see cref="LodColumnMap.Key"/> packs it.</param>
+/// <param name="Fingerprint">The sealed fingerprint the savegame currently produces.</param>
+/// <param name="Rows">Vertical chunks present, zero when the column holds nothing.</param>
+public readonly record struct LodAuditedColumn(long Key, ulong Fingerprint, int Rows);
+
 /// <summary>What one completed savegame index pass learned. Published to the owning thread once.</summary>
 public sealed class LodSavegameIndexResult
 {
@@ -40,11 +46,22 @@ public sealed class LodSavegameIndex : IDisposable
     readonly LodSavegameReader reader;
     readonly object gate = new();
 
+    readonly Queue<long> auditRequests = new();
+    readonly Queue<LodAuditedColumn> auditResults = new();
+    readonly AutoResetEvent work = new(false);
+
     Thread? thread;
     LodSavegameIndexResult? result;
+    int chunksY;
     bool finished;
     bool failed;
     volatile bool stopping;
+
+    /// <summary>
+    /// How many columns the audit may have outstanding. Small on purpose: the audit is a
+    /// trickle, and a request that has not been served yet is not worth remembering twice.
+    /// </summary>
+    const int MaxAuditBacklog = 256;
 
     /// <summary>True once the pass has ended, whether it produced an answer or gave up.</summary>
     public bool Finished { get { lock (gate) return finished; } }
@@ -85,7 +102,44 @@ public sealed class LodSavegameIndex : IDisposable
         }
     }
 
-    public void Stop() => stopping = true;
+    public void Stop()
+    {
+        stopping = true;
+        work.Set();
+    }
+
+    /// <summary>
+    /// Ask the read path to re-examine these columns. Dropped when the backlog is full: the
+    /// audit rotates through the world forever, so a column missed on this pass comes round
+    /// again rather than needing to be queued twice.
+    /// </summary>
+    public void RequestAudit(IReadOnlyList<long> columns)
+    {
+        lock (gate)
+        {
+            if (!finished || failed) return;
+            foreach (long key in columns)
+            {
+                if (auditRequests.Count >= MaxAuditBacklog) break;
+                auditRequests.Enqueue(key);
+            }
+        }
+        work.Set();
+    }
+
+    /// <summary>Takes everything the audit has re-read since the last call. Owning thread.</summary>
+    public int TakeAudited(List<LodAuditedColumn> into)
+    {
+        lock (gate)
+        {
+            int taken = auditResults.Count;
+            while (auditResults.Count > 0) into.Add(auditResults.Dequeue());
+            return taken;
+        }
+    }
+
+    /// <summary>Vertical chunks in this world, needed to address a column's rows by key.</summary>
+    public void SetWorldHeight(int chunksYIn) => chunksY = Math.Max(1, chunksYIn);
 
     void Run()
     {
@@ -142,6 +196,8 @@ public sealed class LodSavegameIndex : IDisposable
                 + "{2} fingerprinted. Reading the file replaces probing the engine one position "
                 + "at a time through the thread that also loads terrain for players.",
                 finishedResult.ElapsedSeconds, exists.Count, prints.Count);
+
+            ServeAudits(scan);
         }
         catch (Exception e)
         {
@@ -153,6 +209,54 @@ public sealed class LodSavegameIndex : IDisposable
         finally
         {
             reader.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Serves audit slices for the rest of the session on the same read connection.
+    ///
+    /// The audit is the half of change detection that protects correctness rather than
+    /// saving work: continuous watching is not airtight, and a column that unloaded before
+    /// its capture ran, or changed while the mod was off, is otherwise wrong in the cache
+    /// forever with nothing to notice it.
+    /// </summary>
+    void ServeAudits(LodSavegameScan scan)
+    {
+        while (!stopping)
+        {
+            long key;
+            lock (gate)
+            {
+                if (auditRequests.Count == 0)
+                {
+                    key = long.MinValue;
+                }
+                else
+                {
+                    key = auditRequests.Dequeue();
+                }
+            }
+
+            if (key == long.MinValue)
+            {
+                work.WaitOne(1000);
+                continue;
+            }
+
+            if (chunksY <= 0) continue;
+            if (!scan.FingerprintColumn(LodColumnMap.KeyCx(key), LodColumnMap.KeyCz(key),
+                chunksY, out LodColumnFingerprint print))
+            {
+                // The read path disabled itself. Nothing further can be audited, and the
+                // sweep's own behaviour is unaffected.
+                return;
+            }
+
+            lock (gate)
+            {
+                auditResults.Enqueue(new LodAuditedColumn(
+                    key, LodSavegameScan.Seal(print), print.Rows));
+            }
         }
     }
 

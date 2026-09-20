@@ -103,6 +103,64 @@ public static class AllowanceChecks
 
         CaptureLedger(c);
         SweepDecision(c);
+        AuditRules(c);
+    }
+
+    /// <summary>
+    /// What the background audit acts on. Its job is to disprove claims this cache makes,
+    /// so the question it asks is narrower than it first looks: a column with no claim is
+    /// not a failed audit, it is simply uncaptured.
+    /// </summary>
+    static void AuditRules(Check c)
+    {
+        long held = LodColumnMap.Key(4, 5);
+        long uncaptured = LodColumnMap.Key(6, 7);
+
+        var captured = new Dictionary<long, ulong>();
+        var ledger = new LodCaptureLedger(captured);
+        ledger.SetSavegame(new Dictionary<long, ulong> { [held] = 100, [uncaptured] = 200 });
+
+        c.False(ledger.Disagrees(held, 100),
+            "a column with no claim is not a mismatch even when the savegame knows it");
+
+        ledger.Submitted(held);
+        ledger.CommitDurable(_ => true, 8, (_, _) => { });
+        c.True(ledger.AlreadyCaptured(held), "the column is now claimed");
+
+        c.False(ledger.Disagrees(held, 100), "a claim matching the savegame is not a mismatch");
+        c.True(ledger.Disagrees(held, 999),
+            "a claim the savegame no longer agrees with is what the audit exists to find");
+
+        // The rule that stops the audit re-reporting every uncaptured column in the world
+        // forever, which would bury the real findings and load terrain nobody asked for.
+        c.False(ledger.Disagrees(uncaptured, 12345),
+            "an uncaptured column is never an audit mismatch, whatever the savegame holds");
+
+        // Acting on a mismatch drops the claim first, so nothing skips the column while its
+        // recapture is in flight.
+        ledger.UpdateSavegame(held, 999);
+        ledger.Forget(held);
+        c.False(ledger.AlreadyCaptured(held),
+            "a disproved column stops being skippable immediately");
+        c.False(ledger.Disagrees(held, 999),
+            "a forgotten column has no claim left to disagree with");
+
+        // And the recapture re-earns the claim at the content the audit actually saw.
+        ledger.Submitted(held);
+        ledger.CommitDurable(_ => true, 8, (_, _) => { });
+        c.True(ledger.AlreadyCaptured(held), "the recaptured column is claimed again");
+        c.Eq(999UL, captured[held],
+            "the re-earned claim records what the audit read, not the content it replaced");
+
+        // The rotation covers what the cache claims, so a column proven later is included
+        // when the order is rebuilt rather than being audited never.
+        List<long> order = ledger.CapturedKeys();
+        c.Eq(1, order.Count, "the rotation covers the claims that exist");
+        c.SeqEq(new[] { held }, order, "and only those");
+        ledger.Submitted(uncaptured);
+        ledger.CommitDurable(_ => true, 8, (_, _) => { });
+        c.Eq(2, ledger.CapturedKeys().Count,
+            "a column proven after the rotation was built appears when it is rebuilt");
     }
 
     /// <summary>

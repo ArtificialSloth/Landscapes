@@ -80,6 +80,25 @@ public class LodServerConfig
     public int RefreshColumnsPerSecond = 1;
 
     /// <summary>
+    /// Columns per second the background audit re-reads from the savegame and compares
+    /// against what this cache proved it captured. A mismatch is queued for recapture under
+    /// the same safety and scheduling rules the sweep uses.
+    ///
+    /// This is the half of change detection that protects correctness rather than saving
+    /// work. Watching changes as they happen is not airtight: the owner's 2026-09-17 log
+    /// shows three columns that unloaded before the capture queue reached them, and a crash,
+    /// a capture error, or terrain edited while the mod was disabled does the same. Those
+    /// are silent - the cache simply holds terrain that is no longer true - and nothing else
+    /// in the design would ever notice.
+    ///
+    /// Sixteen a second walks a 57,600-column world about once an hour. The whole world's
+    /// worth of reading measured 73 seconds on the owner's 3.22 GB save, so spread across an
+    /// hour it is immeasurable. 0 disables the audit outright, and its off state costs
+    /// nothing at all: no reads are requested and the read path serves no audit work.
+    /// </summary>
+    public int AuditColumnsPerSecond = 16;
+
+    /// <summary>
     /// Let an admin build the LOD cache around themselves with /vhgen. Columns nobody
     /// has generated are peeked: real worldgen runs from the seed, capture reads the
     /// result, and nothing is written to the savegame. Columns that exist are loaded
@@ -230,6 +249,9 @@ public class LodServerConfig
         // Snow campaigns get a lower ceiling than the finite startup pass. Sixteen is the
         // already-tested startup cadence; the ordinary background default remains one.
         RefreshColumnsPerSecond = Math.Clamp(RefreshColumnsPerSecond, 0, 16);
+        // A trickle by design. Past 256 the audit stops being background work and starts
+        // competing with the things it exists to protect.
+        AuditColumnsPerSecond = Math.Clamp(AuditColumnsPerSecond, 0, 256);
         // Same ceiling as pregen: past 256 chunks the time cost stops being something an
         // admin grasps from a chat reply. The default clamps against the ceiling, not
         // against 256 - a lowered ceiling must not leave a default the command refuses.
@@ -268,6 +290,9 @@ public class LodServerConfig
     /// <summary>Snow campaigns depend on the generated-column map built by the sweep.</summary>
     public bool RefreshEnabled => SweepEnabled && RefreshColumnsPerSecond > 0;
 
+    /// <summary>The audit needs the sweep's safety rules and its savegame read path.</summary>
+    public bool AuditEnabled => SweepEnabled && AuditColumnsPerSecond > 0;
+
     /// <summary>True when /vhgen is configured to accept a start.</summary>
     public bool GenerateEnabled => EnableGenerateCommand && GenerateMaxRadiusChunks > 0;
 
@@ -280,6 +305,7 @@ public class LodServerConfig
         + $"{MaxSectionsPerSecondPerPlayer}/s per player, {MaxSectionsPerSecondTotal}/s total, "
         + $"sweep {(SweepEnabled ? SweepRadiusChunks + " chunks" : "off")}, "
         + $"refresh {(RefreshEnabled ? RefreshColumnsPerSecond + "/s" : "off")}, "
+        + $"audit {(AuditEnabled ? AuditColumnsPerSecond + "/s" : "off")}, "
         + $"generate {(GenerateEnabled ? "on request up to " + GenerateMaxRadiusChunks + " chunks" : "off")}, "
         + $"world generation {(WorldGenerationEnabled ? "on request up to " + WorldGenMaxRadiusChunks
             + " chunks, queue " + WorldGenQueueTarget : "off")}, "
