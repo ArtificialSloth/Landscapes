@@ -2,7 +2,7 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: the sweep frontier measurement, now that the fog is accepted
+## Start here: 0.4.112 needs a play verdict; the fog is accepted and the frontier A/B is done
 
 Read [the Farseer handoff](plans/HANDOFF_HORIZON_SILHOUETTES.md) and
 [Session 100](sessions/SESSION_100.md), then
@@ -115,20 +115,18 @@ complete and live in `dev/history/DONE.md`.
 
 Open, in the order they block further work:
 
-- **Run a sustained virgin-frontier A/B.** Every completed run used the same route and frozen seed.
-  Its centerline through chunk X 8050 was generated, but the endpoint's view-distance halo added
-  178 new map columns at X 8053–8062 and Z 7990–8012. The route was therefore mixed and proves that
-  0.4.111 yields when real generation appears; it does not isolate a long frontier crossing.
-  Restore the frozen profile, begin near X 8050 and continue through untouched terrain. Compare
-  sweep off, the original ungated scheduler and 0.4.111. Record per-waypoint readiness, frame and
-  server-tick tails, engine queue, save growth, sweep holds/rate, capture backlog, dirty age and
-  save backlog.
-  - **Sweep completion time and effective rate are acceptance numbers, not just recorded ones.** A
-    scheduler that never runs passes every politeness criterion. Added by the §12 review.
-  - **The route must reach the load phase.** The owner's own 2026-09-19 session did not: five
-    minutes were spent entirely in the probe pass (90% of 70,225 positions at quit), so the gate
-    never ran and there was nothing for him to feel. Confirm the load phase is active before
-    treating any condition as a comparison of schedulers.
+- ~~**Run a sustained virgin-frontier A/B.**~~ **Done 2026-09-19**, and it produced 0.4.112's rate
+  floor. Results in `STATUS.md`. Three conditions on `bench/routes/sweep-virgin-frontier.txt` with
+  the frozen seed restored per run; the pre-gate arm was built from checkpoint `2fbf2d1`, whose
+  only source difference from 0.4.111 is the sweep. What remains from it:
+  - **0.4.112 has no play verdict**, and its floor size was chosen from one A/B rather than tuned.
+  - **Multi-player fairness is still unmeasured.** One player's hold still stops the sweep for
+    every other player; the floor bounds how badly, but nothing has been measured with two.
+  - **The snow-refresh arm is still ungated.** `StepRefresh` issues `LoadChunkColumnPriority` with
+    no player gate, no engine gate and no capture-backlog brake. 1/s by default against the sweep's
+    16/s, so small, but the startup pass terminates and snow campaigns do not.
+  - Per-waypoint readiness was not captured; the comparison rests on frame tails, storage age and
+    sweep throughput.
 - **Decide what to do about the probe pass, which is the cost a short session actually pays.** On
   the owner's world the probe phase alone outlasts a five-minute session, every start, and captures
   nothing while it runs. Phase A of the terrain-change plan removes that pass outright (§4.1.6 item
@@ -141,7 +139,7 @@ Open, in the order they block further work:
   gated loads since 0.4.68); §11.4 needs a starvation floor; the snow-refresh arm should be named
   as the known-open lane rather than an eventual nicety; §11.5's probe paragraph contradicts Phase
   A2/A3; §11.2 duplicates analysis §18.5.
-- **Give `StepRefresh` the same gates as `StepLoad`, or record why not.** It issues
+- **Give `StepRefresh` the same gates as `StepLoad`, or record why not.** Still open after 0.4.112, which changed `StepLoad` only. It issues
   `LoadChunkColumnPriority` into the same fast lane with no player gate, no engine gate and no
   capture-backlog brake. Default 1/s against the sweep's 16/s, so the magnitude is small — but the
   startup pass terminates and snow campaigns do not, and this arm has never been in a measured

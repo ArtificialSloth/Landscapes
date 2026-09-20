@@ -4,7 +4,7 @@
 `2fbf2d1` (`0.4.110`); its required scheduling A/B was completed on 2026-09-19 in 0.4.111.
 
 **Required reading first:** [the savegame-sweep scheduling
-analysis](ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md), then `dev/GOTCHAS.md` G190, G192, G199, G227-G233.
+analysis](ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md), then `dev/GOTCHAS.md` G190, G192, G199, G227-G235.
 This plan answers the analysis's §13 candidate "skip columns whose current terrain revision is
 already durable" and its §16 open question "can the mod prove a durable LOD row is current without
 introducing a terrain revision journal?" The answer is yes, and this is how.

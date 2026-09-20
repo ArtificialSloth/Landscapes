@@ -4426,3 +4426,43 @@ was about a build whose changed code never executed.
 must be long enough to leave the probe pass, or it compares probe pacing under three names.
 
 **Found:** 2026-09-19, production observation read offline from the owner's `server-main.log`.
+
+### G234 - A quiet window renewed by movement is a stop, not a slow-down
+
+**Trigger:** pausing background work for a fixed quiet window after each sign of player activity,
+where the activity signal is something a moving player produces repeatedly.
+
+**Trap:** the window is renewed before it expires, so the pause never lapses. 0.4.111 held new
+savegame-sweep loads for five seconds after any chunk-boundary crossing. A 32-block chunk crossed
+more often than every five seconds is 6.4 blocks per second - an ordinary movement speed - so above
+it every crossing lands inside the previous window and the sweep stops for as long as the player
+keeps walking. Measured 2026-09-19 on the owner's frozen world: about 880 sections/min ungated,
+about 110/min held at 5.33 blocks/s, and a whole minute at 7/min at 6.67 blocks/s. Nothing chose
+that threshold; it fell out of two constants picked for other reasons.
+
+**Safer action:** when a hold is renewable by ordinary behaviour, give it a floor rather than a
+zero, and derive the floor from the configured rate so it scales. Draw the floor from its own
+allowance that only held ticks spend, so a long hold cannot burst on release. Then work out the
+speed at which the window is self-renewing and write it down, because it is the number that decides
+whether the mechanism is a throttle or an off switch.
+
+**Found:** 2026-09-19, derived from the two constants and confirmed by three measured routes; fixed
+in 0.4.112.
+
+### G235 - An absolute gate hides the gate you are trying to measure
+
+**Trigger:** testing a newly added scheduling gate on a route where an older, stricter gate is also
+firing.
+
+**Trap:** the first verification run for 0.4.112's sweep floor used the virgin-frontier route and
+recorded one single load under 2,478 player holds, which looks like a broken fix. It was not. On a
+virgin frontier real chunk generation is permanently in flight, so the absolute engine gate returns
+a zero allowance on nearly every tick and the floor has nothing to clamp. The floor only has an
+effect on saved terrain, where the engine counter is blind to ordinary priority loads (G229) and
+the player hold is the only thing stopping the sweep.
+
+**Safer action:** before measuring a gate, check which other gates fire on that route and pick one
+where the gate under test is the binding constraint. The sweep's telemetry prints player and engine
+holds side by side for exactly this reason; equal counts mean the route cannot separate them.
+
+**Found:** 2026-09-19, while verifying 0.4.112.

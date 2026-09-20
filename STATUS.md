@@ -4,9 +4,9 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-19`
-**Mod version:** `0.4.111` — current private test build, measured, verified, copy-installed, checkpointed and played by the owner on 2026-09-19. **The fog work is accepted.** The savegame sweep's player-aware scheduler is still unjudged in play: that session never reached the load phase, so the gate never ran
+**Mod version:** `0.4.112` — current private test build: the held savegame sweep now keeps a 2/s floor instead of stopping while a player walks. Measured, verified, copy-installed and checkpointed; no in-game play verdict yet. 0.4.111's fog work was accepted by the owner on 2026-09-19
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.106 `0257a0f`, 0.4.107 `3ba4a1e`, 0.4.108 `6708b19`, 0.4.109 `3b0bed0`, 0.4.110 `2fbf2d1`, 0.4.111 `b2fe181`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.106 `0257a0f`, 0.4.107 `3ba4a1e`, 0.4.108 `6708b19`, 0.4.109 `3b0bed0`, 0.4.110 `2fbf2d1`, 0.4.111 `b2fe181`, 0.4.112 `6f4aa42`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
 **Source files:** `134` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
@@ -59,6 +59,48 @@ Session 102.
 | Load, original on | 315.5 | 351.3 | 88.3 | 11.32 ms | 8,820 MB |
 | Load, off | 316.4 | 340.4 | 110.3 | 9.07 ms | 7,578 MB |
 | Load, 0.4.111 gate | 324.6 | 353.9 | 109.0 | 9.17 ms | 8,362 MB |
+
+**The sustained virgin-frontier comparison is done, and 0.4.112 gives the held sweep a floor.**
+Measured 2026-09-19 after Session 102. Every run restored the frozen `sweep-ab` seed, used the
+same deterministic integrated route and a 360 s settle so the probe pass finished first.
+
+Virgin frontier, `bench/routes/sweep-virgin-frontier.txt` at 5.33 blocks/s, 180 s:
+
+| Virgin-frontier condition | Average FPS | Median FPS | 1% low | 1% tail | RSS | Oldest dirty |
+|---|---:|---:|---:|---:|---:|---:|
+| Sweep off | 523.6 | 578.9 | 172.9 | 5.78 ms | 7,076 MB | — |
+| 0.4.111 gate | 517.4 | 576.6 | 165.9 | 6.03 ms | 7,685 MB | 57.3 s |
+| Pre-gate scheduler (`2fbf2d1`) | 503.2 | 579.5 | 134.4 | 7.44 ms | 8,906 MB | 170.6 s |
+
+- **The frontier answers the question Session 102 could not.** The pre-gate sweep costs 22.3% of
+  the 1% low and 28.7% of the frame-time tail against the off control, close to the 19.9% and
+  24.8% it cost on saved terrain. 0.4.111 recovers most of it: 4.0% and 4.3%. The storage queue
+  tells the same story — oldest dirty section 170.6 s ungated against 57.3 s gated.
+- **Sweep throughput while the player moved**, sections saved per minute mid-window: about 880
+  ungated, about 110 under the 0.4.111 gate at 5.33 blocks/s, and one whole minute at 7 at
+  6.67 blocks/s. Above 6.4 blocks/s every chunk crossing lands inside the previous five-second
+  window, so the hold never lapses (G234).
+- **On a virgin frontier the player gate is not what starves the sweep.** Real generation is
+  permanently in flight, so the absolute engine gate holds nearly every tick on its own: 2,478
+  engine holds against 2,481 player holds in the fast run. The speed threshold only bites on
+  saved terrain, where the engine counter is blind (G229).
+
+Saved terrain, `bench/routes/sweep-active-exploration.txt` at 13.3 blocks/s, 120 s, both runs in
+one session:
+
+| Floor verification | Average FPS | 1% low | 1% tail | RSS | Loads under hold | Sections saved |
+|---|---:|---:|---:|---:|---:|---:|
+| 0.4.111, no floor | 313.6 | 104.6 | 9.56 ms | 8,094 MB | 0 | 1,732 |
+| 0.4.112, 2/s floor | 317.3 | 103.2 | 9.69 ms | 8,478 MB | 193 | 2,015 |
+
+- A player hold now clamps the sweep to `FloorPerSecond` — one eighth of the configured rate, 2/s
+  at the default 16/s — drawn from its own allowance so a long hold cannot burst on release. Hold
+  counts were unchanged (1,618 against 1,616), so the gate still fires identically; the difference
+  is only the trickle it now permits.
+- The cost is inside run variation on both figures. The benefit is that the sweep converges while
+  someone is walking around instead of waiting for them to stand still.
+- **Not measured:** whether the floor is the right size, multi-player fairness, and the snow
+  refresh arm, which still issues priority loads with no gate of any kind.
 
 **Farseer: P1-P4 and most P5 built (0.4.77–0.4.110).** Sessions 92–100.
 - **Availability and switches.** The saved client choice defaults on. Integrated/LAN servers offer
@@ -650,13 +692,10 @@ Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
    after playing 0.4.111, and the client log for that session is clean. Fog dial tuning is now
    unblocked. The per-dial observations the gate listed were never taken, so treat the drift rate
    and the 50% Fog edge softness default as accepted-by-result, not individually judged.
-2. **Measure sustained virgin-frontier scheduling:** restore the frozen sweep profile, begin near
-   endpoint chunk X 8050 and continue through untouched terrain. Compare sweep off, the original
-   ungated scheduler and 0.4.111. Capture waypoint readiness, frame/server-tick tails, generation
-   queue, save growth, sweep holds/rate and capture/storage pressure. **Sweep completion time and
-   effective rate are acceptance numbers, not merely recorded ones** — the review found that a
-   scheduler which never runs satisfies every politeness criterion the A/B otherwise applies. The
-   route must also reach the load phase: the owner's own session did not (see Current result).
+2. ~~Measure sustained virgin-frontier scheduling.~~ **Done 2026-09-19** and it produced 0.4.112's
+   rate floor; results above. What it leaves open: 0.4.112 has no play verdict, the floor's size
+   was chosen from a single A/B, multi-player fairness is unmeasured, per-waypoint readiness was
+   not captured, and the snow-refresh arm is still ungated.
 3. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
@@ -683,7 +722,7 @@ Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
   look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G233 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+- G166-G235 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
   buried joins, bounded regeneration, stable all-level ownership, post-water volumetric fog and the
   distinction between pacing priority-load submissions and yielding their downstream engine work,
   plus the engine generation counter's saved-load blind spot and route-halo generation.

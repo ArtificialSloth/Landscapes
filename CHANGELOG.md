@@ -46,6 +46,36 @@ The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, st
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
 
+## [0.4.112] - 2026-09-19
+
+**A held savegame sweep is now slowed, not stopped.**
+
+- 0.4.111's quiet window was renewed by every chunk-boundary crossing, so a player moving faster
+  than 32 blocks per five seconds - 6.4 blocks/s - kept renewing it before it lapsed and suspended
+  the sweep for as long as they kept walking. Nothing chose that threshold; it fell out of two
+  constants picked for other reasons. Measured on the frozen world: about 880 sections/min with the
+  pre-gate scheduler, about 110/min held at 5.33 blocks/s, and one whole minute at 7/min at
+  6.67 blocks/s.
+- A player hold now clamps the rate to `FloorPerSecond`, one eighth of the configured rate and 2/s
+  at the default 16/s. The floor is drawn from its own tick allowance that only held ticks spend,
+  so a long hold cannot release a catch-up burst. The engine-generation gate stays absolute: it
+  means real generation is in flight, and there is nothing to be polite about.
+- Same-session A/B on saved terrain with the frozen seed restored per run: the 1% low moved 104.6
+  to 103.2 FPS and the 1% tail 9.56 to 9.69 ms, both inside run variation, for 193 columns loaded
+  under hold where the control loaded none. Hold counts were unchanged at 1,618 against 1,616, so
+  the gate still fires identically and only the trickle is new.
+- The sustained virgin-frontier comparison that motivated this is also complete. The pre-gate
+  scheduler costs 22.3% of the 1% low and 28.7% of the frame-time tail there, close to its cost on
+  saved terrain, and ages the storage queue from 57 to 171 seconds; 0.4.111 recovers most of it. On
+  a virgin frontier the player gate is not the binding one - real generation is permanently in
+  flight, so the absolute engine gate holds nearly every tick by itself, and the floor never fires.
+- Adds `bench/routes/sweep-virgin-frontier.txt` and `-fast.txt`, whose corridor frontier was read
+  read-only from the frozen seed rather than assumed.
+
+**Known open:** no in-game play verdict on 0.4.112; whether the floor is the right size;
+multi-player fairness; and the snow-refresh arm, which still issues priority loads with no gate of
+any kind.
+
 ## [0.4.111] - 2026-09-19
 
 **The startup savegame sweep now yields while players are streaming terrain.**
