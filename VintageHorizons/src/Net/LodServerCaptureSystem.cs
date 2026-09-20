@@ -251,7 +251,8 @@ public class LodServerCaptureSystem : ModSystem
             string savegamePath = sapi.WorldManager.CurrentWorldFilepath;
             if (!string.IsNullOrEmpty(savegamePath))
             {
-                index = new LodSavegameIndex(Mod.Logger, savegamePath);
+                index = new LodSavegameIndex(Mod.Logger, savegamePath,
+                    CaptureBlockEntityClasses());
                 index.SetWorldHeight(sapi.WorldManager.MapSizeY / GlobalConstants.ChunkSize);
                 savegameIndex = index;
             }
@@ -1103,6 +1104,45 @@ public class LodServerCaptureSystem : ModSystem
         if (seconds < 7200) return (seconds + 30) / 60 + " minutes";
         return string.Format(System.Globalization.CultureInfo.InvariantCulture,
             "{0:0.0} hours", seconds / 3600.0);
+    }
+
+    /// <summary>
+    /// Which block-entity classes the savegame fingerprint must keep watching, asked of the
+    /// game's own registry rather than named here.
+    ///
+    /// The capture reads exactly one kind of block entity: a chiselled block, whose materials
+    /// stand in for a block that has no colour of its own (<see cref="LodChiselStandIn"/>).
+    /// Every registered block names the entity class it carries, so a mod's own microblock
+    /// subclass is found the same way vanilla's two are - hard-coding "MicroBlock" would drop
+    /// it from the fingerprint silently, and its chiselled structures would then stop being
+    /// recaptured when someone rebuilt them.
+    /// </summary>
+    HashSet<string> CaptureBlockEntityClasses()
+    {
+        var classes = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            foreach (Block block in sapi.World.Blocks)
+            {
+                string? code = block?.EntityClass;
+                if (string.IsNullOrEmpty(code) || classes.Contains(code)) continue;
+                Type? type = sapi.ClassRegistry.GetBlockEntity(code);
+                if (type != null && typeof(BlockEntityMicroBlock).IsAssignableFrom(type))
+                {
+                    classes.Add(code);
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            // An empty set means "fingerprint every block entity", which is what every build
+            // before this one did. Losing the reduction is a cost; losing chisels is a defect.
+            Mod.Logger.Warning(
+                "[VintageHorizons] Could not ask which block entities are chiselled blocks "
+                + "({0}); the savegame fingerprint keeps watching all of them.", e.Message);
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+        return classes;
     }
 
     void OnChunkColumnLoaded(Vec2i chunkCoord, IWorldChunk[] chunks)

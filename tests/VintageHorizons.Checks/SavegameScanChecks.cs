@@ -25,6 +25,7 @@ public static class SavegameScanChecks
         try
         {
             FingerprintsFollowTheSavegame(c, Path.Combine(dir, "world.vcdbs"));
+            FingerprintCoversTheLandscapeOnly(c, Path.Combine(dir, "landscape.vcdbs"));
         }
         finally
         {
@@ -193,6 +194,187 @@ public static class SavegameScanChecks
             value |= ((long)dimension & 0x3E0) << 44;
         }
         return value;
+    }
+
+    /// <summary>
+    /// The fingerprint has to move for what the distant view draws and stay still for what it
+    /// cannot. Measured on the owner's world, hashing whole rows made 17.8% of flagged columns
+    /// reloads for a berry bush's growth timer, a mob walking past or another mod's water
+    /// simulation - so each of those is asserted here rather than left to inspection.
+    ///
+    /// The two failures worth fearing are opposite. Dropping too much is silent: distant
+    /// terrain would simply stop being recaptured, which is why the chiselled-block case and
+    /// the unknown-field case are here. Dropping too little just costs the work again.
+    /// </summary>
+    static void FingerprintCoversTheLandscapeOnly(Check c, string path)
+    {
+        const int Cx = 200, Cz = 300;
+        long position = Index(Cx, 0, Cz);
+        CreateWorld(path, new[] { (position, (byte)1) }, new[] { position });
+
+        var logger = new CaptureLogger();
+        using var reader = new LodSavegameReader(logger, path);
+        c.True(reader.Open(), "the landscape fixture opens");
+
+        // The class code a chiselled block carries. Resolved from the block registry in the
+        // mod; stated here because a fixture has no registry.
+        var scan = new LodSavegameScan(reader, new[] { "MicroBlock" });
+
+        byte[] Row(byte[] blocks, byte[] light, byte[] entities, byte[] bush, byte[] chisel,
+            byte[] decors, byte[] fluids, byte[]? extra = null)
+        {
+            var row = new List<byte>();
+            row.AddRange(Field(1, blocks));
+            row.AddRange(Field(2, light));
+            row.AddRange(Field(6, entities));
+            row.AddRange(Field(8, BlockEntity("WildFruitingBush", bush)));
+            row.AddRange(Field(8, BlockEntity("MicroBlock", chisel)));
+            row.AddRange(Field(9, new byte[] { 9, 9, 9 }));   // another mod's chunk data
+            row.AddRange(Field(14, decors));
+            row.AddRange(Field(16, fluids));
+            row.AddRange(Varint(15, 2));                      // compression version
+            if (extra != null) row.AddRange(extra);
+            return row.ToArray();
+        }
+
+        byte[] one = { 1 }, two = { 2 };
+        byte[] baseline = Row(blocks: new byte[] { 10, 11, 12 }, light: one, entities: one,
+            bush: one, chisel: new byte[] { 40, 41 }, decors: one, fluids: one);
+
+        ulong Fingerprint(byte[] row)
+        {
+            WriteBlob(path, position, row);
+            var prints = new Dictionary<long, LodColumnFingerprint>();
+            if (!scan.ReadFingerprints(prints)) return 0;
+            return prints.TryGetValue(LodColumnMap.Key(Cx, Cz), out LodColumnFingerprint print)
+                ? LodSavegameScan.Seal(print)
+                : 0;
+        }
+
+        ulong start = Fingerprint(baseline);
+        c.True(start != 0, "the landscape fixture fingerprints");
+        c.Eq(start, Fingerprint(baseline), "the same row fingerprints the same way twice");
+
+        // Ignored: nothing here reaches a captured section.
+        c.Eq(start, Fingerprint(Row(new byte[] { 10, 11, 12 }, two, one, one,
+            new byte[] { 40, 41 }, one, one)), "changed light leaves the fingerprint alone");
+        c.Eq(start, Fingerprint(Row(new byte[] { 10, 11, 12 }, one, two, one,
+            new byte[] { 40, 41 }, one, one)), "a creature moving leaves the fingerprint alone");
+        c.Eq(start, Fingerprint(Row(new byte[] { 10, 11, 12 }, one, one, two,
+            new byte[] { 40, 41 }, one, one)),
+            "a berry bush's own state leaves the fingerprint alone");
+        c.Eq(start, Fingerprint(Row(new byte[] { 10, 11, 12 }, one, one, one,
+            new byte[] { 40, 41 }, two, one)), "a decor change leaves the fingerprint alone");
+
+        // Watched: each of these changes what the distance draws.
+        c.True(start != Fingerprint(Row(new byte[] { 10, 11, 13 }, one, one, one,
+            new byte[] { 40, 41 }, one, one)), "a block change moves the fingerprint");
+        c.True(start != Fingerprint(Row(new byte[] { 10, 11, 12 }, one, one, one,
+            new byte[] { 40, 41 }, one, two)), "a fluid change moves the fingerprint");
+        c.True(start != Fingerprint(Row(new byte[] { 10, 11, 12 }, one, one, one,
+            new byte[] { 40, 42 }, one, one)),
+            "what a chiselled block is made of moves the fingerprint");
+        c.True(start != Fingerprint(Row(new byte[] { 10, 11, 12 }, one, one, one,
+            new byte[] { 40, 41 }, one, one, extra: Field(20, one))),
+            "a field this rule does not know about moves the fingerprint");
+
+        // The audit re-reads one column by key rather than scanning the world. If the two
+        // paths applied the rule differently, every audit would dispute every claim and the
+        // mod would recapture the world on a loop - so they are compared on a row that really
+        // parses, not only on the unreadable fixture rows above.
+        WriteBlob(path, position, baseline);
+        var scanned = new Dictionary<long, LodColumnFingerprint>();
+        c.True(scan.ReadFingerprints(scanned), "the landscape row reads through the full scan");
+        c.True(scan.FingerprintColumn(Cx, Cz, 1, out LodColumnFingerprint keyed),
+            "the landscape row reads through the keyed path");
+        c.Eq(LodSavegameScan.Seal(scanned[LodColumnMap.Key(Cx, Cz)]), LodSavegameScan.Seal(keyed),
+            "the audit's keyed read applies the same rule as the whole-world scan");
+
+        // A chiselled block that was removed must not read as an unchanged column.
+        var withoutChisel = new List<byte>();
+        withoutChisel.AddRange(Field(1, new byte[] { 10, 11, 12 }));
+        withoutChisel.AddRange(Field(8, BlockEntity("WildFruitingBush", one)));
+        withoutChisel.AddRange(Field(16, one));
+        c.True(start != Fingerprint(withoutChisel.ToArray()),
+            "losing a chiselled block moves the fingerprint");
+
+        // Without the registry the rule cannot tell a chisel from a chest, so it keeps every
+        // block entity rather than risking the one it needs.
+        var everything = new LodSavegameScan(reader, Array.Empty<string>());
+        WriteBlob(path, position, baseline);
+        var beforeBush = new Dictionary<long, LodColumnFingerprint>();
+        c.True(everything.ReadFingerprints(beforeBush), "the conservative scan reads");
+        WriteBlob(path, position, Row(new byte[] { 10, 11, 12 }, one, one, two,
+            new byte[] { 40, 41 }, one, one));
+        var afterBush = new Dictionary<long, LodColumnFingerprint>();
+        c.True(everything.ReadFingerprints(afterBush), "the conservative scan reads again");
+        c.True(LodSavegameScan.Seal(beforeBush[LodColumnMap.Key(Cx, Cz)])
+            != LodSavegameScan.Seal(afterBush[LodColumnMap.Key(Cx, Cz)]),
+            "with no known chisel class, every block entity is still watched");
+
+        // A row that is not the shape this rule expects is hashed whole, which is both the
+        // old behaviour and the safe direction.
+        WriteBlob(path, position, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
+        var garbage = new Dictionary<long, LodColumnFingerprint>();
+        c.True(scan.ReadFingerprints(garbage), "an unparseable row still fingerprints");
+        ulong first = LodSavegameScan.Seal(garbage[LodColumnMap.Key(Cx, Cz)]);
+        WriteBlob(path, position, new byte[] { 0xFF, 0xFF, 0xFF, 0xFE });
+        var garbageAgain = new Dictionary<long, LodColumnFingerprint>();
+        c.True(scan.ReadFingerprints(garbageAgain), "the edited unparseable row fingerprints");
+        c.True(first != LodSavegameScan.Seal(garbageAgain[LodColumnMap.Key(Cx, Cz)]),
+            "an unparseable row that changes is still reported as changed");
+    }
+
+    /// <summary>One length-delimited protobuf field, as the engine writes a chunk row's parts.</summary>
+    static byte[] Field(int number, byte[] payload)
+    {
+        var bytes = new List<byte>();
+        WriteVarint(bytes, (ulong)((number << 3) | 2));
+        WriteVarint(bytes, (ulong)payload.Length);
+        bytes.AddRange(payload);
+        return bytes.ToArray();
+    }
+
+    static byte[] Varint(int number, ulong value)
+    {
+        var bytes = new List<byte>();
+        WriteVarint(bytes, (ulong)(number << 3));
+        WriteVarint(bytes, value);
+        return bytes.ToArray();
+    }
+
+    static void WriteVarint(List<byte> into, ulong value)
+    {
+        while (value >= 0x80)
+        {
+            into.Add((byte)((value & 0x7F) | 0x80));
+            value >>= 7;
+        }
+        into.Add((byte)value);
+    }
+
+    /// <summary>
+    /// A stored block entity: its class code the way <c>BinaryWriter.Write(string)</c> writes
+    /// one - a 7-bit encoded length then UTF-8 - followed by its own state.
+    /// </summary>
+    static byte[] BlockEntity(string className, byte[] state)
+    {
+        var bytes = new List<byte>();
+        byte[] name = System.Text.Encoding.UTF8.GetBytes(className);
+        WriteVarint(bytes, (ulong)name.Length);
+        bytes.AddRange(name);
+        bytes.AddRange(state);
+        return bytes.ToArray();
+    }
+
+    static void WriteBlob(string path, long position, byte[] data)
+    {
+        using var conn = Open(path);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE chunk SET data = $d WHERE position = $p;";
+        cmd.Parameters.AddWithValue("$p", position);
+        cmd.Parameters.AddWithValue("$d", data);
+        cmd.ExecuteNonQuery();
     }
 
     static void CreateWorld(string path, (long Position, byte Fill)[] chunks, long[] mapChunks)

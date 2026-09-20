@@ -69,9 +69,17 @@ public sealed class LodSavegameIndex : IDisposable
     /// <summary>True when the caller must fall back to the engine probe pass.</summary>
     public bool Failed { get { lock (gate) return failed; } }
 
-    public LodSavegameIndex(ILogger logger, string savegamePath)
+    /// <summary>
+    /// Block-entity class codes whose contents a capture reads, resolved from the game's own
+    /// registry by the caller. Null or empty leaves every block entity in the fingerprint.
+    /// </summary>
+    readonly IReadOnlyCollection<string>? captureBlockEntityClasses;
+
+    public LodSavegameIndex(ILogger logger, string savegamePath,
+        IReadOnlyCollection<string>? captureBlockEntityClasses = null)
     {
         this.logger = logger;
+        this.captureBlockEntityClasses = captureBlockEntityClasses;
         reader = new LodSavegameReader(logger, savegamePath);
     }
 
@@ -152,7 +160,7 @@ public sealed class LodSavegameIndex : IDisposable
                 return;
             }
 
-            var scan = new LodSavegameScan(reader);
+            var scan = new LodSavegameScan(reader, captureBlockEntityClasses);
             var exists = new LodColumnMap();
             if (!reader.Available || !scan.ReadExistence(exists, ShouldStop))
             {

@@ -20,6 +20,16 @@ public class LodStore : SQLiteDBConnection
     /// <summary>Bump when stored data SEMANTICS change; old rows are purged.</summary>
     const string SchemaVersion = "6"; // v6: palette colors are now UNTINTED + tint-class flags (v5: 1-block leaves)
 
+    /// <summary>
+    /// Bump when the MEANING of a stored column fingerprint changes; old claims are dropped.
+    ///
+    /// Separate from <see cref="SchemaVersion"/> because it says nothing about the sections:
+    /// a fingerprint rule change makes the sweep examine columns it would have skipped, while
+    /// every captured section stays exactly as valid as it was. Bumping the schema for it
+    /// would throw away the cache for no reason.
+    /// </summary>
+    const string FingerprintRule = "2"; // v2: landscape-only rows (v1: whole stored chunk rows)
+
     public override string DBTypeCode => "vintagehorizons lod cache";
 
     SqliteCommand? upsertCmd;
@@ -80,6 +90,52 @@ public class LodStore : SQLiteDBConnection
         }
 
         PurgeOutdatedData(sqliteConn);
+        PurgeOutdatedFingerprints(sqliteConn);
+    }
+
+    /// <summary>
+    /// Drops every stored column fingerprint when the rule that produced them changed.
+    ///
+    /// A fingerprint is a claim that this cache holds what the savegame held at a particular
+    /// moment, expressed as one number. Change what that number covers and the old ones no
+    /// longer answer any question: they cannot match, so they would report every column as
+    /// changed - the safe direction, but silently and forever, since nothing rewrites a
+    /// fingerprint except a capture. Dropping them says it once and recovers in one pass.
+    /// </summary>
+    void PurgeOutdatedFingerprints(SqliteConnection sqliteConn)
+    {
+        string? existing;
+        using (var check = sqliteConn.CreateCommand())
+        {
+            check.CommandText = "SELECT Value FROM Meta WHERE Key='FingerprintRule'";
+            existing = check.ExecuteScalar() as string;
+        }
+        if (existing == FingerprintRule) return;
+
+        if (existing != null)
+        {
+            long dropped = 0;
+            using (var count = sqliteConn.CreateCommand())
+            {
+                count.CommandText = "SELECT COUNT(*) FROM ColumnFingerprint";
+                dropped = (long)(count.ExecuteScalar() ?? 0L);
+            }
+            if (dropped > 0)
+            {
+                logger.Notification(
+                    "[VintageHorizons] The savegame fingerprint now covers the landscape only, "
+                    + "so {0} older column claims no longer mean anything and were dropped. The "
+                    + "next world start examines those columns once and records them again; no "
+                    + "captured terrain is lost.", dropped);
+            }
+        }
+
+        using var cmd = sqliteConn.CreateCommand();
+        cmd.CommandText =
+            "DELETE FROM ColumnFingerprint; "
+            + "INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('FingerprintRule', '"
+            + FingerprintRule + "');";
+        cmd.ExecuteNonQuery();
     }
 
     void PurgeOutdatedData(SqliteConnection sqliteConn)
@@ -118,8 +174,13 @@ public class LodStore : SQLiteDBConnection
         // changes, and throwing it away would cost the player the exploration that filled it
         // for no reason. It carries its own format byte and a blob that does not match is
         // ignored rather than parsed.
+        //
+        // The column fingerprints go with them. Each one claims this cache holds a proven
+        // capture of a column, and the sweep skips a column whose claim matches the savegame;
+        // leaving them behind after deleting the sections they describe would make the sweep
+        // skip terrain it no longer has, permanently, with nothing to notice it.
         using var cmd = sqliteConn.CreateCommand();
-        cmd.CommandText = "DELETE FROM Section; DELETE FROM SiblingMerge; INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('FormatVersion', '" + SchemaVersion + "');";
+        cmd.CommandText = "DELETE FROM Section; DELETE FROM SiblingMerge; DELETE FROM ColumnFingerprint; INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('FormatVersion', '" + SchemaVersion + "');";
         cmd.ExecuteNonQuery();
     }
 
