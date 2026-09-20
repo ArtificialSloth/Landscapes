@@ -104,6 +104,60 @@ public static class AllowanceChecks
         CaptureLedger(c);
         SweepDecision(c);
         AuditRules(c);
+        SettledClaims(c);
+    }
+
+    /// <summary>
+    /// When a claim is allowed to exist, and what it records.
+    ///
+    /// The fingerprint read during the startup index describes the file before the column was
+    /// loaded, and loading a dormant column is itself what changes it - the engine catches up
+    /// its transient blocks, snow and block entities on the way in, and the next save writes
+    /// that. A claim made from the index-time reading therefore describes a file state this
+    /// cache never captured, and costs a reload on the next start for nothing: 399 of 10,439
+    /// columns on the owner's world on 2026-09-20. So taking a durable capture and claiming it
+    /// are two separate steps, with a re-read of the file in between.
+    /// </summary>
+    static void SettledClaims(Check c)
+    {
+        long key = LodColumnMap.Key(11, 12);
+        const ulong AtIndexTime = 100;
+        const ulong AfterTheSave = 777;
+
+        var captured = new Dictionary<long, ulong>();
+        var ledger = new LodCaptureLedger(captured);
+        ledger.SetSavegame(new Dictionary<long, ulong> { [key] = AtIndexTime });
+        ledger.Submitted(key);
+
+        ulong taken = 0;
+        int handed = ledger.TakeDurable(_ => true, 8, (_, print) => taken = print);
+        c.Eq(1, handed, "a durable capture is handed over");
+        c.Eq(AtIndexTime, taken, "with the fingerprint read when it was submitted");
+        c.False(ledger.AlreadyCaptured(key),
+            "taking a durable capture does not by itself claim the column");
+        c.Eq(0, captured.Count, "and writes nothing");
+
+        // The claim the re-read produces has to move both halves. The skip test compares what
+        // the savegame says against what this cache claims, so leaving the savegame side at
+        // the older reading would make the column look changed for the rest of the session -
+        // the same reload this exists to prevent, one session earlier.
+        ledger.Claim(key, AfterTheSave);
+        c.True(ledger.AlreadyCaptured(key), "a claim taken after the save is skippable");
+        c.Eq(AfterTheSave, captured[key], "and records what the file held after the save");
+        c.False(ledger.Disagrees(key, AfterTheSave),
+            "the audit agrees with a claim that matches the file");
+        c.True(ledger.Disagrees(key, 999),
+            "and still disputes one the file has moved away from");
+
+        // A column that never becomes durable is never handed over, so it cannot be claimed
+        // from either reading. It is examined again next start, which is the safe direction.
+        long never = LodColumnMap.Key(13, 14);
+        ledger.SetSavegame(new Dictionary<long, ulong> { [never] = 55 });
+        ledger.Submitted(never);
+        c.Eq(0, ledger.TakeDurable(_ => false, 8, (_, _) => { }),
+            "a capture that is not durable is not handed over");
+        c.False(ledger.AlreadyCaptured(never), "and the column stays unclaimed");
+        c.Eq(1, ledger.Pending, "it simply waits");
     }
 
     /// <summary>
@@ -124,7 +178,7 @@ public static class AllowanceChecks
             "a column with no claim is not a mismatch even when the savegame knows it");
 
         ledger.Submitted(held);
-        ledger.CommitDurable(_ => true, 8, (_, _) => { });
+        ledger.TakeDurable(_ => true, 8, ledger.Claim);
         c.True(ledger.AlreadyCaptured(held), "the column is now claimed");
 
         c.False(ledger.Disagrees(held, 100), "a claim matching the savegame is not a mismatch");
@@ -147,7 +201,7 @@ public static class AllowanceChecks
 
         // And the recapture re-earns the claim at the content the audit actually saw.
         ledger.Submitted(held);
-        ledger.CommitDurable(_ => true, 8, (_, _) => { });
+        ledger.TakeDurable(_ => true, 8, ledger.Claim);
         c.True(ledger.AlreadyCaptured(held), "the recaptured column is claimed again");
         c.Eq(999UL, captured[held],
             "the re-earned claim records what the audit read, not the content it replaced");
@@ -158,7 +212,7 @@ public static class AllowanceChecks
         c.Eq(1, order.Count, "the rotation covers the claims that exist");
         c.SeqEq(new[] { held }, order, "and only those");
         ledger.Submitted(uncaptured);
-        ledger.CommitDurable(_ => true, 8, (_, _) => { });
+        ledger.TakeDurable(_ => true, 8, ledger.Claim);
         c.Eq(2, ledger.CapturedKeys().Count,
             "a column proven after the rotation was built appears when it is rebuilt");
     }
@@ -248,13 +302,17 @@ public static class AllowanceChecks
         c.False(ledger.AlreadyCaptured(a),
             "a column whose capture is still in flight is not yet skippable");
 
-        int written = ledger.CommitDurable(_ => false, 32, (_, _) =>
-            c.True(false, "a capture that is not durable must never be written"));
+        int written = ledger.TakeDurable(_ => false, 32, (_, _) =>
+            c.True(false, "a capture that is not durable must never be handed over"));
         c.Eq(0, written, "nothing commits while the capture has not reached the durable row");
         c.Eq(1, ledger.Pending, "the column is still waiting, not dropped");
 
         var writes = new List<long>();
-        written = ledger.CommitDurable(key => key == a, 32, (key, _) => writes.Add(key));
+        written = ledger.TakeDurable(key => key == a, 32, (key, print) =>
+        {
+            writes.Add(key);
+            ledger.Claim(key, print);
+        });
         c.Eq(1, written, "a durable capture commits exactly once");
         c.SeqEq(new[] { a }, writes, "the durable column is the one written");
         c.Eq(0, ledger.Pending, "committing clears the column from the waiting set");
@@ -278,10 +336,10 @@ public static class AllowanceChecks
         many.SetSavegame(savegame);
         for (int i = 0; i < 10; i++) many.Submitted(LodColumnMap.Key(i, 0));
         c.Eq(10, many.Pending, "every submitted column is waiting");
-        c.Eq(4, many.CommitDurable(_ => true, 4, (_, _) => { }),
+        c.Eq(4, many.TakeDurable(_ => true, 4, many.Claim),
             "a bounded commit writes at most its limit");
         c.Eq(6, many.Pending, "the rest keep waiting rather than being dropped");
-        c.Eq(6, many.CommitDurable(_ => true, 32, (_, _) => { }),
+        c.Eq(6, many.TakeDurable(_ => true, 32, many.Claim),
             "the remainder commits on a later tick");
         c.Eq(0, many.Pending, "nothing is left behind");
     }

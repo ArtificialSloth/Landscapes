@@ -41,6 +41,9 @@ public class LodServerCaptureSystem : ModSystem
     LodPhaseCost pipelineTickCost;
     readonly HashSet<long> persistedLevelZeroChanges = new();
     long nextActiveWorkStatusLogMs;
+
+    /// <summary>What the sweep's background arms had done when the last status line printed.</summary>
+    long lastBackgroundSweepSignature;
     long lastPipelineTickMs;
     long overloadedUntilMs;
     bool columnLoadedSubscribed;
@@ -266,7 +269,8 @@ public class LodServerCaptureSystem : ModSystem
                 (cx, cz) => pipeline?.IsAuthoritativeChunkDurable(cx, cz) == true,
                 (cx, cz, print) => pipeline?.RememberColumnFingerprint(cx, cz, print),
                 (cx, cz) => pipeline?.ForgetColumnFingerprint(cx, cz),
-                Config.AuditEnabled ? Config.AuditColumnsPerSecond : 0)
+                Config.AuditEnabled ? Config.AuditColumnsPerSecond : 0,
+                (cx, cz) => pipeline?.IsColumnQueued(cx, cz) == true)
             {
                 TrackPhaseAllocations = allocationTelemetryEnabled,
             };
@@ -1194,6 +1198,10 @@ public class LodServerCaptureSystem : ModSystem
     {
         worldGen?.Checkpoint();
         if (pipeline?.Active == true) TickPipeline();
+        // Fires BEFORE the engine writes (plan section 4.1.4), which is exactly what the
+        // sweep needs to know: the columns it captured since the last save are about to be
+        // written, and their claims should be taken from the file once they have been.
+        sweep?.NoteWorldSave();
     }
 
     // ---- /vhrefresh: recapture existing terrain without generating missing columns ----
@@ -1332,7 +1340,7 @@ public class LodServerCaptureSystem : ModSystem
         worldGen?.Tick(now < overloadedUntilMs);
         RefreshWorldGenAuthority();
 
-        if (HasActiveCacheWork())
+        if (HasActiveCacheWork() || BackgroundSweepWorkAdvanced())
         {
             if (now < nextActiveWorkStatusLogMs) return;
             Mod.Logger.Notification("{0}", CacheWorkStatusLine);
@@ -1341,7 +1349,12 @@ public class LodServerCaptureSystem : ModSystem
             // needed to answer "what was the mod doing while that happened?" has to reach
             // the log by default. This is one line a minute and only while work is running;
             // the p95/p99 phase dump stays development-only.
-            if (sweep is { Done: false }) Mod.Logger.Notification("  {0}", sweep.Status);
+            //
+            // Including after the sweep finishes, while its audit or snow refresh are still
+            // moving: those two only begin at that moment, and printing nothing from there on
+            // is how both ran unobserved on the owner's world.
+            if (sweep != null) Mod.Logger.Notification("  {0}", sweep.Status);
+            lastBackgroundSweepSignature = sweep?.BackgroundWorkSignature ?? 0;
             nextActiveWorkStatusLogMs = now + ActiveWorkStatusLogIntervalMs;
         }
         else
@@ -1350,6 +1363,16 @@ public class LodServerCaptureSystem : ModSystem
             nextActiveWorkStatusLogMs = now + ActiveWorkStatusLogIntervalMs;
         }
     }
+
+    /// <summary>
+    /// True when the finished sweep's background arms have moved since the last status line.
+    ///
+    /// Deliberately a change test rather than "the audit is enabled": a world sitting idle
+    /// with nothing to re-read should stay quiet, while a world where the audit is re-reading
+    /// or the snow refresh is recapturing says so once a minute.
+    /// </summary>
+    bool BackgroundSweepWorkAdvanced() =>
+        sweep is { Done: true } && sweep.BackgroundWorkSignature != lastBackgroundSweepSignature;
 
     bool HasActiveCacheWork() =>
         sweep is { Done: false }

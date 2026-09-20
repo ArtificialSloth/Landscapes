@@ -225,14 +225,73 @@ public class LodSavegameSweep
     /// <summary>Columns per second the background audit re-reads. 0 disables it entirely.</summary>
     readonly int auditPerSecond;
 
+    /// <summary>True while a column still has a capture queued, so nothing may be claimed for it.</summary>
+    readonly System.Func<int, int, bool>? columnQueued;
+
+    /// <summary>
+    /// Columns whose capture is durable but whose claim is waiting for the world to save.
+    ///
+    /// A fingerprint read during the startup index describes the file as it was before the
+    /// column was loaded - and loading a dormant column is itself what changes it, because
+    /// the engine catches up its transient blocks, its snow and its block entities on the
+    /// way in. Claiming that pre-load fingerprint records a file state this cache never
+    /// captured, so the next start finds a mismatch and loads the column again although
+    /// nothing it can draw has changed. Measured on the owner's world on 2026-09-20: 399 of
+    /// 10,439 columns, 3.8%, and 7.0% on 0.4.116 before the landscape-only rule.
+    ///
+    /// So the claim waits for the save that writes those engine changes, and is then taken
+    /// from a fresh read of the file. Each entry keeps the index-time fingerprint as the
+    /// fallback for a session that ends before the next save.
+    /// </summary>
+    readonly Dictionary<long, ulong> settling = new();
+
+    /// <summary>Settling columns the read path is currently re-reading.</summary>
+    readonly HashSet<long> rereading = new();
+    readonly List<long> rereadScratch = new();
+
+    /// <summary>
+    /// When the file is expected to hold this save's writes. <c>GameWorldSave</c> fires
+    /// *before* the engine writes (plan section 4.1.4), and there is no event for "finished",
+    /// so the re-read waits a few seconds rather than racing it. Reading early is not unsafe:
+    /// it records the pre-save bytes exactly as today's code does, and the audit still catches
+    /// the difference later.
+    /// </summary>
+    long claimRefreshDueMs = long.MaxValue;
+    const int SaveSettleMs = 5000;
+    const int MaxClaimRereadsPerPass = 64;
+
+    /// <summary>
+    /// How long a batch of re-reads may be outstanding before it is assumed lost.
+    ///
+    /// The read path can stop answering mid-session - it disables itself on any failure, and
+    /// a request beyond its backlog is dropped rather than queued. Waiting for an answer that
+    /// is never coming would stop every claim for the rest of the session without a word,
+    /// which is precisely the kind of silent stop this mod has been bitten by before (G237).
+    /// After a few lost batches the sweep says so once and goes back to claiming from the
+    /// startup reading, which is what it did before claims were settled at all.
+    /// </summary>
+    const long ClaimRereadTimeoutMs = 60_000;
+    const int MaxLostClaimRereadBatches = 3;
+    long rereadingSinceMs;
+    int lostClaimRereadBatches;
+    bool claimRefreshUnavailable;
+
+    /// <summary>Claims taken from a fresh read after a world save, rather than at index time.</summary>
+    public long ClaimsRefreshedAfterSave { get; private set; }
+
+    /// <summary>Claims that fell back to the index-time fingerprint because the session ended.</summary>
+    public long ClaimsCommittedUnsettled { get; private set; }
+
     public LodSavegameSweep(ICoreServerAPI sapi, ILogger logger, int radiusChunks, int perSecond,
         int refreshPerSecond, WeatherSystemBase? weather, Action<int, int> queueColumn,
         Func<int> captureBacklog, LodSavegameIndex? savegameIndex = null,
         Dictionary<long, ulong>? capturedFingerprints = null,
         System.Func<int, int, bool>? columnDurable = null,
         Action<int, int, ulong>? rememberFingerprint = null,
-        Action<int, int>? forgetFingerprint = null, int auditPerSecond = 0)
+        Action<int, int>? forgetFingerprint = null, int auditPerSecond = 0,
+        System.Func<int, int, bool>? columnQueued = null)
     {
+        this.columnQueued = columnQueued;
         this.forgetFingerprint = forgetFingerprint;
         this.auditPerSecond = Math.Max(0, auditPerSecond);
         this.sapi = sapi;
@@ -378,6 +437,14 @@ public class LodSavegameSweep
     {
         foreach (LodAuditedColumn audited in auditScratch)
         {
+            // The same read path serves both jobs. A column waiting for its first claim is
+            // being settled, not audited: there is no claim yet to disagree with.
+            if (rereading.Remove(audited.Key))
+            {
+                RefreshSettlingClaim(audited);
+                continue;
+            }
+
             if (!ledger.Disagrees(audited.Key, audited.Fingerprint)) continue;
 
             int cx = LodColumnMap.KeyCx(audited.Key);
@@ -402,20 +469,139 @@ public class LodSavegameSweep
     }
 
     /// <summary>
-    /// Writes the fingerprint for every submitted column whose capture has since reached the
-    /// durable row. Bounded per tick, and the wait is unbounded on purpose: a column that
-    /// never becomes durable is never recorded, so the next start examines it again.
+    /// Moves every submitted column whose capture has since reached the durable row into the
+    /// settling set, to be claimed once the world has saved. Bounded per tick, and the wait is
+    /// unbounded on purpose: a column that never becomes durable is never recorded, so the
+    /// next start examines it again.
+    ///
+    /// Without a read path there is nothing to re-read with, so the claim is written straight
+    /// away from the index-time fingerprint - exactly what every build before 0.4.119 did.
     /// </summary>
     void CommitDurableFingerprints()
     {
         if (columnDurable == null || rememberFingerprint == null || ledger.Pending == 0) return;
 
         const int MaxCommitsPerTick = 32;
-        FingerprintsRecorded += ledger.CommitDurable(
+        bool canRefresh = savegameIndex != null && UsedSavegameIndex && !savegameIndex.Failed;
+
+        ledger.TakeDurable(
             key => columnDurable(LodColumnMap.KeyCx(key), LodColumnMap.KeyCz(key)),
             MaxCommitsPerTick,
             (key, print) =>
-                rememberFingerprint(LodColumnMap.KeyCx(key), LodColumnMap.KeyCz(key), print));
+            {
+                if (canRefresh) settling[key] = print;
+                else Claim(key, print, refreshed: false);
+            });
+    }
+
+    /// <summary>
+    /// Records that this cache holds the column at that savegame content, in memory and on
+    /// disk. The one place a claim is created, so the rule that a claim needs a durable
+    /// capture is stated once.
+    /// </summary>
+    void Claim(long key, ulong print, bool refreshed)
+    {
+        ledger.Claim(key, print);
+        rememberFingerprint?.Invoke(LodColumnMap.KeyCx(key), LodColumnMap.KeyCz(key), print);
+        FingerprintsRecorded++;
+        if (refreshed) ClaimsRefreshedAfterSave++;
+        else ClaimsCommittedUnsettled++;
+    }
+
+    /// <summary>The world has saved; the settling claims may be taken from the file shortly.</summary>
+    public void NoteWorldSave() =>
+        claimRefreshDueMs = sapi.World.ElapsedMilliseconds + SaveSettleMs;
+
+    /// <summary>
+    /// Asks the read path to re-read settling columns, once the save that follows their
+    /// capture has had time to land.
+    ///
+    /// One batch at a time: the read path drops audit requests beyond its backlog, and a
+    /// dropped request would leave a column settling for ever. Keeping the batch small and
+    /// waiting for it to come back also keeps this behind the audit's own rate rather than
+    /// competing with it.
+    /// </summary>
+    void StepClaimRefresh(long now)
+    {
+        if (settling.Count == 0) return;
+
+        if (savegameIndex == null || savegameIndex.Failed || !UsedSavegameIndex
+            || claimRefreshUnavailable)
+        {
+            // The read path went away mid-session. Claim what is already durable rather than
+            // losing it: the index-time fingerprint is what this had before 0.4.119.
+            FlushSettling();
+            return;
+        }
+
+        if (rereading.Count > 0)
+        {
+            if (now - rereadingSinceMs < ClaimRereadTimeoutMs) return;
+            rereading.Clear();
+            if (++lostClaimRereadBatches < MaxLostClaimRereadBatches) return;
+
+            claimRefreshUnavailable = true;
+            logger.Notification(
+                "[VintageHorizons] The savegame read path stopped answering requests to "
+                + "re-read captured columns, so their fingerprints are recorded from the "
+                + "startup reading instead. Those columns are examined again on the next "
+                + "world start; nothing captured is lost.");
+            FlushSettling();
+            return;
+        }
+
+        if (now < claimRefreshDueMs) return;
+
+        rereadScratch.Clear();
+        foreach ((long key, ulong _) in settling)
+        {
+            if (rereadScratch.Count >= MaxClaimRereadsPerPass) break;
+            rereadScratch.Add(key);
+        }
+        foreach (long key in rereadScratch) rereading.Add(key);
+        rereadingSinceMs = now;
+        savegameIndex.RequestAudit(rereadScratch);
+    }
+
+    /// <summary>
+    /// Takes a settling column's claim from what the savegame holds now.
+    ///
+    /// Refused while anything about the column is still in flight: a queued capture means the
+    /// cache is about to change, and a column that is no longer durable has nothing to claim.
+    /// Both leave it settling, so the next save tries again and a session that ends first
+    /// simply examines it next time.
+    /// </summary>
+    void RefreshSettlingClaim(LodAuditedColumn audited)
+    {
+        if (!settling.Remove(audited.Key)) return;
+
+        int cx = LodColumnMap.KeyCx(audited.Key);
+        int cz = LodColumnMap.KeyCz(audited.Key);
+        if (columnDurable?.Invoke(cx, cz) != true || columnQueued?.Invoke(cx, cz) == true) return;
+
+        Claim(audited.Key, audited.Fingerprint, refreshed: true);
+    }
+
+    /// <summary>
+    /// Claims everything still settling from its index-time fingerprint.
+    ///
+    /// For the end of a session: the engine's final save fires the save event and then stops,
+    /// so those columns would otherwise never be claimed at all and the next start would load
+    /// every column captured since the last save. That is strictly worse than the stale claim
+    /// this feature exists to avoid, so the fallback keeps the old behaviour for the tail.
+    /// </summary>
+    void FlushSettling()
+    {
+        if (settling.Count == 0) return;
+        foreach ((long key, ulong print) in settling)
+        {
+            int cx = LodColumnMap.KeyCx(key);
+            int cz = LodColumnMap.KeyCz(key);
+            if (columnDurable?.Invoke(cx, cz) != true) continue;
+            Claim(key, print, refreshed: false);
+        }
+        settling.Clear();
+        rereading.Clear();
     }
 
     public void Start()
@@ -453,6 +639,7 @@ public class LodSavegameSweep
         ObservePlayerTerrainActivity(now);
         ObserveOtherGenerationQueue();
         CommitDurableFingerprints();
+        StepClaimRefresh(now);
         LodPhaseStart phaseStart = LodPhaseCost.Start(TrackPhaseAllocations);
         if (Done)
         {
@@ -973,11 +1160,31 @@ public class LodSavegameSweep
     /// <summary>Stop the persistent listener before its capture pipeline closes.</summary>
     public void Stop()
     {
+        // Before the listener goes: the engine's final save has already been announced, and
+        // these columns are captured and durable. Claiming them from the index-time
+        // fingerprint is what happened before claims were settled at all, and it beats
+        // dropping a whole save interval's worth of proven captures on the floor.
+        FlushSettling();
+
         active = false;
         if (!listenerRegistered) return;
         sapi.Event.UnregisterGameTickListener(listenerId);
         listenerRegistered = false;
     }
+
+    /// <summary>
+    /// Everything the sweep's background arms have done, as one number that changes whenever
+    /// one of them moves.
+    ///
+    /// The audit and the dormant-terrain snow refresh only start once the startup sweep is
+    /// finished - and the status line used to stop at exactly that point, because the server
+    /// only printed one while a job was unfinished. So on 2026-09-20 both ran for nine minutes
+    /// on the owner's world and the log recorded nothing at all about either. That is the same
+    /// shape as G237, where the snow refresh was dead for six weeks with nothing to say so:
+    /// an arm with no voice cannot be checked. The caller prints the status when this moves.
+    /// </summary>
+    public long BackgroundWorkSignature => AuditsRequested + AuditMismatches + AuditPasses
+        + Refreshed + SnowProbes + snowRefresh.Campaigns + snowRefresh.Pending;
 
     /// <summary>One line for /vhserver; null when no sweep was configured.</summary>
     public string Status => AwaitingSavegameIndex
@@ -989,8 +1196,8 @@ public class LodSavegameSweep
                 + $"snow refresh {Refreshed} recaptures, {snowRefresh.Pending} pending from "
                 + $"{snowRefresh.Campaigns} regional campaigns, {SnowProbes} dormant-region "
                 + $"probes over {snowRefresh.Count} candidates at {refreshPerSecond}/s; "
-                + AuditStatus
-            : $"savegame sweep complete ({Loaded} columns loaded, {SkippedUnchanged} already captured, {SkippedEdge} skipped on the frontier); {AuditStatus}"
+                + AuditStatus + "; " + ClaimStatus
+            : $"savegame sweep complete ({Loaded} columns loaded, {SkippedUnchanged} already captured, {SkippedEdge} skipped on the frontier); {AuditStatus}; {ClaimStatus}"
         : verifying
             ? $"savegame sweep verifying: re-probing {Loaded} loads' surroundings"
         : Probing
@@ -999,7 +1206,7 @@ public class LodSavegameSweep
                 + $"held {PlayerActivityYieldTicks} ticks for player movement "
                 + $"({PlayerHoldFloorLoads} columns still loaded at the "
                 + $"{FloorPerSecond(perSecond)}/s floor) and "
-                + $"{EnginePressureYieldTicks} for engine terrain demand";
+                + $"{EnginePressureYieldTicks} for engine terrain demand; {ClaimStatus}";
 
     /// <summary>One clause for the status line; says plainly when the audit is off.</summary>
     string AuditStatus => auditPerSecond <= 0
@@ -1014,6 +1221,16 @@ public class LodSavegameSweep
             : $"background audit {AuditsRequested} columns re-read at {auditPerSecond}/s, "
                 + $"{AuditMismatches} no longer matched and were queued for recapture, "
                 + $"{AuditPasses} full passes over {auditOrder.Count} claims";
+
+    /// <summary>
+    /// One clause for how claims are being recorded. Worth its own words because a claim that
+    /// describes the wrong moment is invisible otherwise: it costs a reload next start and
+    /// nothing says why.
+    /// </summary>
+    string ClaimStatus =>
+        $"claims {FingerprintsRecorded} recorded ({ClaimsRefreshedAfterSave} read back after a "
+        + $"world save, {ClaimsCommittedUnsettled} from the startup reading), "
+        + $"{settling.Count} waiting for the next save";
 
     public void ResetPhaseCosts()
     {
@@ -1168,11 +1385,16 @@ internal sealed class LodCaptureLedger
     public void Forget(long key) => captured.Remove(key);
 
     /// <summary>
-    /// Commits up to <paramref name="max"/> submitted columns whose capture is now durable.
-    /// A column that never becomes durable is never committed and simply waits; the next
+    /// Hands up to <paramref name="max"/> submitted columns whose capture is now durable to
+    /// <paramref name="take"/>, with the savegame fingerprint read when they were submitted.
+    /// A column that never becomes durable is never handed over and simply waits; the next
     /// world start examines it again, which is the safe direction.
+    ///
+    /// Taking is not claiming. The caller decides which fingerprint the claim should carry -
+    /// the one read at index time, or a fresher one read after the world saved - and calls
+    /// <see cref="Claim"/> when it has it.
     /// </summary>
-    public int CommitDurable(System.Func<long, bool> durable, int max, Action<long, ulong> write)
+    public int TakeDurable(System.Func<long, bool> durable, int max, Action<long, ulong> take)
     {
         if (awaiting.Count == 0) return 0;
 
@@ -1187,10 +1409,23 @@ internal sealed class LodCaptureLedger
         {
             ulong print = awaiting[key];
             awaiting.Remove(key);
-            captured[key] = print;
-            write(key, print);
+            take(key, print);
         }
         return scratch.Count;
+    }
+
+    /// <summary>
+    /// Records that this cache holds the column at exactly that savegame content, so the
+    /// sweep may skip it while the savegame still says the same thing.
+    ///
+    /// Both halves move together on purpose: the skip test compares what the savegame says
+    /// against what this cache claims, and leaving the savegame side at an older reading
+    /// would make the column look changed for the rest of the session.
+    /// </summary>
+    public void Claim(long key, ulong print)
+    {
+        savegame[key] = print;
+        captured[key] = print;
     }
 }
 

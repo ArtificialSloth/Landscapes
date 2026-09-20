@@ -112,7 +112,10 @@ public class LodStore : SQLiteDBConnection
         }
         if (existing == FingerprintRule) return;
 
-        if (existing != null)
+        // Counted before the delete and announced whenever claims really go, rather than only
+        // when a rule marker was already there. The first cache to meet a rule version has no
+        // marker and every claim it holds is about to be dropped, which is exactly the run
+        // worth announcing - and the run where 0.4.118 said nothing.
         {
             long dropped = 0;
             using (var count = sqliteConn.CreateCommand())

@@ -426,6 +426,13 @@ public class LodPipeline
         return LodWorldGenSections.HasAuthoritativeColumns(section, cx, cz);
     }
 
+    /// <summary>
+    /// Whether a capture for this column is queued and has not run yet. A claim about a
+    /// column must never be recorded while one is outstanding: the cache is about to change.
+    /// </summary>
+    internal bool IsColumnQueued(int cx, int cz) =>
+        queuedColumns.ContainsKey(((long)cz << 32) | (uint)cx);
+
     internal bool IsChunkAwaitingPersistence(int cx, int cz) =>
         World.SaveDirty.Contains(LodWorldGenSections.KeyForChunk(cx, cz));
 
