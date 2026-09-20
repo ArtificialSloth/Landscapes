@@ -28,6 +28,7 @@ public class LodServerCaptureSystem : ModSystem
     LodPipeline? pipeline;
     LodPlayerPregen? pregen;
     LodSavegameSweep? sweep;
+    LodSavegameIndex? savegameIndex;
     LodPlayerPregen? generate;
     LodPlayerPregen? refresh;
     LodWorldGenJob? worldGen;
@@ -233,10 +234,25 @@ public class LodServerCaptureSystem : ModSystem
                     "Vanilla weather system was unavailable; the startup sweep still runs, "
                     + "but automatic dormant-terrain snow refresh is disabled: {0}", e.Message);
             }
+            // Read the savegame ourselves rather than asking the engine 70,225 times through
+            // the thread that loads terrain for players. Null when the file cannot be named,
+            // and the sweep then probes exactly as it always did.
+            LodSavegameIndex? index = null;
+            string savegamePath = sapi.WorldManager.CurrentWorldFilepath;
+            if (!string.IsNullOrEmpty(savegamePath))
+            {
+                index = new LodSavegameIndex(Mod.Logger, savegamePath);
+                savegameIndex = index;
+            }
+
             sweep = new LodSavegameSweep(sapi, Mod.Logger,
                 Config.SweepRadiusChunks, Config.SweepColumnsPerSecond,
                 Config.RefreshColumnsPerSecond, weather, pipeline!.QueueColumn,
-                () => pipeline?.CaptureBacklogTotal ?? 0)
+                () => pipeline?.CaptureBacklogTotal ?? 0,
+                index,
+                pipeline!.LoadColumnFingerprints(),
+                (cx, cz) => pipeline?.IsAuthoritativeChunkDurable(cx, cz) == true,
+                (cx, cz, print) => pipeline?.RememberColumnFingerprint(cx, cz, print))
             {
                 TrackPhaseAllocations = allocationTelemetryEnabled,
             };
@@ -1451,6 +1467,8 @@ public class LodServerCaptureSystem : ModSystem
         generate?.Cancel();
         refresh?.Cancel();
         sweep?.Stop();
+        savegameIndex?.Dispose();
+        savegameIndex = null;
         worldGen?.Shutdown();
 
         if (sapi != null)

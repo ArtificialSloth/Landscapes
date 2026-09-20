@@ -183,13 +183,19 @@ public class LodStore : SQLiteDBConnection
         var found = new Dictionary<long, ulong>();
         try
         {
-            using var cmd = sqliteConn.CreateCommand();
-            cmd.CommandText = "SELECT CX, CZ, Fingerprint FROM ColumnFingerprint";
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
+            // Unlike the climate accessors above, these are reached from the server tick
+            // thread and from startup while the storage thread may be writing, so they take
+            // the same transaction lock the bulk key load does.
+            lock (transactionLock)
             {
-                found[Net.LodColumnMap.Key(reader.GetInt32(0), reader.GetInt32(1))] =
-                    unchecked((ulong)reader.GetInt64(2));
+                using var cmd = sqliteConn.CreateCommand();
+                cmd.CommandText = "SELECT CX, CZ, Fingerprint FROM ColumnFingerprint";
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    found[Net.LodColumnMap.Key(reader.GetInt32(0), reader.GetInt32(1))] =
+                        unchecked((ulong)reader.GetInt64(2));
+                }
             }
         }
         catch (Exception e)
@@ -215,16 +221,20 @@ public class LodStore : SQLiteDBConnection
     {
         try
         {
-            using var cmd = sqliteConn.CreateCommand();
-            cmd.CommandText =
-                "INSERT OR REPLACE INTO ColumnFingerprint (CX, CZ, Fingerprint, Rows, ModifiedMs) "
-                + "VALUES (@cx, @cz, @fp, @rows, @ms)";
-            cmd.Parameters.AddWithValue("@cx", cx);
-            cmd.Parameters.AddWithValue("@cz", cz);
-            cmd.Parameters.AddWithValue("@fp", unchecked((long)fingerprint));
-            cmd.Parameters.AddWithValue("@rows", rows);
-            cmd.Parameters.AddWithValue("@ms", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-            cmd.ExecuteNonQuery();
+            lock (transactionLock)
+            {
+                using var cmd = sqliteConn.CreateCommand();
+                cmd.CommandText =
+                    "INSERT OR REPLACE INTO ColumnFingerprint "
+                    + "(CX, CZ, Fingerprint, Rows, ModifiedMs) "
+                    + "VALUES (@cx, @cz, @fp, @rows, @ms)";
+                cmd.Parameters.AddWithValue("@cx", cx);
+                cmd.Parameters.AddWithValue("@cz", cz);
+                cmd.Parameters.AddWithValue("@fp", unchecked((long)fingerprint));
+                cmd.Parameters.AddWithValue("@rows", rows);
+                cmd.Parameters.AddWithValue("@ms", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                cmd.ExecuteNonQuery();
+            }
         }
         catch (Exception e)
         {
@@ -243,11 +253,14 @@ public class LodStore : SQLiteDBConnection
     {
         try
         {
-            using var cmd = sqliteConn.CreateCommand();
-            cmd.CommandText = "DELETE FROM ColumnFingerprint WHERE CX=@cx AND CZ=@cz";
-            cmd.Parameters.AddWithValue("@cx", cx);
-            cmd.Parameters.AddWithValue("@cz", cz);
-            cmd.ExecuteNonQuery();
+            lock (transactionLock)
+            {
+                using var cmd = sqliteConn.CreateCommand();
+                cmd.CommandText = "DELETE FROM ColumnFingerprint WHERE CX=@cx AND CZ=@cz";
+                cmd.Parameters.AddWithValue("@cx", cx);
+                cmd.Parameters.AddWithValue("@cz", cz);
+                cmd.ExecuteNonQuery();
+            }
         }
         catch (Exception e)
         {

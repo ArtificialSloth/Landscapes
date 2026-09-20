@@ -412,6 +412,20 @@ public class LodPipeline
         World.SaveDirty.Contains(LodWorldGenSections.KeyForChunk(cx, cz));
 
     /// <summary>
+    /// Column fingerprints this cache has proved it captured. Empty when there is no store,
+    /// which reads as "assume every column changed" - the behaviour before fingerprints.
+    /// </summary>
+    public Dictionary<long, ulong> LoadColumnFingerprints() =>
+        store?.LoadColumnFingerprints() ?? new Dictionary<long, ulong>();
+
+    /// <summary>
+    /// Record that this column's savegame content is captured. Callers must already have
+    /// proved durability with <see cref="IsAuthoritativeChunkDurable"/>; this only writes.
+    /// </summary>
+    public void RememberColumnFingerprint(int cx, int cz, ulong fingerprint) =>
+        store?.SaveColumnFingerprint(cx, cz, fingerprint, 0);
+
+    /// <summary>
     /// Capture a chunk column the caller already holds, rather than one the world can
     /// be asked for. <see cref="QueueColumn"/> cannot serve a peeked column: a peek
     /// puts nothing in the loaded chunk list, so the BlockAccessor lookup in

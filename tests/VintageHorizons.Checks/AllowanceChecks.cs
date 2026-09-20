@@ -100,5 +100,80 @@ public static class AllowanceChecks
         floor.Spend(1);
         c.Eq(1, floor.Available(600_000, floorRate),
             "ten minutes of holding cannot release a catch-up burst at the floor");
+
+        CaptureLedger(c);
+    }
+
+    /// <summary>
+    /// The skip rule and its fingerprint commit point. Both of this class's mistakes are
+    /// silent: skipping a column that changed leaves distant terrain permanently wrong, and
+    /// recording a fingerprint for a capture that failed does the same while also making the
+    /// audit blind to it.
+    /// </summary>
+    static void CaptureLedger(Check c)
+    {
+        long a = LodColumnMap.Key(10, 20);
+        long b = LodColumnMap.Key(11, 20);
+        long never = LodColumnMap.Key(99, 99);
+
+        var captured = new Dictionary<long, ulong>();
+        var ledger = new LodCaptureLedger(captured);
+
+        // Before the savegame has been read, nothing may be skipped. This is the state a
+        // world is in when the read path failed, and it must behave exactly as the sweep did
+        // before fingerprints existed.
+        c.False(ledger.AlreadyCaptured(a), "nothing is skipped before the savegame is read");
+        ledger.Submitted(a);
+        c.Eq(0, ledger.Pending,
+            "a column submitted with no savegame fingerprint is not queued for one");
+
+        ledger.SetSavegame(new Dictionary<long, ulong> { [a] = 111, [b] = 222 });
+        c.False(ledger.AlreadyCaptured(a),
+            "a column the cache has never proved it captured is never skipped");
+        c.Eq(0, ledger.AlreadyCapturedCount, "an empty cache matches nothing");
+
+        // The commit point. A submitted column earns its fingerprint only once its capture
+        // is durable, never when its savegame row was read.
+        ledger.Submitted(a);
+        c.Eq(1, ledger.Pending, "a submitted column waits for its capture");
+        c.False(ledger.AlreadyCaptured(a),
+            "a column whose capture is still in flight is not yet skippable");
+
+        int written = ledger.CommitDurable(_ => false, 32, (_, _) =>
+            c.True(false, "a capture that is not durable must never be written"));
+        c.Eq(0, written, "nothing commits while the capture has not reached the durable row");
+        c.Eq(1, ledger.Pending, "the column is still waiting, not dropped");
+
+        var writes = new List<long>();
+        written = ledger.CommitDurable(key => key == a, 32, (key, _) => writes.Add(key));
+        c.Eq(1, written, "a durable capture commits exactly once");
+        c.SeqEq(new[] { a }, writes, "the durable column is the one written");
+        c.Eq(0, ledger.Pending, "committing clears the column from the waiting set");
+        c.True(ledger.AlreadyCaptured(a), "a proven column is skippable afterwards");
+        c.Eq(111UL, captured[a], "the committed fingerprint is the savegame content it was submitted at");
+
+        // The whole point of comparing content rather than existence: the savegame changing
+        // underneath a proven column must make it loadable again.
+        ledger.SetSavegame(new Dictionary<long, ulong> { [a] = 999, [b] = 222 });
+        c.False(ledger.AlreadyCaptured(a),
+            "a column whose savegame content changed is no longer skippable");
+        c.Eq(0, ledger.AlreadyCapturedCount, "the changed column stops counting as captured");
+
+        // A column nobody has ever mentioned is not skippable in either direction.
+        c.False(ledger.AlreadyCaptured(never), "an unknown column is never skipped");
+
+        // The per-tick bound must not lose anything it did not commit.
+        var many = new LodCaptureLedger();
+        var savegame = new Dictionary<long, ulong>();
+        for (int i = 0; i < 10; i++) savegame[LodColumnMap.Key(i, 0)] = (ulong)(i + 1);
+        many.SetSavegame(savegame);
+        for (int i = 0; i < 10; i++) many.Submitted(LodColumnMap.Key(i, 0));
+        c.Eq(10, many.Pending, "every submitted column is waiting");
+        c.Eq(4, many.CommitDurable(_ => true, 4, (_, _) => { }),
+            "a bounded commit writes at most its limit");
+        c.Eq(6, many.Pending, "the rest keep waiting rather than being dropped");
+        c.Eq(6, many.CommitDurable(_ => true, 32, (_, _) => { }),
+            "the remainder commits on a later tick");
+        c.Eq(0, many.Pending, "nothing is left behind");
     }
 }

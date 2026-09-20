@@ -56,7 +56,10 @@ public class LodSavegameSweep
     const long SnowPollIntervalMs = 30_000;
 
     /// <summary>Which positions hold generated terrain, and the safety rule over them.</summary>
-    readonly LodColumnMap exists = new();
+    LodColumnMap exists = new();
+
+    /// <summary>Which columns may be skipped, and when a capture has earned its fingerprint.</summary>
+    readonly LodCaptureLedger ledger;
     readonly LodTickAllowance loadAllowance = new();
     readonly LodTickAllowance refreshAllowance = new();
     readonly LodTickAllowance floorAllowance = new();
@@ -125,6 +128,18 @@ public class LodSavegameSweep
     /// <summary>Columns the floor rate still issued while a player hold was in force.</summary>
     public long PlayerHoldFloorLoads { get; private set; }
 
+    /// <summary>Columns skipped because the cache already holds this exact savegame content.</summary>
+    public int SkippedUnchanged { get; private set; }
+
+    /// <summary>Columns whose capture reached the durable row and were fingerprinted.</summary>
+    public long FingerprintsRecorded { get; private set; }
+
+    /// <summary>True while the whole-world savegame index is still being read.</summary>
+    public bool AwaitingSavegameIndex { get; private set; }
+
+    /// <summary>True when existence came from the savegame rather than from engine probes.</summary>
+    public bool UsedSavegameIndex { get; private set; }
+
     /// <summary>Dormant map regions woken since startup to reveal new vanilla snapshots.</summary>
     public long SnowProbes { get; private set; }
 
@@ -176,9 +191,24 @@ public class LodSavegameSweep
     /// <summary>Columns queued for capture or in the capture worker; see MaxCaptureBacklogForLoads.</summary>
     readonly Func<int> captureBacklog;
 
+    /// <summary>
+    /// Whether this column's capture is now in the durable level-0 row. Null leaves the
+    /// sweep exactly as it was: nothing is skipped and no fingerprint is ever written.
+    /// </summary>
+    readonly System.Func<int, int, bool>? columnDurable;
+
+    /// <summary>Records a proven capture. Paired with <see cref="columnDurable"/>.</summary>
+    readonly Action<int, int, ulong>? rememberFingerprint;
+
+    /// <summary>The whole-world savegame index, when the read path is available.</summary>
+    readonly LodSavegameIndex? savegameIndex;
+
     public LodSavegameSweep(ICoreServerAPI sapi, ILogger logger, int radiusChunks, int perSecond,
         int refreshPerSecond, WeatherSystemBase? weather, Action<int, int> queueColumn,
-        Func<int> captureBacklog)
+        Func<int> captureBacklog, LodSavegameIndex? savegameIndex = null,
+        Dictionary<long, ulong>? capturedFingerprints = null,
+        System.Func<int, int, bool>? columnDurable = null,
+        Action<int, int, ulong>? rememberFingerprint = null)
     {
         this.sapi = sapi;
         this.logger = logger;
@@ -188,8 +218,73 @@ public class LodSavegameSweep
         this.weather = weather;
         this.queueColumn = queueColumn;
         this.captureBacklog = captureBacklog;
+        this.savegameIndex = savegameIndex;
+        this.columnDurable = columnDurable;
+        this.rememberFingerprint = rememberFingerprint;
+        ledger = new LodCaptureLedger(capturedFingerprints);
         chunksPerRegion = Math.Max(1, sapi.WorldManager.RegionSize / GlobalConstants.ChunkSize);
         snowAccumulationEnabled = sapi.World.Config.GetBool("snowAccum", true);
+    }
+
+    /// <summary>
+    /// Waits for the whole-world savegame index instead of probing the engine.
+    ///
+    /// Nothing else runs while it is pending. Probing in parallel would pay the cost this
+    /// exists to remove, and the read either succeeds in tens of seconds or fails almost
+    /// immediately - a file that cannot be opened says so at once.
+    /// </summary>
+    void StepSavegameIndex()
+    {
+        if (savegameIndex == null)
+        {
+            AwaitingSavegameIndex = false;
+            return;
+        }
+
+        if (savegameIndex.TryTake(out LodSavegameIndexResult? indexed) && indexed != null)
+        {
+            exists = indexed.Exists;
+            ledger.SetSavegame(indexed.Fingerprints);
+            AwaitingSavegameIndex = false;
+            UsedSavegameIndex = true;
+            Probing = false;
+            reported = 0;
+
+            logger.Notification(
+                "Savegame sweep: {0} columns hold generated terrain, read from the savegame "
+                + "itself rather than by probing the engine. {1} carry a fingerprint this cache "
+                + "already matches and will be skipped. Loading the rest with a complete "
+                + "neighbourhood.",
+                exists.Count, ledger.AlreadyCapturedCount);
+            return;
+        }
+
+        if (!savegameIndex.Finished) return;
+
+        // Failed. Everything below this point behaves exactly as it did before the read path
+        // existed, which is the point of it being an accelerator.
+        AwaitingSavegameIndex = false;
+        Probing = true;
+        logger.Notification(
+            "Savegame sweep: reading the savegame directly was not available, so the engine is "
+            + "probed for {0} positions as before.", ProbeTotal);
+    }
+
+    /// <summary>
+    /// Writes the fingerprint for every submitted column whose capture has since reached the
+    /// durable row. Bounded per tick, and the wait is unbounded on purpose: a column that
+    /// never becomes durable is never recorded, so the next start examines it again.
+    /// </summary>
+    void CommitDurableFingerprints()
+    {
+        if (columnDurable == null || rememberFingerprint == null || ledger.Pending == 0) return;
+
+        const int MaxCommitsPerTick = 32;
+        FingerprintsRecorded += ledger.CommitDurable(
+            key => columnDurable(LodColumnMap.KeyCx(key), LodColumnMap.KeyCz(key)),
+            MaxCommitsPerTick,
+            (key, print) =>
+                rememberFingerprint(LodColumnMap.KeyCx(key), LodColumnMap.KeyCz(key), print));
     }
 
     public void Start()
@@ -198,6 +293,12 @@ public class LodSavegameSweep
         spawnCx = (int)sapi.World.DefaultSpawnPosition.X / GlobalConstants.ChunkSize;
         spawnCz = (int)sapi.World.DefaultSpawnPosition.Z / GlobalConstants.ChunkSize;
         ObserveOtherGenerationQueue();
+
+        if (savegameIndex != null)
+        {
+            AwaitingSavegameIndex = true;
+            savegameIndex.Start();
+        }
 
         logger.Notification(
             "Sweeping the savegame for terrain that already exists, out to {0} blocks around "
@@ -220,12 +321,18 @@ public class LodSavegameSweep
         long now = sapi.World.ElapsedMilliseconds;
         ObservePlayerTerrainActivity(now);
         ObserveOtherGenerationQueue();
+        CommitDurableFingerprints();
         LodPhaseStart phaseStart = LodPhaseCost.Start(TrackPhaseAllocations);
         if (Done)
         {
             StepSnowSignals();
             StepRefresh();
             RefreshIssueCost.Add(phaseStart);
+        }
+        else if (AwaitingSavegameIndex)
+        {
+            StepSavegameIndex();
+            ProbeIssueCost.Add(phaseStart);
         }
         else if (Probing)
         {
@@ -320,7 +427,11 @@ public class LodSavegameSweep
 
         var tickBudget = new LodWorkBudget(TickWorkBudgetMs);
         int loaded = 0;
-        while (loadIndex < LoadTotal && loaded < allowance && !tickBudget.Expired)
+        // The rate allowance bounds loads, not decisions. Deciding that a column needs
+        // nothing costs a dictionary lookup, and gating that behind the load rate would
+        // leave a world where nothing changed still crawling through its spiral one
+        // allowance at a time - which is the whole cost this is meant to remove.
+        while (loadIndex < LoadTotal && !tickBudget.Expired)
         {
             (int dx, int dz) = LodColumnMap.SpiralAt(loadIndex++);
             int cx = spawnCx + dx;
@@ -344,11 +455,37 @@ public class LodSavegameSweep
                     continue;
             }
 
+            // Registered before the skip below, never after it. The snow candidate set is
+            // built from this arm, so a skip path that returned early would silently stop
+            // dormant-terrain snow maintenance from ever reaching captured ground - no
+            // error, just no snow in the distance. This is the single easiest regression to
+            // introduce here.
             snowRefresh.Add(cx, cz, chunksPerRegion);
+
+            long key = LodColumnMap.Key(cx, cz);
+            if (ledger.AlreadyCaptured(key))
+            {
+                // The savegame holds exactly what this cache already proved it captured, so
+                // there is nothing to load. This does not consume the rate allowance: a
+                // skip costs a dictionary lookup, not a chunk load.
+                SkippedUnchanged++;
+                continue;
+            }
+
+            if (loaded >= allowance)
+            {
+                // This column needs a real load and the rate has none left. Put it back so
+                // the next tick starts here rather than past it, and stop: everything after
+                // it is further out on the spiral and can wait its turn.
+                loadIndex--;
+                break;
+            }
+
             // Not KeepLoaded: each column needs to pass through capture once, not stay
             // resident. A radius worth sweeping is far more terrain than fits in memory.
             issuedSweepLoad = true;
             sapi.WorldManager.LoadChunkColumnPriority(cx, cz);
+            if (rememberFingerprint != null) ledger.Submitted(key);
             Loaded++;
             loaded++;
         }
@@ -695,18 +832,21 @@ public class LodSavegameSweep
     }
 
     /// <summary>One line for /vhserver; null when no sweep was configured.</summary>
-    public string Status => Done
+    public string Status => AwaitingSavegameIndex
+        ? "sweeping savegame: reading the savegame directly instead of probing the engine"
+        : Done
         ? AutomaticSnowRefresh
-            ? $"savegame sweep complete ({Loaded} columns loaded, {SkippedEdge} skipped on the frontier); "
+            ? $"savegame sweep complete ({Loaded} columns loaded, {SkippedUnchanged} already "
+                + $"captured, {SkippedEdge} skipped on the frontier); "
                 + $"snow refresh {Refreshed} recaptures, {snowRefresh.Pending} pending from "
                 + $"{snowRefresh.Campaigns} regional campaigns, {SnowProbes} dormant-region "
                 + $"probes over {snowRefresh.Count} candidates at {refreshPerSecond}/s"
-            : $"savegame sweep complete ({Loaded} columns loaded, {SkippedEdge} skipped on the frontier)"
+            : $"savegame sweep complete ({Loaded} columns loaded, {SkippedUnchanged} already captured, {SkippedEdge} skipped on the frontier)"
         : verifying
             ? $"savegame sweep verifying: re-probing {Loaded} loads' surroundings"
         : Probing
             ? $"sweeping savegame: examined {probeIndex}/{ProbeTotal}, {exists.Count} hold terrain"
-            : $"sweeping savegame: loaded {Loaded}, {SkippedEdge} skipped on the frontier; "
+            : $"sweeping savegame: loaded {Loaded}, {SkippedUnchanged} already captured, {SkippedEdge} skipped on the frontier; "
                 + $"held {PlayerActivityYieldTicks} ticks for player movement "
                 + $"({PlayerHoldFloorLoads} columns still loaded at the "
                 + $"{FloorPerSecond(perSecond)}/s floor) and "
@@ -718,6 +858,94 @@ public class LodSavegameSweep
         ProbePublishCost.Reset();
         LoadIssueCost.Reset();
         RefreshIssueCost.Reset();
+    }
+}
+
+/// <summary>
+/// Decides which columns the sweep may skip, and when a submitted column has earned its
+/// fingerprint. Deliberately free of game types so the rule is testable without a game
+/// process, for the same reason <see cref="LodColumnMap"/> is: both of its mistakes are
+/// silent, and both would be discovered as missing distant terrain months later.
+///
+/// The two fingerprints it compares are different facts. One is what the savegame holds
+/// now; the other is what this cache last *proved* it captured. Skipping needs both, and a
+/// column earns the second only when its capture reached the durable row - never when its
+/// savegame row was read (G232).
+/// </summary>
+internal sealed class LodCaptureLedger
+{
+    readonly Dictionary<long, ulong> captured;
+    readonly Dictionary<long, ulong> awaiting = new();
+    readonly List<long> scratch = new();
+    Dictionary<long, ulong> savegame = new();
+
+    public LodCaptureLedger(Dictionary<long, ulong>? captured = null) =>
+        this.captured = captured ?? new Dictionary<long, ulong>();
+
+    /// <summary>Adopt the whole-world savegame index once it has been read.</summary>
+    public void SetSavegame(Dictionary<long, ulong> prints) => savegame = prints;
+
+    /// <summary>Columns submitted for capture that have not yet proved durable.</summary>
+    public int Pending => awaiting.Count;
+
+    /// <summary>How many columns the savegame holds that this cache has already captured.</summary>
+    public int AlreadyCapturedCount
+    {
+        get
+        {
+            int matched = 0;
+            foreach ((long key, ulong print) in savegame)
+            {
+                if (captured.TryGetValue(key, out ulong held) && held == print) matched++;
+            }
+            return matched;
+        }
+    }
+
+    /// <summary>
+    /// True when the cache holds exactly this savegame content. Either fingerprint being
+    /// unknown means "assume changed", which is the behaviour that existed before any of
+    /// this: an unread savegame or an unproven capture may never cause a skip.
+    /// </summary>
+    public bool AlreadyCaptured(long key) =>
+        savegame.TryGetValue(key, out ulong current)
+        && captured.TryGetValue(key, out ulong held)
+        && held == current;
+
+    /// <summary>
+    /// Remember that a column was submitted for capture at its current savegame content.
+    /// Does nothing when the savegame content is unknown, so a column read through the old
+    /// probe path is never fingerprinted from thin air.
+    /// </summary>
+    public void Submitted(long key)
+    {
+        if (savegame.TryGetValue(key, out ulong print)) awaiting[key] = print;
+    }
+
+    /// <summary>
+    /// Commits up to <paramref name="max"/> submitted columns whose capture is now durable.
+    /// A column that never becomes durable is never committed and simply waits; the next
+    /// world start examines it again, which is the safe direction.
+    /// </summary>
+    public int CommitDurable(System.Func<long, bool> durable, int max, Action<long, ulong> write)
+    {
+        if (awaiting.Count == 0) return 0;
+
+        scratch.Clear();
+        foreach ((long key, ulong _) in awaiting)
+        {
+            if (scratch.Count >= max) break;
+            if (durable(key)) scratch.Add(key);
+        }
+
+        foreach (long key in scratch)
+        {
+            ulong print = awaiting[key];
+            awaiting.Remove(key);
+            captured[key] = print;
+            write(key, print);
+        }
+        return scratch.Count;
     }
 }
 
