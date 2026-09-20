@@ -80,20 +80,30 @@ public class LodServerCaptureSystem : ModSystem
     public string CacheWorkStatusLine => FormatCacheWorkStatus(
         pipeline?.DirtySections ?? 0,
         pipeline?.OldestDirtyAgeMs ?? 0,
+        pipeline?.StorageBacklog ?? 0,
         pipeline?.SavesPerSecond ?? 0,
         pipeline?.SectionsSaved ?? 0,
         pipeline?.CaptureBacklogTotal ?? 0,
         pipeline?.CaptureDropsUnloaded ?? 0,
         pipeline?.CaptureErrors ?? 0);
 
+    /// <summary>
+    /// The oldest-dirty age used to be printed beside the dirty count as though the two
+    /// described one backlog, and it read as an alarm: the owner's 2026-09-20 session
+    /// reported 307.6s beside 52 dirty and 7.38 saves/s, figures that cannot describe the
+    /// same queue. They do not. A section stays dirty while it keeps changing, so during a
+    /// sweep the coarse parents age continuously while the writes themselves keep up. The
+    /// storage queue depth is printed next to it so the two can be told apart.
+    /// </summary>
     internal static string FormatCacheWorkStatus(
-        int dirtySections, long oldestDirtyAgeMs, double savesPerSecond,
+        int dirtySections, long oldestDirtyAgeMs, long storageBacklog, double savesPerSecond,
         long sectionsSaved, int captureBacklog, long captureDropsUnloaded,
         int captureErrors) => string.Format(System.Globalization.CultureInfo.InvariantCulture,
-            "[VintageHorizons] Cache work: {0} dirty, oldest dirty {1:0.0}s, "
-            + "{2:0.00} saves/s ({3} saved); capture backlog {4}, "
-            + "unloaded-before-capture drops {5}, capture errors {6}.",
-            dirtySections, oldestDirtyAgeMs / 1000.0, savesPerSecond,
+            "[VintageHorizons] Cache work: {0} dirty (oldest has been changing {1:0.0}s, "
+            + "which is not a write backlog), storage queue {2}, "
+            + "{3:0.00} saves/s ({4} saved); capture backlog {5}, "
+            + "unloaded-before-capture drops {6}, capture errors {7}.",
+            dirtySections, oldestDirtyAgeMs / 1000.0, storageBacklog, savesPerSecond,
             sectionsSaved, captureBacklog, captureDropsUnloaded, captureErrors);
 
     /// <summary>Progress line for /vhserver, or null when no pre-generation is running.</summary>
@@ -1286,6 +1296,12 @@ public class LodServerCaptureSystem : ModSystem
         {
             if (now < nextActiveWorkStatusLogMs) return;
             Mod.Logger.Notification("{0}", CacheWorkStatusLine);
+            // The sweep's own numbers belong here rather than behind the allocation
+            // telemetry switch. The owner cannot copy text out of game chat, so anything
+            // needed to answer "what was the mod doing while that happened?" has to reach
+            // the log by default. This is one line a minute and only while work is running;
+            // the p95/p99 phase dump stays development-only.
+            if (sweep is { Done: false }) Mod.Logger.Notification("  {0}", sweep.Status);
             nextActiveWorkStatusLogMs = now + ActiveWorkStatusLogIntervalMs;
         }
         else

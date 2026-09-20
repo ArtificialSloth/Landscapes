@@ -151,14 +151,22 @@ public static class PersistenceChecks
     static void ServerStatusNamesTheBacklogs(Check c)
     {
         string line = LodServerCaptureSystem.FormatCacheWorkStatus(
-            17, 125_000, 8.5, 901, 23, 4, 2);
+            17, 125_000, 6, 8.5, 901, 23, 4, 2);
         c.True(line.Contains("17 dirty", StringComparison.Ordinal)
-            && line.Contains("oldest dirty 125.0s", StringComparison.Ordinal)
+            && line.Contains("changing 125.0s", StringComparison.Ordinal)
+            && line.Contains("storage queue 6", StringComparison.Ordinal)
             && line.Contains("8.50 saves/s", StringComparison.Ordinal)
             && line.Contains("capture backlog 23", StringComparison.Ordinal)
             && line.Contains("unloaded-before-capture drops 4", StringComparison.Ordinal)
             && line.Contains("capture errors 2", StringComparison.Ordinal),
             "the server status line exposes every persistence and capture health signal");
+
+        // The two numbers describe different things and used to sit side by side as though
+        // they described one queue. The owner's 2026-09-20 log read 307.6s beside 52 dirty
+        // and 7.38 saves/s and looked like a stalled writer; it was coarse sections being
+        // re-dirtied by mip propagation while the writes kept up.
+        c.False(line.Contains("oldest dirty", StringComparison.Ordinal),
+            "the dirty age is not labelled as though it were a write backlog");
     }
 
     static void ExactAcknowledgements(Check c)

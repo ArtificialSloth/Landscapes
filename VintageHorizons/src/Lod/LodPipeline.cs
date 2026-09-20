@@ -257,7 +257,25 @@ public class LodPipeline
     public long CaptureDropsUnloaded { get; private set; }
     public int CaptureErrors => Volatile.Read(ref Worker.CaptureErrors);
     public int DirtySections => World.SaveDirty.Count;
+    /// <summary>
+    /// How long the longest-standing dirty section has been *continuously* dirty.
+    ///
+    /// Not a write backlog, and it reads like one. A section stays in the dirty set while it
+    /// keeps changing - `CompleteSave` clears it only when the completed revision is still
+    /// the newest - and its age is measured from when it first became dirty, so a section
+    /// that is modified again while its save is in flight never resets. During a sweep the
+    /// coarse parent sections are re-dirtied continuously by mip propagation, so this climbs
+    /// for as long as the sweep runs and says nothing about storage being behind.
+    /// <see cref="StorageBacklog"/> is the number that does.
+    /// </summary>
     public long OldestDirtyAgeMs => World.SaveDirty.OldestAgeMilliseconds;
+
+    /// <summary>
+    /// Section writes actually queued or in flight on the storage thread. This is the real
+    /// save backlog, and it is already bounded: <see cref="SaveSomeDirtySections"/> stops
+    /// feeding the queue at <see cref="MaxStorageBacklog"/>, so it cannot run away.
+    /// </summary>
+    public long StorageBacklog => storageThread?.Backlog ?? 0;
     public long SectionsSaved => storageThread == null
         ? 0
         : Math.Max(0, Interlocked.Read(ref storageThread.SectionsWritten));

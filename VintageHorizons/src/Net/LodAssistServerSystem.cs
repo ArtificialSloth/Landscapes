@@ -114,7 +114,7 @@ public class LodAssistServerSystem : ModSystem
                     + $"{manifestDeltasSent} new-key and {refreshManifestsSent} refresh offers "
                     + "sent to connected players.",
                     capture?.CacheWorkStatusLine
-                        ?? LodServerCaptureSystem.FormatCacheWorkStatus(0, 0, 0, 0, 0, 0, 0),
+                        ?? LodServerCaptureSystem.FormatCacheWorkStatus(0, 0, 0, 0, 0, 0, 0, 0),
                 };
                 if (capture?.SweepStatus is string sw) lines.Add("[VintageHorizons] " + sw + ".");
                 if (capture?.PregenStatus is string pg) lines.Add("[VintageHorizons] " + pg + ".");
