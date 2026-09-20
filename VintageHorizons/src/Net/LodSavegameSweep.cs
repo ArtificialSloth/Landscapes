@@ -437,37 +437,34 @@ public class LodSavegameSweep
             int cx = spawnCx + dx;
             int cz = spawnCz + dz;
 
-            switch (exists.Classify(cx, cz))
-            {
-                case EnumColumnAction.Peek:
-                    // Not in the savegame. The sweep indexes what exists and creates
-                    // nothing, so there is no work here. Generation (/vhgen) is the
-                    // feature that acts on this arm.
-                    continue;
+            long key = LodColumnMap.Key(cx, cz);
+            EnumSweepColumnAction action = LodSweepDecision.Decide(
+                exists.Classify(cx, cz), ledger.AlreadyCaptured(key));
 
-                case EnumColumnAction.SkipFrontier:
-                    // On the frontier of explored terrain. A load here would generate
-                    // whatever is missing beside it - the one thing this must not do. Keep
-                    // it in the snow candidate set: ordinary exploration may fill that
-                    // missing neighbourhood later, and its load event then captures it.
-                    snowRefresh.Add(cx, cz, chunksPerRegion);
-                    SkippedEdge++;
-                    continue;
+            // One registration for every outcome that owns real terrain, driven by the rule
+            // rather than repeated down each branch. A branch that forgot it would silently
+            // stop distant snow maintenance reaching that ground.
+            if (LodSweepDecision.RegistersSnowCandidate(action))
+                snowRefresh.Add(cx, cz, chunksPerRegion);
+
+            // Not in the savegame: the sweep indexes what exists and creates nothing, so
+            // there is no work here. Generation (/vhgen) is the feature that acts on this.
+            if (action == EnumSweepColumnAction.Nothing) continue;
+
+            // On the frontier of explored terrain. A load here would generate whatever is
+            // missing beside it - the one thing this must not do. Ordinary exploration may
+            // fill that neighbourhood later, and its load event then captures it.
+            if (action == EnumSweepColumnAction.Frontier)
+            {
+                SkippedEdge++;
+                continue;
             }
 
-            // Registered before the skip below, never after it. The snow candidate set is
-            // built from this arm, so a skip path that returned early would silently stop
-            // dormant-terrain snow maintenance from ever reaching captured ground - no
-            // error, just no snow in the distance. This is the single easiest regression to
-            // introduce here.
-            snowRefresh.Add(cx, cz, chunksPerRegion);
-
-            long key = LodColumnMap.Key(cx, cz);
-            if (ledger.AlreadyCaptured(key))
+            // The savegame holds exactly what this cache already proved it captured, so
+            // there is nothing to load. This does not consume the rate allowance: a skip
+            // costs a dictionary lookup, not a chunk load.
+            if (action == EnumSweepColumnAction.AlreadyCaptured)
             {
-                // The savegame holds exactly what this cache already proved it captured, so
-                // there is nothing to load. This does not consume the rate allowance: a
-                // skip costs a dictionary lookup, not a chunk load.
                 SkippedUnchanged++;
                 continue;
             }
@@ -859,6 +856,58 @@ public class LodSavegameSweep
         LoadIssueCost.Reset();
         RefreshIssueCost.Reset();
     }
+}
+
+/// <summary>What the sweep's load pass does at one column.</summary>
+internal enum EnumSweepColumnAction
+{
+    /// <summary>Not in the savegame. The sweep creates nothing, so there is no work.</summary>
+    Nothing,
+
+    /// <summary>On the frontier of explored terrain; loading it would generate its neighbours.</summary>
+    Frontier,
+
+    /// <summary>Held, and the cache already proved it captured exactly this content.</summary>
+    AlreadyCaptured,
+
+    /// <summary>Held, and the cache needs it.</summary>
+    Load,
+}
+
+/// <summary>
+/// The load pass's per-column decision, separated from the sweep so the one invariant that
+/// fails silently can be tested without a game process.
+///
+/// That invariant is snow. The dormant-terrain snow candidate set is built from this arm, so
+/// any outcome that leaves a column out of it stops distant snow maintenance ever reaching
+/// that ground - no error, no log line, just no snow in the distance months later. Adding a
+/// skip outcome is exactly how that regression gets introduced, which is why the rule lives
+/// here with a check on it rather than as an ordering inside a loop.
+/// </summary>
+internal static class LodSweepDecision
+{
+    public static EnumSweepColumnAction Decide(EnumColumnAction classified, bool alreadyCaptured) =>
+        classified switch
+        {
+            EnumColumnAction.Peek => EnumSweepColumnAction.Nothing,
+            EnumColumnAction.SkipFrontier => EnumSweepColumnAction.Frontier,
+            _ => alreadyCaptured ? EnumSweepColumnAction.AlreadyCaptured : EnumSweepColumnAction.Load,
+        };
+
+    /// <summary>
+    /// Whether this outcome must register the column as a snow-refresh candidate.
+    ///
+    /// Everything the savegame actually holds must, including the frontier columns the sweep
+    /// refuses to load - ordinary exploration may fill their missing neighbours later - and
+    /// including columns skipped because they are already captured, which are precisely the
+    /// ground distant snow has to keep reaching.
+    /// </summary>
+    public static bool RegistersSnowCandidate(EnumSweepColumnAction action) =>
+        action != EnumSweepColumnAction.Nothing;
+
+    /// <summary>Whether this outcome spends a column from the rate allowance.</summary>
+    public static bool CostsAllowance(EnumSweepColumnAction action) =>
+        action == EnumSweepColumnAction.Load;
 }
 
 /// <summary>

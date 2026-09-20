@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using VintageHorizons;
+using VintageHorizons.Net;
 
 namespace VintageHorizons.Checks;
 
@@ -163,12 +164,26 @@ public static class SavegameReaderChecks
         c.True(reader.ReadChangeCounter().HasValue,
             "the real savegame has a readable, settled change counter");
 
-        int columns = 0;
-        c.True(reader.Read("SELECT position FROM mapchunk;", _ => columns++),
-            "the real savegame's whole map-chunk table reads through the paced path");
-        c.True(columns > 0, "the real savegame holds map columns");
+        var scan = new LodSavegameScan(reader);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var exists = new LodColumnMap();
+        c.True(scan.ReadExistence(exists), "the real savegame's existence map reads");
+        double existenceSeconds = clock.Elapsed.TotalSeconds;
+        c.True(exists.Count > 0, "the real savegame holds map columns");
+
+        // The number that decides whether a scan-skipping fast path is worth its risk. The
+        // plan's fast path was designed when a world start cost 5m35s of paced engine
+        // probes; this is what a start costs once that pass is gone.
+        clock.Restart();
+        var prints = new Dictionary<long, LodColumnFingerprint>(exists.Count);
+        c.True(scan.ReadFingerprints(prints), "the real savegame fingerprints every column");
+        double fingerprintSeconds = clock.Elapsed.TotalSeconds;
+        c.True(prints.Count > 0, "the real savegame produced fingerprints");
+
         Console.WriteLine($"    real savegame: {reader.JournalMode} journal, change counter "
-            + $"{reader.ReadChangeCounter()}, {columns} map columns");
+            + $"{reader.ReadChangeCounter()}, {exists.Count} map columns in "
+            + $"{existenceSeconds:0.0}s, {prints.Count} fingerprints in {fingerprintSeconds:0.0}s "
+            + $"(whole index {existenceSeconds + fingerprintSeconds:0.0}s)");
     }
 
     static void CreateSavegame(string path, int chunkRows, int mapChunkRows)

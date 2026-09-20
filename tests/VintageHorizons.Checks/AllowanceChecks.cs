@@ -102,6 +102,57 @@ public static class AllowanceChecks
             "ten minutes of holding cannot release a catch-up burst at the floor");
 
         CaptureLedger(c);
+        SweepDecision(c);
+    }
+
+    /// <summary>
+    /// The load pass's per-column outcome, and the snow invariant the plan calls the single
+    /// easiest regression to introduce: every column the savegame actually holds must stay a
+    /// snow-refresh candidate, including the ones the sweep decides not to load.
+    /// </summary>
+    static void SweepDecision(Check c)
+    {
+        c.Eq(EnumSweepColumnAction.Nothing,
+            LodSweepDecision.Decide(EnumColumnAction.Peek, alreadyCaptured: false),
+            "a column the savegame does not hold is no work for the sweep");
+        c.Eq(EnumSweepColumnAction.Frontier,
+            LodSweepDecision.Decide(EnumColumnAction.SkipFrontier, alreadyCaptured: false),
+            "a frontier column is refused so the engine is not made to generate its neighbours");
+        c.Eq(EnumSweepColumnAction.Frontier,
+            LodSweepDecision.Decide(EnumColumnAction.SkipFrontier, alreadyCaptured: true),
+            "the frontier rule outranks the fingerprint; a held column is still not loadable");
+        c.Eq(EnumSweepColumnAction.Load,
+            LodSweepDecision.Decide(EnumColumnAction.Load, alreadyCaptured: false),
+            "a safe column the cache lacks is loaded");
+        c.Eq(EnumSweepColumnAction.AlreadyCaptured,
+            LodSweepDecision.Decide(EnumColumnAction.Load, alreadyCaptured: true),
+            "a safe column the cache already proved it captured is skipped");
+
+        // The invariant, stated over every outcome rather than over the ones that exist
+        // today, so a future outcome has to decide this question deliberately.
+        foreach (EnumSweepColumnAction action in Enum.GetValues<EnumSweepColumnAction>())
+        {
+            c.Eq(action != EnumSweepColumnAction.Nothing,
+                LodSweepDecision.RegistersSnowCandidate(action),
+                $"{action} registers a snow candidate exactly when the savegame holds the column");
+        }
+
+        c.True(LodSweepDecision.RegistersSnowCandidate(EnumSweepColumnAction.AlreadyCaptured),
+            "a column skipped as already captured is still snow-maintained - this is the "
+            + "regression that shows up months later as no snow in the distance");
+        c.True(LodSweepDecision.RegistersSnowCandidate(EnumSweepColumnAction.Frontier),
+            "a frontier column stays a snow candidate for when exploration fills its edge");
+
+        // Only a real load may spend the rate. Charging a skip would leave a world where
+        // nothing changed crawling through its spiral one allowance at a time.
+        c.True(LodSweepDecision.CostsAllowance(EnumSweepColumnAction.Load),
+            "a real load spends the rate allowance");
+        c.False(LodSweepDecision.CostsAllowance(EnumSweepColumnAction.AlreadyCaptured),
+            "deciding a column needs nothing does not spend the rate allowance");
+        c.False(LodSweepDecision.CostsAllowance(EnumSweepColumnAction.Frontier),
+            "refusing a frontier column does not spend the rate allowance");
+        c.False(LodSweepDecision.CostsAllowance(EnumSweepColumnAction.Nothing),
+            "an absent column does not spend the rate allowance");
     }
 
     /// <summary>
