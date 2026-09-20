@@ -1,0 +1,35 @@
+# Integrated-singleplayer sustained virgin-frontier route.
+#
+# Session 102's route was mixed: its centerline through chunk X 8050 already existed and
+# only the view-distance halo crossed the frontier, adding 178 columns (G230). This route
+# starts at that endpoint and keeps going east into terrain the frozen seed has never held.
+#
+# The seed's eastern frontier along this corridor is chunk X 8053, read read-only from
+# .testdata/profiles/sweep-ab/seed/bodanboys.vcdbs: at chunk Z 8000 the highest generated
+# chunk X is 8053, and the frontier is ragged between 8046 and 8061 across Z 7980-8020.
+# Leg A therefore spends its first three chunks on saved terrain and the rest on virgin
+# ground; leg B is entirely virgin.
+#
+# The two legs straddle 0.4.111's gate threshold, which is a speed and not a distance.
+# LodPlayerTerrainActivity stamps activity on every chunk-boundary crossing and holds new
+# sweep loads for QuietMilliseconds = 5,000. A player crossing a 32-block chunk more often
+# than every five seconds therefore holds the sweep permanently: the threshold is
+# 32 / 5 = 6.4 blocks per second.
+#
+# Both speeds assume -Measure 180. The route file sets distance, the runner sets duration, so
+# a different -Measure silently moves both legs across the threshold. Run it with 180.
+#
+#   Leg A, 6.67 blocks/s - above the threshold. Expect the sweep held continuously and
+#                          effectively zero sweep progress while the player moves.
+#   Leg B, 5.33 blocks/s - below it. A chunk every 6.0 s leaves about 1.0 s of progress in
+#                          each, roughly a 17% duty cycle. This is the partial regime the
+#                          A/B actually has to judge, and no run has visited it yet.
+#
+# Record sweep completion time and effective rate as acceptance numbers, not only tails:
+# a scheduler that never runs passes every politeness criterion (plan §12 finding 5).
+# Confirm from server-main.log that the sweep reached its load phase before treating any
+# condition as a comparison of schedulers (G233); the default-radius probe pass needs
+# about 220 s, so settle past it.
+
+sweep-frontier-crossing   257600  280  256000  0  -12  ->  258800  280  256000  1080  -12
+sweep-frontier-strolling  258800  280  256000  0  -12  ->  259760  280  256000   900  -12

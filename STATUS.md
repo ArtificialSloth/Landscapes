@@ -4,7 +4,7 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-19`
-**Mod version:** `0.4.111` — current private test build, measured, verified, copy-installed and checkpointed; its player-aware savegame-sweep scheduler has not received the owner's play verdict, and 0.4.110's rounded fog ends, wobbled rim and corrected drift rate remain visually unrun
+**Mod version:** `0.4.111` — current private test build, measured, verified, copy-installed, checkpointed and played by the owner on 2026-09-19. **The fog work is accepted.** The savegame sweep's player-aware scheduler is still unjudged in play: that session never reached the load phase, so the gate never ran
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
 **Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.106 `0257a0f`, 0.4.107 `3ba4a1e`, 0.4.108 `6708b19`, 0.4.109 `3b0bed0`, 0.4.110 `2fbf2d1`, 0.4.111 `b2fe181`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
@@ -34,8 +34,23 @@ Session 102.
   178 map columns at X 8053–8062 / Z 7990–8012 through the view-distance halo. The test covers
   saved-terrain streaming and a short real-generation tail, not sustained virgin-frontier travel.
 - The terrain-change plan remains unimplemented. Its clean marker and fingerprints decide whether
-  work is needed; 0.4.111 decides when necessary loads may run. Codex recommendations are separately
-  labelled in that plan and await independent review.
+  work is needed; 0.4.111 decides when necessary loads may run. The Codex recommendations appended
+  to that plan were independently reviewed on 2026-09-19; see its §12, and §§4.1.4, 4.1.5, 4.1.6,
+  4.3 and 7 for the corrections that review made.
+
+**The owner's 0.4.111 play session never reached the sweep's load phase.** Production-observed
+2026-09-19, read offline from `server-main.log`.
+
+- The session ran 16:13:21 to 16:18:36, about five minutes. The sweep announced 70,225 positions to
+  examine at 16:13:21 and had examined 90% of them at 16:18:04. The owner quit 32 seconds later.
+- The load phase therefore never started, and 0.4.111's player-aware gate guards only `StepLoad`.
+  It cannot have held anything, and no player-hold telemetry was emitted.
+- This explains the owner's report that the sweep was hard to tell apart in play: on his world a
+  short session is spent entirely in the probe pass, which the gate does not touch.
+- It is also a product fact in its own right. For sessions of this length the sweep on this world
+  is all cost and no captured terrain, every start, and the probe pass is the cost. Phase A of the
+  terrain-change plan removes that pass outright — which is a stronger argument for it than the
+  repeated-load waste the plan leads with.
 
 | Sweep condition | Average FPS | Median FPS | 1% low | 1% frame-time tail | RSS |
 |---|---:|---:|---:|---:|---:|
@@ -117,7 +132,9 @@ Session 102.
 | 0.4.106 typed-uniform fix | Corrected integer upload to a declared float uniform. The owner reported that the fog looked “very good” | Human-tested; source/static regression-tested |
 | 0.4.107 post-water fog and radial corners | Fog composites after OIT and water stays visible; the owner called the result excellent. Screenshots still showed a rounded/missing diagonal quadrant at turns | Human-tested; corner limitation human-observed |
 | 0.4.109 swept ends | The owner called the fog's ends excellent, then reported sharp corners everywhere. The square swept end protrudes at every turn of a staircase frontier | Human-tested; the sawtooth is human-observed and reproduced offline |
-| 0.4.110 rounded ends and rim wobble | Plan-view rasterization of the real mesh over a staircase seam: the regular sawtooth is gone and the outline is irregular and continuous. Peak plan density falls 2.71 to 1.50 as the spikes go, so the core still saturates and only the rim thins | Measured offline from the real mesh; not human-tested |
+| 0.4.110 rounded ends and rim wobble | Plan-view rasterization of the real mesh over a staircase seam: the regular sawtooth is gone and the outline is irregular and continuous. Peak plan density falls 2.71 to 1.50 as the spikes go, so the core still saturates and only the rim thins | Measured offline from the real mesh |
+| **Owner acceptance of the fog, 2026-09-19** | Played 0.4.111 and accepted the fog work. The itemised sub-observations the gate asked for — Fog drift speed at 0% and 300%, and the aerial staircase/ninety-degree views — were not separately reported, so the acceptance is a whole-result verdict rather than per-dial evidence | Human-tested |
+| Client log for that session | `lodsilhouette` and `lodsilhouettefogvolume` both compiled at 16:13:27; zero `InvalidOperation`, zero GL errors, Farseer never disabled, clean exit at 16:18:36. The client store held 1,097 tiles from earlier sessions and the client asked for a 4,096-block reach | Production-observed (read offline) |
 | 0.4.110 drift rate | The previous 0.006 noise-units/second offset is 0.6 blocks/s at a 100-block billow size, and was time multiplied by the live dial, so only a dial change moved it. Drift is now integrated and applied as 6 blocks/s at speed one | Source-traced and static-checked; not human-tested |
 | Final checks | 25,190 assertions pass; Release mod build has zero warnings/errors | Harness-/build-tested at 0.4.111 |
 | 0.4.111 artifact | 43 root-relative entries, one DLL, fog shaders present, no PDB/wrapper, matching installed copy; SHA-256 `06BE22051686FF8F865B53557920D2037AB46141CA4B8D8541F36FAD2961D1AA` | Artifact-verified |
@@ -629,20 +646,17 @@ Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
 [Session 102](dev/sessions/SESSION_102.md), the top of [TODO](dev/TODO.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. **Run 0.4.110's shape and drift gate:** one aerial view of a staircase stretch of the frontier and
-   one isolated ninety-degree turn. The regular sawtooth must be gone, the outline must wander rather
-   than follow the chunk grid, and a turn must still sweep continuously. Judge the thinner rim
-   against Fog spread and the 50% Fog edge softness default. Separately set Fog drift speed to 0%
-   then 300%, waiting several seconds at each, and report whether the billows visibly move. Include
-   water, then confirm the current client log has no seam-fog compile/draw failure and Farseer
-   remained enabled.
+1. ~~Run 0.4.110's shape and drift gate.~~ **Closed 2026-09-19:** the owner accepted the fog work
+   after playing 0.4.111, and the client log for that session is clean. Fog dial tuning is now
+   unblocked. The per-dial observations the gate listed were never taken, so treat the drift rate
+   and the 50% Fog edge softness default as accepted-by-result, not individually judged.
 2. **Measure sustained virgin-frontier scheduling:** restore the frozen sweep profile, begin near
    endpoint chunk X 8050 and continue through untouched terrain. Compare sweep off, the original
    ungated scheduler and 0.4.111. Capture waypoint readiness, frame/server-tick tails, generation
-   queue, save growth, sweep holds/rate and capture/storage pressure. Then independently review the
-   Codex recommendation appended to
-   [the terrain-change plan](dev/plans/PLAN_TERRAIN_CHANGE_DETECTION.md); its original phases remain
-   owner-directed and unimplemented.
+   queue, save growth, sweep holds/rate and capture/storage pressure. **Sweep completion time and
+   effective rate are acceptance numbers, not merely recorded ones** — the review found that a
+   scheduler which never runs satisfies every politeness criterion the A/B otherwise applies. The
+   route must also reach the load phase: the owner's own session did not (see Current result).
 3. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
@@ -669,7 +683,7 @@ Begin with [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md),
   look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G230 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+- G166-G233 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
   buried joins, bounded regeneration, stable all-level ownership, post-water volumetric fog and the
   distinction between pacing priority-load submissions and yielding their downstream engine work,
   plus the engine generation counter's saved-load blind spot and route-halo generation.

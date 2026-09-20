@@ -4371,3 +4371,58 @@ world-generation benchmark, start at a known frontier and route far enough into 
 that the measured window is dominated by generation rather than saved-column streaming.
 
 **Found:** 2026-09-19, Session 102 (read-only before/after save-database comparison).
+
+### G231 - `GameWorldSave` fires before the engine writes, not after
+
+**Trigger:** planning to re-read or re-fingerprint what the engine has "just written" from inside a
+`GameWorldSave` handler.
+
+**Trap:** `VintagestoryAPI.xml` documents `IServerEventAPI.GameWorldSave` as "Triggered **before**
+the game world data is being saved to disk", and `LodServerCaptureSystem.OnGameWorldSave` already
+depends on that ordering to flush the mod's own data *into* the same save. Anything read from the
+database in that handler is pre-save. There is no post-save event in the API;
+`EnumServerRunPhase.Exit` ("shutdown complete") is the only candidate for a final pass and its
+ordering against the database close is unverified.
+
+**Safer action:** use the event to learn *which* columns are about to be written, then do the read
+afterwards on a thread that can tolerate `SQLITE_BUSY`. A record derived from pre-save bytes is
+merely useless where it causes an extra reload, but it is unsafe wherever something later skips the
+comparison on the strength of it.
+
+**Found:** 2026-09-19, review of `PLAN_TERRAIN_CHANGE_DETECTION.md` §11 (API documentation read
+offline; the plan's §4.1.4 asserted the opposite and was corrected).
+
+### G232 - A savegame fingerprint records that you looked, not that you captured
+
+**Trigger:** storing a per-column content fingerprint when the column's savegame row is read, then
+skipping columns whose fingerprint still matches.
+
+**Trap:** the two facts are different. If a fingerprint is committed at read time and the column's
+capture then fails - three columns unloaded before the capture queue reached them in the owner's
+2026-09-17 log - the cache never holds that column, yet its fingerprint matches an unchanged file
+forever. Neither the next sweep nor a background audit has a mismatch to act on, because an audit
+compares the file against the stored fingerprint and the file did not change. The hole is silent
+and permanent.
+
+**Safer action:** commit the fingerprint only in the completion path that marks the column durable.
+Only "we hold a correct capture of this" may cause a skip; "we have looked at this" may not.
+
+**Found:** 2026-09-19, review of `PLAN_TERRAIN_CHANGE_DETECTION.md` §11 (the plan did not state
+when a fingerprint became stored, and both readings were available).
+
+### G233 - A short session never leaves the sweep's probe pass
+
+**Trigger:** reading a player's "I could not tell a difference" as evidence about the savegame
+sweep's load scheduling.
+
+**Trap:** the startup sweep probes before it loads, and on a large world the probe pass alone
+outlasts an ordinary session. The owner's 2026-09-19 session ran 16:13:21 to 16:18:36 and had
+examined 90% of 70,225 positions when he quit. The load phase never started, so 0.4.111's
+player-aware gate - which guards `StepLoad` only - could not have held anything. The play verdict
+was about a build whose changed code never executed.
+
+**Safer action:** before attributing a play observation to load scheduling, confirm from
+`server-main.log` that the sweep reached the load phase. For the same reason, a benchmark route
+must be long enough to leave the probe pass, or it compares probe pacing under three names.
+
+**Found:** 2026-09-19, production observation read offline from the owner's `server-main.log`.

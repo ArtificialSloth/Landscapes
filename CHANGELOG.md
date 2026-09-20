@@ -8,6 +8,16 @@ first.
 
 ## [Unreleased]
 
+**The fog work is accepted, and the terrain-change plan was independently reviewed.** The owner
+played 0.4.111 on 2026-09-19 and accepted the seam fog; the client log for that session shows both
+silhouette shaders compiled, no `InvalidOperation`, no GL errors and a clean exit. He could not
+tell the savegame sweep apart in play, which the server log explains: those five minutes were spent
+entirely in the sweep's probe pass, so 0.4.111's player-aware load gate never ran. The Codex
+recommendations appended to the terrain-change plan were reviewed; three corrections were applied
+to the plan proper (re-fingerprint after the engine writes rather than inside `GameWorldSave`,
+which fires before it; commit a fingerprint only on durable capture success; use SQLite's header
+change counter instead of file size and mtime). No source changed.
+
 **Multi-thread generation was measured and rejected.** The benchmark did enable Vintage Story's
 real engine setting: each sandbox's `servermagicnumbers.json` held the requested
 `MaxWorldgenThreads`, no run used `--reducedthreads`, six-thread runs exposed named

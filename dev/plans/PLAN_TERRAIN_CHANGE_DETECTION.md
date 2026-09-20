@@ -4,7 +4,7 @@
 `2fbf2d1` (`0.4.110`); its required scheduling A/B was completed on 2026-09-19 in 0.4.111.
 
 **Required reading first:** [the savegame-sweep scheduling
-analysis](ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md), then `dev/GOTCHAS.md` G190, G192, G199, G227-G230.
+analysis](ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md), then `dev/GOTCHAS.md` G190, G192, G199, G227-G233.
 This plan answers the analysis's §13 candidate "skip columns whose current terrain revision is
 already durable" and its §16 open question "can the mod prove a durable LOD row is current without
 introducing a terrain revision journal?" The answer is yes, and this is how.
@@ -194,18 +194,57 @@ Fingerprints describe *saved* bytes, so they can never be fresher than the last 
 the mod captures from chunks in memory and already learns of every change through `ChunkDirty`,
 `DidBreakBlock` and `DidPlaceBlock`; it does not need fingerprints to know what changed.
 
-It does need them to stay in step with the file. Hook `GameWorldSave`: the engine has just written
-only the dirty chunks, so read those few columns back and re-fingerprint them. Saves are small, so
-this is cheap, and it is what makes both §4.1.5 and §4.3 trustworthy.
+It does need them to stay in step with the file. Hook `GameWorldSave` to learn *which* columns are
+about to be written, then re-fingerprint those few on the private reader thread **after** the engine
+has written them. Saves are small, so this is cheap, and it is what makes both §4.1.5 and §4.3
+trustworthy.
+
+> **Corrected 2026-09-19 (review of §11).** This section originally said "the engine has just
+> written only the dirty chunks, so read those few columns back". That is backwards.
+> `VintagestoryAPI.xml` documents `IServerEventAPI.GameWorldSave` as "Triggered **before** the game
+> world data is being saved to disk", and the mod's own `LodServerCaptureSystem.OnGameWorldSave`
+> already relies on that ordering to flush its data *into* the same save. Fingerprinting inside the
+> event therefore records pre-save bytes.
+>
+> On its own that is merely useless rather than unsafe: a stale fingerprint mismatches the file at
+> the next scan and causes a reload, which is the safe direction. It becomes unsafe only in
+> combination with §4.1.5, which skips the comparison entirely — one save's worth of changes would
+> then never be discovered at startup. Hence the deferred re-fingerprint above.
+>
+> There is no post-save event in the API. `EnumServerRunPhase.Exit` ("shutdown complete") is the
+> only candidate for a final pass and its ordering against the database close is **unverified**;
+> do not build on it without checking. The reader thread already tolerates `SQLITE_BUSY` (§4.1.1),
+> so deferring the read is cheaper than finding a new hook.
 
 #### 4.1.5 Skipping the scan entirely
 
-The common case must cost nothing. At clean shutdown, record the savegame file's size and
-modification time alongside a marker that this session watched the world continuously to that point.
-At the next start, if the file is unchanged, nothing was written since — skip the scan outright.
+The common case must cost nothing. At clean shutdown, record proof of the savegame's current
+contents alongside a marker that this session watched the world continuously to that point. At the
+next start, if that proof still matches, nothing was written since — skip the scan outright.
 
-A full scan is then needed only when: the world is adopted for the first time; the file changed
+**The proof is SQLite's own file change counter**, a four-byte big-endian value at offset 24 of the
+database header that increments on every transaction commit and persists in the file. Read it
+directly; no connection is needed. Offset 92 holds the version-valid-for number, which equals the
+change counter when the counter is current. Measured on the owner's world 2026-09-19:
+`bodanboys.vcdbs` reports change counter 651, version-valid-for 651, and read/write format 1/1 —
+a rollback journal, consistent with the `journal_mode = delete` recorded in §4.1.1.
+
+**Under WAL the counter is not enough.** WAL defers the main-file header update until a checkpoint,
+so a WAL world must also consider the `-wal` side file. §4.1.1 already requires journal-mode
+detection, so this is a branch on a decision the design makes anyway. (Orphaned `-wal`/`-shm` files
+from an earlier world exist in the owner's `Saves` folder, so this branch is not hypothetical.)
+
+File size and modification time were the original proposal here and are strictly weaker: size is
+unchanged by most edits, and a modification time is a filesystem artefact rather than a statement
+about the database's contents.
+
+A full scan is then needed only when: the world is adopted for the first time; the proof changed
 while the mod was absent or disabled; or the previous session did not shut down cleanly.
+
+**This fast path is only ever as good as the live change hooks.** Skipping the scan means trusting
+that everything which changed during the previous session was captured while it was happening
+(§4.1.4's first paragraph), not that the fingerprints proved it. §4.3's audit is what covers the
+cases the hooks miss, which is why it is part of the design rather than a refinement of it.
 
 #### 4.1.6 What the sweep does instead
 
@@ -216,11 +255,20 @@ missing neighbours. The change is what feeds them:
 1. Existence and fingerprints come from the private read path, not from 70,225 paced engine probes.
 2. A candidate column is loaded when it is safe **and** its fingerprint differs from the stored one
    or is unknown. Otherwise it is skipped.
-3. **Skipped columns are still registered as snow-refresh candidates.** `StepLoad` currently calls
+3. **A fingerprint is committed only when that column's capture has durably succeeded**, in the
+   same completion path that marks the column durable — never at the moment the savegame row was
+   read. The distinction is the difference between "we have looked at this column" and "we hold a
+   correct capture of it", and only the second may cause a skip. Committing at read time creates a
+   silent permanent hole: a column whose capture then fails — §4.3 cites three that unloaded before
+   the capture queue reached them — carries a fingerprint that still matches an unchanged file
+   forever, so neither the next sweep nor the §4.3 audit ever has a mismatch to act on. Added
+   2026-09-19 by the review in §12; the original text did not say when a fingerprint became stored,
+   and both readings were available.
+4. **Skipped columns are still registered as snow-refresh candidates.** `StepLoad` currently calls
    `snowRefresh.Add` on both the frontier and load arms. If the skip path omits it, dormant-terrain
    snow maintenance silently stops reaching everything already captured — no error, just no snow in
    the distance. This is the single easiest regression to introduce here.
-4. The absence verifier still runs. Reading the savegame directly cannot generate terrain, so the
+5. The absence verifier still runs. Reading the savegame directly cannot generate terrain, so the
    promise it measures becomes easier to keep, not harder.
 
 ### 4.2 Phase B - section versions
@@ -288,6 +336,11 @@ fingerprinting is a prerequisite rather than an optimisation. Without it there i
 against, and verification would mean rebuilding each section to compare — which costs the same as
 recapturing it, and buys nothing.
 
+**What this audit cannot see**, and why §4.1.6 item 3 exists: the audit detects *savegame* changes
+the mod missed. It compares the file against the stored fingerprint, so a column whose fingerprint
+was stored even though its capture failed presents no mismatch and is never queued. The audit
+covers a stale cache row; only committing the fingerprint on capture success covers a missing one.
+
 ## 5. What this does not improve
 
 Stated so the plan is not oversold:
@@ -341,9 +394,14 @@ invisible until someone notices distant terrain is wrong.
 | 11 | Old client against new server, and new client against old server | Both behave as their own version does today |
 | 12 | Autosave during a scan | No stall attributable to the mod; saves complete normally |
 | 13 | Savegame file unreadable or locked at startup | Named log line; sweep runs as today; no crash |
+| 14 | Fail a column's capture (unload before capture, or an injected capture error), then restart with the file unchanged | The column is loaded again. A fingerprint must not have been committed for a capture that did not succeed (§4.1.6 item 3) |
+| 15 | Clean shutdown immediately after a save that changed terrain, then restart | The fast path may skip the scan only if the changed columns were already captured live; the stored fingerprints must match the file, not the pre-save bytes (§4.1.4) |
+| 16 | Restart after a change made while the mod was absent, on a WAL world | The change is detected. The main-file change counter alone is insufficient under WAL (§4.1.5) |
 
-Tests 1, 6, 7, 9 and 10 are the ones that fail quietly if the design is wrong. None of this is
+Tests 1, 6, 7, 9, 10 and 14 are the ones that fail quietly if the design is wrong. None of this is
 established until the owner has run it; source and harness evidence do not substitute.
+
+Tests 14-16 were added 2026-09-19 by the review in §12.
 
 ## 8. Risks
 
@@ -388,9 +446,10 @@ established until the owner has run it; source and harness evidence do not subst
 
 ## 11. Codex recommendations after 0.4.111 — awaiting independent review
 
-> **Review status:** This section is a Codex recommendation added after the original plan. It is not
-> an owner decision and does not replace or silently amend §§0–10. Another AI and the owner should
-> evaluate it before these suggestions are accepted into the implementation plan.
+> **Review status: reviewed 2026-09-19; see [§12](#12-independent-review-of-11-2026-09-19).** This
+> section is a Codex recommendation added after the original plan. It is not an owner decision and
+> does not replace or silently amend §§0–10. Its text is retained verbatim below; §12 records what
+> holds, what does not, and the edits the review already made to §§4 and 7.
 
 ### 11.1 Keep “is work needed?” separate from “when may work run?”
 
@@ -463,3 +522,77 @@ show that downstream persistence remains a player-facing source of contention.
 No probe-phase change is recommended from the current evidence. Its one on/off pair showed a worse
 tail with probes enabled but conflicting average/median movement. Revisit it only if repeated runs
 or waypoint readiness show a material probe-specific penalty.
+
+## 12. Independent review of §11 (2026-09-19)
+
+Requested by the owner on 2026-09-19 as the follow-up assigned in `STATUS.md` §Next work item 2.
+Reviewed against §§0-10, [the sweep analysis](ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md), the 0.4.111
+source at `b2fe181`, and the installed `VintagestoryAPI.xml`. The owner accepted the review's
+recommendations on 2026-09-19 without itemising them; the corrections marked "review of §11" in
+§§4.1.4, 4.1.5, 4.1.6, 4.3 and 7 were made under that acceptance.
+
+**Verdict.** The five recommendations are directionally right and none is dangerous. Two rest on
+premises that are not true - one API behaviour and one description of the current build - and the
+section leaves open a silent-failure hole it inherits from §§4.1-4.3 without noticing. §11 is
+retained as a proposal, not promoted, and the corrections below were applied to the plan proper.
+
+### 12.1 What holds
+
+- **§11.1's core separation.** Phase A removes unnecessary work; the scheduler makes necessary work
+  polite. Neither substitutes for the other. This is the right headline for the section.
+- **§11.5 item 1.** Capture the sustained-frontier baseline before Phase A changes what "sweep on"
+  means. This is the same argument the header makes for the original A/B and is correct.
+- **§11.4's capped allowance.** Already true by construction, not an outstanding requirement:
+  `LodTickAllowance.Available` caps each grant at one tick's rounded share and drops older credit
+  when a tick arrives late, and `Spend` deducts only actual use. A five-second hold cannot release
+  a burst.
+
+### 12.2 Findings
+
+1. **§11.1 step 1 rested on a wrong API assumption.** `GameWorldSave` fires *before* the engine
+   writes. Corrected in §4.1.4 with the citation; the fast path's consequence is recorded there.
+2. **Nobody said when a fingerprint becomes "stored",** and the two available readings differ by a
+   permanent silent hole. Resolved in §4.1.6 item 3, with the audit's matching blind spot in §4.3
+   and acceptance test 14.
+3. **§11.1 step 1's size-and-mtime proof is weaker than SQLite's own.** Replaced in §4.1.5 by the
+   header change counter, measured on the owner's world, with the WAL branch stated.
+4. **§11.3 mis-states the current build.** It reads as though no pressure gating exists. Capture
+   backlog has gated loads since 0.4.68 - `LodSavegameSweep.MaxCaptureBacklogForLoads` = 32,
+   applied in `LoadsAllowed`. What is absent is *storage* pressure, and those signals already exist
+   too: `LodPipeline.DirtySections`, `LodPipeline.OldestDirtyAgeMs`,
+   `LodServerConfig.WorldGenDirtySectionLimit`, and `AutomaticGenerationGate`, which the worldgen
+   path already consults. Analysis §13 lists reusing that gate as a candidate. **The recommendation
+   should read "reuse the existing gate after the measurement", not "add storage pressure"** - as
+   written it invites a second capture brake beside the one already there.
+5. **§11.4 has no progress floor.** "Any moving player should extend the quiet window for everyone"
+   means a populated server can hold the startup load pass indefinitely; Session 102 logged 1,621
+   holds on a single-player route. Analysis §15 already requires that "multiplayer demand cannot
+   starve or be starved by the sweep", and §11.4 satisfies only half of it. The cost is not
+   obvious: snow-refresh candidates are registered from *inside* `StepLoad`, so a starved sweep
+   silently starves dormant-terrain snow maintenance as well. **Sweep completion time and effective
+   rate must be acceptance numbers in the frontier A/B, not merely recorded** - otherwise "polite"
+   is satisfied by never running.
+6. **"Background audits and dormant-snow loads should eventually adopt the same fairness policy" is
+   too weak.** `LodSavegameSweep.StepRefresh` issues `LoadChunkColumnPriority` into the same fast
+   lane with no player gate, no engine gate and no capture-backlog brake. It is 1/s by default
+   against the sweep's 16/s, so the magnitude is small - but the startup pass terminates and snow
+   campaigns do not, and this arm was outside the measured condition entirely. It should be named
+   as the known-open lane.
+7. **Minor: §11.5's closing probe paragraph contradicts the plan it is appended to.** Phase A2/A3
+   removes the 70,225-probe pass outright (§4.1.6 item 1). The paragraph should be scoped to
+   *pacing* changes to the existing path, which is what it means.
+8. **Minor: §11.2 restates analysis §18.5 almost verbatim.** By the plan's own rule in §1.2 - two
+   mechanisms describing the same fact is how they come to disagree - it should be a pointer.
+
+### 12.3 Aside from reading the 0.4.111 gate
+
+`LodPlayerTerrainActivity.players` never evicts departed players. It is bounded by unique player
+UIDs per session, so the size is immaterial, and a rejoin after a long absence is still correctly
+treated as activity - but only because the stale entry fails the `Sample == sample - 1` check
+rather than because it was removed. Worth a comment if anything else ever reads that dictionary.
+
+### 12.4 Not changed
+
+§11's text stands as written; this review does not edit it. Findings 4-8 are recommendations about
+§11 itself and are for the owner to fold in or discard. Findings 1-3 were factual errors or
+genuine gaps in §§4 and 7 and have been corrected there, each marked with its date and evidence.

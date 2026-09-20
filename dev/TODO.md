@@ -2,7 +2,7 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.111, the sweep frontier measurement and the seam fog's shape gate
+## Start here: the sweep frontier measurement, now that the fog is accepted
 
 Read [the Farseer handoff](plans/HANDOFF_HORIZON_SILHOUETTES.md) and
 [Session 100](sessions/SESSION_100.md), then
@@ -12,30 +12,26 @@ human-seen instant client rejoin, accepted the coarse 0.4.93 geometry, rejected 
 required exact no-overlap ownership, and selected a heavy atmospheric veil for the residual visual
 handoff. The 0.4.106 volume looked “very good”; the post-water 0.4.107 result was called excellent;
 0.4.109's swept ends were called excellent for the fog's ends but exposed a sawtooth at every
-staircase turn, which 0.4.110 rounds off. Neither 0.4.109 nor 0.4.110 has run in game. The absence
-of another player continues to defer the dedicated/multiplayer gate.
+staircase turn, which 0.4.110 rounds off. **The owner played 0.4.111 on 2026-09-19 and accepted the
+fog work**, so the shape gate is closed and dial tuning is unblocked. The absence of another player
+continues to defer the dedicated/multiplayer gate.
 
 Separately, 0.4.111's player-aware savegame-sweep scheduler is measured, built, installed and
-checkpointed but has not received the owner's play verdict. Its remaining measurement and its
-relationship to the terrain-change plan are recorded below.
+checkpointed. The owner played it and could not tell a difference — which the server log explains:
+that session spent all five minutes in the probe pass and never reached the load phase the gate
+guards. He has said play feedback on the sweep will not be substantial or reliable, so the
+sustained-frontier measurement is the deciding evidence, not a play verdict.
 
 Open, in the order they block further work:
 
-- **0.4.110 shape and drift acceptance.** One aerial view of a staircase stretch of the frontier and
-  one isolated ninety-degree turn:
-  - the regular sawtooth must be gone and the outline must wander rather than follow the chunk grid;
-  - a turn must still sweep continuously, with no missing adjacent section;
-  - judge whether the thinner rim that came with removing the spikes wants more Fog spread, and
-    whether the Fog edge softness default of 50% is right;
-  - set Fog drift speed to 0% and then 300%, waiting several seconds at each, and report whether the
-    billows visibly move. The dial is now a rate, so adjusting it no longer produces an instant jump;
-  - water must remain visible and the fog must stay over its chunk edge rather than letting water
-    repaint the seam;
-  - inspect `client-main.log` after the view: Farseer must remain enabled and there must be no
-    seam-fog shader/draw `InvalidOperation`.
-  Do not retune density or geometry until this has a visual verdict. The owner's Fog coverage is at
-  100%, which leaves the billow noise unable to open any gap; whether that is the intended look now
-  that the outline is irregular is part of this gate.
+- ~~**0.4.110 shape and drift acceptance.**~~ **Closed 2026-09-19.** The owner accepted the fog work
+  after playing 0.4.111. The log half of the gate was verified offline from that session:
+  `lodsilhouette` and `lodsilhouettefogvolume` both compiled, zero `InvalidOperation`, zero GL
+  errors, Farseer never disabled, clean exit. Retained as a caveat for whoever tunes next: the
+  per-item observations the gate listed — drift speed at 0% and 300%, the thinner rim against Fog
+  spread, the 50% edge-softness default, and whether 100% Fog coverage is the intended look now
+  that the outline is irregular — were never separately reported. The acceptance is a whole-result
+  verdict, so a dial that turns out wrong later has not been re-judged, it was never judged.
 - **Complete the underlying ownership/motion matrix.** Fog intentionally conceals the transition,
   but must not become an excuse to regress correctness:
   - hold position and turn through the whole scene; Farseer ownership must not shift with yaw;
@@ -127,13 +123,40 @@ Open, in the order they block further work:
   sweep off, the original ungated scheduler and 0.4.111. Record per-waypoint readiness, frame and
   server-tick tails, engine queue, save growth, sweep holds/rate, capture backlog, dirty age and
   save backlog.
+  - **Sweep completion time and effective rate are acceptance numbers, not just recorded ones.** A
+    scheduler that never runs passes every politeness criterion. Added by the §12 review.
+  - **The route must reach the load phase.** The owner's own 2026-09-19 session did not: five
+    minutes were spent entirely in the probe pass (90% of 70,225 positions at quit), so the gate
+    never ran and there was nothing for him to feel. Confirm the load phase is active before
+    treating any condition as a comparison of schedulers.
+- **Decide what to do about the probe pass, which is the cost a short session actually pays.** On
+  the owner's world the probe phase alone outlasts a five-minute session, every start, and captures
+  nothing while it runs. Phase A of the terrain-change plan removes that pass outright (§4.1.6 item
+  1). That is a stronger case for Phase A than the repeated-load waste the plan leads with, and it
+  is worth the owner knowing before he sequences the work.
+- **Fold in or discard the §12 review's recommendations about §11 itself.** Findings 1-3 were
+  factual errors or genuine gaps and are already corrected in §§4.1.4, 4.1.5, 4.1.6, 4.3 and 7.
+  Findings 4-8 are about §11's own text and are the owner's call: §11.3 should say "reuse the
+  existing `AutomaticGenerationGate`" rather than "add storage pressure" (capture backlog has
+  gated loads since 0.4.68); §11.4 needs a starvation floor; the snow-refresh arm should be named
+  as the known-open lane rather than an eventual nicety; §11.5's probe paragraph contradicts Phase
+  A2/A3; §11.2 duplicates analysis §18.5.
+- **Give `StepRefresh` the same gates as `StepLoad`, or record why not.** It issues
+  `LoadChunkColumnPriority` into the same fast lane with no player gate, no engine gate and no
+  capture-backlog brake. Default 1/s against the sweep's 16/s, so the magnitude is small — but the
+  startup pass terminates and snow campaigns do not, and this arm has never been in a measured
+  condition.
 - **Implement terrain change detection after review.** The original owner-directed
   [plan](plans/PLAN_TERRAIN_CHANGE_DETECTION.md) remains intact. Phase A uses a private read-only
   save path, fingerprints and a clean-shutdown/save-metadata fast path so an unchanged start does no
   sweep work; Phase B versions sections so a returning client receives offline changes. The A/B
   prerequisite is now satisfied. Codex appended a separately labelled recommendation section for
   independent review: retain 0.4.111 for first adoption and true mismatches; B is independent; then
-  A1/A2, A3 with the scheduler, A4 and A5.
+  A1/A2, A3 with the scheduler, A4 and A5. **That review was done on 2026-09-19 (plan §12).** Three
+  things must be built the corrected way: re-fingerprint *after* the engine writes, not inside
+  `GameWorldSave`, which fires before it; commit a fingerprint only when the column's capture has
+  durably succeeded; and use SQLite's header change counter rather than file size and mtime, with a
+  WAL branch.
 - **Do not substitute time or population for change detection.** In-game time may pace an audit,
   but it cannot prove a change. Singleplayer can change terrain immediately; many multiplayer users
   may change nothing. Live hooks cover loaded changes while the mod is active, and fingerprints
