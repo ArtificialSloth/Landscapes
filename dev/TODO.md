@@ -38,11 +38,16 @@ will not be substantial or reliable, so measurement is the deciding evidence the
 
 Open, in the order they block further work:
 
-- **Play 0.4.116 and report the startup.** The two things worth watching are whether the world start
-  feels different — the probe pass that used to take 5m35s on the owner's world is gone, replaced by
-  a 73.3 s off-thread file read — and whether anything stutters while the revived snow-refresh arm
-  runs for the first time. Afterwards the server log should show the savegame read path opening with
-  its journal mode, the index time, and on a second start a non-zero "already captured" count.
+- **Finish a world's sweep, then play it.** This is the blocking item. The owner played 0.4.116 on
+  `test2` and called it good, but the session ended before the sweep completed, so **the skip path,
+  the audit and the revived snow refresh have still never executed on his machine**. On `test2` that
+  needs roughly 16 minutes of play from a cold start. Afterwards, a second start should report a
+  large "already captured" count and finish in minutes, and the log should carry audit and
+  snow-refresh lines. It also settles the FPS-dip question for free: if the dips go once the sweep
+  is done, they were the sweep rather than vanilla generation.
+- **Explain the one unloaded-before-capture drop** in the owner's 0.4.116 session, or establish that
+  a single drop is the expected floor. The 32-column capture brake exists to prevent exactly this,
+  so one is either noise or a small leak in the brake. Noted rather than investigated.
 - **Confirm or overturn the A4 recommendation.** See Session 103 §7. Either drop the fast path, or
   rebuild it around "record what the next save will touch and treat those columns as unverified",
   which is the only shape available without a post-save hook.
@@ -187,11 +192,17 @@ Open, in the order they block further work:
   may change nothing. Live hooks cover loaded changes while the mod is active, and fingerprints
   cover disabled, crashed or externally changed intervals. Player movement/count is a scheduling
   signal only.
-- **Choose any additional pressure gate from frontier evidence.** Dirty count/age and save backlog
-  may justify holding A3 loads and later A5 audits, but their player-facing contribution is not yet
-  isolated. Do not add a fairer load API or broader gate merely from source inspection. Preserve
-  the complete-neighbourhood rule, capture-before-unload brake, quiet-server progress and capped
-  no-catch-up allowance.
+- ~~**Choose any additional pressure gate from frontier evidence.**~~ **Closed 2026-09-20: none is
+  warranted, and the candidate signal was misread.** Dirty *age* does not measure a write backlog —
+  a section keeps its first-dirty timestamp while it continues to change, so the coarse parents age
+  without bound during any sweep while the writes keep up (G238). Gating on it would have throttled
+  the sweep permanently for a benign reason. The dirty *count* never approached its limit (52
+  against 512) in the one production observation available, and the save queue is already bounded at
+  `MaxStorageBacklog` = 256. Reopen only with evidence that downstream persistence is actually
+  player-facing, not with a number that merely looks large.
+- **Probe scheduling is moot where the read path works.** The probe pass only runs now when the
+  savegame read path is unavailable (A3), so its pacing is a fallback concern rather than a live
+  one. The item below predates that.
 - **Leave probe scheduling alone for now.** The probe on/off pair had a worse 1% tail with probes,
   but average and median FPS moved the other way. Repeat or add waypoint evidence before changing
   probe pacing.

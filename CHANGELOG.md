@@ -46,6 +46,24 @@ The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, st
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
 
+## [0.4.117] - 2026-09-20
+
+**The sweep says what it is doing, and a status number stops reading as an alarm.**
+
+- The sweep's own status now prints once a minute beside the cache-work line while work is running,
+  with no environment variable needed. The owner cannot copy text out of game chat, so anything
+  required to answer "what was the mod doing while that happened?" has to reach the log by default;
+  his 0.4.116 session could not be explained from his log for exactly this reason. The p95/p99 phase
+  and allocation dumps stay development-only behind `VINTAGEHORIZONS_STATS`.
+- The cache-work line printed an oldest-dirty age beside the dirty count as though the two described
+  one backlog. They do not. A section stays dirty while it keeps changing, and its age runs from
+  when it first became dirty, so during a sweep the coarse parent sections are re-dirtied
+  continuously by mip propagation and age without bound while the writes keep up. The line now says
+  the oldest has been *changing* that long and prints the real storage queue depth beside it.
+- **No storage-pressure brake was added**, against the plan's own §11.3 direction. The save queue is
+  already bounded, the dirty count never approached its limit, and the alarming age was never a
+  backlog signal - gating the sweep on it would have throttled it permanently for a benign reason.
+
 ## [0.4.116] - 2026-09-20
 
 **A background audit, and a dormant arm revived after seven weeks.**

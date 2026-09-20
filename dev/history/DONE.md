@@ -2,6 +2,26 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-20 - First play verdict on phase A, and a rejected brake (0.4.117)
+
+- The owner played 0.4.116 on `test2` and called it good. His log shows the savegame read path
+  opening on a WAL world and reading all 15,112 columns in 9.9 s with no probe lines, so A3 works
+  outside the sandbox. The sweep did not finish in his ~10 minute session, so the skip path, the
+  audit and the revived snow refresh have still never executed on his machine.
+- Attributed his minor exploring FPS dips to vanilla generation plus the ~4% share the Session 103
+  frontier A/B already measured, noting his session was the worst case because first adoption is the
+  most work a sweep ever does on a world.
+- Did **not** build the directed storage-pressure brake. `oldest dirty 307.6s` beside `52 dirty` and
+  `7.38 saves/s` cannot describe one queue; a section keeps its first-dirty timestamp while it
+  continues to change, so during a sweep the coarse parents age without bound while the writes keep
+  up. Braking on it would have throttled the sweep permanently for a benign reason, and the save
+  queue is already bounded at 256. G238.
+- 0.4.117 fixes the diagnostic instead - the line reports the oldest as *changing* for that long and
+  prints the real storage queue depth - and makes the sweep's own status log once a minute without
+  `VINTAGEHORIZONS_STATS`, because the owner cannot copy text out of game chat.
+- Added a release-procedure step for re-reading the log as a server admin rather than a developer.
+- 25,320 assertions and 10,779 documentation checks pass.
+
 ## 2026-09-20 - Terrain change detection phase A, and a dormant arm revived (0.4.112-0.4.116)
 
 - Reviewed the Codex section appended to the terrain-change plan and recorded the result as plan

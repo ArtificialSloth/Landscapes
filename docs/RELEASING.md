@@ -48,6 +48,26 @@ holds. It has gone stale before. The description said "fully client-side" from 0
 which stopped being the whole picture when server-assist shipped. Nothing caught that
 automatically, because nothing checks prose against capability.
 
+## 4b. Re-read the log through a player's eyes
+
+Development logging and player logging have different jobs, and this repo accumulates both.
+Before a public release, read a full session's `server-main.log` and `client-main.log` as a
+server admin who has never seen the source would.
+
+- **Keep** the small number of plain-language lines a dedicated-server admin has nothing else
+  to go on for: the mod started, what it is doing, when it finished, and anything unusual.
+  These are at most one line a minute, only while work is running, and they stop by themselves.
+- **Hide** per-interval numeric dumps - microsecond percentiles, allocation figures, tick
+  histograms. These already require `VINTAGEHORIZONS_STATS=1` and are off unless it is set, so
+  the usual answer is "nothing to do"; confirm rather than assume.
+- **Check the wording of anything that survives.** A status number that pairs badly with its
+  neighbour reads as a fault report: the cache-work line printed a continuously-changing
+  section's age beside a pending count and looked like a stalled writer for weeks (G238).
+
+Owner question, 2026-09-20: "we only need that log for development purposes, right?" Partly.
+The split above is the answer, and it is a release-time judgement rather than something to
+settle while the features are still moving.
+
 ## 5. Bump the version
 
 Both of these must carry the exact same version string, and a fast-tier check

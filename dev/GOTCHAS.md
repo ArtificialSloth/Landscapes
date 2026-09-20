@@ -4507,3 +4507,26 @@ reviving such an arm, check what it does before letting it run: this one issued 
 loads with none of the brakes the load pass had gained in the meantime.
 
 **Found:** 2026-09-20, Session 103, while building the audit into the same dead code path.
+
+### G238 - A continuously-modified item's age is not a queue latency
+
+**Trigger:** reading, or gating on, an "oldest pending" age printed beside a pending count.
+
+**Trap:** the owner's 2026-09-20 log read `52 dirty, oldest dirty 307.6s, 7.38 saves/s`. Those three
+figures cannot describe one queue - 52 items at 7.38 a second drain in seconds - and the pairing
+reads as a stalled writer. It is not one. `LodSaveDirtySet.Add` returns false for a key already
+present, so a re-dirtied section keeps its original first-dirty timestamp, and `LodWorld.CompleteSave`
+clears dirty state only when the completed revision is still the newest, so a section modified again
+while its save is in flight stays dirty. During a sweep the coarse parent sections are re-dirtied
+continuously by mip propagation, so one of them ages without bound while the writes keep up
+perfectly. A brake on that age would have fired permanently during every sweep.
+
+**Safer action:** trace a status number to its definition before making it a scheduling input, and
+check whether the figures printed in one line can describe the same thing - inconsistent arithmetic
+between them is the cheapest available signal that one of them does not mean what it says. Report
+"has been changing for" separately from "has been waiting to be written", and print the real queue
+depth next to it. The save queue was already bounded at `MaxStorageBacklog`, so no new brake was
+warranted at all.
+
+**Found:** 2026-09-20, Session 104, while building a storage-pressure brake that turned out to be
+unnecessary; the plan's §11.3 direction and a recommendation to the owner were both reversed.

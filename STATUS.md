@@ -4,9 +4,9 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-20`
-**Mod version:** `0.4.116` — current private test build: the startup sweep reads the savegame directly instead of probing the engine, skips columns it has already captured, and a background audit re-reads the world against those claims. Measured, verified, copy-installed and checkpointed. **0.4.113–0.4.116 have no in-game play verdict**; 0.4.111's fog work was accepted by the owner on 2026-09-19
+**Mod version:** `0.4.117` — current private test build: the sweep logs its own progress without a diagnostic flag, and the cache-work line no longer prints a continuously-changing section's age as though it were a write backlog. Verified, copy-installed and checkpointed, **not play-tested**. The owner played 0.4.116 on `test2` and called it good; 0.4.113–0.4.116 otherwise have no play verdict
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.110 `2fbf2d1`, 0.4.111 `b2fe181`, 0.4.112 `6f4aa42`, A1/A2 `611ce7a`, 0.4.113 `61ca662`, 0.4.114 `b513808`, 0.4.115 `2d9b25f`, 0.4.116 `d0a5dca`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.110 `2fbf2d1`, 0.4.111 `b2fe181`, 0.4.112 `6f4aa42`, A1/A2 `611ce7a`, 0.4.113 `61ca662`, 0.4.114 `b513808`, 0.4.115 `2d9b25f`, 0.4.116 `d0a5dca`, 0.4.117 `5043e96`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
 **Source files:** `137` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
@@ -101,8 +101,8 @@ one session:
   someone is walking around instead of waiting for them to stand still.
 - **Not measured:** whether the floor is the right size, and multi-player fairness.
 
-**Terrain change detection: phase A is built (0.4.113–0.4.116).** Session 103. Sandbox-verified;
-no in-game play verdict.
+**Terrain change detection: phase A is built (0.4.113–0.4.116).** Session 103. Sandbox-verified, and the owner played 0.4.116 once;
+see the play verdict below.
 
 - **The probe pass is gone.** The sweep reads the savegame itself through a private read-only
   connection on its own thread, rather than asking the engine 70,225 times at ~320/s through the
@@ -134,6 +134,36 @@ no in-game play verdict.
 | Journal mode, change counter | `delete`, 651 with version-valid-for 651 |
 | Existence map | 64,179 map columns |
 | Whole index | 73.3 s, of which fingerprints 73.0 s |
+
+**The owner played 0.4.116 on `test2` and called it good.** Session 104. First play verdict on
+phase A; the only one so far.
+
+- The read path opened on a **WAL** world — change counter 100 — and read all **15,112 columns in
+  9.9 s**, with no probe progress lines in the log at all. A3 works on his machine.
+- He reported consistent minor FPS dips while exploring new terrain and asked whether they exceeded
+  vanilla's own generation cost. Attribution: mostly vanilla, plus the ~4% of the 1% low the
+  frontier A/B already measured for the sweep. His session was the worst case — the sweep was doing
+  first-adoption work throughout, capturing 3,986 sections with its capture backlog at 31–40
+  against a limit of 32 — and that cost is one-time per world.
+- **The sweep did not finish** (15,112 columns at 16/s needs ~16 minutes; the session ran ~10), so
+  **the audit and the revived snow refresh never ran.** Neither has executed on his machine.
+- One unloaded-before-capture drop, no capture errors, no client-side errors.
+- The free follow-up: play `test2` until the sweep completes, then explore. If the dips largely go
+  they were the sweep; if they are unchanged they were vanilla generation.
+
+**A status number read as an alarm and was not.** Session 104; 0.4.117 fixes the diagnostic.
+
+- His log read `52 dirty, oldest dirty 307.6s, 7.38 saves/s`. Those cannot describe one queue.
+- A section keeps its first-dirty timestamp while it continues to change, and `CompleteSave` clears
+  dirty state only when the completed revision is still the newest. During a sweep the coarse parent
+  sections are re-dirtied continuously by mip propagation, so one ages without bound while the
+  writes keep up (G238).
+- **No storage-pressure brake was added**, reversing plan §11.3. Braking on that age would have
+  throttled the sweep permanently for a benign reason; the dirty count never approached its limit;
+  and the save queue is already bounded at `MaxStorageBacklog` = 256. This was a diagnostic defect.
+- The line now reports the oldest as *changing* for that long and prints the storage queue depth.
+  The sweep's own status logs once a minute without `VINTAGEHORIZONS_STATS`; the phase and
+  allocation dumps stay development-only.
 
 **Dormant-terrain snow refresh has never run, and now does.** Found 2026-09-20 while building the
 audit into the same code path.
@@ -732,15 +762,17 @@ It covers:
 
 ## Next work
 
-Begin with [Session 103](dev/sessions/SESSION_103.md), the top of [TODO](dev/TODO.md),
+Begin with [Session 104](dev/sessions/SESSION_104.md) and [Session 103](dev/sessions/SESSION_103.md), the top of [TODO](dev/TODO.md),
 [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. **Play 0.4.116.** Four builds have landed with no in-game verdict, and two of them change what
-   happens at every world start: the sweep now reads the savegame instead of probing, and the
-   dormant snow-refresh arm runs for the first time in seven weeks. Watch the server log for the
-   savegame read path opening, the index time on the real world (73.3 s offline), and whether the
-   sweep reports columns already captured on a second start. Report any stutter at startup.
+1. **Finish a world's sweep, then play it.** Everything built in Sessions 103–104 changes what a
+   world start does, and no session has yet run long enough to finish a sweep — so the skip path,
+   the audit and the revived snow refresh have all never executed on the owner's machine. On
+   `test2` that needs roughly 16 minutes of play from a cold start. Afterwards: a second start
+   should report a large "already captured" count and reach completion in minutes, and the log
+   should carry audit and snow-refresh lines. This also settles the FPS-dip question for free — if
+   the dips go once the sweep is done, they were the sweep.
 2. **Decide A4's fate.** The clean-shutdown fast path cannot be built as specified — no hook exists
    after the engine's final save (G236) — and with the probe pass gone it would save 73 s of
    background reading for an unverifiable assumption. Recommendation: drop it, or rebuild it around
@@ -769,7 +801,8 @@ Begin with [Session 103](dev/sessions/SESSION_103.md), the top of [TODO](dev/TOD
    - pause loading;
    - Session 84 diagnostic cleanup.
 
-[Session 103](dev/sessions/SESSION_103.md) is the authoritative documentation continuation point;
+[Session 104](dev/sessions/SESSION_104.md) is the authoritative documentation continuation point;
+[Session 103](dev/sessions/SESSION_103.md) retains phase A, the frontier A/B and the snow-refresh bug;
 [Session 102](dev/sessions/SESSION_102.md) retains the first sweep A/B and the 0.4.111 gate;
 [Session 101](dev/sessions/SESSION_101.md) retains the pre-measurement sweep analysis,
 [Session 100](dev/sessions/SESSION_100.md) retains the preceding fog and attribution work, and
@@ -778,7 +811,7 @@ Begin with [Session 103](dev/sessions/SESSION_103.md), the top of [TODO](dev/TOD
   look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G237 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+- G166-G238 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
   buried joins, bounded regeneration, stable all-level ownership, post-water volumetric fog and the
   distinction between pacing priority-load submissions and yielding their downstream engine work,
   plus the engine generation counter's saved-load blind spot and route-halo generation.

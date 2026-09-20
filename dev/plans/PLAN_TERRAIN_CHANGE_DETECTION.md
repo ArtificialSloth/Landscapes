@@ -23,7 +23,7 @@ virgin-frontier follow-up on 2026-09-19 produced 0.4.112's rate floor.
 > recover from — so A5 belongs before it, not after, reversing §11.5's suggested order.
 
 **Required reading first:** [the savegame-sweep scheduling
-analysis](ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md), then `dev/GOTCHAS.md` G190, G192, G199, G227-G237.
+analysis](ANALYSIS_SAVEGAME_SWEEP_SCHEDULING.md), then `dev/GOTCHAS.md` G190, G192, G199, G227-G238.
 This plan answers the analysis's §13 candidate "skip columns whose current terrain revision is
 already durable" and its §16 open question "can the mod prove a durable LOD row is current without
 introducing a terrain revision journal?" The answer is yes, and this is how.
