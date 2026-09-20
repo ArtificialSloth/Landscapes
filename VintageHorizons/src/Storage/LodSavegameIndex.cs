@@ -134,11 +134,14 @@ public sealed class LodSavegameIndex : IDisposable
                 finished = true;
             }
 
+            // Deliberately does not claim a probe count: the sweep owns its own radius, and
+            // an earlier version of this line quoted the column count as though it were the
+            // number of probes replaced, which it is not.
             logger.Notification(
                 "[VintageHorizons] Read the savegame directly in {0:0.0}s: {1} columns exist, "
-                + "{2} fingerprinted. That replaces {3} paced engine probes, which are served by "
-                + "the same thread that loads terrain for players.",
-                finishedResult.ElapsedSeconds, exists.Count, prints.Count, exists.Count);
+                + "{2} fingerprinted. Reading the file replaces probing the engine one position "
+                + "at a time through the thread that also loads terrain for players.",
+                finishedResult.ElapsedSeconds, exists.Count, prints.Count);
         }
         catch (Exception e)
         {
