@@ -92,7 +92,8 @@ public partial class LodTerrainRenderer
     bool SilhouetteFadeTargetActive => Silhouettes is { Enabled: true }
         && silhouetteShaderOk && silhouetteMeshes.Count > 0 && SilhouetteFogReady;
 
-    bool SilhouetteFogReady => !silhouetteSeamMask.HasEdges || silhouetteFogFieldTexture != 0;
+    bool SilhouetteFogReady => !SilhouetteFogEnabled || !silhouetteSeamMask.HasEdges
+        || silhouetteFogFieldTexture != 0;
 
     internal string SilhouetteShaderState => !silhouetteShaderWanted
         ? "not compiled (never switched on)"
@@ -194,6 +195,10 @@ public partial class LodTerrainRenderer
             ClearSilhouetteFogField();
             return;
         }
+        // Fog switched off: nothing is built, uploaded or drawn for it.
+        if (!SilhouetteFogEnabled && (silhouetteFogFieldTexture != 0
+                || silhouetteFogBuildTask != null || silhouetteFogPendingBuild != null))
+            ClearSilhouetteFogField();
         if (!PublishSilhouetteFogVolume(silhouettes)) return;
 
         Vec3d cam = capi.World.Player.Entity.CameraPos;
@@ -252,7 +257,7 @@ public partial class LodTerrainRenderer
             silhouetteSeamMask.CompleteBuild();
             QueueSilhouetteFogVolume(silhouettes);
         }
-        else if (silhouetteSeamMask.HasEdges
+        else if (SilhouetteFogEnabled && silhouetteSeamMask.HasEdges
             && (silhouetteFogGeometryDirty
                 || silhouetteFogFieldTexture == 0
                     && silhouetteFogBuildTask == null && silhouetteFogPendingBuild == null))

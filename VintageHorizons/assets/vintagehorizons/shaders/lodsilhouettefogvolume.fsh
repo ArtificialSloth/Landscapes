@@ -2,9 +2,20 @@
 
 // A single depth-aware integration through a smooth world-space field. Unlike crossing cards,
 // this has no internal surfaces whose alpha can stack into lines at corners or height slices.
+//
+// The medium is shaped like a real fog bank (0.4.123). Its vertical column over the measured
+// seam band, widened by a margin and a gently fading seal so slanted views are covered too, is
+// held just opaque rather than many times over. Beyond that band the bank thins exponentially, noise
+// erodes its edges into strands instead of dimming the whole pattern, a faint haze carries the
+// fade on, and sunlight shades it: bright tops, grey-blue undersides, never brighter than the
+// horizon. Mirrored for the checks by LodSilhouetteFogVolume.
 
 uniform sampler2D sceneDepth;
 uniform sampler2D fogField;
+// Tiling value noise, 16 lattice cells per repeat, four independent channels
+// (LodSilhouetteFogNoise). The engine's uniform collector does not know sampler3D, so the draw
+// binds this unit with GL directly.
+uniform sampler3D fogNoise;
 uniform mat4 invProjection;
 uniform mat4 invView;
 uniform vec3 cameraInField;
@@ -18,8 +29,13 @@ uniform float fieldMaxY;
 uniform float farViewDistance;
 uniform float globeStart;
 uniform float globeEffect;
+// Blocks one pixel covers per block of distance, so detail smaller than a pixel is filtered.
+uniform float fogPixelScale;
 
 uniform vec4 rgbaFogIn;
+uniform vec3 sunPosition;
+uniform vec3 sunColor;
+uniform float dayLight;
 uniform float fogStrength;
 uniform float fogCoverage;
 uniform float fogSpillBlocks;
@@ -28,52 +44,37 @@ uniform float fogFloorDepthBlocks;
 uniform float fogBillowSizeBlocks;
 uniform float fogEdgeSoftness;
 uniform float fogLayerDetail;
+// Half-width of the band that must stay hidden, measured from how far the real 32-block
+// staircase strays from the rounded centreline.
+uniform float fogCoreBlocks;
 // Distance the billows have already drifted, in blocks, integrated on the CPU.
 uniform float fogDriftBlocks;
 
 layout(location = 0) out vec4 outColor;
 
-const float GuardProfile = -0.55;
-const float FogExtinctionPerBlock = 0.018;
-const float SeamSealIntegralFraction = 0.54;
-const int MaxFogSteps = 160;
+// Optical depths are quoted through one vertical column over the core.
+const float SealOpticalDepth = 3.5;
+const float BankOpticalDepth = 3.2;
+const float HazeOpticalDepth = 0.25;
+const float BankMeanDensity = 0.6;
+const float ShoulderFraction = 0.4;
+const float HazeFraction = 0.6;
+const float SealFalloffFraction = 0.3;
+const float FarseerReachScale = 1.6;
+const float GroundLayerFraction = 0.3;
+const float ScaleHeightFraction = 0.42;
+const float SealColumnFraction = 0.5923;
+const float BankColumnFraction = 0.5548;
+const float NoisePeriod = 16.0;
+const float NoiseTexelsPerCell = 4.0;
+const float SunProbeBlocks = 14.0;
+const int MaxFogSteps = 192;
 
 float vhFogHash(vec3 p)
 {
     p = fract(p * 0.1031);
     p += dot(p, p.yzx + 33.33);
     return fract((p.x + p.y) * p.z);
-}
-
-float vhFogNoise(vec3 p)
-{
-    vec3 cell = floor(p);
-    vec3 f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    float n000 = vhFogHash(cell + vec3(0.0, 0.0, 0.0));
-    float n100 = vhFogHash(cell + vec3(1.0, 0.0, 0.0));
-    float n010 = vhFogHash(cell + vec3(0.0, 1.0, 0.0));
-    float n110 = vhFogHash(cell + vec3(1.0, 1.0, 0.0));
-    float n001 = vhFogHash(cell + vec3(0.0, 0.0, 1.0));
-    float n101 = vhFogHash(cell + vec3(1.0, 0.0, 1.0));
-    float n011 = vhFogHash(cell + vec3(0.0, 1.0, 1.0));
-    float n111 = vhFogHash(cell + vec3(1.0, 1.0, 1.0));
-    float n00 = mix(n000, n100, f.x);
-    float n10 = mix(n010, n110, f.x);
-    float n01 = mix(n001, n101, f.x);
-    float n11 = mix(n011, n111, f.x);
-    return mix(mix(n00, n10, f.y), mix(n01, n11, f.y), f.z);
-}
-
-float vhFogFbm(vec3 p)
-{
-    float value = 0.0;
-    value += 0.57 * vhFogNoise(p);
-    p = p * 2.03 + vec3(11.7, 5.3, 17.1);
-    value += 0.29 * vhFogNoise(p);
-    p = p * 2.01 + vec3(3.1, 19.4, 7.8);
-    value += 0.14 * vhFogNoise(p);
-    return value;
 }
 
 bool vhFogSlab(float origin, float direction, float minimum, float maximum,
@@ -94,37 +95,135 @@ bool vhFogSlab(float origin, float direction, float minimum, float maximum,
     return nearDistance <= farDistance;
 }
 
-float vhFogCrossingProfile(float signedDistance)
+// Mip level at which one noise texel covers a pixel, for a lookup scaled by cellsPerBlock.
+float vhFogNoiseLod(float pixelBlocks, float cellsPerBlock)
 {
-    float lodPlateau = -min(14.0, fogSpillBlocks * 0.29);
-    float farseerPlateau = min(32.0, fogSpillBlocks * 0.67);
-    float farseerReach = fogSpillBlocks + min(32.0, fogSpillBlocks * 0.67);
-    float linearProfile;
-    if (signedDistance < lodPlateau)
-        linearProfile = (signedDistance + fogSpillBlocks) / (lodPlateau + fogSpillBlocks);
-    else if (signedDistance <= farseerPlateau)
-        linearProfile = 1.0;
-    else
-        linearProfile = (farseerReach - signedDistance)
-            / (farseerReach - farseerPlateau);
-    return clamp(linearProfile, 0.0, 1.0);
+    return log2(max(0.0001, pixelBlocks * cellsPerBlock * NoiseTexelsPerCell));
 }
 
-float vhFogSeamSealDensity(float signedDistance, float endFade)
+vec4 vhFogNoise(vec3 cells, float lod)
 {
-    // A noisy volumetric bank still needs to fulfill its actual job: the exact terrain handoff
-    // must not show through a low-density pocket. This is a broad normalized extinction core,
-    // not another surface. Its one-sided integral from LOD terrain to the seam is a stable target
-    // optical depth at any spill width; the Farseer side is deliberately allowed to be wider.
-    float lodReach = clamp(fogSpillBlocks * 0.67, 12.0, 32.0);
-    float sideReach = signedDistance < 0.0
-        ? lodReach : clamp(fogSpillBlocks, 12.0, 48.0);
-    float across = abs(signedDistance) / sideReach;
-    float profile = 1.0 - smoothstep(0.08, 1.0, across);
-    float targetOpticalDepth = mix(3.0, 4.5, clamp(fogCoverage, 0.0, 1.0));
-    float normalization = FogExtinctionPerBlock * SeamSealIntegralFraction * lodReach;
-    return profile * clamp(endFade, 0.0, 1.0)
-        * targetOpticalDepth / max(0.0001, normalization);
+    return textureLod(fogNoise, cells * (1.0 / NoisePeriod), max(0.0, lod));
+}
+
+// Three octaves across three channels, so the octaves are independent patterns.
+float vhFogFbm(vec3 q, float lod)
+{
+    return 0.57 * vhFogNoise(q, lod).r
+        + 0.29 * vhFogNoise(q * 2.03 + vec3(11.7, 5.3, 17.1), lod + 1.02).g
+        + 0.14 * vhFogNoise(q * 4.09 + vec3(3.1, 19.4, 7.8), lod + 2.03).b;
+}
+
+// The coverage remap's mean over evenly spread noise. Where the billows are smaller than a
+// pixel the filtered noise flattens toward its middle value, which would erase the thin fringe
+// instead of averaging it; the mean keeps the fringe as the veil it would look like.
+float vhFogExpectedDensity(float threshold)
+{
+    return threshold >= 0.0
+        ? max(0.0, 0.5 * (1.0 - threshold))
+        : (0.5 - threshold) / (1.0 - threshold);
+}
+
+float vhFogPhase(float cosine, float g)
+{
+    float g2 = g * g;
+    return (1.0 - g2) / pow(1.0 + g2 - 2.0 * g * cosine, 1.5);
+}
+
+// Extinction (optical depth per block) at one point of the bank. `field` is the fog field at
+// that point and `height` its height above the seam ground. `cheap` is the sun probe's
+// cut-down form. Each term is normalized by its own column, so its vertical integral is the
+// named optical depth whatever the bank's local height.
+float vhFogExtinction(vec3 fogWorld, vec4 field, float height, float pixelBlocks, bool cheap,
+    out float top)
+{
+    float billowBlocks = max(1.0, fogBillowSizeBlocks);
+    float cellsPerBlock = 1.0 / billowBlocks;
+    vec3 world = fogWorld + vec3(fogDriftBlocks, 0.0, fogDriftBlocks * -0.67);
+    float signedDistance = field.r;
+    float endFade = clamp(field.a, 0.0, 1.0);
+
+    // Broad, vertically flattened lookup: the rim's wander, the swirl, the top's undulation.
+    vec3 broadCells = world * vec3(cellsPerBlock * 0.55, cellsPerBlock * 0.15,
+        cellsPerBlock * 0.55);
+    vec4 broad = vhFogNoise(broadCells, vhFogNoiseLod(pixelBlocks, cellsPerBlock * 0.55));
+
+    // 1. Lateral: nothing thins inside the measured core; beyond it the bank fades
+    //    exponentially, further over Farseer. The rim wanders before shaping (G225).
+    float beyond = max(0.0, abs(signedDistance) - fogCoreBlocks);
+    float wanderBlocks = clamp(fogEdgeSoftness, 0.0, 1.0) * 0.5 * fogSpillBlocks;
+    float rim = max(0.0, beyond + (broad.r - 0.5) * 1.8 * wanderBlocks);
+    float side = signedDistance < 0.0 ? fogSpillBlocks : fogSpillBlocks * FarseerReachScale;
+    // Past one and a half shoulders nothing remains, which is what bounds the march.
+    float cut = 1.0 - smoothstep(side, side * 1.5, rim);
+    float envelope = exp(-rim / max(1.0, side * ShoulderFraction)) * endFade * cut;
+
+    // 2. Vertical: tallest over the seam and lower toward the rim, with an undulating top; a
+    //    dense ground layer, then exponential thinning.
+    top = fogHeightBlocks * (0.45 + 0.55 * envelope) * (0.7 + 0.6 * broad.a);
+    float hs = max(0.0, height);
+    float scaleHeight = max(1.0, ScaleHeightFraction * top);
+    float heightDensity = exp(-max(0.0, hs - GroundLayerFraction * top) / scaleHeight);
+    float lowerFade = max(2.0, min(10.0, fogFloorDepthBlocks * 0.35 + 2.0));
+    float under = smoothstep(-fogFloorDepthBlocks, -fogFloorDepthBlocks + lowerFade, height);
+    float ceiling = 1.0 - smoothstep(0.35 * top, 1.1 * top, hs);
+
+    // 3. Coverage erosion, not dimming: near the seam every noise value is fog; toward the rim
+    //    only the peaks survive, as separate strands. The swirl and a frame stretched along
+    //    the wind and flattened vertically make those strands streaks rather than balls.
+    vec3 wind = normalize(vec3(1.0, 0.0, -0.67));
+    vec3 crosswind = vec3(-wind.z, 0.0, wind.x);
+    vec3 swirled = world + vec3(broad.g - 0.5, 0.0, broad.b - 0.5) * (billowBlocks * 1.1);
+    vec3 q = vec3(dot(swirled, wind) * 0.5, swirled.y * 2.2, dot(swirled, crosswind))
+        * cellsPerBlock;
+    float baseLod = vhFogNoiseLod(pixelBlocks, cellsPerBlock);
+    float noise = cheap ? vhFogNoise(q, baseLod).r * 0.9 + 0.05 : vhFogFbm(q, baseLod);
+    noise = smoothstep(0.18, 0.82, noise);
+    float coverage = envelope * ceiling;
+    float threshold = 1.0 - coverage * mix(1.0, 1.7, clamp(fogCoverage, 0.0, 1.0));
+    float density = clamp((noise - threshold) / max(0.001, 1.0 - threshold), 0.0, 1.0);
+    density = mix(density, vhFogExpectedDensity(threshold), smoothstep(1.0, 3.0, baseLod));
+
+    // 4. Feathery edges: finer thread-like noise frays the thin parts, and fades out where its
+    //    threads would be narrower than a pixel and sparkle.
+    if (!cheap)
+    {
+        float detailLod = vhFogNoiseLod(pixelBlocks, cellsPerBlock * 3.3);
+        float detailWeight = 1.0 - smoothstep(-0.3, 1.4, detailLod);
+        if (detailWeight > 0.0)
+        {
+            float thread = vhFogNoise(q * vec3(3.3, 2.7, 3.3) + vec3(5.2, 1.7, 9.4),
+                detailLod).a;
+            float ridge = 1.0 - abs(2.0 * thread - 1.0);
+            float erosion = clamp(fogEdgeSoftness, 0.0, 1.0) * 0.8 * ridge * detailWeight
+                * (1.0 - 0.7 * density);
+            density = clamp((density - erosion) / max(0.001, 1.0 - erosion), 0.0, 1.0);
+        }
+    }
+    // Thin, translucent strands near the rim rather than opaque puffs.
+    density *= pow(envelope, 0.75);
+
+    float columnBlocks = max(1.0, top);
+    float bank = BankOpticalDepth / (BankColumnFraction * columnBlocks * BankMeanDensity)
+        * density * heightDensity;
+
+    // 5. The seal: noise cannot open the measured core. Its column there is exactly
+    //    SealOpticalDepth, the same scale as the bank's, so it fills holes instead of
+    //    becoming a second, denser wall; it dies away under the bank's shoulder.
+    float sealFalloff = max(1.0, SealFalloffFraction * fogSpillBlocks);
+    float sealProfile = exp(-beyond / sealFalloff) * endFade;
+    // Past the core the seal takes on the bank's billows, so its fade is lobed like the bank's
+    // edge instead of a clean offset of the centreline. Inside the core it stays whole.
+    float sealBillows = mix(1.0, 0.3 + 0.7 * noise, smoothstep(0.0, sealFalloff, beyond));
+    float sealCeiling = 1.0 - smoothstep(0.5 * top, 1.15 * top, hs);
+    float seal = SealOpticalDepth / (SealColumnFraction * columnBlocks)
+        * sealProfile * sealBillows * heightDensity * sealCeiling;
+
+    // 6. Haze: real fog never ends at a line.
+    float haze = HazeOpticalDepth / (BankColumnFraction * columnBlocks)
+        * exp(-rim / max(1.0, side * HazeFraction)) * endFade * cut * heightDensity * ceiling;
+
+    return (max(bank, seal) + haze) * under * max(0.0, fogStrength);
 }
 
 void main()
@@ -157,22 +256,31 @@ void main()
             marchStart, marchEnd)
         || marchEnd <= max(0.0, marchStart)) discard;
 
-    float baseStep = mix(7.5, 3.0, clamp(fogLayerDetail, 0.0, 1.0));
+    float baseStep = mix(6.0, 2.5, clamp(fogLayerDetail, 0.0, 1.0));
     // Spatial dithering turns the residual fixed-step error into fine grain instead of coherent
     // view-facing bands. The field and density remain world anchored.
     float rayDistance = max(0.0, marchStart)
         + baseStep * vhFogHash(vec3(gl_FragCoord.xy, 0.731));
     float transmittance = 1.0;
     vec3 scattered = vec3(0.0);
-    float broadScale = 1.0 / max(1.0, fogBillowSizeBlocks);
-    vec3 drift = vec3(fogDriftBlocks, 0.0, fogDriftBlocks * -0.67);
-    float farseerReach = fogSpillBlocks + min(32.0, fogSpillBlocks * 0.67);
-    float maxWobble = min(18.0, fogSpillBlocks * 0.35);
-    float conservativeReach = farseerReach + maxWobble + fieldTexelBlocks * 1.5;
+    float conservativeReach = fogCoreBlocks + fogSpillBlocks * FarseerReachScale * 1.5
+        + clamp(fogEdgeSoftness, 0.0, 1.0) * 0.5 * fogSpillBlocks + fieldTexelBlocks * 1.5;
+    // The highest top is 1.3 heights and its ceiling ends at 1.15 of that.
+    float bankCeiling = fogHeightBlocks * 1.5;
+
+    // Sunlight. A sun below the horizon still lights from just above it while the day fades.
+    vec3 sunDirection = normalize(vec3(sunPosition.x, max(sunPosition.y, 0.08), sunPosition.z));
+    float sunHeight = max(0.25, sunDirection.y);
+    float daylight = smoothstep(0.02, 0.35, dayLight);
+    // Fog glows a little toward the sun and dims a little away from it.
+    float phase = mix(1.0, vhFogPhase(dot(rayDirection, sunDirection), 0.3), 0.3);
+    vec3 sunTint = sunColor / max(0.001, max(sunColor.r, max(sunColor.g, sunColor.b)));
+    sunTint = mix(vec3(1.0), sunTint, 0.6 * daylight);
+    float previousExtinction = 0.0;
 
     for (int stepIndex = 0; stepIndex < MaxFogSteps; stepIndex++)
     {
-        if (rayDistance >= marchEnd || transmittance < 0.015) break;
+        if (rayDistance >= marchEnd || transmittance < 0.01) break;
         vec3 relative = rayDirection * rayDistance;
         vec3 fieldPosition = cameraInField + relative;
         vec2 fieldUv = fieldPosition.xz / vec2(fieldBlocksX, fieldBlocksZ);
@@ -189,66 +297,68 @@ void main()
         float heightAboveGround = fieldPosition.y - groundY;
         float verticalOutside = max(0.0, max(
             -fogFloorDepthBlocks - heightAboveGround,
-            heightAboveGround - fogHeightBlocks));
+            heightAboveGround - bankCeiling));
         // A ray that follows the seam while above or below its local terrain must still advance;
         // otherwise it can spend the whole fixed budget walking empty air in tiny steps.
         float outside = max(horizontalOutside, verticalOutside * 0.35);
         float stepBlocks = outside > 0.0
             ? clamp(outside * 0.72, baseStep, 512.0) : baseStep;
+        // Keep each segment optically thin, so a dense core cannot become a stepped surface.
+        if (previousExtinction > 0.0)
+            stepBlocks = min(stepBlocks, max(0.75, 0.35 / previousExtinction));
         stepBlocks = min(stepBlocks, marchEnd - rayDistance);
+        previousExtinction = 0.0;
 
         if (horizontalOutside <= 0.0 && verticalOutside <= 0.0)
         {
-            float lowerFade = max(2.0, min(10.0, fogFloorDepthBlocks * 0.35 + 2.0));
-            float vertical = smoothstep(-fogFloorDepthBlocks,
-                    -fogFloorDepthBlocks + lowerFade, heightAboveGround)
-                * (1.0 - smoothstep(fogHeightBlocks * 0.55,
-                    fogHeightBlocks, heightAboveGround));
-
             // Noise is evaluated in the unwarped world so its scale and drift do not stretch as
             // the distant globe curve lowers geometry.
             vec3 fogWorldPosition = vec3(
                 fieldWorldOriginX + fieldPosition.x,
                 fieldPosition.y + globeDrop,
                 fieldWorldOriginZ + fieldPosition.z);
-            vec3 broadPoint = (fogWorldPosition + drift)
-                * vec3(broadScale, broadScale * 1.40, broadScale);
-            float broad = vhFogFbm(broadPoint);
-            float detail = vhFogNoise((fogWorldPosition + drift * 1.35)
-                * vec3(broadScale * 2.75, broadScale * 3.60, broadScale * 2.75));
-            float billow = smoothstep(0.28, 0.80, broad * 0.74 + detail * 0.26);
-
-            vec3 wobblePoint = (fogWorldPosition + drift * 0.8) * broadScale;
-            float wobble = (vhFogNoise(wobblePoint * 1.10) - 0.5) * 0.80
-                + (vhFogNoise(wobblePoint * 2.60 + vec3(37.1, 11.9, 53.7)) - 0.5)
-                    * 0.80;
-            float signedDistance = field.r + wobble * fogEdgeSoftness * maxWobble;
-            float crossing = vhFogCrossingProfile(signedDistance);
-            // The open-end value fades toward a negative guard. At zero it cannot reappear even
-            // when edge wobble is at its maximum.
-            crossing = GuardProfile + (crossing - GuardProfile) * clamp(field.a, 0.0, 1.0);
-            crossing = clamp(crossing, 0.0, 1.0);
-            crossing = crossing * crossing * (3.0 - 2.0 * crossing);
-
-            float noiseDensity = mix(0.10 + 0.50 * clamp(fogCoverage, 0.0, 1.0),
-                1.45, billow);
-            // The organic field shapes the bank while a stable core seals the exact ownership
-            // transition. Using the unwobbled distance for the core prevents noise from opening
-            // a crack; both terms are integrated together and remain free of internal surfaces.
-            float seamSealDensity = vhFogSeamSealDensity(field.r, field.a);
-            float density = vertical * max(0.0, fogStrength)
-                * (crossing * noiseDensity + seamSealDensity);
-            float segmentAlpha = 1.0 - exp(
-                -FogExtinctionPerBlock * density * stepBlocks);
-            float contribution = transmittance * segmentAlpha;
-            vec3 colour = rgbaFogIn.rgb * mix(0.92, 1.035, broad);
-            scattered += colour * contribution;
-            transmittance *= 1.0 - segmentAlpha;
+            float pixelBlocks = max(0.001, rayDistance * fogPixelScale);
+            float top;
+            float extinction = vhFogExtinction(fogWorldPosition, field, heightAboveGround,
+                pixelBlocks, false, top);
+            previousExtinction = extinction;
+            if (extinction > 0.0000001)
+            {
+                // Fog between this point and the sun shades it: one cheap look toward the sun,
+                // plus this point's own share. Without the look the bank goes flat grey.
+                float towardSun = extinction * max(1.0, ScaleHeightFraction * top) / sunHeight;
+                vec3 probePosition = fieldPosition + sunDirection * SunProbeBlocks;
+                vec2 probeUv = probePosition.xz / vec2(fieldBlocksX, fieldBlocksZ);
+                if (all(greaterThanEqual(probeUv, vec2(0.0)))
+                    && all(lessThanEqual(probeUv, vec2(1.0))))
+                {
+                    vec4 probeField = texture(fogField, probeUv);
+                    float probeTop;
+                    float probeExtinction = vhFogExtinction(
+                        fogWorldPosition + sunDirection * SunProbeBlocks, probeField,
+                        probePosition.y - (probeField.g - globeDrop), pixelBlocks, true,
+                        probeTop);
+                    towardSun = (extinction * 0.35 + probeExtinction) * SunProbeBlocks * 1.6;
+                }
+                // Beer's law plus a softer lobe standing in for light scattered many times.
+                float direct = (exp(-towardSun) + 0.6 * exp(-towardSun * 0.25)) / 1.6;
+                // Low fog sees less of the sky.
+                float sky = mix(0.55, 1.0,
+                    clamp(max(0.0, heightAboveGround) / max(1.0, top), 0.0, 1.0));
+                float sunlit = 0.62 * direct * phase + 0.38 * sky;
+                float light = clamp(mix(sky, sunlit, daylight), 0.0, 1.2);
+                // Never brighter than the horizon fog; shadows turn cool grey-blue.
+                vec3 tint = mix(vec3(0.90, 0.94, 1.04), sunTint, clamp(light, 0.0, 1.0));
+                vec3 colour = rgbaFogIn.rgb * mix(0.64, 0.93, light) * tint;
+                float segmentAlpha = 1.0 - exp(-extinction * stepBlocks);
+                scattered += colour * (transmittance * segmentAlpha);
+                transmittance *= 1.0 - segmentAlpha;
+            }
         }
         rayDistance += max(0.25, stepBlocks);
     }
 
-    float alpha = clamp(1.0 - transmittance, 0.0, 0.985);
+    float alpha = clamp(1.0 - transmittance, 0.0, 0.99);
     if (alpha < 0.002) discard;
     outColor = vec4(scattered / max(alpha, 0.0001), alpha);
 }

@@ -4,6 +4,8 @@ namespace VintageHorizons;
 /// CPU-authored description of the seam fog. RGBA stores effective signed distance to the
 /// rounded ownership frontier, frontier ground height, unsigned distance, and open-end fade.
 /// The texture is only a compact spatial field; the actual medium is integrated in screen space.
+/// <see cref="CoreBlocks"/> comes from how far the real 32-block staircase strays from that
+/// rounded frontier, measured here, so the shader knows how wide a band must stay hidden.
 /// </summary>
 internal sealed class LodSilhouetteFogFieldArrays
 {
@@ -21,6 +23,8 @@ internal sealed class LodSilhouetteFogFieldArrays
     public required int PathSamples;
     public required int CenterlineSpans;
     public required int DiagonalCenterlineSpans;
+    public required float CoreBlocks;
+    public required float StaircaseDeviationBlocks;
 
     internal float SampleChannel(float worldX, float worldZ, int channel)
     {
@@ -62,16 +66,64 @@ internal static class LodSilhouetteFogVolume
     /// <summary>Half-float-safe range; the shader never needs a larger conservative skip.</summary>
     public const float StoredDistanceLimit = 2048f;
 
-    /// <summary>The fragment integrator's extinction coefficient per block.</summary>
-    public const float ExtinctionPerBlock = 0.018f;
+    /// <summary>
+    /// The fog model a saved config's dials were tuned for. 2 is the natural bank of 0.4.123;
+    /// a file written for an older model has its fog dials reset once, because the same numbers
+    /// no longer describe the same fog.
+    /// </summary>
+    public const int FogModel = 2;
+
+    // The shader's medium, mirrored here for the checks (lodsilhouettefogvolume.fsh). Optical
+    // depths are quoted through one vertical column. A slanted view of ground near the core's
+    // edge crosses mostly the thinner shoulder outside it instead, which is what the core margin
+    // and the seal's gentle falloff are for (scripts/fog-mockup measures every angle).
 
     /// <summary>
-    /// Integral from the smooth seam-seal rim to its centre, in units of side reach. The profile
-    /// is one through the first 8%, then one minus smoothstep through the remaining 92%:
-    /// 0.08 + 0.92 / 2 = 0.54. Normalizing by this makes its promised optical depth independent
-    /// of the spill-width dial instead of letting a narrow bank expose the ownership seam.
+    /// Column optical depth the seal guarantees over the measured core, whatever the bank's
+    /// height or noise: 3.5 hides 97% of the seam. Sized like the bank, so it fills its holes
+    /// rather than standing out as a second, denser body (G245's 0.4.122 form).
     /// </summary>
-    public const float SeamSealIntegralFraction = 0.54f;
+    public const float SealOpticalDepth = 3.5f;
+
+    /// <summary>Mean column optical depth of the noisy bank over the core.</summary>
+    public const float BankOpticalDepth = 3.2f;
+
+    /// <summary>The faint halo that carries the fade past the last strands.</summary>
+    public const float HazeOpticalDepth = 0.25f;
+
+    /// <summary>Mean eroded noise density inside the core, so the bank meets its target.</summary>
+    public const float BankMeanDensity = 0.6f;
+
+    /// <summary>Exponential fade lengths beyond the core, as fractions of that side's reach.</summary>
+    public const float ShoulderFraction = 0.4f;
+    public const float HazeFraction = 0.6f;
+    public const float SealFalloffFraction = 0.3f;
+
+    /// <summary>The Farseer side reaches this much further than the spread dial.</summary>
+    public const float FarseerReachScale = 1.6f;
+
+    /// <summary>
+    /// Vertical profile, as fractions of the local bank top: a dense ground layer, then an
+    /// exponential thinning with this scale height, under a soft eroded ceiling.
+    /// </summary>
+    public const float GroundLayerFraction = 0.3f;
+    public const float ScaleHeightFraction = 0.42f;
+
+    /// <summary>
+    /// The vertical profile's integral in units of bank top, computed numerically: under the
+    /// seal's ceiling (0.5 to 1.15 of the top) and under the bank's (0.35 to 1.1).
+    /// </summary>
+    public const float SealColumnFraction = 0.5923f;
+    public const float BankColumnFraction = 0.5548f;
+
+    /// <summary>
+    /// The core covers the measured staircase plus this margin, within these bounds. Six blocks
+    /// left a slanted view of the staircase's outermost corners 13-17% visible in the mock-up;
+    /// ten, with the seal fading over 0.3 of the spread, holds every tested angle under 4%.
+    /// </summary>
+    public const float CoreMarginBlocks = 10f;
+    public const float MinCoreBlocks = 12f;
+    public const float MaxCoreBlocks = 48f;
 
     /// <summary>
     /// A true open path grows a rounded, fading cap past its endpoint. Width contracts the bank
@@ -86,31 +138,30 @@ internal static class LodSilhouetteFogVolume
 
     public static int ColumnsPerOpenEnd => SweptEnd.Length;
 
-    public const float GuardProfile = -0.55f;
     public const float MinStrength = 0f;
     public const float MaxStrength = 2f;
     public const float DefaultStrength = 1f;
     public const float MinCoverage = 0f;
     public const float MaxCoverage = 1f;
-    public const float DefaultCoverage = 0.25f;
+    public const float DefaultCoverage = 0.5f;
     public const float MinSpillBlocks = 8f;
     public const float MaxSpillBlocks = 128f;
     public const float DefaultSpillBlocks = 48f;
     public const float MinHeightBlocks = 16f;
     public const float MaxHeightBlocks = 192f;
-    public const float DefaultHeightBlocks = 88f;
+    public const float DefaultHeightBlocks = 40f;
     public const float MinFloorDepthBlocks = 0f;
     public const float MaxFloorDepthBlocks = 64f;
     public const float DefaultFloorDepthBlocks = 16f;
     public const float MinBillowSizeBlocks = 12f;
     public const float MaxBillowSizeBlocks = 160f;
-    public const float DefaultBillowSizeBlocks = 50f;
+    public const float DefaultBillowSizeBlocks = 48f;
     public const float MinDriftSpeed = 0f;
     public const float MaxDriftSpeed = 3f;
     public const float DefaultDriftSpeed = 1f;
     public const float MinEdgeSoftness = 0f;
     public const float MaxEdgeSoftness = 1f;
-    public const float DefaultEdgeSoftness = 0.5f;
+    public const float DefaultEdgeSoftness = 0.6f;
     public const float MinLayerDetail = 0f;
     public const float MaxLayerDetail = 1f;
     public const float DefaultLayerDetail = 0.67f;
@@ -130,6 +181,7 @@ internal static class LodSilhouetteFogVolume
     internal sealed class Prepared
     {
         internal required List<FogPath> Paths;
+        internal required LodSilhouetteBoundaryEdge[] Boundaries;
         internal required float SpillBlocks;
         internal required float MinX;
         internal required float MinZ;
@@ -197,6 +249,7 @@ internal static class LodSilhouetteFogVolume
         return new Prepared
         {
             Paths = paths,
+            Boundaries = mask.Boundaries.ToArray(),
             SpillBlocks = spillBlocks,
             MinX = minX,
             MinZ = minZ,
@@ -220,9 +273,10 @@ internal static class LodSilhouetteFogVolume
         float spillBlocks = prepared.SpillBlocks;
         float minX = prepared.MinX, minZ = prepared.MinZ;
         float maxX = prepared.MaxX, maxZ = prepared.MaxZ;
-        float farseerReach = FarseerReach(spillBlocks);
-        float guard = Math.Clamp(spillBlocks * 0.40f, 12f, 32f);
-        float padding = farseerReach + guard + BaseFieldTexelBlocks * 2f;
+        // The march stops where the field ends, so it must hold the whole fade: the widest
+        // core, the Farseer shoulder, and the rim's largest wander.
+        float padding = BankReach(spillBlocks, MaxEdgeSoftness, MaxCoreBlocks)
+            + BaseFieldTexelBlocks * 2f;
         float texelBlocks = BaseFieldTexelBlocks;
         int originX, originZ, width, height;
         while (true)
@@ -349,7 +403,7 @@ internal static class LodSilhouetteFogVolume
             }
         }
 
-        return new LodSilhouetteFogFieldArrays
+        var field = new LodSilhouetteFogFieldArrays
         {
             Texels = texels,
             Width = width,
@@ -365,7 +419,29 @@ internal static class LodSilhouetteFogVolume
             PathSamples = samples.Count,
             CenterlineSpans = prepared.CenterlineSpans,
             DiagonalCenterlineSpans = prepared.DiagonalCenterlineSpans,
+            CoreBlocks = MinCoreBlocks,
+            StaircaseDeviationBlocks = 0f,
         };
+
+        // How far the real staircase strays from the rounded centreline, in the same lateral
+        // distance the shader reads. Faded open ends are excluded: they taper on purpose.
+        float deviation = 0f;
+        foreach (LodSilhouetteBoundaryEdge edge in prepared.Boundaries)
+        {
+            for (int part = 0; part <= 2; part++)
+            {
+                float t = part * 0.5f;
+                float x = (edge.StartGridX + (edge.EndGridX - edge.StartGridX) * t)
+                    * LodSilhouetteSeamMask.CellBlocks;
+                float z = (edge.StartGridZ + (edge.EndGridZ - edge.StartGridZ) * t)
+                    * LodSilhouetteSeamMask.CellBlocks;
+                if (field.SampleChannel(x, z, 3) < 0.99f) continue;
+                deviation = MathF.Max(deviation, MathF.Abs(field.SampleChannel(x, z, 0)));
+            }
+        }
+        field.StaircaseDeviationBlocks = deviation;
+        field.CoreBlocks = CoreHalfWidth(deviation);
+        return field;
 
         float DistanceToCellCenterSquared(FogSample sample, int x, int z)
         {
@@ -716,67 +792,69 @@ internal static class LodSilhouetteFogVolume
         return length > 0.000001f ? new PlanPoint(x / length, z / length) : new PlanPoint(1f, 0f);
     }
 
-    internal static float FarseerReach(float spillBlocks)
+    /// <summary>The seam band that must stay hidden: measured staircase plus a margin.</summary>
+    internal static float CoreHalfWidth(float staircaseDeviationBlocks) => Math.Clamp(
+        (float.IsFinite(staircaseDeviationBlocks) ? staircaseDeviationBlocks : MaxCoreBlocks)
+            + CoreMarginBlocks, MinCoreBlocks, MaxCoreBlocks);
+
+    /// <summary>
+    /// How far from the centreline any fog can exist: the core, one and a half Farseer shoulder
+    /// reaches (the bank and haze are cut to zero there), and the rim's largest wander.
+    /// </summary>
+    internal static float BankReach(float spillBlocks, float edgeSoftness, float coreBlocks)
     {
         spillBlocks = Dial(spillBlocks, DefaultSpillBlocks, MinSpillBlocks, MaxSpillBlocks);
-        return spillBlocks + MathF.Min(32f, spillBlocks * 0.67f);
+        edgeSoftness = Dial(edgeSoftness, DefaultEdgeSoftness, MinEdgeSoftness, MaxEdgeSoftness);
+        return coreBlocks + spillBlocks * FarseerReachScale * 1.5f
+            + edgeSoftness * 0.5f * spillBlocks;
     }
 
     internal static float MarchStepBlocks(float detail)
     {
         detail = Dial(detail, DefaultLayerDetail, MinLayerDetail, MaxLayerDetail);
-        return Lerp(7.5f, 3f, detail);
+        return Lerp(6f, 2.5f, detail);
     }
 
-    internal static float SeamSealLodReach(float spillBlocks)
+    /// <summary>Lateral reach on each side of the centreline; Farseer's is wider.</summary>
+    internal static float SideReach(float signedDistance, float spillBlocks)
     {
         spillBlocks = Dial(spillBlocks, DefaultSpillBlocks, MinSpillBlocks, MaxSpillBlocks);
-        return Math.Clamp(spillBlocks * 0.67f, 12f, 32f);
-    }
-
-    internal static float SeamSealTargetOpticalDepth(float coverage)
-    {
-        coverage = Dial(coverage, DefaultCoverage, MinCoverage, MaxCoverage);
-        return Lerp(3f, 4.5f, coverage);
+        return signedDistance < 0f ? spillBlocks : spillBlocks * FarseerReachScale;
     }
 
     /// <summary>
-    /// CPU counterpart of the shader's deterministic seam core. Organic billows may open around
-    /// it, but cannot punch a view through the exact handoff. The broad smooth profile keeps this
-    /// a volume rather than drawing a new line where the old terrain cards met.
+    /// The vertical profile at a height above the seam ground: full through the ground layer,
+    /// then exponential. The shader multiplies it by the seal's or the bank's ceiling.
     /// </summary>
-    internal static float SeamSealDensity(
-        float signedDistance, float spillBlocks, float coverage, float endFade = 1f)
+    internal static float HeightProfile(float heightAboveGround, float bankTop)
     {
-        spillBlocks = Dial(spillBlocks, DefaultSpillBlocks, MinSpillBlocks, MaxSpillBlocks);
-        float lodReach = SeamSealLodReach(spillBlocks);
-        float sideReach = signedDistance < 0f
-            ? lodReach : Math.Clamp(spillBlocks, 12f, 48f);
-        float across = Math.Abs(signedDistance) / sideReach;
-        float profile = 1f - SmoothStep(0.08f, 1f, across);
-        float normalization = ExtinctionPerBlock * SeamSealIntegralFraction * lodReach;
-        return profile * Math.Clamp(endFade, 0f, 1f)
-            * SeamSealTargetOpticalDepth(coverage) / normalization;
+        float top = MathF.Max(1f, bankTop);
+        float lift = MathF.Max(0f, heightAboveGround - GroundLayerFraction * top);
+        return MathF.Exp(-lift / MathF.Max(1f, ScaleHeightFraction * top));
     }
 
-    /// <summary>CPU counterpart of the shader's asymmetric lateral bank profile.</summary>
-    internal static float CrossingProfile(float effectiveSignedDistance, float spillBlocks)
+    /// <summary>
+    /// CPU counterpart of the shader's seal: extinction per block at a lateral distance beyond
+    /// the core and a height above the seam ground, for a bank of the given top. Its vertical
+    /// column over the core integrates to <see cref="SealOpticalDepth"/> for any top. Outside
+    /// the core the shader also thins it by the bank's billows; this is that fade's envelope.
+    /// </summary>
+    internal static float SealExtinction(float beyondCore, float heightAboveGround,
+        float bankTop, float spillBlocks, float endFade = 1f)
     {
         spillBlocks = Dial(spillBlocks, DefaultSpillBlocks, MinSpillBlocks, MaxSpillBlocks);
-        float lodPlateau = -MathF.Min(14f, spillBlocks * 0.29f);
-        float farseerPlateau = MathF.Min(32f, spillBlocks * 0.67f);
-        float farseerReach = FarseerReach(spillBlocks);
-        float linear;
-        if (effectiveSignedDistance < lodPlateau)
-            linear = (effectiveSignedDistance + spillBlocks) / (lodPlateau + spillBlocks);
-        else if (effectiveSignedDistance <= farseerPlateau)
-            linear = 1f;
-        else
-            linear = (farseerReach - effectiveSignedDistance)
-                / (farseerReach - farseerPlateau);
-        float across = Math.Clamp(linear, 0f, 1f);
-        return across * across * (3f - 2f * across);
+        float top = MathF.Max(1f, bankTop);
+        float hs = MathF.Max(0f, heightAboveGround);
+        float profile = MathF.Exp(-MathF.Max(0f, beyondCore)
+            / MathF.Max(1f, SealFalloffFraction * spillBlocks)) * Math.Clamp(endFade, 0f, 1f);
+        float ceiling = 1f - SmoothStep(0.5f * top, 1.15f * top, hs);
+        return SealOpticalDepth / (SealColumnFraction * top) * profile
+            * HeightProfile(hs, top) * ceiling;
     }
+
+    /// <summary>The bank's lateral coverage envelope at a rim distance beyond the core.</summary>
+    internal static float Envelope(float rimBlocks, float sideReach) =>
+        MathF.Exp(-MathF.Max(0f, rimBlocks) / MathF.Max(1f, sideReach * ShoulderFraction));
 
     static float Lerp(float from, float to, float amount) => from + (to - from) * amount;
 

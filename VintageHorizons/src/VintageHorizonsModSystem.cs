@@ -160,6 +160,19 @@ public class VintageHorizonsConfig
         Silhouette.LodSilhouetteField.DefaultUnderlayWidthBlocks;
     public float SilhouetteOutlineDetail = Silhouette.LodSilhouetteField.DefaultOutlineDetail;
     public float SilhouetteHillSoftness = Silhouette.LodSilhouetteField.DefaultHillSoftness;
+
+    /// <summary>
+    /// The seam fog's own switch, under Farseer's. Off draws no fog pass and builds no field;
+    /// an older config file with no such key loads as on.
+    /// </summary>
+    public bool SilhouetteFog = true;
+
+    /// <summary>
+    /// The fog model the dials below were saved for. A file without the key, or with an older
+    /// model, has them reset once to the current defaults: a redesign changes what the same
+    /// numbers look like, and values tuned against the old fog work against the new one.
+    /// </summary>
+    public int SilhouetteFogModel;
     public float SilhouetteFogStrength = LodSilhouetteFogVolume.DefaultStrength;
     public float SilhouetteFogCoverage = LodSilhouetteFogVolume.DefaultCoverage;
     public float SilhouetteFogSpillBlocks = LodSilhouetteFogVolume.DefaultSpillBlocks;
@@ -281,14 +294,19 @@ public partial class VintageHorizonsModSystem : ModSystem
         allocationTelemetryEnabled =
             Environment.GetEnvironmentVariable("VINTAGEHORIZONS_STATS") == "1";
 
+        bool configLoaded = false;
         try
         {
-            config = capi.LoadModConfig<VintageHorizonsConfig>("vintagehorizons.json") ?? new VintageHorizonsConfig();
+            VintageHorizonsConfig? loaded =
+                capi.LoadModConfig<VintageHorizonsConfig>("vintagehorizons.json");
+            configLoaded = loaded != null;
+            config = loaded ?? new VintageHorizonsConfig();
         }
         catch
         {
             config = new VintageHorizonsConfig();
         }
+        ResetOutdatedFogDials(configLoaded);
 
         // Before anything that can return early, and before the connection handshake:
         // the server learns we speak this channel at handshake time and never again. A
@@ -4649,6 +4667,32 @@ public partial class VintageHorizonsModSystem : ModSystem
         pipeline.SetTextureSlotsEnabled(true);
         renderer.TextureSlotSourceReady = pipeline.TextureSlotsPrepared;
         renderer.BlendPipelineEnabled = true;
+    }
+
+    /// <summary>
+    /// Put the seam-fog dials back to the current model's defaults once, when the file was
+    /// written for an older fog. The on/off switch is kept. A file that could not be read is
+    /// never written here, and a fresh install only records the model.
+    /// </summary>
+    void ResetOutdatedFogDials(bool fromFile)
+    {
+        if (config.SilhouetteFogModel >= LodSilhouetteFogVolume.FogModel) return;
+        LodSilhouetteSettings defaults = LodSilhouetteSettings.Default;
+        config.SilhouetteFogStrength = defaults.FogStrength;
+        config.SilhouetteFogCoverage = defaults.FogCoverage;
+        config.SilhouetteFogSpillBlocks = defaults.FogSpillBlocks;
+        config.SilhouetteFogHeightBlocks = defaults.FogHeightBlocks;
+        config.SilhouetteFogFloorDepthBlocks = defaults.FogFloorDepthBlocks;
+        config.SilhouetteFogBillowSizeBlocks = defaults.FogBillowSizeBlocks;
+        config.SilhouetteFogDriftSpeed = defaults.FogDriftSpeed;
+        config.SilhouetteFogLayerDetail = defaults.FogLayerDetail;
+        config.SilhouetteFogEdgeSoftness = defaults.FogEdgeSoftness;
+        config.SilhouetteFogModel = LodSilhouetteFogVolume.FogModel;
+        if (!fromFile) return;
+        capi.StoreModConfig(config, "vintagehorizons.json");
+        Mod.Logger.Notification(
+            "[VintageHorizons] the seam fog was redesigned, so its dials were reset once to the "
+            + "new defaults. The values you had were tuned for the previous fog.");
     }
 
     /// <summary>Writes every setting: a partial write would silently reset the others.</summary>

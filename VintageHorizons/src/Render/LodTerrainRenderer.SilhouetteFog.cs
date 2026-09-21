@@ -50,6 +50,19 @@ public partial class LodTerrainRenderer
     int silhouetteFogErrorChecksLeft = 240;
     bool silhouetteFogReportedPendingError;
     float silhouetteFogDriftBlocks;
+    int silhouetteFogNoiseTexture;
+    int silhouetteFogNoiseProgram;
+    int silhouetteFogNoiseLocation = -1;
+    float silhouetteFogCoreBlocks = LodSilhouetteFogVolume.MinCoreBlocks;
+    float silhouetteFogStaircaseDeviation;
+
+    /// <summary>
+    /// The player's seam-fog switch. Off draws no fog pass and builds no fog field, so the
+    /// difference in frame time is the fog's whole cost; Farseer is then not held for a field.
+    /// </summary>
+    internal bool SilhouetteFogEnabled = true;
+    internal float SilhouetteFogCoreBlocks => silhouetteFogCoreBlocks;
+    internal float SilhouetteFogStaircaseDeviation => silhouetteFogStaircaseDeviation;
     internal float SilhouetteFogStrength = LodSilhouetteFogVolume.DefaultStrength;
     internal float SilhouetteFogCoverage = LodSilhouetteFogVolume.DefaultCoverage;
     internal float SilhouetteFogSpillBlocks = LodSilhouetteFogVolume.DefaultSpillBlocks;
@@ -82,7 +95,7 @@ public partial class LodTerrainRenderer
 
     void QueueSilhouetteFogVolume(LodSilhouetteClient silhouettes)
     {
-        if (!silhouetteSeamMask.HasEdges)
+        if (!SilhouetteFogEnabled || !silhouetteSeamMask.HasEdges)
         {
             ClearSilhouetteFogField();
             silhouetteSeamMask.MarkUploaded();
@@ -119,6 +132,8 @@ public partial class LodTerrainRenderer
         {
             try
             {
+                // Bake the noise here, once, so the render thread only ever uploads it.
+                _ = LodSilhouetteFogNoise.Texels;
                 return new SilhouetteFogBuildOutcome(
                     revision, LodSilhouetteFogVolume.Build(prepared, token), "", false);
             }
@@ -185,8 +200,22 @@ public partial class LodTerrainRenderer
     void PublishSilhouetteFogField(LodSilhouetteFogFieldArrays arrays)
     {
         int next = UploadSilhouetteFogField(arrays);
+        if (silhouetteFogNoiseTexture == 0)
+        {
+            try
+            {
+                silhouetteFogNoiseTexture = UploadSilhouetteFogNoise();
+            }
+            catch
+            {
+                GL.DeleteTexture(next);
+                throw;
+            }
+        }
         int old = silhouetteFogFieldTexture;
         silhouetteFogFieldTexture = next;
+        silhouetteFogCoreBlocks = arrays.CoreBlocks;
+        silhouetteFogStaircaseDeviation = arrays.StaircaseDeviationBlocks;
         silhouetteFogFieldOriginX = arrays.OriginBlockX;
         silhouetteFogFieldOriginZ = arrays.OriginBlockZ;
         silhouetteFogFieldWidth = arrays.Width;
@@ -210,12 +239,15 @@ public partial class LodTerrainRenderer
         silhouetteFogBuildTask = null;
     }
 
-    internal void SetSilhouetteFogSettings(
+    internal void SetSilhouetteFogSettings(bool enabled,
         float strength, float coverage, float spillBlocks, float heightBlocks,
         float floorDepthBlocks, float billowSizeBlocks, float driftSpeed, float layerDetail,
         float edgeSoftness)
     {
-        bool geometryChanged = SilhouetteFogSpillBlocks != spillBlocks;
+        bool geometryChanged = SilhouetteFogSpillBlocks != spillBlocks
+            || enabled && !SilhouetteFogEnabled;
+        // Turning off releases the field in the next prepared frame, on the render thread.
+        SilhouetteFogEnabled = enabled;
         SilhouetteFogStrength = strength;
         SilhouetteFogCoverage = coverage;
         SilhouetteFogSpillBlocks = spillBlocks;
@@ -284,6 +316,55 @@ public partial class LodTerrainRenderer
         throw failure;
     }
 
+    /// <summary>
+    /// The baked tiling noise as a mipmapped 3D texture. Uploaded once, after the first field,
+    /// so the field upload's error baseline has already been taken on this frame.
+    /// </summary>
+    int UploadSilhouetteFogNoise()
+    {
+        byte[] texels = LodSilhouetteFogNoise.Texels;
+        int size = LodSilhouetteFogNoise.Size;
+        int activeTexture = GL.GetInteger(GetPName.ActiveTexture);
+        GL.ActiveTexture(TextureUnit.Texture0);
+        int previous = GL.GetInteger(GetPName.TextureBinding3D);
+        int texture = 0;
+        try
+        {
+            texture = GL.GenTexture();
+            if (texture == 0)
+                throw new InvalidOperationException("the seam-fog noise texture was not created");
+            GL.BindTexture(TextureTarget.Texture3D, texture);
+            GL.TexParameter(TextureTarget.Texture3D, TextureParameterName.TextureWrapS,
+                (int)TextureWrapMode.Repeat);
+            GL.TexParameter(TextureTarget.Texture3D, TextureParameterName.TextureWrapT,
+                (int)TextureWrapMode.Repeat);
+            GL.TexParameter(TextureTarget.Texture3D, TextureParameterName.TextureWrapR,
+                (int)TextureWrapMode.Repeat);
+            GL.TexParameter(TextureTarget.Texture3D, TextureParameterName.TextureMinFilter,
+                (int)TextureMinFilter.LinearMipmapLinear);
+            GL.TexParameter(TextureTarget.Texture3D, TextureParameterName.TextureMagFilter,
+                (int)TextureMagFilter.Linear);
+            GL.TexImage3D(TextureTarget.Texture3D, 0, PixelInternalFormat.Rgba8,
+                size, size, size, 0, PixelFormat.Rgba, PixelType.UnsignedByte, texels);
+            GL.GenerateMipmap(GenerateMipmapTarget.Texture3D);
+            ErrorCode uploadError = GL.GetError();
+            if (uploadError != ErrorCode.NoError)
+                throw new InvalidOperationException(
+                    "seam-fog noise upload raised OpenGL " + uploadError);
+            return texture;
+        }
+        catch
+        {
+            if (texture != 0) GL.DeleteTexture(texture);
+            throw;
+        }
+        finally
+        {
+            GL.BindTexture(TextureTarget.Texture3D, previous);
+            GL.ActiveTexture((TextureUnit)activeTexture);
+        }
+    }
+
     float SilhouetteFogHeightAtGrid(int gridX, int gridZ)
     {
         int cells = LodSilhouetteField.CoverageCellsPerEdge;
@@ -340,7 +421,8 @@ public partial class LodTerrainRenderer
         AdvanceSilhouetteFogDrift(deltaSeconds);
         LodSilhouetteClient? silhouettes = Silhouettes;
         if (silhouettes == null || !silhouettes.Enabled || silhouetteFogVolumeFailed
-            || silhouetteFogFieldTexture == 0 || silhouetteFogBoundaryEdges == 0
+            || !SilhouetteFogEnabled || silhouetteFogFieldTexture == 0
+            || silhouetteFogNoiseTexture == 0 || silhouetteFogBoundaryEdges == 0
             || silhouetteFogVolumeProg == null || silhouetteFogVolumeProg.LoadError
             || SilhouetteFogStrength <= 0f) return;
         FrameBufferRef? primary = PrimaryFrameBuffer();
@@ -375,6 +457,8 @@ public partial class LodTerrainRenderer
         int activeTexture = GL.GetInteger(GetPName.ActiveTexture);
         GL.ActiveTexture(TextureUnit.Texture1);
         int textureUnit1 = GL.GetInteger(GetPName.TextureBinding2D);
+        GL.ActiveTexture(TextureUnit.Texture2);
+        int textureUnit2 = GL.GetInteger(GetPName.TextureBinding3D);
         GL.ActiveTexture((TextureUnit)activeTexture);
         IShaderProgram? incoming = ShaderProgramBase.CurrentShaderProgram;
         bool depthTest = GL.IsEnabled(EnableCap.DepthTest);
@@ -435,9 +519,18 @@ public partial class LodTerrainRenderer
             float globeRise = MathF.Max(0f, -SilhouetteGlobeEffect) * silhouettes.ReachBlocks;
             p.Uniform("fieldMinY",
                 silhouetteFogMinGroundY - SilhouetteFogFloorDepthBlocks - globeDrop - 4f);
+            // The tallest bank top is 1.3 heights, and its ceiling ends at 1.15 of that.
             p.Uniform("fieldMaxY",
-                silhouetteFogMaxGroundY + SilhouetteFogHeightBlocks + globeRise + 4f);
+                silhouetteFogMaxGroundY + SilhouetteFogHeightBlocks * 1.5f + globeRise + 4f);
+            // One pixel's width in blocks per block of distance, from the vertical field of view.
+            float focal = MathF.Abs(projection[5]);
+            p.Uniform("fogPixelScale",
+                focal > 1e-6f ? 2f / (focal * Math.Max(1, primary.Height)) : 0.001f);
             p.Uniform("rgbaFogIn", capi.Ambient.BlendedFogColor);
+            p.Uniform("sunPosition", capi.World.Calendar.SunPositionNormalized);
+            p.Uniform("sunColor", capi.World.Calendar.SunColor);
+            p.Uniform("dayLight", Math.Max(0, capi.World.Calendar.DayLightStrength));
+            p.Uniform("fogCoreBlocks", silhouetteFogCoreBlocks);
             p.Uniform("fogStrength", SilhouetteFogStrength);
             p.Uniform("fogCoverage", SilhouetteFogCoverage);
             p.Uniform("fogSpillBlocks", SilhouetteFogSpillBlocks);
@@ -449,6 +542,18 @@ public partial class LodTerrainRenderer
             p.Uniform("fogDriftBlocks", silhouetteFogDriftBlocks);
             p.BindTexture2D("sceneDepth", primary.DepthTextureId, 0);
             p.BindTexture2D("fogField", silhouetteFogFieldTexture, 1);
+            // The engine's uniform collector has no sampler3D, so this unit is bound directly.
+            if (silhouetteFogNoiseProgram != p.ProgramId)
+            {
+                silhouetteFogNoiseLocation = GL.GetUniformLocation(p.ProgramId, "fogNoise");
+                silhouetteFogNoiseProgram = p.ProgramId;
+            }
+            if (silhouetteFogNoiseLocation < 0)
+                throw new InvalidOperationException("the seam-fog shader has no fogNoise sampler");
+            GL.ActiveTexture(TextureUnit.Texture2);
+            GL.BindTexture(TextureTarget.Texture3D, silhouetteFogNoiseTexture);
+            GL.Uniform1(silhouetteFogNoiseLocation, 2);
+            GL.ActiveTexture(TextureUnit.Texture0);
             GL.BindVertexArray(silhouetteFogVao);
             GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
             p.Stop();
@@ -477,6 +582,8 @@ public partial class LodTerrainRenderer
                 silhouetteFogColorMask[2], silhouetteFogColorMask[3]);
             GL.ActiveTexture(TextureUnit.Texture1);
             GL.BindTexture(TextureTarget.Texture2D, textureUnit1);
+            GL.ActiveTexture(TextureUnit.Texture2);
+            GL.BindTexture(TextureTarget.Texture3D, textureUnit2);
             GL.ActiveTexture((TextureUnit)state.ActiveTexture);
             if (!LodGlStateGuard.TryRestore(silhouetteFogStateApi, state, out string restoreFailure))
                 failure ??= new InvalidOperationException(
@@ -549,6 +656,7 @@ public partial class LodTerrainRenderer
             ClearSilhouetteFogField();
             if (silhouetteFogVao != 0) GL.DeleteVertexArray(silhouetteFogVao);
             if (silhouetteFogFramebuffer != 0) GL.DeleteFramebuffer(silhouetteFogFramebuffer);
+            if (silhouetteFogNoiseTexture != 0) GL.DeleteTexture(silhouetteFogNoiseTexture);
         }
         catch
         {
@@ -557,5 +665,8 @@ public partial class LodTerrainRenderer
         silhouetteFogVao = 0;
         silhouetteFogFramebuffer = 0;
         silhouetteFogAttachedColor = 0;
+        silhouetteFogNoiseTexture = 0;
+        silhouetteFogNoiseProgram = 0;
+        silhouetteFogNoiseLocation = -1;
     }
 }

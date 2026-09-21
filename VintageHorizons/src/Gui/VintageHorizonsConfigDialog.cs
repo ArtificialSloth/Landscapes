@@ -360,18 +360,18 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("sil-softness", "Hill softness", "Rounds and feathers the distant height profile. Higher produces broader rolling hills; regeneration is gradual and runs off-thread.",
             0, 100, 1, s => (int)MathF.Round(s.HillSoftness * 100),
             (s, v) => s with { HillSoftness = v / 100f }, HillSoftnessLabel),
-        new("sil-fog-strength", "Fog density", "Overall opacity of the fog hiding the Farseer/LOD ownership seam. Zero disables the fog pass.",
+        new("sil-fog-strength", "Fog density", "How thick the fog over the Farseer/LOD seam is. 100% hides the seam; lower lets it show through; zero draws no fog.",
             0, 200, 5, s => (int)MathF.Round(s.FogStrength * 100),
             (s, v) => s with { FogStrength = v / 100f }, v => $"{v}%"),
-        new("sil-fog-coverage", "Fog coverage", "Minimum veil between billows away from the seam-sealing core. Higher makes the whole bank more continuous; Fog density still controls all opacity.",
+        new("sil-fog-coverage", "Fog coverage", "How solid the bank is. Lower breaks it into separate billows and strands; higher makes one continuous blanket. The seam itself stays covered either way.",
             0, 100, 5, s => (int)MathF.Round(s.FogCoverage * 100),
             (s, v) => s with { FogCoverage = v / 100f }, v => $"{v}%"),
-        new("sil-fog-spill", "Fog spread", "How far the fog spills across both Farseer and real LOD terrain from the ownership seam.",
+        new("sil-fog-spill", "Fog spread", "How far the fog thins out from the seam on each side. It reaches further over Farseer than over real terrain.",
             (int)LodSilhouetteFogVolume.MinSpillBlocks,
             (int)LodSilhouetteFogVolume.MaxSpillBlocks, 4,
             s => (int)MathF.Round(s.FogSpillBlocks),
             (s, v) => s with { FogSpillBlocks = v }, v => $"{v} blocks"),
-        new("sil-fog-height", "Fog height", "How high the seam fog hangs above the sampled terrain surface.",
+        new("sil-fog-height", "Fog height", "How tall the bank stands over the seam. It is lower toward its edges and densest at the ground; height does not change how well the seam is hidden.",
             (int)LodSilhouetteFogVolume.MinHeightBlocks,
             (int)LodSilhouetteFogVolume.MaxHeightBlocks, 4,
             s => (int)MathF.Round(s.FogHeightBlocks),
@@ -381,7 +381,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             (int)LodSilhouetteFogVolume.MaxFloorDepthBlocks, 2,
             s => (int)MathF.Round(s.FogFloorDepthBlocks),
             (s, v) => s with { FogFloorDepthBlocks = v }, v => $"{v} blocks"),
-        new("sil-fog-billow", "Fog billow size", "World-space size of the broad cloud shapes. Higher gives larger, slower-changing banks; lower gives smaller wisps.",
+        new("sil-fog-billow", "Fog billow size", "Size of the billows and wisps. Higher gives larger, slower-changing shapes; lower gives finer ones.",
             (int)LodSilhouetteFogVolume.MinBillowSizeBlocks,
             (int)LodSilhouetteFogVolume.MaxBillowSizeBlocks, 4,
             s => (int)MathF.Round(s.FogBillowSizeBlocks),
@@ -389,10 +389,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("sil-fog-drift", "Fog drift speed", "How quickly the world-anchored billows move. Zero keeps their shape stationary.",
             0, 300, 5, s => (int)MathF.Round(s.FogDriftSpeed * 100),
             (s, v) => s with { FogDriftSpeed = v / 100f }, v => $"{v}%"),
-        new("sil-fog-edge", "Fog edge softness", "How far a broad world-anchored wobble pushes the fog's rim in and out. Higher dissolves the chunk-grid outline and rounds its corners; zero leaves the bare geometric edge.",
+        new("sil-fog-edge", "Fog edge softness", "How wispy the edges are: how much they fray into strands and wander in and out. Zero gives a smooth, even fade.",
             0, 100, 5, s => (int)MathF.Round(s.FogEdgeSoftness * 100),
             (s, v) => s with { FogEdgeSoftness = v / 100f }, v => $"{v}%"),
-        new("sil-fog-detail", "Fog quality", "Raymarch precision through the continuous fog volume. Higher preserves finer billow and terrain detail but costs more fragment work.",
+        new("sil-fog-detail", "Fog quality", "Raymarch precision through the fog. Higher keeps finer detail and smoother gradients but costs more GPU time; the Seam fog switch shows its whole cost.",
             0, 100, 1, s => (int)MathF.Round(s.FogLayerDetail * 100),
             (s, v) => s with { FogLayerDetail = v / 100f }, FogQualityLabel),
     };
@@ -661,7 +661,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     void ComposeSilhouettes(GuiComposer composer)
     {
         composer.AddStaticText("Farseer horizon terrain", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, Y(42), 500, 30));
+            ElementBounds.Fixed(Margin, Y(42), 400, 30));
+        composer.AddStaticText("Seam fog", CairoFont.WhiteSmallishText(),
+            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 370, Y(48), 140, 24));
+        composer.AddSwitch(OnSilhouetteFogChanged,
+            ElementBounds.Fixed(SwitchX - 220, Y(42), 32, 32), "silhouette-fog");
+        composer.AddHoverText(SeamFogTip, CairoFont.WhiteSmallText(), 330,
+            ElementBounds.Fixed(SwitchX - 370, Y(42), 182, 32), "tip-silhouette-fog");
         composer.AddStaticText("Enabled", CairoFont.WhiteSmallishText(),
             EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 150, Y(48), 140, 24));
         composer.AddSwitch(OnSilhouetteEnabledChanged,
@@ -707,6 +713,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         if (activeComposer?.Composed != true) return;
         activeComposer.GetSwitch("silhouette-enabled").On = pendingSilhouettes.Enabled;
+        activeComposer.GetSwitch("silhouette-fog").On = pendingSilhouettes.FogEnabled;
         GuiElementSlider reach = activeComposer.GetSlider("silhouette-reach");
         reach.SetValues(pendingSilhouettes.ReachBlocks, LodSilhouetteSettings.MinReachBlocks,
             LodSilhouetteSettings.MaxReachBlocks, LodSilhouetteSettings.ReachStepBlocks, " blocks");
@@ -1040,6 +1047,17 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         pendingSilhouettes = pendingSilhouettes with { Enabled = on };
         silhouettes.Preview(pendingSilhouettes);
         scale?.SetSilhouette(pendingSilhouettes.ReachBlocks, on);
+        RefreshSilhouetteStatus();
+    }
+
+    const string SeamFogTip = "Fog over the seam between Farseer and real terrain. Off draws "
+        + "no fog and builds nothing for it, so switching it shows its whole cost; the seam "
+        + "is visible while it is off. .vhfog toggles it without saving.";
+
+    void OnSilhouetteFogChanged(bool on)
+    {
+        pendingSilhouettes = pendingSilhouettes with { FogEnabled = on };
+        silhouettes.Preview(pendingSilhouettes);
         RefreshSilhouetteStatus();
     }
 

@@ -89,7 +89,46 @@ public partial class VintageHorizonsModSystem
                 Mod.Logger.Notification("{0}", line);
                 return TextCommandResult.Success(line);
             });
+
+        // A quick A/B switch for judging the seam fog's frame-time cost while playing.
+        capi.ChatCommands.Create("vhfog")
+            .WithDescription("Seam fog: on, off, or no argument to toggle. Session-only; the "
+                + "Farseer tab's Seam fog switch saves it.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("action"))
+            .HandleWith(args =>
+            {
+                if (deferringTo != null || silhouettes == null)
+                    return TextCommandResult.Error(
+                        "[VintageHorizons] seam fog is unavailable while another LOD mod draws.");
+                LodSilhouetteSettings current = CurrentSilhouetteSettings();
+                string action = args.Parsers[0].IsMissing
+                    ? (current.FogEnabled ? "off" : "on")
+                    : ((string)args[0]).ToLowerInvariant();
+                switch (action)
+                {
+                    case "on":
+                    case "off":
+                        ApplySilhouetteSettings(current with { FogEnabled = action == "on" });
+                        break;
+                    case "stats":
+                        break;
+                    default:
+                        return TextCommandResult.Error("[VintageHorizons] use .vhfog, .vhfog on or .vhfog off");
+                }
+                string line = "[VintageHorizons] " + DescribeSeamFog()
+                    + " (the command is session-only).";
+                Mod.Logger.Notification("{0}", line);
+                return TextCommandResult.Success(line);
+            });
     }
+
+    string DescribeSeamFog() => !renderer.SilhouetteFogEnabled
+        ? "seam fog off: no fog pass is drawn and no fog field is built"
+        : $"seam fog on: {renderer.SilhouetteFogStrength * 100f:0}% density, "
+            + $"{renderer.SilhouetteFogSpillBlocks:0}-block spread, "
+            + $"{renderer.SilhouetteFogHeightBlocks:0} blocks high, sealed core "
+            + $"{renderer.SilhouetteFogCoreBlocks:0} blocks each side of the seam "
+            + $"(staircase strays {renderer.SilhouetteFogStaircaseDeviation:0.0})";
 
     string DescribeSilhouettes()
     {
@@ -122,10 +161,8 @@ public partial class VintageHorizonsModSystem
             + $"{renderer.SilhouetteOutlineDetail * 100f:0}% geometry detail, "
             + $"{s.HillSoftness * 100f:0}% hill softness, "
             + $"{renderer.SilhouetteUnderlayDepthBlocks:0} deep/"
-            + $"{renderer.SilhouetteUnderlayWidthBlocks:0} wide edge apron; fog "
-            + $"{renderer.SilhouetteFogStrength * 100f:0}% density, "
-            + $"{renderer.SilhouetteFogSpillBlocks:0} blocks each side, "
-            + $"{renderer.SilhouetteFogHeightBlocks:0} blocks high). "
+            + $"{renderer.SilhouetteUnderlayWidthBlocks:0} wide edge apron; "
+            + $"{DescribeSeamFog()}). "
             + $"Shader: {renderer.SilhouetteShaderState}.";
     }
 
@@ -144,6 +181,7 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteUnderlayWidthBlocks,
         config.SilhouetteOutlineDetail,
         config.SilhouetteHillSoftness,
+        config.SilhouetteFog,
         config.SilhouetteFogStrength,
         config.SilhouetteFogCoverage,
         config.SilhouetteFogSpillBlocks,
@@ -172,6 +210,7 @@ public partial class VintageHorizonsModSystem
             renderer.SilhouetteUnderlayWidthBlocks,
             renderer.SilhouetteOutlineDetail,
             silhouettes.HillSoftness,
+            renderer.SilhouetteFogEnabled,
             renderer.SilhouetteFogStrength,
             renderer.SilhouetteFogCoverage,
             renderer.SilhouetteFogSpillBlocks,
@@ -201,7 +240,7 @@ public partial class VintageHorizonsModSystem
         renderer.SilhouetteUnderlayDepthBlocks = value.UnderlayDepthBlocks;
         renderer.SilhouetteUnderlayWidthBlocks = value.UnderlayWidthBlocks;
         renderer.SilhouetteOutlineDetail = value.OutlineDetail;
-        renderer.SetSilhouetteFogSettings(
+        renderer.SetSilhouetteFogSettings(value.FogEnabled,
             value.FogStrength, value.FogCoverage, value.FogSpillBlocks,
             value.FogHeightBlocks, value.FogFloorDepthBlocks,
             value.FogBillowSizeBlocks, value.FogDriftSpeed, value.FogLayerDetail,
@@ -229,6 +268,7 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteUnderlayWidthBlocks = value.UnderlayWidthBlocks;
         config.SilhouetteOutlineDetail = value.OutlineDetail;
         config.SilhouetteHillSoftness = value.HillSoftness;
+        config.SilhouetteFog = value.FogEnabled;
         config.SilhouetteFogStrength = value.FogStrength;
         config.SilhouetteFogCoverage = value.FogCoverage;
         config.SilhouetteFogSpillBlocks = value.FogSpillBlocks;

@@ -30,6 +30,8 @@ public static class SilhouetteChecks
         MeshResolutionsAndUnderlay(c);
         StableReplacementLevelSelection(c);
         SeamFogMaskAndVolume(c);
+        SeamFogMedium(c);
+        SeamFogNoise(c);
         ClientSettingsArithmetic(c);
         FeatureGate(c);
         GeneratorStallWatch(c);
@@ -122,37 +124,22 @@ public static class SilhouetteChecks
         c.True(volume.SampleChannel(edgeX, edgeZ, 2) <= volume.TexelBlocks * 1.5f,
             "the unsigned channel reaches zero continuously at the ownership frontier");
         float spill = LodSilhouetteFogVolume.DefaultSpillBlocks;
-        c.True(LodSilhouetteFogVolume.CrossingProfile(spill, spill)
-                > LodSilhouetteFogVolume.CrossingProfile(-spill, spill),
+        c.True(LodSilhouetteFogVolume.SideReach(1f, spill)
+                > LodSilhouetteFogVolume.SideReach(-1f, spill),
             "the continuous bank keeps the intended wider shoulder over Farseer terrain");
-        c.Near(1f, LodSilhouetteFogVolume.CrossingProfile(0f, spill), 0.0001f,
-            "the ownership centreline lies on the full-density plateau");
         c.True(volume.Texels.Where((_, i) => (i & 3) == 3).Min() <= 0.001f,
-            "a true path endpoint reaches a fully guarded fade instead of exposing a cap");
+            "a true path endpoint reaches a fully faded end instead of exposing a cap");
         c.True(LodSilhouetteFogVolume.MarchStepBlocks(1f)
                 < LodSilhouetteFogVolume.MarchStepBlocks(0f),
             "the fog quality dial increases raymarch precision instead of adding planes");
-
-        float sealReach = LodSilhouetteFogVolume.SeamSealLodReach(spill);
-        const int sealSamples = 4096;
-        float sealStep = sealReach / sealSamples;
-        float sealOpticalDepth = 0f;
-        for (int sample = 0; sample < sealSamples; sample++)
-        {
-            float signedDistance = -sealReach + (sample + 0.5f) * sealStep;
-            sealOpticalDepth += LodSilhouetteFogVolume.SeamSealDensity(
-                    signedDistance, spill, LodSilhouetteFogVolume.DefaultCoverage)
-                * LodSilhouetteFogVolume.ExtinctionPerBlock * sealStep;
-        }
-        float promisedSeal = LodSilhouetteFogVolume.SeamSealTargetOpticalDepth(
-            LodSilhouetteFogVolume.DefaultCoverage);
-        c.Near(promisedSeal, sealOpticalDepth, 0.001f,
-            "the smooth LOD-side core integrates to its promised seam-sealing optical depth");
-        c.True(1f - MathF.Exp(-sealOpticalDepth) > 0.96f,
-            "default fog blocks more than 96% of seam light before noise and Farseer spill");
-        c.Near(0f, LodSilhouetteFogVolume.SeamSealDensity(
-            -sealReach, spill, LodSilhouetteFogVolume.DefaultCoverage), 0.0001f,
-            "the guaranteed core still reaches zero smoothly before its visible outer rim");
+        c.True(volume.StaircaseDeviationBlocks < 2f
+                && volume.CoreBlocks == LodSilhouetteFogVolume.MinCoreBlocks,
+            "a straight frontier needs only the narrowest sealed core");
+        float reach = LodSilhouetteFogVolume.BankReach(spill,
+            LodSilhouetteFogVolume.MaxEdgeSoftness, LodSilhouetteFogVolume.MaxCoreBlocks);
+        c.True(volume.OriginBlockX <= edgeX - reach
+                && volume.OriginBlockX + volume.Width * volume.TexelBlocks >= edgeX + reach,
+            "the field holds the whole fade, so the march never stops at a hard field edge");
 
         var cornerReplacements = LodSilhouetteCoverage.Empty;
         for (int z = 0; z < 8; z++)
@@ -173,7 +160,8 @@ public static class SilhouetteChecks
         float corner = 8f * LodSilhouetteSeamMask.CellBlocks;
         float cornerDistance = cornerVolume.SampleChannel(
             corner + spill * 0.45f, corner + spill * 0.45f, 0);
-        c.True(LodSilhouetteFogVolume.CrossingProfile(cornerDistance, spill) > 0f,
+        c.True(cornerDistance > 0f && cornerDistance < LodSilhouetteFogVolume.BankReach(
+                spill, LodSilhouetteFogVolume.DefaultEdgeSoftness, cornerVolume.CoreBlocks),
             "the continuous distance field fills the Farseer-side diagonal of a grid turn");
 
         var stairReplacements = LodSilhouetteCoverage.Empty;
@@ -194,6 +182,25 @@ public static class SilhouetteChecks
             "the sawtooth creates no artificial fog caps at its many grid turns");
         c.True(stairVolume.DiagonalCenterlineSpans > 0,
             "bounded simplification turns the distant sawtooth into a fluid diagonal curve");
+        c.True(stairVolume.StaircaseDeviationBlocks > 2f
+                && stairVolume.CoreBlocks >= stairVolume.StaircaseDeviationBlocks
+                    + LodSilhouetteFogVolume.CoreMarginBlocks - 0.001f,
+            "the sealed core is measured from how far the staircase strays from the rounded curve");
+        float strayed = 0f;
+        foreach (LodSilhouetteBoundaryEdge edge in stairMask.Boundaries)
+        {
+            for (int part = 0; part <= 2; part++)
+            {
+                float x = (edge.StartGridX + (edge.EndGridX - edge.StartGridX) * part * 0.5f)
+                    * LodSilhouetteSeamMask.CellBlocks;
+                float z = (edge.StartGridZ + (edge.EndGridZ - edge.StartGridZ) * part * 0.5f)
+                    * LodSilhouetteSeamMask.CellBlocks;
+                if (stairVolume.SampleChannel(x, z, 3) < 0.99f) continue;
+                strayed = MathF.Max(strayed, MathF.Abs(stairVolume.SampleChannel(x, z, 0)));
+            }
+        }
+        c.True(strayed <= stairVolume.CoreBlocks,
+            "every full-strength point of the real staircase lies inside the sealed core");
 
         var islandReplacements = LodSilhouetteCoverage.Empty;
         for (int z = 4; z < 12; z++)
@@ -217,6 +224,73 @@ public static class SilhouetteChecks
             "unchanged ownership reuses the uploaded fog volume");
         c.False(mask.Dirty,
             "an unchanged frame does not upload the seam-fog geometry again");
+    }
+
+    /// <summary>
+    /// The seam fog's deterministic parts: the seal's vertical column is its promised optical
+    /// depth whatever the bank height, and it dies away beyond the core instead of standing as
+    /// a second wall (0.4.122's form).
+    /// </summary>
+    static void SeamFogMedium(Check c)
+    {
+        float spill = LodSilhouetteFogVolume.DefaultSpillBlocks;
+        foreach (float top in new[] { 11f, 39f, 56f, 73f, 190f })
+        {
+            const int samples = 8192;
+            float height = top * 2f;
+            float step = height / samples;
+            float column = 0f;
+            for (int i = 0; i < samples; i++)
+                column += LodSilhouetteFogVolume.SealExtinction(0f, (i + 0.5f) * step, top, spill)
+                    * step;
+            c.Near(LodSilhouetteFogVolume.SealOpticalDepth, column, 0.02f,
+                $"the seal's vertical column over the core is its promised depth for a {top}-block bank");
+        }
+        c.True(1f - MathF.Exp(-LodSilhouetteFogVolume.SealOpticalDepth) > 0.96f,
+            "the seal alone hides more than 96% of the seam along the shortest, vertical path");
+        float atCore = LodSilhouetteFogVolume.SealExtinction(0f, 0f, 56f, spill);
+        c.True(LodSilhouetteFogVolume.SealExtinction(spill * 1.5f, 0f, 56f, spill) < atCore * 0.01f
+                && LodSilhouetteFogVolume.SealExtinction(spill * 0.3f, 0f, 56f, spill) > atCore * 0.2f,
+            "beyond the core the seal fades gradually under the bank instead of ending as a wall");
+        c.True(LodSilhouetteFogVolume.SealExtinction(0f, 0f, 56f, spill, endFade: 0f) == 0f,
+            "a faded open end carries no seal");
+        c.Near(1f, LodSilhouetteFogVolume.HeightProfile(0.3f * 56f, 56f), 1e-6f,
+            "the bank is full through its ground layer");
+        c.True(LodSilhouetteFogVolume.HeightProfile(56f, 56f) < 0.25f,
+            "the bank thins with height toward its top");
+        c.Near(1f, LodSilhouetteFogVolume.Envelope(0f, spill), 1e-6f,
+            "nothing thins inside the sealed core");
+        c.True(LodSilhouetteFogVolume.Envelope(spill, spill) < 0.1f
+                && LodSilhouetteFogVolume.Envelope(spill * 0.5f, spill) > 0.25f,
+            "the bank fades gradually over the spread rather than ending at a line");
+        c.Eq(LodSilhouetteFogVolume.MinCoreBlocks, LodSilhouetteFogVolume.CoreHalfWidth(0f),
+            "the core never shrinks below its floor");
+        c.Eq(LodSilhouetteFogVolume.MaxCoreBlocks, LodSilhouetteFogVolume.CoreHalfWidth(float.NaN),
+            "an unmeasurable staircase takes the widest core");
+    }
+
+    /// <summary>The baked noise texture tiles, is deterministic, and has independent channels.</summary>
+    static void SeamFogNoise(Check c)
+    {
+        byte[] texels = LodSilhouetteFogNoise.Texels;
+        int size = LodSilhouetteFogNoise.Size;
+        c.Eq(size * size * size * LodSilhouetteFogNoise.Channels, texels.Length,
+            "the seam-fog noise is one RGBA byte per texel");
+        c.Eq(LodSilhouetteFogNoise.PeriodCells * LodSilhouetteFogNoise.TexelsPerCell, size,
+            "the noise texture holds exactly one repeat of the lattice");
+        bool tiles = true;
+        foreach (var (x, y, z) in new[] { (0.3f, 1.7f, 2.2f), (5.5f, 9.1f, 15.9f), (15.99f, 0.01f, 7.5f) })
+            for (int channel = 0; channel < LodSilhouetteFogNoise.Channels; channel++)
+                tiles &= MathF.Abs(LodSilhouetteFogNoise.ValueNoise(x, y, z, channel)
+                    - LodSilhouetteFogNoise.ValueNoise(x + 16f, y - 16f, z + 32f, channel)) < 1e-5f;
+        c.True(tiles, "the noise repeats exactly every lattice period, so the texture wraps without a seam");
+        int differing = 0;
+        for (int i = 0; i < texels.Length; i += 4 * 97)
+            if (texels[i] != texels[i + 1] || texels[i + 1] != texels[i + 2]) differing++;
+        c.True(differing > texels.Length / (4 * 97) * 9 / 10,
+            "the four noise channels are independent patterns");
+        c.True(texels.Min() < 40 && texels.Max() > 215,
+            "the noise spans nearly the whole byte range");
     }
 
     public static void RunWiring(Check c)
@@ -1538,6 +1612,9 @@ public static class SilhouetteChecks
                 repaired.FogBillowSizeBlocks, repaired.FogDriftSpeed,
                 repaired.FogLayerDetail, repaired.FogEdgeSoftness),
             "all fog dials repair non-finite values and clamp hand-edited config ranges");
+        c.False((defaults with { FogEnabled = false }).Normalize().FogEnabled,
+            "normalization keeps the seam fog switch off when it was saved off");
+        c.True(defaults.FogEnabled, "the seam fog is on by default");
     }
 
     static string Source(params string[] parts) => File.ReadAllText(
@@ -1740,17 +1817,19 @@ public static class SilhouetteChecks
                 && !fogPass.Contains("RenderMesh", StringComparison.Ordinal)
                 && !fogPass.Contains("FramebufferAttachment.DepthAttachment", StringComparison.Ordinal)
                 && fogVolume.Contains("DefaultSpillBlocks = 48f", StringComparison.Ordinal)
-                && fogVolume.Contains("DefaultHeightBlocks = 88f", StringComparison.Ordinal)
+                && fogVolume.Contains("DefaultHeightBlocks = 40f", StringComparison.Ordinal)
                 && fogVolume.Contains("Felzenszwalb", StringComparison.Ordinal)
                 && fogVertex.Contains("gl_VertexID", StringComparison.Ordinal)
                 && fogFragment.Contains("vhFogFbm", StringComparison.Ordinal)
                 && fogFragment.Contains("uniform sampler2D sceneDepth", StringComparison.Ordinal)
                 && fogFragment.Contains("uniform sampler2D fogField", StringComparison.Ordinal)
+                && fogFragment.Contains("uniform sampler3D fogNoise", StringComparison.Ordinal)
+                && fogFragment.Contains("textureLod(fogNoise", StringComparison.Ordinal)
                 && fogFragment.Contains("for (int stepIndex = 0; stepIndex < MaxFogSteps",
                     StringComparison.Ordinal)
                 && fogFragment.Contains("segmentAlpha", StringComparison.Ordinal)
-                && fogFragment.Contains("vhFogSeamSealDensity", StringComparison.Ordinal)
-                && fogFragment.Contains("targetOpticalDepth", StringComparison.Ordinal)
+                && fogFragment.Contains("vhFogExtinction", StringComparison.Ordinal)
+                && fogFragment.Contains("max(bank, seal) + haze", StringComparison.Ordinal)
                 && fogFragment.Contains("fogCoverage", StringComparison.Ordinal)
                 && !inputs.Contains("lodsilhouettefog.fsh", StringComparison.Ordinal)
                 && !fragment.Contains("vhSilhouetteSeamFog", StringComparison.Ordinal)
@@ -1770,28 +1849,97 @@ public static class SilhouetteChecks
                 && !fogFragment.Contains("fogTime", StringComparison.Ordinal)
                 && !fogFragment.Contains("fogDriftSpeed", StringComparison.Ordinal)
                 && fogFragment.Contains("uniform float fogDriftBlocks;", StringComparison.Ordinal)
-                && fogFragment.Contains("(fogWorldPosition + drift)", StringComparison.Ordinal),
+                && fogFragment.Contains(
+                    "fogWorld + vec3(fogDriftBlocks, 0.0, fogDriftBlocks * -0.67)",
+                    StringComparison.Ordinal),
             "billow drift is an integrated world-space distance, not elapsed time times the dial");
         // Every uniform the draw uploads must be declared, or the engine throws at the call site.
         foreach (string uniform in new[]
         {
             "fogStrength", "fogCoverage", "fogSpillBlocks", "fogHeightBlocks",
             "fogFloorDepthBlocks", "fogBillowSizeBlocks", "fogEdgeSoftness",
-            "fogLayerDetail", "fogDriftBlocks",
+            "fogLayerDetail", "fogDriftBlocks", "fogCoreBlocks", "fogPixelScale", "dayLight",
         })
             c.True(fogFragment.Contains("uniform float " + uniform + ";", StringComparison.Ordinal)
                     && fogPass.Contains("p.Uniform(\"" + uniform + "\"", StringComparison.Ordinal),
                 uniform + " is both declared by the fog shader and uploaded by its draw");
         c.True(fogFragment.Contains("float signedDistance = field.r", StringComparison.Ordinal)
-                && fogFragment.Contains("vhFogCrossingProfile", StringComparison.Ordinal)
-                && fogFragment.Contains("GuardProfile + (crossing - GuardProfile)",
+                && fogFragment.Contains("endFade * cut", StringComparison.Ordinal)
+                && fogFragment.Contains("pow(envelope, 0.75)", StringComparison.Ordinal)
+                && fogFragment.Contains("vhFogExpectedDensity(threshold)", StringComparison.Ordinal)
+                && fogFragment.Contains("vec3 sunDirection", StringComparison.Ordinal)
+                && fogFragment.Contains("SunProbeBlocks", StringComparison.Ordinal)
+                && fogFragment.Contains("mix(0.64, 0.93, light)", StringComparison.Ordinal)
+                && !fogFragment.Contains("GuardProfile", StringComparison.Ordinal)
+                && !fogFragment.Contains("vhFogSeamSealDensity", StringComparison.Ordinal),
+            "the fog is an eroded, sunlit bank with a sized seal, not noise over a pasted-in wall");
+        // The shader's medium and its CPU mirror must be the same numbers.
+        foreach ((string name, float value) in new[]
+        {
+            ("SealOpticalDepth", LodSilhouetteFogVolume.SealOpticalDepth),
+            ("BankOpticalDepth", LodSilhouetteFogVolume.BankOpticalDepth),
+            ("HazeOpticalDepth", LodSilhouetteFogVolume.HazeOpticalDepth),
+            ("BankMeanDensity", LodSilhouetteFogVolume.BankMeanDensity),
+            ("ShoulderFraction", LodSilhouetteFogVolume.ShoulderFraction),
+            ("HazeFraction", LodSilhouetteFogVolume.HazeFraction),
+            ("SealFalloffFraction", LodSilhouetteFogVolume.SealFalloffFraction),
+            ("FarseerReachScale", LodSilhouetteFogVolume.FarseerReachScale),
+            ("GroundLayerFraction", LodSilhouetteFogVolume.GroundLayerFraction),
+            ("ScaleHeightFraction", LodSilhouetteFogVolume.ScaleHeightFraction),
+            ("SealColumnFraction", LodSilhouetteFogVolume.SealColumnFraction),
+            ("BankColumnFraction", LodSilhouetteFogVolume.BankColumnFraction),
+            ("NoisePeriod", (float)LodSilhouetteFogNoise.PeriodCells),
+            ("NoiseTexelsPerCell", (float)LodSilhouetteFogNoise.TexelsPerCell),
+        })
+        {
+            string literal = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (!literal.Contains('.')) literal += ".0";
+            c.True(fogFragment.Contains($"const float {name} = {literal};", StringComparison.Ordinal),
+                $"the fog shader's {name} matches its CPU mirror ({literal})");
+        }
+        c.True(fogPass.Contains("GL.TexImage3D(TextureTarget.Texture3D", StringComparison.Ordinal)
+                && fogPass.Contains("GL.GenerateMipmap(GenerateMipmapTarget.Texture3D)",
                     StringComparison.Ordinal)
-                && fogVolume.Contains("GuardProfile = -0.55f", StringComparison.Ordinal)
-                && fogVolume.Contains("return spillBlocks + MathF.Min(32f",
+                && fogPass.Contains("TextureWrapMode.Repeat", StringComparison.Ordinal)
+                && fogPass.Contains("GL.GetUniformLocation(p.ProgramId, \"fogNoise\")",
                     StringComparison.Ordinal)
-                && fogFragment.Contains(
-                    "crossing * crossing * (3.0 - 2.0 * crossing)", StringComparison.Ordinal),
-            "the distance field has an asymmetric guarded shoulder and a non-reappearing end fade");
+                && fogPass.Contains("int textureUnit2 = GL.GetInteger(GetPName.TextureBinding3D);",
+                    StringComparison.Ordinal)
+                && fogPass.Contains("GL.BindTexture(TextureTarget.Texture3D, textureUnit2);",
+                    StringComparison.Ordinal)
+                && fogPass.Contains("_ = LodSilhouetteFogNoise.Texels;", StringComparison.Ordinal)
+                && fogPass.Contains("silhouetteFogCoreBlocks = arrays.CoreBlocks;",
+                    StringComparison.Ordinal),
+            "the baked noise is made off-thread, uploaded once as a tiling mipmapped 3D texture "
+                + "on its own unit, and restored after the draw");
+        c.True(pass.Contains("bool SilhouetteFogReady => !SilhouetteFogEnabled", StringComparison.Ordinal)
+                && pass.Contains("if (!SilhouetteFogEnabled && (silhouetteFogFieldTexture != 0",
+                    StringComparison.Ordinal)
+                && pass.Contains("else if (SilhouetteFogEnabled && silhouetteSeamMask.HasEdges",
+                    StringComparison.Ordinal)
+                && fogPass.Contains("if (!SilhouetteFogEnabled || !silhouetteSeamMask.HasEdges)",
+                    StringComparison.Ordinal)
+                && fogPass.Contains("|| !SilhouetteFogEnabled || silhouetteFogFieldTexture == 0",
+                    StringComparison.Ordinal),
+            "the seam fog switch is a real off: no field is built or held, no pass is drawn, "
+                + "and Farseer is not held back waiting for fog");
+        c.True(mod.Contains("capi.ChatCommands.Create(\"vhfog\")", StringComparison.Ordinal)
+                && mod.Contains("current with { FogEnabled = action == \"on\" }", StringComparison.Ordinal)
+                && dialog.Contains("\"silhouette-fog\"", StringComparison.Ordinal)
+                && dialog.Contains("pendingSilhouettes with { FogEnabled = on }", StringComparison.Ordinal)
+                && mod.Contains("public bool SilhouetteFog = true;", StringComparison.Ordinal)
+                && mod.Contains("config.SilhouetteFog = value.FogEnabled;", StringComparison.Ordinal),
+            "the seam fog has a saved switch on the Farseer tab and a session .vhfog toggle");
+        int reset = mod.IndexOf("void ResetOutdatedFogDials(bool fromFile)", StringComparison.Ordinal);
+        int guard = mod.IndexOf("if (!fromFile) return;", reset, StringComparison.Ordinal);
+        int store = mod.IndexOf("capi.StoreModConfig(config, \"vintagehorizons.json\");", reset,
+            StringComparison.Ordinal);
+        c.True(reset > 0 && guard > reset && store > guard
+                && mod.Contains("ResetOutdatedFogDials(configLoaded);", StringComparison.Ordinal)
+                && mod.Contains("config.SilhouetteFogModel = LodSilhouetteFogVolume.FogModel;",
+                    StringComparison.Ordinal)
+                && mod.Contains("public int SilhouetteFogModel;", StringComparison.Ordinal),
+            "fog dials saved for an older fog model are reset once, and an unreadable file is never overwritten");
         c.True(field.Contains("DefaultUnderlayDepthBlocks = 64f", StringComparison.Ordinal)
                 && field.Contains("DefaultUnderlayWidthBlocks = 384f", StringComparison.Ordinal)
                 && field.Contains("EdgeDistance(", StringComparison.Ordinal)
@@ -1877,7 +2025,7 @@ public static class SilhouetteChecks
             "SilhouetteFogStrength", "SilhouetteFogCoverage", "SilhouetteFogSpillBlocks",
             "SilhouetteFogHeightBlocks", "SilhouetteFogFloorDepthBlocks",
             "SilhouetteFogBillowSizeBlocks", "SilhouetteFogDriftSpeed",
-            "SilhouetteFogLayerDetail", "SilhouetteFogEdgeSoftness",
+            "SilhouetteFogLayerDetail", "SilhouetteFogEdgeSoftness", "SilhouetteFogModel",
         })
             c.True(mod.Contains(name, StringComparison.Ordinal), name + " is persisted in client config");
     }
