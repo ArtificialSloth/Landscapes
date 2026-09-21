@@ -94,26 +94,44 @@ public static class SilhouetteChecks
         c.Eq(LodSilhouetteField.CoverageCellsPerEdge, mask.Boundaries.Count,
             "one unique vertical centreline edge is emitted for each chunk along the join");
         LodSilhouetteFogMeshArrays volume = LodSilhouetteFogVolume.Build(mask, (_, _) => 100f);
-        c.Eq(mask.Boundaries.Count * volume.VerticesPerEdge
-                + volume.TaperedEnds * volume.VerticesPerTaper,
-            volume.VertexCount, "the fog volume has a bounded number of layered vertices per edge");
-        c.Eq(mask.Boundaries.Count * volume.IndicesPerEdge
-                + volume.TaperedEnds * volume.IndicesPerTaper,
-            volume.IndexCount, "the fog volume has a bounded number of layered indices per edge");
-        c.Eq(2, volume.TaperedEnds,
-            "a straight frontier fades only at the two ends of its run, never between its edges");
+        c.Eq(volume.PathColumns * (
+                volume.VerticalLayers * LodSilhouetteFogVolume.VerticalVerticesPerColumn
+                + volume.HorizontalLayers * LodSilhouetteFogVolume.HorizontalVerticesPerColumn),
+            volume.VertexCount, "continuous path columns size every fog vertex exactly");
+        c.Eq(volume.PathSpans * (
+                volume.VerticalLayers * LodSilhouetteFogVolume.VerticalIndicesPerSpan
+                + volume.HorizontalLayers * LodSilhouetteFogVolume.HorizontalIndicesPerSpan),
+            volume.IndexCount, "continuous path spans size every fog triangle exactly");
+        c.Eq(1, volume.PathCount,
+            "a straight ownership frontier becomes one continuous fog path");
+        c.Eq(2, volume.OpenPathEnds,
+            "a straight frontier has only two faded ends, never one pair per chunk edge");
         c.True(volume.VerticalLayers >= 7 && volume.HorizontalLayers >= 5,
             "the default fog has enough crossing layers to avoid five obvious vertical cards");
         c.True(volume.FogWeights.Where((_, i) => (i & 1) == 0).Max() >= 0.15f,
             "the ownership centreline carries the densest fog layer");
         c.Near(1f, volume.FogWeights.Where((_, i) => (i & 1) == 1).Max(), 0.0001f,
-            "each layer's dense rail carries the full crossing profile");
-        c.Near(0f, volume.FogWeights.Where((_, i) => (i & 1) == 1).Min(), 0.0001f,
-            "outer, lower and upper volume vertices fade completely instead of ending in walls");
+            "each horizontal layer carries a broad full-density plateau");
+        c.Near(LodSilhouetteFogVolume.GuardProfile,
+            volume.FogWeights.Where((_, i) => (i & 1) == 1).Min(), 0.0001f,
+            "the horizontal ribbon includes a transparent geometry guard beyond its visible rim");
         float minY = Enumerable.Range(0, volume.VertexCount).Min(i => volume.Xyz[i * 3 + 1]);
         float maxY = Enumerable.Range(0, volume.VertexCount).Max(i => volume.Xyz[i * 3 + 1]);
         c.Near(84f, minY, 0.0001f, "fog begins below the sampled handoff ground");
         c.Near(188f, maxY, 0.0001f, "fog hangs well above the sampled handoff ground");
+        float localEdgeX = 8f * LodSilhouetteSeamMask.CellBlocks;
+        float minFogX = Enumerable.Range(0, volume.VertexCount).Min(i => volume.Xyz[i * 3]);
+        float maxFogX = Enumerable.Range(0, volume.VertexCount).Max(i => volume.Xyz[i * 3]);
+        c.True(maxFogX - localEdgeX > localEdgeX - minFogX + 20f,
+            "the visible bank and guard extend materially farther over Farseer than LOD terrain");
+        c.True(LodSilhouetteFogVolume.GuardProfile + 0.52f < 0f,
+            "the guard stays transparent under the shader's maximum positive rim wobble");
+        float minFogZ = Enumerable.Range(0, volume.VertexCount).Min(i => volume.Xyz[i * 3 + 2]);
+        c.True(Enumerable.Range(0, volume.VertexCount)
+                .Where(i => Math.Abs(volume.Xyz[i * 3 + 2] - minFogZ) < 0.0001f)
+                .All(i => volume.FogWeights[i * 2 + 1]
+                    <= LodSilhouetteFogVolume.GuardProfile + 0.0001f),
+            "a true path endpoint fades below every possible shader wobble instead of reappearing");
 
         var cornerReplacements = LodSilhouetteCoverage.Empty;
         for (int z = 0; z < 8; z++)
@@ -125,81 +143,59 @@ public static class SilhouetteChecks
         cornerMask.CompleteBuild();
         LodSilhouetteFogMeshArrays cornerVolume =
             LodSilhouetteFogVolume.Build(cornerMask, (_, _) => 100f);
-        c.Eq(4, cornerVolume.TaperedEnds,
-            "an L-shaped turn supports neither run, so both fade past it and past their far ends");
-        c.Eq(cornerMask.Boundaries.Count * cornerVolume.VerticesPerEdge
-                + cornerVolume.TaperedEnds * cornerVolume.VerticesPerTaper,
-            cornerVolume.VertexCount,
-            "faded end cross-sections are bounded separately from ordinary edge strips");
-        c.Eq(cornerMask.Boundaries.Count * cornerVolume.IndicesPerEdge
-                + cornerVolume.TaperedEnds * cornerVolume.IndicesPerTaper,
-            cornerVolume.IndexCount,
-            "faded end triangles are bounded separately from ordinary edge strips");
+        c.Eq(1, cornerVolume.PathCount,
+            "an L-shaped ownership frontier is one path through its grid turn");
+        c.Eq(2, cornerVolume.OpenPathEnds,
+            "the L-shaped path fades only at its two true ends, not at its corner");
+        c.True(cornerVolume.DiagonalCenterlineSpans > 0,
+            "curve smoothing replaces the L-shaped path's hard corner with diagonal spans");
         float corner = 8f * LodSilhouetteSeamMask.CellBlocks;
         float spill = LodSilhouetteFogVolume.DefaultSpillBlocks;
-        c.True(CornerFogProfileAt(cornerVolume, corner, corner + spill) == 0f
-                && CornerFogProfileAt(cornerVolume, corner + spill, corner) == 0f,
-            "both runs sweep a full spill past the turn and reach zero density there");
-        // The end is closed as an arc, not squared off: a square corner stands out past the
-        // neighbouring strips and grows a tooth at every chunk-grid turn. So the footprint is a
-        // stadium - full spill along each axis, and no further on the diagonal.
-        c.True(float.IsNaN(CornerFogProfileAt(cornerVolume, corner + spill, corner + spill)),
-            "a swept end is rounded off instead of reaching the square diagonal corner");
-        c.True(Enumerable.Range(0, cornerVolume.VertexCount).All(i =>
-                cornerVolume.Xyz[i * 3] <= corner + spill + 0.0001f
-                && cornerVolume.Xyz[i * 3 + 2] <= corner + spill + 0.0001f),
-            "no fog reaches further than one spill beyond the last known ownership edge");
-        float reach = Enumerable.Range(0, cornerVolume.VertexCount)
-            .Where(i => cornerVolume.Xyz[i * 3] > corner && cornerVolume.Xyz[i * 3 + 2] > corner)
-            .Max(i => MathF.Sqrt(
-                (cornerVolume.Xyz[i * 3] - corner) * (cornerVolume.Xyz[i * 3] - corner)
-                + (cornerVolume.Xyz[i * 3 + 2] - corner) * (cornerVolume.Xyz[i * 3 + 2] - corner)));
-        c.True(reach <= spill * 1.06f,
-            "the swept ends hold one spill from the turn in every direction, not spill by spill");
-        c.True(Enumerable.Range(0, cornerVolume.VertexCount).Any(i =>
-                Math.Abs(cornerVolume.Xyz[i * 3 + 1] - 108f) < 0.0001f
-                && Math.Abs(cornerVolume.Xyz[i * 3 + 2] - (corner + spill)) < 0.0001f
-                && cornerVolume.FogWeights[i * 2 + 1] == 0f),
-            "a swept end carries the vertical sheets too, not only a flat aerial cap");
+        c.True(PlanFogWeight(cornerVolume,
+                corner + spill * 0.45f, corner + spill * 0.45f) > 0f,
+            "the continuous rounded ribbon fills the Farseer-side diagonal of a grid turn");
 
-        // The empty quadrant sits outside the L, beyond both runs. Measured straight down, the
-        // two swept ends have to leave it reading like band, not like a thin patch: at least
-        // one straight seam's fog at the same offset, and no more than the two runs crossing.
-        float straightBand = PlanFogWeight(cornerVolume, corner - spill * 0.5f, corner - 100f);
-        float quadrant = PlanFogWeight(cornerVolume, corner + spill * 0.25f, corner + spill * 0.25f);
-        c.True(quadrant >= straightBand && quadrant <= straightBand * 2.6f,
-            "the diagonal quadrant carries a crossing band's fog at the same offset");
-        c.True(PlanFogWeight(cornerVolume, corner + spill * 0.45f, corner + spill * 0.45f) > 0f,
-            "the quadrant fills out to the arc, instead of being bitten off diagonally");
-        float insideOldWall = PlanFogWeight(cornerVolume, corner + spill * 0.5f, corner - 8f);
-        float outsideOldWall = PlanFogWeight(cornerVolume, corner + spill * 0.5f, corner + 8f);
-        c.True(outsideOldWall > insideOldWall * 0.85f,
-            "fog no longer steps down at the turn where the strips used to end");
+        var stairReplacements = LodSilhouetteCoverage.Empty;
+        for (int z = 0; z < LodSilhouetteField.CoverageCellsPerEdge; z++)
+            for (int x = 0; x < 4 + z / 2; x++)
+                stairReplacements = stairReplacements.WithCovered(x, z);
+        var stairMask = new LodSilhouetteSeamMask();
+        stairMask.BeginBuild(0, 0, 0, 0, 19);
+        stairMask.SetTile(0, 0, stairReplacements);
+        stairMask.CompleteBuild();
+        LodSilhouetteFogMeshArrays stairVolume =
+            LodSilhouetteFogVolume.Build(stairMask, (x, z) => 80f + x + z);
+        c.True(stairMask.Boundaries.Count > LodSilhouetteField.CoverageCellsPerEdge,
+            "the staircase fixture contains both chunk-aligned risers and treads");
+        c.Eq(1, stairVolume.PathCount,
+            "a long sawtooth ownership frontier is traced as one continuous path");
+        c.Eq(2, stairVolume.OpenPathEnds,
+            "the sawtooth creates no artificial fog caps at its many grid turns");
+        c.True(stairVolume.DiagonalCenterlineSpans > 0,
+            "bounded simplification turns the distant sawtooth into a fluid diagonal curve");
+
+        var islandReplacements = LodSilhouetteCoverage.Empty;
+        for (int z = 4; z < 12; z++)
+            for (int x = 4; x < 12; x++)
+                islandReplacements = islandReplacements.WithCovered(x, z);
+        var islandMask = new LodSilhouetteSeamMask();
+        islandMask.BeginBuild(0, 0, 0, 0, 20);
+        islandMask.SetTile(0, 0, islandReplacements);
+        islandMask.CompleteBuild();
+        LodSilhouetteFogMeshArrays islandVolume =
+            LodSilhouetteFogVolume.Build(islandMask, (_, _) => 100f);
+        c.Eq(1, islandVolume.PathCount,
+            "a closed ownership island remains one continuous fog loop");
+        c.Eq(0, islandVolume.OpenPathEnds,
+            "a closed fog loop has no artificial faded caps");
+        c.True(islandVolume.DiagonalCenterlineSpans > 0,
+            "closed-loop corners receive the same organic curve smoothing");
 
         mask.MarkUploaded();
         c.False(mask.BeginBuild(-2, 3, -2, 3, 17),
             "unchanged ownership reuses the uploaded fog volume");
         c.False(mask.Dirty,
             "an unchanged frame does not upload the seam-fog geometry again");
-    }
-
-    /// <summary>
-    /// The largest crossing profile the volume carries at one ground-plan position, or NaN when
-    /// the mesh never reaches it. NaN fails an equality check, so an absent position cannot pass
-    /// as a faded one.
-    /// </summary>
-    static float CornerFogProfileAt(LodSilhouetteFogMeshArrays volume, float x, float z)
-    {
-        float heaviest = float.NaN;
-        for (int i = 0; i < volume.VertexCount; i++)
-        {
-            if (Math.Abs(volume.Xyz[i * 3] - x) > 0.0001f) continue;
-            if (Math.Abs(volume.Xyz[i * 3 + 2] - z) > 0.0001f) continue;
-            float profile = volume.FogWeights[i * 2 + 1];
-            heaviest = float.IsNaN(heaviest) ? profile : Math.Max(heaviest, profile);
-        }
-
-        return heaviest;
     }
 
     /// <summary>
@@ -1786,11 +1782,15 @@ public static class SilhouetteChecks
         c.True(fogVertex.Contains("out float fogProfile", StringComparison.Ordinal)
                 && fogVertex.Contains("fogProfile = fogDataIn.y;", StringComparison.Ordinal)
                 && fogFragment.Contains("in float fogProfile;", StringComparison.Ordinal)
-                && fogFragment.Contains("wobble * fogEdgeSoftness", StringComparison.Ordinal)
+                && fogFragment.Contains(
+                    "wobbleShift = wobble * fogEdgeSoftness * 0.65", StringComparison.Ordinal)
+                && fogVolume.Contains("GuardProfile = -0.55f", StringComparison.Ordinal)
+                && fogVolume.Contains("farseerVisible = spillBlocks + farseerExtra",
+                    StringComparison.Ordinal)
                 && fogFragment.Contains("across * across * (3.0 - 2.0 * across)",
                     StringComparison.Ordinal)
                 && fogFragment.Contains("* shaped *", StringComparison.Ordinal),
-            "the crossing profile travels separately so the rim gets a shoulder and a wobble");
+            "the crossing profile has an asymmetric guarded shoulder for bounded rim wobble");
         c.True(field.Contains("DefaultUnderlayDepthBlocks = 64f", StringComparison.Ordinal)
                 && field.Contains("DefaultUnderlayWidthBlocks = 384f", StringComparison.Ordinal)
                 && field.Contains("EdgeDistance(", StringComparison.Ordinal)

@@ -76,18 +76,19 @@ void main()
         * vec3(broadScale * 2.75, broadScale * 3.60, broadScale * 2.75));
     float billow = smoothstep(0.28, 0.80, broad * 0.74 + detail * 0.26);
 
-    // The mesh crosses each layer as a straight ramp between its rims, and the ownership frontier
-    // it follows is a chunk-grid staircase, so the bare geometry reads as a faceted ribbon with
-    // square corners. A broad world-anchored wobble pushes the rim in and out before the shoulder
-    // is applied: the outline wanders, the ninety-degree turns round off, and the stacked layers
-    // stop lining up into visible steps. Zero softness leaves the plain ramp.
+    // The CPU turns the ownership staircase into a continuous rounded ribbon. World-anchored
+    // wobble then moves its visible rim inside a geometry-only guard band, adding irregularity
+    // without exposing a hard mesh boundary. Zero softness leaves the smooth CPU profile.
     // Two octaves: broad lobes that swell and pinch the whole bank, and a finer one near the
     // 32-block cell size that is what actually dissolves the grid's teeth. One coarse octave
     // alone just slides the sawtooth sideways.
     vec3 wobblePoint = (fogWorldPosition + drift * 0.8) * broadScale;
     float wobble = (vhFogNoise(wobblePoint * 1.10) - 0.5) * 0.80
         + (vhFogNoise(wobblePoint * 2.60 + vec3(37.1, 11.9, 53.7)) - 0.5) * 0.80;
-    float across = clamp(fogProfile + wobble * fogEdgeSoftness * 1.20, 0.0, 1.0);
+    // Wobble is bounded to +/-0.8. The 0.65 scale therefore moves at most 0.52 profile units;
+    // the mesh's -0.55 outer guard remains transparent even at full edge softness.
+    float wobbleShift = wobble * fogEdgeSoftness * 0.65;
+    float across = clamp(fogProfile + wobbleShift, 0.0, 1.0);
     float shaped = across * across * (3.0 - 2.0 * across);
 
     // Coverage leaves only a controllable veil in the noise pockets. The old 0.62 floor made

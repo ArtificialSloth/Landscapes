@@ -143,12 +143,20 @@ internal sealed class LodSilhouetteSeamMask
                     WriteState(cellX, cellZ, state);
                     // Keep one copy of each shared edge. Its opposite cell carries the matching
                     // west/north flag, so east and south are sufficient for the complete set.
+                    // Direct every edge so its right-hand normal points into Farseer terrain.
+                    // The fog path builder can then widen that side without re-reading ownership.
                     if ((state & EastEdge) != 0)
-                        boundaries.Add(new LodSilhouetteBoundaryEdge(
-                            cellX + 1, cellZ, cellX + 1, cellZ + 1));
+                        boundaries.Add(replaced
+                            ? new LodSilhouetteBoundaryEdge(
+                                cellX + 1, cellZ + 1, cellX + 1, cellZ)
+                            : new LodSilhouetteBoundaryEdge(
+                                cellX + 1, cellZ, cellX + 1, cellZ + 1));
                     if ((state & SouthEdge) != 0)
-                        boundaries.Add(new LodSilhouetteBoundaryEdge(
-                            cellX, cellZ + 1, cellX + 1, cellZ + 1));
+                        boundaries.Add(replaced
+                            ? new LodSilhouetteBoundaryEdge(
+                                cellX, cellZ + 1, cellX + 1, cellZ + 1)
+                            : new LodSilhouetteBoundaryEdge(
+                                cellX + 1, cellZ + 1, cellX, cellZ + 1));
                 }
             }
         }
