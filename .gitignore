@@ -9,6 +9,10 @@ notes/
 # Local assistant instructions.
 CLAUDE.local.md
 
+# Python bytecode from the repository's own tools
+__pycache__/
+*.pyc
+
 # .NET build output
 bin/
 obj/
