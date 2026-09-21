@@ -124,12 +124,15 @@ public partial class VintageHorizonsModSystem
 
     string DescribeSeamFog() => !renderer.SilhouetteFogEnabled
         ? "seam fog off: no fog pass is drawn and no fog field is built"
-        : $"seam fog on: {renderer.SilhouetteFogSeamStrength * 100f:0}% density over the seam, "
-            + $"{renderer.SilhouetteFogStrength * 100f:0}% outside it, "
+        : $"seam fog on: a {renderer.SilhouetteFogStripHeightBlocks:0}-block strip at "
+            + $"{renderer.SilhouetteFogSeamStrength * 100f:0}% density, "
+            + $"{renderer.SilhouetteFogStripHalfBlocks:0} blocks each side of the seam; the bank "
+            + $"at {renderer.SilhouetteFogStrength * 100f:0}%, "
             + $"{renderer.SilhouetteFogSpillBlocks:0}-block spread, "
-            + $"{renderer.SilhouetteFogHeightBlocks:0} blocks high, sealed core "
-            + $"{renderer.SilhouetteFogCoreBlocks:0} blocks each side of the seam "
-            + $"(staircase strays {renderer.SilhouetteFogStaircaseDeviation:0.0})";
+            + $"{renderer.SilhouetteFogHeightBlocks:0} blocks high, core "
+            + $"{renderer.SilhouetteFogCoreBlocks:0} blocks each side "
+            + $"(staircase strays {renderer.SilhouetteFogStaircaseDeviation:0.0}); moved fog "
+            + $"dissolves over {renderer.SilhouetteFogFadeSeconds:0.0} s";
 
     string DescribeSilhouettes()
     {
@@ -192,7 +195,9 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteFogBillowSizeBlocks,
         config.SilhouetteFogDriftSpeed,
         config.SilhouetteFogLayerDetail,
-        config.SilhouetteFogEdgeSoftness).Normalize();
+        config.SilhouetteFogEdgeSoftness,
+        config.SilhouetteFogStripHeightBlocks,
+        config.SilhouetteFogFadeSeconds).Normalize();
 
     LodSilhouetteSettings CurrentSilhouetteSettings()
     {
@@ -222,7 +227,9 @@ public partial class VintageHorizonsModSystem
             renderer.SilhouetteFogBillowSizeBlocks,
             renderer.SilhouetteFogDriftSpeed,
             renderer.SilhouetteFogLayerDetail,
-            renderer.SilhouetteFogEdgeSoftness).Normalize();
+            renderer.SilhouetteFogEdgeSoftness,
+            renderer.SilhouetteFogStripHeightBlocks,
+            renderer.SilhouetteFogFadeSeconds).Normalize();
     }
 
     void PreviewSilhouetteSettings(LodSilhouetteSettings value)
@@ -247,7 +254,7 @@ public partial class VintageHorizonsModSystem
             value.FogStrength, value.FogSeamStrength, value.FogCoverage, value.FogSpillBlocks,
             value.FogHeightBlocks, value.FogFloorDepthBlocks,
             value.FogBillowSizeBlocks, value.FogDriftSpeed, value.FogLayerDetail,
-            value.FogEdgeSoftness);
+            value.FogEdgeSoftness, value.FogStripHeightBlocks, value.FogFadeSeconds);
         silhouettes.SetReachBlocks(value.ReachBlocks);
         silhouettes.SetHillSoftness(value.HillSoftness);
         silhouettes.SetEnabled(value.Enabled);
@@ -282,5 +289,7 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteFogDriftSpeed = value.FogDriftSpeed;
         config.SilhouetteFogLayerDetail = value.FogLayerDetail;
         config.SilhouetteFogEdgeSoftness = value.FogEdgeSoftness;
+        config.SilhouetteFogStripHeightBlocks = value.FogStripHeightBlocks;
+        config.SilhouetteFogFadeSeconds = value.FogFadeSeconds;
     }
 }

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using OpenTK.Graphics.OpenGL4;
 using Vintagestory.API.Client;
 using Vintagestory.API.MathTools;
@@ -8,8 +9,13 @@ namespace VintageHorizons;
 
 public partial class LodTerrainRenderer
 {
+    /// <summary>
+    /// A finished field build. <see cref="Residual"/> carries the fog shown when it began onto
+    /// its lattice, weighted as of <see cref="Started"/> (a Stopwatch timestamp).
+    /// </summary>
     readonly record struct SilhouetteFogBuildOutcome(
-        long Revision, LodSilhouetteFogFieldArrays? Field, string Failure, bool Cancelled);
+        long Revision, LodSilhouetteFogFieldArrays? Field, LodSilhouetteFogResidual? Residual,
+        long Started, string Failure, bool Cancelled);
 
     internal const double SilhouetteFogAfterOitOrder = 1.0;
 
@@ -57,6 +63,21 @@ public partial class LodTerrainRenderer
     float silhouetteFogCoreBlocks = LodSilhouetteFogVolume.MinCoreBlocks;
     float silhouetteFogStaircaseDeviation;
 
+    // The dissolving previous fog (0.4.125). The shown layer is the published field's texels,
+    // which the next build carries on; the residual is on the published field's lattice, and
+    // its weights wear down from silhouetteFogResidualStarted at one per fade duration.
+    LodSilhouetteFogLayer? silhouetteFogShownLayer;
+    LodSilhouetteFogLayer? silhouetteFogResidualLayer;
+    int silhouetteFogResidualTexture;
+    long silhouetteFogResidualStarted;
+    float silhouetteFogResidualMaxWeight;
+
+    /// <summary>
+    /// How long a build takes from its snapshot to its publication, smoothed. The fog shown
+    /// until then gets that much head start, so it does not dip at the moment it is replaced.
+    /// </summary>
+    float silhouetteFogBuildSeconds = 0.05f;
+
     // The half-resolution march target: premultiplied fog, and the length of the ray each
     // pixel marched, which the full-resolution upsample compares against the scene's depth.
     int silhouetteFogLowFramebuffer;
@@ -82,6 +103,10 @@ public partial class LodTerrainRenderer
     internal float SilhouetteFogDriftSpeed = LodSilhouetteFogVolume.DefaultDriftSpeed;
     internal float SilhouetteFogLayerDetail = LodSilhouetteFogVolume.DefaultLayerDetail;
     internal float SilhouetteFogEdgeSoftness = LodSilhouetteFogVolume.DefaultEdgeSoftness;
+    internal float SilhouetteFogStripHeightBlocks = LodSilhouetteFogVolume.DefaultStripHeightBlocks;
+    internal float SilhouetteFogFadeSeconds = LodSilhouetteFogVolume.DefaultFadeSeconds;
+    internal float SilhouetteFogStripHalfBlocks =>
+        LodSilhouetteFogVolume.StripHalfWidth(silhouetteFogStaircaseDeviation);
     readonly LodOpenGlStateApi silhouetteFogStateApi = new();
     readonly int[] silhouetteFogViewport = new int[4];
     readonly bool[] silhouetteFogColorMask = new bool[4];
@@ -140,22 +165,33 @@ public partial class LodTerrainRenderer
         silhouetteFogPendingBuild = null;
         silhouetteFogBuildCancellation = new CancellationTokenSource();
         CancellationToken token = silhouetteFogBuildCancellation.Token;
+        // What is on screen now is what the new field must let dissolve. Nothing is published
+        // while this build runs, so this is exactly the fog the new field replaces.
+        long started = Stopwatch.GetTimestamp();
+        float fadeSeconds = SilhouetteFogFadeSeconds;
+        LodSilhouetteFogLayer? shown = fadeSeconds > 0f ? silhouetteFogShownLayer : null;
+        float fadingElapsed = SilhouetteFogResidualElapsed(started);
+        LodSilhouetteFogLayer? fading = fadeSeconds > 0f
+            && fadingElapsed < silhouetteFogResidualMaxWeight ? silhouetteFogResidualLayer : null;
+        float headStart = fadeSeconds > 0f ? silhouetteFogBuildSeconds / fadeSeconds : 0f;
         silhouetteFogBuildTask = Task.Run(() =>
         {
             try
             {
                 // Bake the noise here, once, so the render thread only ever uploads it.
                 _ = LodSilhouetteFogNoise.Texels;
-                return new SilhouetteFogBuildOutcome(
-                    revision, LodSilhouetteFogVolume.Build(prepared, token), "", false);
+                LodSilhouetteFogFieldArrays field = LodSilhouetteFogVolume.Build(prepared, token);
+                LodSilhouetteFogResidual? residual = LodSilhouetteFogVolume.BuildResidual(
+                    field, shown, fading, fadingElapsed, headStart, prepared.SpillBlocks, token);
+                return new SilhouetteFogBuildOutcome(revision, field, residual, started, "", false);
             }
             catch (OperationCanceledException)
             {
-                return new SilhouetteFogBuildOutcome(revision, null, "", true);
+                return new SilhouetteFogBuildOutcome(revision, null, null, started, "", true);
             }
             catch (Exception e)
             {
-                return new SilhouetteFogBuildOutcome(revision, null, e.Message, false);
+                return new SilhouetteFogBuildOutcome(revision, null, null, started, e.Message, false);
             }
         });
     }
@@ -192,7 +228,7 @@ public partial class LodTerrainRenderer
         {
             try
             {
-                PublishSilhouetteFogField(outcome.Field);
+                PublishSilhouetteFogField(outcome.Field, outcome.Residual, outcome.Started);
             }
             catch (Exception e)
             {
@@ -209,21 +245,39 @@ public partial class LodTerrainRenderer
         return true;
     }
 
-    void PublishSilhouetteFogField(LodSilhouetteFogFieldArrays arrays)
+    void PublishSilhouetteFogField(LodSilhouetteFogFieldArrays arrays,
+        LodSilhouetteFogResidual? residual, long started)
     {
-        int next = UploadSilhouetteFogField(arrays);
-        if (silhouetteFogNoiseTexture == 0)
+        int next = UploadSilhouetteFogField(arrays.HalfTexels, arrays.Width, arrays.Height);
+        int nextResidual = 0;
+        try
         {
-            try
-            {
+            if (residual != null)
+                nextResidual = UploadSilhouetteFogField(residual.Layer.HalfTexels,
+                    residual.Layer.Width, residual.Layer.Height);
+            if (silhouetteFogNoiseTexture == 0)
                 silhouetteFogNoiseTexture = UploadSilhouetteFogNoise();
-            }
-            catch
-            {
-                GL.DeleteTexture(next);
-                throw;
-            }
         }
+        catch
+        {
+            GL.DeleteTexture(next);
+            if (nextResidual != 0) GL.DeleteTexture(nextResidual);
+            throw;
+        }
+        long now = Stopwatch.GetTimestamp();
+        float buildSeconds = (float)((now - started) / (double)Stopwatch.Frequency);
+        if (float.IsFinite(buildSeconds) && buildSeconds >= 0f)
+            silhouetteFogBuildSeconds = MathF.Min(0.5f,
+                silhouetteFogBuildSeconds + (buildSeconds - silhouetteFogBuildSeconds) * 0.25f);
+        DisposeSilhouetteFogResidual();
+        if (residual != null)
+        {
+            silhouetteFogResidualTexture = nextResidual;
+            silhouetteFogResidualLayer = residual.Layer;
+            silhouetteFogResidualMaxWeight = residual.MaxWeight;
+            silhouetteFogResidualStarted = started;
+        }
+        silhouetteFogShownLayer = arrays.Layer;
         int old = silhouetteFogFieldTexture;
         silhouetteFogFieldTexture = next;
         silhouetteFogCoreBlocks = arrays.CoreBlocks;
@@ -254,7 +308,7 @@ public partial class LodTerrainRenderer
     internal void SetSilhouetteFogSettings(bool enabled,
         float strength, float seamStrength, float coverage, float spillBlocks, float heightBlocks,
         float floorDepthBlocks, float billowSizeBlocks, float driftSpeed, float layerDetail,
-        float edgeSoftness)
+        float edgeSoftness, float stripHeightBlocks, float fadeSeconds)
     {
         bool geometryChanged = SilhouetteFogSpillBlocks != spillBlocks
             || enabled && !SilhouetteFogEnabled;
@@ -270,10 +324,26 @@ public partial class LodTerrainRenderer
         SilhouetteFogDriftSpeed = driftSpeed;
         SilhouetteFogLayerDetail = layerDetail;
         SilhouetteFogEdgeSoftness = edgeSoftness;
+        SilhouetteFogStripHeightBlocks = stripHeightBlocks;
+        SilhouetteFogFadeSeconds = fadeSeconds;
         silhouetteFogGeometryDirty |= geometryChanged;
     }
 
-    int UploadSilhouetteFogField(LodSilhouetteFogFieldArrays field)
+    /// <summary>
+    /// Fade durations since the residual's weights were taken. A zero fade time has dissolved
+    /// everything at once.
+    /// </summary>
+    float SilhouetteFogResidualElapsed(long now)
+    {
+        if (silhouetteFogResidualTexture == 0) return float.PositiveInfinity;
+        float fadeSeconds = SilhouetteFogFadeSeconds;
+        if (!(fadeSeconds > 0f)) return float.PositiveInfinity;
+        double seconds = (now - silhouetteFogResidualStarted) / (double)Stopwatch.Frequency;
+        return (float)Math.Max(0.0, seconds / fadeSeconds);
+    }
+
+    /// <summary>A half-float RGBA field texture: the fog field or its residual.</summary>
+    int UploadSilhouetteFogField(ushort[] halfTexels, int width, int height)
     {
         if (!LodGlErrorIsolation.TryEstablishBaseline(
                 () => (int)GL.GetError(), out string advisory, out string baselineFailure))
@@ -308,8 +378,7 @@ public partial class LodTerrainRenderer
             // converted it, so the render thread moves half the bytes and the driver converts
             // nothing.
             GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba16f,
-                field.Width, field.Height, 0, PixelFormat.Rgba, PixelType.HalfFloat,
-                field.HalfTexels);
+                width, height, 0, PixelFormat.Rgba, PixelType.HalfFloat, halfTexels);
             ErrorCode uploadError = GL.GetError();
             if (uploadError != ErrorCode.NoError)
                 throw new InvalidOperationException(
@@ -451,6 +520,12 @@ public partial class LodTerrainRenderer
             return;
         if (silhouetteFogVao == 0) silhouetteFogVao = GL.GenVertexArray();
 
+        float residualElapsed = SilhouetteFogResidualElapsed(Stopwatch.GetTimestamp());
+        // Fully dissolved: free it, so the march stops looking for it.
+        if (silhouetteFogResidualTexture != 0 && residualElapsed >= silhouetteFogResidualMaxWeight)
+            DisposeSilhouetteFogResidual();
+        bool residualActive = silhouetteFogResidualTexture != 0;
+
         bool checkErrors = silhouetteFogErrorChecksLeft > 0;
         string advisory = "";
         if (checkErrors && !LodGlErrorIsolation.TryEstablishBaseline(
@@ -476,6 +551,8 @@ public partial class LodTerrainRenderer
         GL.ActiveTexture(TextureUnit.Texture2);
         int textureUnit2 = GL.GetInteger(GetPName.TextureBinding3D);
         int textureUnit2Flat = GL.GetInteger(GetPName.TextureBinding2D);
+        GL.ActiveTexture(TextureUnit.Texture3);
+        int textureUnit3 = GL.GetInteger(GetPName.TextureBinding2D);
         GL.ActiveTexture((TextureUnit)activeTexture);
         IShaderProgram? incoming = ShaderProgramBase.CurrentShaderProgram;
         bool depthTest = GL.IsEnabled(EnableCap.DepthTest);
@@ -529,11 +606,20 @@ public partial class LodTerrainRenderer
             p.Uniform("globeEffect", SilhouetteGlobeEffect);
             float globeDrop = MathF.Max(0f, SilhouetteGlobeEffect) * silhouettes.ReachBlocks;
             float globeRise = MathF.Max(0f, -SilhouetteGlobeEffect) * silhouettes.ReachBlocks;
+            float minGround = silhouetteFogMinGroundY, maxGround = silhouetteFogMaxGroundY;
+            if (residualActive)
+            {
+                minGround = MathF.Min(minGround, silhouetteFogResidualLayer!.MinGroundY);
+                maxGround = MathF.Max(maxGround, silhouetteFogResidualLayer.MaxGroundY);
+            }
+            // The strip may rest up to its anchor reach off the sampled ground.
+            float anchor = LodSilhouetteFogVolume.StripAnchorReachBlocks;
             p.Uniform("fieldMinY",
-                silhouetteFogMinGroundY - SilhouetteFogFloorDepthBlocks - globeDrop - 4f);
-            // The tallest bank top is 1.3 heights, and its ceiling ends at 1.15 of that.
-            p.Uniform("fieldMaxY",
-                silhouetteFogMaxGroundY + SilhouetteFogHeightBlocks * 1.5f + globeRise + 4f);
+                minGround - SilhouetteFogFloorDepthBlocks - anchor - globeDrop - 4f);
+            // The tallest bank top is 1.3 heights and its ceiling ends at 1.15 of that; the
+            // strip's highest top is 1.44 of its depth and its profile ends at 1.35 of that.
+            p.Uniform("fieldMaxY", maxGround + MathF.Max(SilhouetteFogHeightBlocks * 1.5f,
+                anchor + SilhouetteFogStripHeightBlocks * 1.95f) + globeRise + 4f);
             // One marched pixel's width in blocks per block of distance, from the vertical
             // field of view and the half-resolution target's height.
             float focal = MathF.Abs(projection[5]);
@@ -544,6 +630,10 @@ public partial class LodTerrainRenderer
             p.Uniform("sunColor", capi.World.Calendar.SunColor);
             p.Uniform("dayLight", Math.Max(0, capi.World.Calendar.DayLightStrength));
             p.Uniform("fogCoreBlocks", silhouetteFogCoreBlocks);
+            p.Uniform("fogStripHalfBlocks", SilhouetteFogStripHalfBlocks);
+            p.Uniform("fogStripHeightBlocks", SilhouetteFogStripHeightBlocks);
+            p.Uniform("fogResidualActive", residualActive ? 1 : 0);
+            p.Uniform("fogResidualElapsed", residualActive ? residualElapsed : 0f);
             p.Uniform("fogStrength", SilhouetteFogStrength);
             p.Uniform("fogSeamStrength", SilhouetteFogSeamStrength);
             p.Uniform("fogCoverage", SilhouetteFogCoverage);
@@ -556,6 +646,9 @@ public partial class LodTerrainRenderer
             p.Uniform("fogDriftBlocks", silhouetteFogDriftBlocks);
             p.BindTexture2D("sceneDepth", primary.DepthTextureId, 0);
             p.BindTexture2D("fogField", silhouetteFogFieldTexture, 1);
+            // Always bound, so the sampler is valid; read only while active.
+            p.BindTexture2D("fogResidual",
+                residualActive ? silhouetteFogResidualTexture : silhouetteFogFieldTexture, 3);
             // The engine's uniform collector has no sampler3D, so this unit is bound directly.
             if (silhouetteFogNoiseProgram != p.ProgramId)
             {
@@ -626,6 +719,8 @@ public partial class LodTerrainRenderer
             GL.ActiveTexture(TextureUnit.Texture2);
             GL.BindTexture(TextureTarget.Texture3D, textureUnit2);
             GL.BindTexture(TextureTarget.Texture2D, textureUnit2Flat);
+            GL.ActiveTexture(TextureUnit.Texture3);
+            GL.BindTexture(TextureTarget.Texture2D, textureUnit3);
             GL.ActiveTexture((TextureUnit)state.ActiveTexture);
             if (!LodGlStateGuard.TryRestore(silhouetteFogStateApi, state, out string restoreFailure))
                 failure ??= new InvalidOperationException(
@@ -743,6 +838,16 @@ public partial class LodTerrainRenderer
         if (silhouetteFogFieldTexture != 0) GL.DeleteTexture(silhouetteFogFieldTexture);
         silhouetteFogFieldTexture = 0;
         silhouetteFogBoundaryEdges = 0;
+        silhouetteFogShownLayer = null;
+        DisposeSilhouetteFogResidual();
+    }
+
+    void DisposeSilhouetteFogResidual()
+    {
+        if (silhouetteFogResidualTexture != 0) GL.DeleteTexture(silhouetteFogResidualTexture);
+        silhouetteFogResidualTexture = 0;
+        silhouetteFogResidualLayer = null;
+        silhouetteFogResidualMaxWeight = 0f;
     }
 
     void ClearSilhouetteFogField()
@@ -775,5 +880,8 @@ public partial class LodTerrainRenderer
         silhouetteFogNoiseTexture = 0;
         silhouetteFogNoiseProgram = 0;
         silhouetteFogNoiseLocation = -1;
+        silhouetteFogResidualTexture = 0;
+        silhouetteFogResidualLayer = null;
+        silhouetteFogShownLayer = null;
     }
 }

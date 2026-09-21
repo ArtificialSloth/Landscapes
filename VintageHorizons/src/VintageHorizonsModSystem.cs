@@ -184,6 +184,12 @@ public class VintageHorizonsConfig
     public float SilhouetteFogEdgeSoftness = LodSilhouetteFogVolume.DefaultEdgeSoftness;
     public float SilhouetteFogLayerDetail = LodSilhouetteFogVolume.DefaultLayerDetail;
 
+    /// <summary>Depth of the fog strip lying on the seam (0.4.125).</summary>
+    public float SilhouetteFogStripHeightBlocks = LodSilhouetteFogVolume.DefaultStripHeightBlocks;
+
+    /// <summary>Seconds fog left behind by a moved seam takes to dissolve; 0 is instant.</summary>
+    public float SilhouetteFogFadeSeconds = LodSilhouetteFogVolume.DefaultFadeSeconds;
+
     /// <summary>
     /// Choose L1-L6 from the field of view and render resolution instead of the fixed
     /// LodThresholds above, so every level hands over at the same size on screen and follows
@@ -4673,9 +4679,9 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// <summary>
     /// Put the seam-fog dials back to the current model's defaults once, when the file was
     /// written for an older fog. The on/off switch is kept. A file that could not be read is
-    /// never written here, and a fresh install only records the model. From model 2 only the
-    /// densities change: that is the one dial whose meaning moved, and the rest are the
-    /// player's tuning of the same fog.
+    /// never written here, and a fresh install only records the model. From models 2 and 3
+    /// only the densities change: they are the dials whose meaning moved, and the rest are the
+    /// player's tuning of the same bank's shape.
     /// </summary>
     void ResetOutdatedFogDials(bool fromFile)
     {
@@ -4685,14 +4691,15 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.SilhouetteFogStrength = defaults.FogStrength;
         config.SilhouetteFogSeamStrength = defaults.FogSeamStrength;
         config.SilhouetteFogModel = LodSilhouetteFogVolume.FogModel;
-        if (previous == 2)
+        if (previous is 2 or 3)
         {
             if (!fromFile) return;
             capi.StoreModConfig(config, "vintagehorizons.json");
             Mod.Logger.Notification(
-                "[VintageHorizons] the seam fog's density is now two dials, over the seam and "
-                + "outside it. They were set once to {0:0}% and {1:0}%; your other fog dials are "
-                + "unchanged.", defaults.FogSeamStrength * 100f, defaults.FogStrength * 100f);
+                "[VintageHorizons] the seam fog now hides the seam with a shallow strip and "
+                + "leaves the bank above it see-through. Its two densities, the strip's and the "
+                + "bank's, were set once to {0:0}% and {1:0}%; your other fog dials are unchanged.",
+                defaults.FogSeamStrength * 100f, defaults.FogStrength * 100f);
             return;
         }
         config.SilhouetteFogCoverage = defaults.FogCoverage;
@@ -4703,6 +4710,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.SilhouetteFogDriftSpeed = defaults.FogDriftSpeed;
         config.SilhouetteFogLayerDetail = defaults.FogLayerDetail;
         config.SilhouetteFogEdgeSoftness = defaults.FogEdgeSoftness;
+        config.SilhouetteFogStripHeightBlocks = defaults.FogStripHeightBlocks;
+        config.SilhouetteFogFadeSeconds = defaults.FogFadeSeconds;
         config.SilhouetteFogModel = LodSilhouetteFogVolume.FogModel;
         if (!fromFile) return;
         capi.StoreModConfig(config, "vintagehorizons.json");

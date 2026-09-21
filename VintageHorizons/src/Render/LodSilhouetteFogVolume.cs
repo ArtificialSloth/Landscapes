@@ -48,6 +48,37 @@ internal sealed class LodSilhouetteFogFieldArrays
     }
 
     static float Lerp(float from, float to, float amount) => from + (to - from) * amount;
+
+    /// <summary>The uploaded texels and their lattice, as the next residual reads them.</summary>
+    internal LodSilhouetteFogLayer Layer => new(HalfTexels, Width, Height, OriginBlockX,
+        OriginBlockZ, TexelBlocks, MinGroundY, MaxGroundY);
+}
+
+/// <summary>
+/// A published field's texels and lattice, kept so the next field can carry its fog on while it
+/// dissolves. The half floats are the uploaded texture's own; nothing is copied.
+/// </summary>
+internal sealed record LodSilhouetteFogLayer(ushort[] HalfTexels, int Width, int Height,
+    int OriginBlockX, int OriginBlockZ, float TexelBlocks, float MinGroundY, float MaxGroundY);
+
+/// <summary>
+/// The fog a moved seam leaves behind (0.4.125), on the new field's lattice so the shader reads
+/// both with one coordinate. RGB are the old field's (signed distance, ground, unsigned distance)
+/// and alpha the weight it had when the build began: for fog shown until then its open-end
+/// fade plus a head start for the time the build takes; for an earlier residual what it had
+/// left. The shader subtracts the fade durations elapsed since the build began, so the old fog
+/// thins, lowers and frays away instead of vanishing in one frame. Where the new field already
+/// draws the same fog the weight is zero, so the shader does no second evaluation there.
+/// </summary>
+internal sealed class LodSilhouetteFogResidual
+{
+    public required LodSilhouetteFogLayer Layer;
+
+    /// <summary>The largest weight, in fade durations: once elapsed, nothing remains.</summary>
+    public required float MaxWeight;
+
+    /// <summary>Texels that carry fog.</summary>
+    public required int LiveTexels;
 }
 
 /// <summary>
@@ -71,29 +102,51 @@ internal static class LodSilhouetteFogVolume
 
     /// <summary>
     /// The fog model a saved config's dials were tuned for. 2 is the natural bank of 0.4.123;
-    /// 3 splits its density into seam and outer dials (0.4.124). A file written for model 1 has
+    /// 3 splits its density into seam and outer dials (0.4.124); 4 gives the seam its own
+    /// shallow strip and makes the bank see-through (0.4.125). A file written for model 1 has
     /// every fog dial reset once, because the same numbers no longer describe the same fog; a
-    /// model-2 file has only its densities reset, the one dial whose meaning changed.
+    /// model-2 or model-3 file has only its densities reset, the dials whose meaning changed.
     /// </summary>
-    public const int FogModel = 3;
+    public const int FogModel = 4;
 
     // The shader's medium, mirrored here for the checks (lodsilhouettefogvolume.fsh). Optical
-    // depths are quoted through one vertical column. A slanted view of ground near the core's
-    // edge crosses mostly the thinner shoulder outside it instead, which is what the core margin
-    // and the seal's gentle falloff are for (scripts/fog-mockup measures every angle).
+    // depths are quoted through one vertical column. The strip hides the seam; the bank is
+    // scenery, thin enough to see Farseer through (scripts/fog-mockup measures both).
 
     /// <summary>
-    /// Column optical depth the seal guarantees over the measured core, whatever the bank's
-    /// height or noise: 3.5 hides 97% of the seam. Sized like the bank, so it fills its holes
-    /// rather than standing out as a second, denser body (G245's 0.4.122 form).
+    /// Column optical depth of the seam strip over its band at full seam density, whatever its
+    /// depth or the noise: 3.5 hides 97% of the seam straight down, and every slanted view
+    /// crosses more of it.
     /// </summary>
-    public const float SealOpticalDepth = 3.5f;
+    public const float StripOpticalDepth = 3.5f;
 
-    /// <summary>Mean column optical depth of the noisy bank over the core.</summary>
-    public const float BankOpticalDepth = 3.2f;
+    /// <summary>The strip's vertical profile's integral in units of its local top.</summary>
+    public const float StripColumnFraction = 0.95f;
 
-    /// <summary>The faint halo that carries the fade past the last strands.</summary>
-    public const float HazeOpticalDepth = 0.25f;
+    /// <summary>
+    /// Blocks over which the strip frays out past its band, and its edge's wander: up to twice
+    /// this, broad and billow-sized, which the band's margin absorbs.
+    /// </summary>
+    public const float StripFalloffBlocks = 12f;
+    public const float StripWanderBlocks = 3f;
+
+    /// <summary>
+    /// Near where a ray lands the strip rests on that surface, within this reach of the
+    /// sampled seam height; from the near to the far distance it returns to the sampled height.
+    /// </summary>
+    public const float StripAnchorNearBlocks = 24f;
+    public const float StripAnchorFarBlocks = 64f;
+    public const float StripAnchorReachBlocks = 16f;
+
+    /// <summary>
+    /// Mean optical depth of a level crossing through the bank's ground layer, square to the
+    /// seam, at full density: how see-through it is from the ground. Its density per block does
+    /// not depend on its height, so a taller bank is deeper from above, not from the side.
+    /// </summary>
+    public const float BankCrossingOpticalDepth = 1f;
+
+    /// <summary>The faint halo that carries the fade past the last strands, the same way.</summary>
+    public const float HazeCrossingOpticalDepth = 0.15f;
 
     /// <summary>Mean eroded noise density inside the core, so the bank meets its target.</summary>
     public const float BankMeanDensity = 0.6f;
@@ -101,7 +154,6 @@ internal static class LodSilhouetteFogVolume
     /// <summary>Exponential fade lengths beyond the core, as fractions of that side's reach.</summary>
     public const float ShoulderFraction = 0.4f;
     public const float HazeFraction = 0.6f;
-    public const float SealFalloffFraction = 0.3f;
 
     /// <summary>The Farseer side reaches this much further than the spread dial.</summary>
     public const float FarseerReachScale = 1.6f;
@@ -114,20 +166,21 @@ internal static class LodSilhouetteFogVolume
     public const float ScaleHeightFraction = 0.42f;
 
     /// <summary>
-    /// The vertical profile's integral in units of bank top, computed numerically: under the
-    /// seal's ceiling (0.5 to 1.15 of the top) and under the bank's (0.35 to 1.1).
-    /// </summary>
-    public const float SealColumnFraction = 0.5923f;
-    public const float BankColumnFraction = 0.5548f;
-
-    /// <summary>
-    /// The core covers the measured staircase plus this margin, within these bounds. Six blocks
-    /// left a slanted view of the staircase's outermost corners 13-17% visible in the mock-up;
-    /// ten, with the seal fading over 0.3 of the spread, holds every tested angle under 4%.
+    /// The bank's core covers the measured staircase plus this margin, within these bounds: a
+    /// slanted view through a tall bank crosses mostly its shoulder near the core's edge (G247).
     /// </summary>
     public const float CoreMarginBlocks = 10f;
     public const float MinCoreBlocks = 12f;
     public const float MaxCoreBlocks = 48f;
+
+    /// <summary>
+    /// The strip covers the measured staircase plus this smaller margin. A layer a few blocks
+    /// deep is crossed close to where a ray lands, so a slanted view of the band's edge still
+    /// passes through the band.
+    /// </summary>
+    public const float StripMarginBlocks = 6f;
+    public const float MinStripHalfBlocks = 8f;
+    public const float MaxStripHalfBlocks = 44f;
 
     /// <summary>
     /// A true open path grows a rounded, fading cap past its endpoint. Width contracts the bank
@@ -146,13 +199,29 @@ internal static class LodSilhouetteFogVolume
     public const float MaxStrength = 2f;
 
     /// <summary>
-    /// Density of the bank away from the seam, and of its haze. The owner's in-game values
-    /// (2026-09-21): 35% outside, 60% over the seam, where 35% alone let the staircase show.
+    /// Density of the bank and its haze, everywhere above and around the strip. At 100% a
+    /// level view across the bank still shows the terrain behind it, veiled.
     /// </summary>
-    public const float DefaultStrength = 0.35f;
+    public const float DefaultStrength = 1f;
 
-    /// <summary>Density of the sealed core and the bank over it.</summary>
-    public const float DefaultSeamStrength = 0.6f;
+    /// <summary>Density of the seam strip. At 100% it hides the staircase from every angle.</summary>
+    public const float DefaultSeamStrength = 1f;
+
+    /// <summary>
+    /// How deep the seam strip lies over the ground. The owner asked for no more than 2-3
+    /// blocks (2026-09-21): the seam itself is a ground-level edge.
+    /// </summary>
+    public const float MinStripHeightBlocks = 1f;
+    public const float MaxStripHeightBlocks = 16f;
+    public const float DefaultStripHeightBlocks = 3f;
+
+    /// <summary>
+    /// Seconds over which fog left behind by a moved seam dissolves, instead of vanishing in
+    /// one frame when the field is replaced. Zero restores the instant change.
+    /// </summary>
+    public const float MinFadeSeconds = 0f;
+    public const float MaxFadeSeconds = 3f;
+    public const float DefaultFadeSeconds = 0.8f;
     // The remaining defaults are the owner's in-game tuning of 0.4.123 (2026-09-21), which
     // hid the seam better than the first defaults at the same densities.
     public const float MinCoverage = 0f;
@@ -223,7 +292,8 @@ internal static class LodSilhouetteFogVolume
     internal static float TexelBlocksForReach(float reachBlocks, float spillBlocks)
     {
         float extent = 2f * (MathF.Max(0f, reachBlocks) + Silhouette.LodSilhouetteTile.TileBlocks
-            + BankReach(spillBlocks, MaxEdgeSoftness, MaxCoreBlocks) + BaseFieldTexelBlocks * 2f);
+            + FogReach(spillBlocks, MaxEdgeSoftness, MaxCoreBlocks, MaxStripHalfBlocks)
+            + BaseFieldTexelBlocks * 2f);
         float texel = BaseFieldTexelBlocks;
         while (extent / texel > MaxFieldTextureEdge && texel < 4096f) texel *= 2f;
         return texel;
@@ -304,8 +374,8 @@ internal static class LodSilhouetteFogVolume
         float minX = prepared.MinX, minZ = prepared.MinZ;
         float maxX = prepared.MaxX, maxZ = prepared.MaxZ;
         // The march stops where the field ends, so it must hold the whole fade: the widest
-        // core, the Farseer shoulder, and the rim's largest wander.
-        float padding = BankReach(spillBlocks, MaxEdgeSoftness, MaxCoreBlocks)
+        // core, the Farseer shoulder, and the rim's largest wander, or the strip's fringe.
+        float padding = FogReach(spillBlocks, MaxEdgeSoftness, MaxCoreBlocks, MaxStripHalfBlocks)
             + BaseFieldTexelBlocks * 2f;
         float texelBlocks = prepared.MinimumTexelBlocks;
         int originX, originZ, width, height;
@@ -775,8 +845,25 @@ internal static class LodSilhouetteFogVolume
         (float.IsFinite(staircaseDeviationBlocks) ? staircaseDeviationBlocks : MaxCoreBlocks)
             + CoreMarginBlocks, MinCoreBlocks, MaxCoreBlocks);
 
+    /// <summary>The strip's band: measured staircase plus its smaller margin.</summary>
+    internal static float StripHalfWidth(float staircaseDeviationBlocks) => Math.Clamp(
+        (float.IsFinite(staircaseDeviationBlocks) ? staircaseDeviationBlocks : MaxStripHalfBlocks)
+            + StripMarginBlocks, MinStripHalfBlocks, MaxStripHalfBlocks);
+
     /// <summary>
-    /// How far from the centreline any fog can exist: the core, one and a half Farseer shoulder
+    /// How far from the centreline the strip can reach: its band, its edge's largest wander
+    /// and the fringe, which the shader cuts off at 3.5 fall-offs.
+    /// </summary>
+    internal static float StripReach(float stripHalfBlocks) =>
+        stripHalfBlocks + 2f * StripWanderBlocks + 3.5f * StripFalloffBlocks;
+
+    /// <summary>How far from the centreline any fog can exist: the bank's reach or the strip's.</summary>
+    internal static float FogReach(float spillBlocks, float edgeSoftness, float coreBlocks,
+        float stripHalfBlocks) =>
+        MathF.Max(BankReach(spillBlocks, edgeSoftness, coreBlocks), StripReach(stripHalfBlocks));
+
+    /// <summary>
+    /// How far from the centreline the bank can exist: the core, one and a half Farseer shoulder
     /// reaches (the bank and haze are cut to zero there), and the rim's largest wander.
     /// </summary>
     internal static float BankReach(float spillBlocks, float edgeSoftness, float coreBlocks)
@@ -801,8 +888,8 @@ internal static class LodSilhouetteFogVolume
     }
 
     /// <summary>
-    /// The vertical profile at a height above the seam ground: full through the ground layer,
-    /// then exponential. The shader multiplies it by the seal's or the bank's ceiling.
+    /// The bank's vertical profile at a height above the seam ground: full through the ground
+    /// layer, then exponential. The shader multiplies it by the bank's ceiling.
     /// </summary>
     internal static float HeightProfile(float heightAboveGround, float bankTop)
     {
@@ -812,23 +899,159 @@ internal static class LodSilhouetteFogVolume
     }
 
     /// <summary>
-    /// CPU counterpart of the shader's seal: extinction per block at a lateral distance beyond
-    /// the core and a height above the seam ground, for a bank of the given top. Its vertical
-    /// column over the core integrates to <see cref="SealOpticalDepth"/> for any top. Outside
-    /// the core the shader also thins it by the bank's billows; this is that fade's envelope.
+    /// CPU counterpart of the shader's strip over its band, without the billows' quarter either
+    /// way: extinction per block at a height above the surface it rests on, for a local top and
+    /// a weight (open-end fade, times what is left of a dissolve). Its vertical column is
+    /// <see cref="StripOpticalDepth"/> times the weight squared, for any top.
     /// </summary>
-    internal static float SealExtinction(float beyondCore, float heightAboveGround,
-        float bankTop, float spillBlocks, float endFade = 1f)
+    internal static float StripExtinction(float heightAboveGround, float stripTop,
+        float weight = 1f)
     {
-        spillBlocks = Dial(spillBlocks, DefaultSpillBlocks, MinSpillBlocks, MaxSpillBlocks);
-        float top = MathF.Max(1f, bankTop);
-        float hs = MathF.Max(0f, heightAboveGround);
-        float profile = MathF.Exp(-MathF.Max(0f, beyondCore)
-            / MathF.Max(1f, SealFalloffFraction * spillBlocks)) * Math.Clamp(endFade, 0f, 1f);
-        float ceiling = 1f - SmoothStep(0.5f * top, 1.15f * top, hs);
-        return SealOpticalDepth / (SealColumnFraction * top) * profile
-            * HeightProfile(hs, top) * ceiling;
+        float top = MathF.Max(0.5f, stripTop);
+        float w = Math.Clamp(weight, 0f, 1f);
+        float vertical = 1f - SmoothStep(0.55f * top, 1.35f * top, MathF.Max(0f, heightAboveGround));
+        return StripOpticalDepth / (StripColumnFraction * top) * vertical * w * w;
     }
+
+    /// <summary>
+    /// The strip's sideways profile beyond its band, before the billows lobe it: whole over
+    /// the band, fraying out exponentially, gone by 3.5 fall-offs.
+    /// </summary>
+    internal static float StripLateral(float beyondBandBlocks)
+    {
+        float rim = MathF.Max(0f, beyondBandBlocks);
+        return MathF.Exp(-rim / StripFalloffBlocks)
+            * (1f - SmoothStep(2f * StripFalloffBlocks, 3.5f * StripFalloffBlocks, rim));
+    }
+
+    /// <summary>
+    /// Worker thread. Carries the fog shown until now, and what is left of an earlier residual,
+    /// onto the next field's lattice (see <see cref="LodSilhouetteFogResidual"/>). Null when
+    /// nothing is left to dissolve, or when the lattices differ, which only a reach change
+    /// causes; the old fog then goes at once, as before 0.4.125.
+    /// </summary>
+    /// <param name="shown">The field on screen when the build began.</param>
+    /// <param name="fading">The residual on screen then, if it still had weight.</param>
+    /// <param name="fadingElapsed">Fade durations that residual had already dissolved.</param>
+    /// <param name="headStart">
+    /// Fade durations the build is expected to take. The shown fog stays whole until the new
+    /// field replaces it, so its weight starts that much above one.
+    /// </param>
+    internal static LodSilhouetteFogResidual? BuildResidual(LodSilhouetteFogFieldArrays next,
+        LodSilhouetteFogLayer? shown, LodSilhouetteFogLayer? fading, float fadingElapsed,
+        float headStart, float spillBlocks, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(next);
+        if (shown == null && fading == null) return null;
+        if (shown != null && !SameLattice(next, shown)) shown = null;
+        if (fading != null && !SameLattice(next, fading)) fading = null;
+        if (shown == null && fading == null) return null;
+        spillBlocks = Dial(spillBlocks, DefaultSpillBlocks, MinSpillBlocks, MaxSpillBlocks);
+        headStart = float.IsFinite(headStart) ? Math.Clamp(headStart, 0f, 1f) : 0f;
+        fadingElapsed = float.IsFinite(fadingElapsed) ? MathF.Max(0f, fadingElapsed) : float.MaxValue;
+        // Which candidate a texel keeps: the one whose fog there is heaviest, judged by weight
+        // and by how far past the core it lies, on the bank's Farseer shoulder scale.
+        float shoulder = MathF.Max(1f, ShoulderFraction * FarseerReachScale * spillBlocks);
+        float core = next.CoreBlocks;
+
+        int width = next.Width, height = next.Height;
+        var half = new ushort[checked(width * height * 4)];
+        float maxWeight = 0f;
+        float minGround = float.PositiveInfinity, maxGround = float.NegativeInfinity;
+        int live = 0;
+        Span<float> chosen = stackalloc float[4];
+        for (int z = 0; z < height; z++)
+        {
+            if ((z & 15) == 0) cancellationToken.ThrowIfCancellationRequested();
+            for (int x = 0; x < width; x++)
+            {
+                int at = (z * width + x) * 4;
+                float bestPresence = 0f;
+                bool have = false;
+
+                if (shown != null && TexelIndex(next, shown, x, z) is int shownAt)
+                {
+                    float r = Half(shown, shownAt), g = Half(shown, shownAt + 1);
+                    float b = Half(shown, shownAt + 2), a = Half(shown, shownAt + 3);
+                    // Where the new field already draws the same fog, nothing needs to dissolve.
+                    // Compared as uploaded, so half-float rounding far out cannot differ.
+                    bool same = MathF.Abs(r - NextHalf(at)) < 0.5f
+                        && MathF.Abs(g - NextHalf(at + 1)) < 0.5f
+                        && MathF.Abs(a - NextHalf(at + 3)) < 0.02f;
+                    float weight = same ? 0f : a + headStart;
+                    chosen[0] = r;
+                    chosen[1] = g;
+                    chosen[2] = b;
+                    chosen[3] = weight;
+                    bestPresence = Presence(weight, r);
+                    have = true;
+                }
+                if (fading != null && TexelIndex(next, fading, x, z) is int fadingAt)
+                {
+                    float r = Half(fading, fadingAt);
+                    float weight = Half(fading, fadingAt + 3) - fadingElapsed;
+                    float presence = Presence(weight, r);
+                    if (!have || presence > bestPresence)
+                    {
+                        chosen[0] = r;
+                        chosen[1] = Half(fading, fadingAt + 1);
+                        chosen[2] = Half(fading, fadingAt + 2);
+                        chosen[3] = MathF.Max(0f, weight);
+                        bestPresence = presence;
+                        have = true;
+                    }
+                }
+                if (!have)
+                {
+                    // Outside both old lattices: no old fog, on the new field's own geometry
+                    // so filtering toward a live neighbour stays smooth.
+                    chosen[0] = next.Texels[at];
+                    chosen[1] = next.Texels[at + 1];
+                    chosen[2] = next.Texels[at + 2];
+                    chosen[3] = 0f;
+                }
+                for (int channel = 0; channel < 4; channel++)
+                    half[at + channel] = BitConverter.HalfToUInt16Bits((Half)chosen[channel]);
+                if (chosen[3] <= 0f) continue;
+                live++;
+                maxWeight = MathF.Max(maxWeight, chosen[3]);
+                minGround = MathF.Min(minGround, chosen[1]);
+                maxGround = MathF.Max(maxGround, chosen[1]);
+            }
+        }
+        if (live == 0) return null;
+        return new LodSilhouetteFogResidual
+        {
+            Layer = new LodSilhouetteFogLayer(half, width, height, next.OriginBlockX,
+                next.OriginBlockZ, next.TexelBlocks, minGround, maxGround),
+            MaxWeight = maxWeight,
+            LiveTexels = live,
+        };
+
+        float Presence(float weight, float signed) => weight <= 0f ? 0f
+            : weight * MathF.Exp(-MathF.Max(0f, MathF.Abs(signed) - core) / shoulder);
+
+        float NextHalf(int index) => (float)BitConverter.UInt16BitsToHalf(next.HalfTexels[index]);
+    }
+
+    static bool SameLattice(LodSilhouetteFogFieldArrays next, LodSilhouetteFogLayer layer) =>
+        layer.TexelBlocks == next.TexelBlocks
+        && layer.HalfTexels.Length == layer.Width * layer.Height * 4
+        && (layer.OriginBlockX - next.OriginBlockX) % (int)next.TexelBlocks == 0
+        && (layer.OriginBlockZ - next.OriginBlockZ) % (int)next.TexelBlocks == 0;
+
+    /// <summary>The texel of <paramref name="layer"/> at the next field's texel, if it has one.</summary>
+    static int? TexelIndex(LodSilhouetteFogFieldArrays next, LodSilhouetteFogLayer layer, int x, int z)
+    {
+        int texel = (int)next.TexelBlocks;
+        int lx = x + (next.OriginBlockX - layer.OriginBlockX) / texel;
+        int lz = z + (next.OriginBlockZ - layer.OriginBlockZ) / texel;
+        if ((uint)lx >= (uint)layer.Width || (uint)lz >= (uint)layer.Height) return null;
+        return (lz * layer.Width + lx) * 4;
+    }
+
+    static float Half(LodSilhouetteFogLayer layer, int index) =>
+        (float)BitConverter.UInt16BitsToHalf(layer.HalfTexels[index]);
 
     /// <summary>The bank's lateral coverage envelope at a rim distance beyond the core.</summary>
     internal static float Envelope(float rimBlocks, float sideReach) =>
