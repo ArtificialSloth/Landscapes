@@ -363,7 +363,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("sil-fog-strength", "Fog density", "Overall opacity of the fog hiding the Farseer/LOD ownership seam. Zero disables the fog pass.",
             0, 200, 5, s => (int)MathF.Round(s.FogStrength * 100),
             (s, v) => s with { FogStrength = v / 100f }, v => $"{v}%"),
-        new("sil-fog-coverage", "Fog coverage", "Minimum veil left inside low-density noise pockets. Lower makes more open gaps; higher hides the seam more continuously.",
+        new("sil-fog-coverage", "Fog coverage", "Minimum veil between billows away from the seam-sealing core. Higher makes the whole bank more continuous; Fog density still controls all opacity.",
             0, 100, 5, s => (int)MathF.Round(s.FogCoverage * 100),
             (s, v) => s with { FogCoverage = v / 100f }, v => $"{v}%"),
         new("sil-fog-spill", "Fog spread", "How far the fog spills across both Farseer and real LOD terrain from the ownership seam.",

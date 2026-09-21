@@ -62,6 +62,17 @@ internal static class LodSilhouetteFogVolume
     /// <summary>Half-float-safe range; the shader never needs a larger conservative skip.</summary>
     public const float StoredDistanceLimit = 2048f;
 
+    /// <summary>The fragment integrator's extinction coefficient per block.</summary>
+    public const float ExtinctionPerBlock = 0.018f;
+
+    /// <summary>
+    /// Integral from the smooth seam-seal rim to its centre, in units of side reach. The profile
+    /// is one through the first 8%, then one minus smoothstep through the remaining 92%:
+    /// 0.08 + 0.92 / 2 = 0.54. Normalizing by this makes its promised optical depth independent
+    /// of the spill-width dial instead of letting a narrow bank expose the ownership seam.
+    /// </summary>
+    public const float SeamSealIntegralFraction = 0.54f;
+
     /// <summary>
     /// A true open path grows a rounded, fading cap past its endpoint. Width contracts the bank
     /// laterally while Profile guarantees that the final sample remains invisible under wobble.
@@ -717,6 +728,37 @@ internal static class LodSilhouetteFogVolume
         return Lerp(7.5f, 3f, detail);
     }
 
+    internal static float SeamSealLodReach(float spillBlocks)
+    {
+        spillBlocks = Dial(spillBlocks, DefaultSpillBlocks, MinSpillBlocks, MaxSpillBlocks);
+        return Math.Clamp(spillBlocks * 0.67f, 12f, 32f);
+    }
+
+    internal static float SeamSealTargetOpticalDepth(float coverage)
+    {
+        coverage = Dial(coverage, DefaultCoverage, MinCoverage, MaxCoverage);
+        return Lerp(3f, 4.5f, coverage);
+    }
+
+    /// <summary>
+    /// CPU counterpart of the shader's deterministic seam core. Organic billows may open around
+    /// it, but cannot punch a view through the exact handoff. The broad smooth profile keeps this
+    /// a volume rather than drawing a new line where the old terrain cards met.
+    /// </summary>
+    internal static float SeamSealDensity(
+        float signedDistance, float spillBlocks, float coverage, float endFade = 1f)
+    {
+        spillBlocks = Dial(spillBlocks, DefaultSpillBlocks, MinSpillBlocks, MaxSpillBlocks);
+        float lodReach = SeamSealLodReach(spillBlocks);
+        float sideReach = signedDistance < 0f
+            ? lodReach : Math.Clamp(spillBlocks, 12f, 48f);
+        float across = Math.Abs(signedDistance) / sideReach;
+        float profile = 1f - SmoothStep(0.08f, 1f, across);
+        float normalization = ExtinctionPerBlock * SeamSealIntegralFraction * lodReach;
+        return profile * Math.Clamp(endFade, 0f, 1f)
+            * SeamSealTargetOpticalDepth(coverage) / normalization;
+    }
+
     /// <summary>CPU counterpart of the shader's asymmetric lateral bank profile.</summary>
     internal static float CrossingProfile(float effectiveSignedDistance, float spillBlocks)
     {
@@ -737,6 +779,12 @@ internal static class LodSilhouetteFogVolume
     }
 
     static float Lerp(float from, float to, float amount) => from + (to - from) * amount;
+
+    static float SmoothStep(float edge0, float edge1, float value)
+    {
+        float t = Math.Clamp((value - edge0) / (edge1 - edge0), 0f, 1f);
+        return t * t * (3f - 2f * t);
+    }
 
     static float Dial(float value, float fallback, float min, float max) =>
         Math.Clamp(float.IsFinite(value) ? value : fallback, min, max);

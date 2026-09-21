@@ -133,6 +133,27 @@ public static class SilhouetteChecks
                 < LodSilhouetteFogVolume.MarchStepBlocks(0f),
             "the fog quality dial increases raymarch precision instead of adding planes");
 
+        float sealReach = LodSilhouetteFogVolume.SeamSealLodReach(spill);
+        const int sealSamples = 4096;
+        float sealStep = sealReach / sealSamples;
+        float sealOpticalDepth = 0f;
+        for (int sample = 0; sample < sealSamples; sample++)
+        {
+            float signedDistance = -sealReach + (sample + 0.5f) * sealStep;
+            sealOpticalDepth += LodSilhouetteFogVolume.SeamSealDensity(
+                    signedDistance, spill, LodSilhouetteFogVolume.DefaultCoverage)
+                * LodSilhouetteFogVolume.ExtinctionPerBlock * sealStep;
+        }
+        float promisedSeal = LodSilhouetteFogVolume.SeamSealTargetOpticalDepth(
+            LodSilhouetteFogVolume.DefaultCoverage);
+        c.Near(promisedSeal, sealOpticalDepth, 0.001f,
+            "the smooth LOD-side core integrates to its promised seam-sealing optical depth");
+        c.True(1f - MathF.Exp(-sealOpticalDepth) > 0.96f,
+            "default fog blocks more than 96% of seam light before noise and Farseer spill");
+        c.Near(0f, LodSilhouetteFogVolume.SeamSealDensity(
+            -sealReach, spill, LodSilhouetteFogVolume.DefaultCoverage), 0.0001f,
+            "the guaranteed core still reaches zero smoothly before its visible outer rim");
+
         var cornerReplacements = LodSilhouetteCoverage.Empty;
         for (int z = 0; z < 8; z++)
             for (int x = 0; x < 8; x++)
@@ -1728,6 +1749,8 @@ public static class SilhouetteChecks
                 && fogFragment.Contains("for (int stepIndex = 0; stepIndex < MaxFogSteps",
                     StringComparison.Ordinal)
                 && fogFragment.Contains("segmentAlpha", StringComparison.Ordinal)
+                && fogFragment.Contains("vhFogSeamSealDensity", StringComparison.Ordinal)
+                && fogFragment.Contains("targetOpticalDepth", StringComparison.Ordinal)
                 && fogFragment.Contains("fogCoverage", StringComparison.Ordinal)
                 && !inputs.Contains("lodsilhouettefog.fsh", StringComparison.Ordinal)
                 && !fragment.Contains("vhSilhouetteSeamFog", StringComparison.Ordinal)

@@ -34,6 +34,8 @@ uniform float fogDriftBlocks;
 layout(location = 0) out vec4 outColor;
 
 const float GuardProfile = -0.55;
+const float FogExtinctionPerBlock = 0.018;
+const float SeamSealIntegralFraction = 0.54;
 const int MaxFogSteps = 160;
 
 float vhFogHash(vec3 p)
@@ -106,6 +108,23 @@ float vhFogCrossingProfile(float signedDistance)
         linearProfile = (farseerReach - signedDistance)
             / (farseerReach - farseerPlateau);
     return clamp(linearProfile, 0.0, 1.0);
+}
+
+float vhFogSeamSealDensity(float signedDistance, float endFade)
+{
+    // A noisy volumetric bank still needs to fulfill its actual job: the exact terrain handoff
+    // must not show through a low-density pocket. This is a broad normalized extinction core,
+    // not another surface. Its one-sided integral from LOD terrain to the seam is a stable target
+    // optical depth at any spill width; the Farseer side is deliberately allowed to be wider.
+    float lodReach = clamp(fogSpillBlocks * 0.67, 12.0, 32.0);
+    float sideReach = signedDistance < 0.0
+        ? lodReach : clamp(fogSpillBlocks, 12.0, 48.0);
+    float across = abs(signedDistance) / sideReach;
+    float profile = 1.0 - smoothstep(0.08, 1.0, across);
+    float targetOpticalDepth = mix(3.0, 4.5, clamp(fogCoverage, 0.0, 1.0));
+    float normalization = FogExtinctionPerBlock * SeamSealIntegralFraction * lodReach;
+    return profile * clamp(endFade, 0.0, 1.0)
+        * targetOpticalDepth / max(0.0001, normalization);
 }
 
 void main()
@@ -213,8 +232,14 @@ void main()
 
             float noiseDensity = mix(0.10 + 0.50 * clamp(fogCoverage, 0.0, 1.0),
                 1.45, billow);
-            float density = vertical * crossing * max(0.0, fogStrength) * noiseDensity;
-            float segmentAlpha = 1.0 - exp(-0.018 * density * stepBlocks);
+            // The organic field shapes the bank while a stable core seals the exact ownership
+            // transition. Using the unwobbled distance for the core prevents noise from opening
+            // a crack; both terms are integrated together and remain free of internal surfaces.
+            float seamSealDensity = vhFogSeamSealDensity(field.r, field.a);
+            float density = vertical * max(0.0, fogStrength)
+                * (crossing * noiseDensity + seamSealDensity);
+            float segmentAlpha = 1.0 - exp(
+                -FogExtinctionPerBlock * density * stepBlocks);
             float contribution = transmittance * segmentAlpha;
             vec3 colour = rgbaFogIn.rgb * mix(0.92, 1.035, broad);
             scattered += colour * contribution;
