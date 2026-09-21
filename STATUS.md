@@ -4,152 +4,144 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-20`
-**Mod version:** `0.4.117` — current private test build: the sweep logs its own progress without a diagnostic flag, and the cache-work line no longer prints a continuously-changing section's age as though it were a write backlog. Verified, copy-installed and checkpointed, **not play-tested**. The owner played 0.4.116 on `test2` and called it good; 0.4.113–0.4.116 otherwise have no play verdict
+**Mod version:** `0.4.119` - current private test build: claims are taken from a re-read of the savegame after a world save, and the sweep's background arms report themselves. Verified, copy-installed, checkpointed, and **played once on `test2`**. 0.4.118 was played twice on the same world
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.110 `2fbf2d1`, 0.4.111 `b2fe181`, 0.4.112 `6f4aa42`, A1/A2 `611ce7a`, 0.4.113 `61ca662`, 0.4.114 `b513808`, 0.4.115 `2d9b25f`, 0.4.116 `d0a5dca`, 0.4.117 `5043e96`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.113 `61ca662`, 0.4.114 `b513808`, 0.4.115 `2d9b25f`, 0.4.116 `d0a5dca`, 0.4.117 `5043e96`, 0.4.118 `0c9ac69`, 0.4.119 `3dd8fb3`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
 **Source files:** `137` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
-**Database schema:** `6`
+**Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
 
-**Savegame-sweep load contention is measured and 0.4.111 yields to player terrain activity.**
-Session 102.
+**The startup sweep's payoff is demonstrated in play, on the owner's own world.** Session 105,
+production-observed 2026-09-20 from his `test2` logs and measured offline from the files afterwards.
 
-- Every condition restored the same frozen `BodanBoys` save and client/server caches, then ran the
-  same deterministic integrated-singleplayer route.
-- During the priority-load phase, original sweep on versus sweep off had effectively equal average
-  FPS, 315.5 versus 316.4, but the 1% low fell from 110.3 to 88.3 FPS, the 1% frame-time tail rose
-  from 9.07 to 11.32 ms, and RSS rose from 7,578 to 8,820 MB.
-- Engine-counter-only gates at 8 and 1 did not see ordinary saved-column pressure. The counter did
-  see actual generation later and remains a secondary threshold-1 guard.
-- A new/rejoining player or any chunk-boundary crossing now pauses new startup-sweep priority loads
-  for five seconds. Activity by any player extends the window. Stationary players and no-player
-  servers permit progress; the capped allowance still prevents catch-up bursts.
-- The follow-up recovered a 109.0 FPS 1% low and 9.17 ms tail, effectively the sweep-off control,
-  with 1,621 player holds, 209 engine holds and no capture drops/errors.
-- The route was mixed. Its centerline through endpoint X 8050 existed, but the final save gained
-  178 map columns at X 8053–8062 / Z 7990–8012 through the view-distance halo. The test covers
-  saved-terrain streaming and a short real-generation tail, not sustained virgin-frontier travel.
-- The terrain-change plan remains unimplemented. Its clean marker and fingerprints decide whether
-  work is needed; 0.4.111 decides when necessary loads may run. The Codex recommendations appended
-  to that plan were independently reviewed on 2026-09-19; see its §12, and §§4.1.4, 4.1.5, 4.1.6,
-  4.3 and 7 for the corrections that review made.
+| `test2` start | columns read | skipped as already captured | loaded | sweep duration |
+|---|---:|---:|---:|---:|
+| 0.4.118, first adoption | 17,219 in 1.2 s | 0 | 10,439 | ~25 min |
+| 0.4.118, restart | 17,296 in 1.6 s | 10,040 | 399 | 37 s |
+| 0.4.119, restart | 17,296 in 1.1 s | 10,172 | 267 | 27 s |
 
-**The owner's 0.4.111 play session never reached the sweep's load phase.** Production-observed
-2026-09-19, read offline from `server-main.log`.
+- Both restarts verified 256/256 sampled absent positions still absent, and generated nothing.
+- Capture errors and unloaded-before-capture drops were zero across all three.
+- After a clean quit on 0.4.119, **35 of 10,423 claims no longer matched the savegame - 0.34%**,
+  against 399 of 10,439 (3.8%) for the equivalent measurement one build earlier. The stale ones
+  cluster where the player stood: 16% of claims within three chunks of him, 4% within seven, 0.28%
+  of the 8,190 beyond forty.
 
-- The session ran 16:13:21 to 16:18:36, about five minutes. The sweep announced 70,225 positions to
-  examine at 16:13:21 and had examined 90% of them at 16:18:04. The owner quit 32 seconds later.
-- The load phase therefore never started, and 0.4.111's player-aware gate guards only `StepLoad`.
-  It cannot have held anything, and no player-hold telemetry was emitted.
-- This explains the owner's report that the sweep was hard to tell apart in play: on his world a
-  short session is spent entirely in the probe pass, which the gate does not touch.
-- It is also a product fact in its own right. For sessions of this length the sweep on this world
-  is all cost and no captured terrain, every start, and the probe pass is the cost. Phase A of the
-  terrain-change plan removes that pass outright — which is a stronger argument for it than the
-  repeated-load waste the plan leads with.
+**The fingerprint now covers the landscape rather than the whole stored row (0.4.118).** Session
+105; the measurement that motivated it was taken offline on his own savegames, read-only.
 
-| Sweep condition | Average FPS | Median FPS | 1% low | 1% frame-time tail | RSS |
-|---|---:|---:|---:|---:|---:|
-| Probe on | 487.5 | 525.9 | 136.0 | 7.35 ms | — |
-| Probe off | 476.2 | 507.1 | 159.3 | 6.28 ms | — |
-| Load, original on | 315.5 | 351.3 | 88.3 | 11.32 ms | 8,820 MB |
-| Load, off | 316.4 | 340.4 | 110.3 | 9.07 ms | 7,578 MB |
-| Load, 0.4.111 gate | 324.6 | 353.9 | 109.0 | 9.17 ms | 8,362 MB |
+- Over 25 days of his play and generation, 13,754 of 62,390 columns moved their fingerprint -
+  22.05% of the world, and **43.5% of the 31,583 columns inside his 128-chunk sweep square**, which
+  is where all of the change is.
+- Of those changed columns: 81.87% changed blocks, fluids or decors; 12.08% changed only non-chisel
+  block entities; 5.98% changed only entities, light or mod data; 0.07% changed chiselled contents.
+  The block-entity churn is berry bushes, mycelium, transients, tree hollows, locust nests, beehives.
+- The hash now keeps blocks, fluids, chiselled-block contents, the layer count and the structural
+  markers, and drops light, light saturation, entities and their count, the block-entity count, mod
+  data, server mod data, light positions, decors and the placed/removed counters. **Decors are
+  excluded by the owner's decision** of 2026-09-20: ground gaining decor is being worked on for
+  other reasons anyway.
+- The rule is an exclusion list, so a field a future game version adds still counts as a change.
+  Chisel classes come from the game's own block registry, so a mod's own microblock subclass is
+  covered; hard-coding the two vanilla names would have dropped it silently.
+- Verified with the shipping code against the same two real savegames: **13,754 flagged columns
+  become 11,307**, matching an independent offline prediction exactly, with **no column flagged that
+  the whole-row hash did not already flag**. Without the chisel filter it would be 12,967. About 45%
+  of the bytes are no longer hashed; other mods' chunk data (Watersheds groundwater and flow
+  vectors) was 84% of the bytes in a sample of his rows.
+- 17.8% is a **lower bound** on capture-irrelevant churn: any change to the packed block bytes was
+  counted as relevant, and some of those cannot alter a distant section.
 
-**The sustained virgin-frontier comparison is done, and 0.4.112 gives the held sweep a floor.**
-Measured 2026-09-19 after Session 102. Every run restored the frozen `sweep-ab` seed, used the
-same deterministic integrated route and a 360 s settle so the probe pass finished first.
+**A claim used to be wrong the moment it was made; 0.4.119 fixes that.** Session 105.
 
-Virgin frontier, `bench/routes/sweep-virgin-frontier.txt` at 5.33 blocks/s, 180 s:
+- The sweep fingerprints the savegame once at world start, then loads a column. Loading a dormant
+  column is itself what changes it - the engine catches up transient blocks, snow and block entities
+  on the way in - and the capture reads the corrected column, so the cache is right. The claim
+  carried the pre-load reading, so the next start loaded the column again for nothing.
+- Measured at 7.0% of claims on 0.4.116 (162 of 2,323, his own world) and 3.8% on 0.4.118 (399 of
+  10,439). In the sandbox, where the whole sweep square sits inside the player's load radius, 26.3%.
+- Three signals agreed on the mechanism: claims made in the sweep's first 90 s were stale at 10.6%
+  against 5.2% for later ones; columns the sweep had loaded changed at 33.6% against 0.019%
+  elsewhere; and 48 of 162 disputed columns had had their cached section rewritten after the claim,
+  against 2.2% of agreeing claims (G240).
+- 0.4.119 separates taking a durable capture from claiming it. The world-save event schedules a
+  re-read a few seconds later - `GameWorldSave` fires *before* the engine writes and there is no
+  "finished" event - and the claim is taken from what the file then holds. A column with a capture
+  queued, or no longer durable, is left settling.
+- Fallbacks: no read path claims from the startup reading as before; a session ending with columns
+  still settling claims them the same way, because losing a save interval's proven captures would be
+  worse than a stale claim; and re-read batches unanswered three times say so once and turn the
+  refresh off for the session.
+- **Not established:** the settle path under load. That session captured 273 columns and all 273
+  were claimed after a save with no fallbacks, but a session with a large sweep behind it is the
+  real test. Whether a disputed claim's recapture is *wasted* is measured for 48 of 162 columns and
+  argued from `ChunkDirty` semantics for the rest; it is not proven.
 
-| Virgin-frontier condition | Average FPS | Median FPS | 1% low | 1% tail | RSS | Oldest dirty |
-|---|---:|---:|---:|---:|---:|---:|
-| Sweep off | 523.6 | 578.9 | 172.9 | 5.78 ms | 7,076 MB | — |
-| 0.4.111 gate | 517.4 | 576.6 | 165.9 | 6.03 ms | 7,685 MB | 57.3 s |
-| Pre-gate scheduler (`2fbf2d1`) | 503.2 | 579.5 | 134.4 | 7.44 ms | 8,906 MB | 170.6 s |
+**The background audit and the dormant-terrain snow refresh report themselves for the first time
+(0.4.119).** Both begin when the startup sweep finishes, and the server printed a status line only
+while a job was unfinished, so on 2026-09-20 both ran nine minutes on his world with the log silent
+about either - G237's shape a second time (G241).
 
-- **The frontier answers the question Session 102 could not.** The pre-gate sweep costs 22.3% of
-  the 1% low and 28.7% of the frame-time tail against the off control, close to the 19.9% and
-  24.8% it cost on saved terrain. 0.4.111 recovers most of it: 4.0% and 4.3%. The storage queue
-  tells the same story — oldest dirty section 170.6 s ungated against 57.3 s gated.
-- **Sweep throughput while the player moved**, sections saved per minute mid-window: about 880
-  ungated, about 110 under the 0.4.111 gate at 5.33 blocks/s, and one whole minute at 7 at
-  6.67 blocks/s. Above 6.4 blocks/s every chunk crossing lands inside the previous five-second
-  window, so the hold never lapses (G234).
-- **On a virgin frontier the player gate is not what starves the sweep.** Real generation is
-  permanently in flight, so the absolute engine gate holds nearly every tick on its own: 2,478
-  engine holds against 2,481 player holds in the fast run. The speed threshold only bites on
-  saved terrain, where the engine counter is blind (G229).
+| Arm, `test2` 0.4.119, about 12 minutes | Result |
+|---|---|
+| Background audit | 10,591 columns re-read at 16/s, **81 no longer matched** and were queued for recapture, one full pass over 10,431 claims |
+| Audit dispute rate | 0.76% of re-reads, against 0.71% in the sandbox |
+| Dormant-terrain snow refresh | 550 recaptures, 81 regional campaigns, 23 dormant-region probes over 12,551 candidates, **12,104 still queued at 1/s** |
+| Claims | 273 recorded, 273 read back after a world save, 0 from the startup reading, 0 waiting |
 
-Saved terrain, `bench/routes/sweep-active-exploration.txt` at 13.3 blocks/s, 120 s, both runs in
-one session:
+- The snow-refresh backlog is the debt of six weeks unreachable behind an uncleared flag. About
+  three hours of background priority loads on that world; **no FPS or frame-time run has yet been
+  taken with that trickle running.**
+- The mod's own arms are a floor on claim staleness: each dormant column they wake is updated by the
+  engine and written at the next save, which disputes that column's claim (G243).
+- Claim re-reads queue behind the audit's 16/s stream: claims for the 20:54 save were not written
+  until 20:56:39. Not a correctness fault, but a session ending in that window falls back.
 
-| Floor verification | Average FPS | 1% low | 1% tail | RSS | Loads under hold | Sections saved |
-|---|---:|---:|---:|---:|---:|---:|
-| 0.4.111, no floor | 313.6 | 104.6 | 9.56 ms | 8,094 MB | 0 | 1,732 |
-| 0.4.112, 2/s floor | 317.3 | 103.2 | 9.69 ms | 8,478 MB | 193 | 2,015 |
-
-- A player hold now clamps the sweep to `FloorPerSecond` — one eighth of the configured rate, 2/s
-  at the default 16/s — drawn from its own allowance so a long hold cannot burst on release. Hold
-  counts were unchanged (1,618 against 1,616), so the gate still fires identically; the difference
-  is only the trickle it now permits.
-- The cost is inside run variation on both figures. The benefit is that the sweep converges while
-  someone is walking around instead of waiting for them to stand still.
-- **Not measured:** whether the floor is the right size, and multi-player fairness.
-
-**Terrain change detection: phase A is built (0.4.113–0.4.116).** Session 103. Sandbox-verified, and the owner played 0.4.116 once;
-see the play verdict below.
+**Terrain change detection: phase A is built and played (0.4.113-0.4.119).** Sessions 103-105.
 
 - **The probe pass is gone.** The sweep reads the savegame itself through a private read-only
   connection on its own thread, rather than asking the engine 70,225 times at ~320/s through the
-  chunk thread that also loads player terrain. Sandbox first adoption read 62,098 columns in 6.4 s
-  and emitted no probe progress lines at all. The index covers the whole world rather than the
-  probe square, so edge columns have better neighbour knowledge than before.
+  chunk thread that also loads player terrain. On the owner's `test2` the whole index reads in
+  1.1-1.6 s; on his 3.22 GB `bodanboys` it measured 73.3 s cold. The index covers the whole world
+  rather than the probe square, so edge columns have better neighbour knowledge than before.
 - **The read path detects the journal mode and never sets it**, paces reads in short batches with
   yields (relaxed under WAL), waits out `SQLITE_BUSY`, validates the schema rather than guessing at
   an unexpected one, and disables itself for the session with one named line on any failure, after
   which the sweep probes exactly as it did before. Its checks prove the connection cannot write.
 - **A column is skipped only when the savegame's content fingerprint and the cache's proven one are
-  both known and equal.** Either unknown means "assume changed". A submitted column earns its
-  fingerprint only once its capture reached the durable row, never when its savegame row was read
-  (G232). The sandbox restart skipped exactly the 1,905 columns the first run had proved.
-- **Fingerprints live in a new `ColumnFingerprint` table** created with `CREATE TABLE IF NOT
-  EXISTS`. No schema bump: an existing cache gains it empty, a missing entry reads as "assume
-  changed", and there is no migration.
+  both known and equal.** Either unknown means "assume changed". A column earns its claim only once
+  its capture reached the durable row, never when its savegame row was read (G232) - and since
+  0.4.119, only from a re-read taken after the world has saved (G240).
+- **Claims live in the `ColumnFingerprint` table** created with `CREATE TABLE IF NOT EXISTS`, and
+  carry a rule version in `Meta`. No schema bump: an existing cache gains the table empty, a missing
+  entry reads as "assume changed", and a rule change drops the claims with a line naming how many.
+  A cache-format purge now drops them alongside the sections they describe.
 - **The background audit** re-reads a rotating slice against those claims and queues a mismatch for
   recapture under the sweep's own safety and scheduling rules. It disputes only claims this cache
-  makes. `AuditColumnsPerSecond` defaults to 16, walks a 57,600-column world about once an hour and
-  0 disables it with no residual cost. Sandbox: 4,661 columns over 16 passes, no read-path failure.
+  makes. `AuditColumnsPerSecond` defaults to 16 and 0 disables it with no residual cost. Its
+  production numbers are in the current result above.
 - **Not built: A4's clean-shutdown fast path**, and it should not be built as specified. There is no
-  hook after the engine's final save (G236), so its marker cannot record the file's post-save state,
-  and the whole index measures 73.3 s on the owner's real world — so it would trade an unverifiable
-  assumption for background file reading that does not compete with the player.
-
-| Read path, owner's real 3.22 GB world | Result |
-|---|---|
-| Journal mode, change counter | `delete`, 651 with version-valid-for 651 |
-| Existence map | 64,179 map columns |
-| Whole index | 73.3 s, of which fingerprints 73.0 s |
+  hook after the engine's final save (G236), so its marker cannot record the file's post-save state.
+  A4's other half - re-fingerprinting after the engine writes - is what 0.4.119 built, in the shape
+  the plan's own 2026-09-19 correction describes. Recording the fast path as dropped is still the
+  owner's decision.
 
 **The owner played 0.4.116 on `test2` and called it good.** Session 104. First play verdict on
-phase A; the only one so far.
+phase A, superseded for sweep numbers by the 0.4.118/0.4.119 sessions above.
 
-- The read path opened on a **WAL** world — change counter 100 — and read all **15,112 columns in
+- The read path opened on a **WAL** world - change counter 100 - and read all **15,112 columns in
   9.9 s**, with no probe progress lines in the log at all. A3 works on his machine.
-- He reported consistent minor FPS dips while exploring new terrain and asked whether they exceeded
-  vanilla's own generation cost. Attribution: mostly vanilla, plus the ~4% of the 1% low the
-  frontier A/B already measured for the sweep. His session was the worst case — the sweep was doing
-  first-adoption work throughout, capturing 3,986 sections with its capture backlog at 31–40
-  against a limit of 32 — and that cost is one-time per world.
-- **The sweep did not finish** (15,112 columns at 16/s needs ~16 minutes; the session ran ~10), so
-  **the audit and the revived snow refresh never ran.** Neither has executed on his machine.
-- One unloaded-before-capture drop, no capture errors, no client-side errors.
-- The free follow-up: play `test2` until the sweep completes, then explore. If the dips largely go
-  they were the sweep; if they are unchanged they were vanilla generation.
+- He reported consistent minor FPS dips while exploring new terrain. Attribution: mostly vanilla,
+  plus the ~4% of the 1% low the frontier A/B already measured for the sweep. His session was the
+  worst case - the sweep was doing first-adoption work throughout, capturing 3,986 sections with its
+  capture backlog at 31-40 against a limit of 32 - and that cost is one-time per world.
+- The sweep did not finish in that ~10 minute session. It has since finished twice on that world.
+- One unloaded-before-capture drop, no capture errors, no client-side errors. The 0.4.118 and
+  0.4.119 sessions had none at all.
 
 **A status number read as an alarm and was not.** Session 104; 0.4.117 fixes the diagnostic.
 
@@ -762,46 +754,53 @@ It covers:
 
 ## Next work
 
-Begin with [Session 104](dev/sessions/SESSION_104.md) and [Session 103](dev/sessions/SESSION_103.md), the top of [TODO](dev/TODO.md),
+Begin with [Session 105](dev/sessions/SESSION_105.md) and [Session 104](dev/sessions/SESSION_104.md), the top of [TODO](dev/TODO.md),
 [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. **Finish a world's sweep, then play it.** Everything built in Sessions 103–104 changes what a
-   world start does, and no session has yet run long enough to finish a sweep — so the skip path,
-   the audit and the revived snow refresh have all never executed on the owner's machine. On
-   `test2` that needs roughly 16 minutes of play from a cold start. Afterwards: a second start
-   should report a large "already captured" count and reach completion in minutes, and the log
-   should carry audit and snow-refresh lines. This also settles the FPS-dip question for free — if
-   the dips go once the sweep is done, they were the sweep.
-2. **Decide A4's fate.** The clean-shutdown fast path cannot be built as specified — no hook exists
-   after the engine's final save (G236) — and with the probe pass gone it would save 73 s of
-   background reading for an unverifiable assumption. Recommendation: drop it, or rebuild it around
-   "record what the next save will touch, treat those as unverified". Owner's call.
-3. **Measure the audit's real false-positive rate.** 33 mismatches in the sandbox is not a rate for
-   the owner's setup: the sandbox lacks mods his world's block entities need, so the engine discards
-   them and rewrites those chunks. Volatile state (light, snow, block entities) may make more
-   columns look changed than truly are; this is plan §10's open question and is now measurable.
-4. **Prove the audit catches a real fault.** It is proven to run, not to catch anything: staging
-   genuine corruption was not possible in a live world. Its decision rules are covered offline.
-5. **Close P3's deferred integration debt** when another player is available: a complete
+1. **Play a world with a real sweep behind it, on 0.4.119.** The claim path now waits for a world
+   save and re-reads the file, and that ran end to end on `test2` - but only 273 columns passed
+   through it. A fresh world, or one with a lot of newly generated terrain, puts thousands through
+   it in one session. Afterwards the status line should show claims "read back after a world save"
+   far outnumbering "from the startup reading", and the next start should load only a few hundred
+   columns.
+2. **Give claim re-reads priority over audit re-reads.** Measured 2026-09-20: claims for a 20:54
+   save were not written until 20:56:39, because they queue behind the audit's steady 16/s stream.
+   A session ending in that window falls back to the index-time claim unnecessarily.
+3. **Measure the snow refresh's backlog cost.** It has about 12,000 columns queued at 1/s on
+   `test2`, roughly three hours of background priority loads, and no FPS or frame-time run has yet
+   been taken with that trickle running - the owner stood still deliberately for both builds. This
+   is the most likely source of any new in-play cost, and the arm has only been reachable since
+   0.4.116.
+4. **Record A4's fast path as dropped**, or rebuild it around "record what the next save will touch,
+   treat those as unverified". Its other half is built. Owner's call.
+5. **Prove the audit catches a real fault.** It is now proven to run and to dispute claims - 81 in
+   one pass - but every dispute so far is ordinary change, not a cache that was wrong. Staging real
+   corruption was not possible in a live world; its decision rules are covered offline.
+6. **Decide whether the measurement tools belong in the repository.** Session 105's numbers came
+   from a content-churn comparator, an audit replay and a fingerprint dumper built against the
+   shipping code, none of which is in the tree. They cannot be reproduced without them.
+7. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
-6. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
+8. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
    observations beneath the veil; tune Outline detail, Hill softness, apron and the nine fog dials
    only after the shape is accepted; measure controlled Farseer off/on and fog-detail cost,
    including the swept arc's extra cross-section per end.
-7. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
+9. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
    player-facing Farseer rename plus bundled MIT notice.
-8. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
-9. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
+10. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
+11. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
    offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
-10. **Older TODO debt:** keep the debt including:
+12. **Older TODO debt:** keep the debt including:
    - P3's after-comparison;
-   - winter convergence, which G237 shows was never reachable; re-judge now the arm actually runs;
+   - winter convergence, which G237 showed was never reachable and which the refresh arm has now
+     begun working through - re-judge once its backlog has drained;
    - pause loading;
    - Session 84 diagnostic cleanup.
 
-[Session 104](dev/sessions/SESSION_104.md) is the authoritative documentation continuation point;
+[Session 105](dev/sessions/SESSION_105.md) is the authoritative documentation continuation point;
+[Session 104](dev/sessions/SESSION_104.md) retains the first phase-A play verdict and the rejected brake;
 [Session 103](dev/sessions/SESSION_103.md) retains phase A, the frontier A/B and the snow-refresh bug;
 [Session 102](dev/sessions/SESSION_102.md) retains the first sweep A/B and the 0.4.111 gate;
 [Session 101](dev/sessions/SESSION_101.md) retains the pre-measurement sweep analysis,
@@ -811,10 +810,12 @@ Begin with [Session 104](dev/sessions/SESSION_104.md) and [Session 103](dev/sess
   look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G238 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
-  buried joins, bounded regeneration, stable all-level ownership, post-water volumetric fog and the
+- G166-G243 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+  buried joins, bounded regeneration, stable all-level ownership, post-water volumetric fog, the
   distinction between pacing priority-load submissions and yielding their downstream engine work,
-  plus the engine generation counter's saved-load blind spot and route-halo generation.
+  the engine generation counter's saved-load blind spot, route-halo generation, and now what a
+  whole-row hash really reports, why a claim recorded before the work describes a state nobody
+  held, and why an arm that starts when a job finishes needs its own voice.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work

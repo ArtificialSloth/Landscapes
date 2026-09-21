@@ -2,6 +2,33 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-20 - The fingerprint learns what the landscape is, and the skip path is demonstrated (0.4.118-0.4.119)
+
+- **Measured the terrain-change plan's section 10 question on the owner's own worlds, offline.**
+  Over 25 days of his play, 13,754 of 62,390 columns moved their fingerprint - 43.5% of those inside
+  his sweep square - and 17.8% of those moved only for state a capture cannot show. Separately, 162
+  of 2,323 claims from his 0.4.116 session were already disputed when it ended, because a claim
+  carried the fingerprint read at world start while loading a dormant column is itself what changes
+  it. G239, G240.
+- **0.4.118 fingerprints the landscape only**, with chisel classes resolved from the block registry,
+  an exclusion rule so unknown fields still count, and a stored rule version so old claims are
+  dropped rather than mismatching forever. Verified with the shipping code on his real world: 13,754
+  flagged columns become 11,307. A latent defect was fixed alongside it - a schema purge deleted
+  sections but left the claims describing them.
+- **The startup sweep's payoff was demonstrated in play for the first time.** On `test2`, a 25
+  minute first sweep, then a restart that skipped 10,040 columns, loaded 399 and finished in 37
+  seconds; under 0.4.119, 10,172 skipped, 267 loaded, 27 seconds, and 35 of 10,423 claims stale
+  after a clean quit.
+- **0.4.119 gave the audit and snow refresh a voice** - both start when the sweep finishes, and the
+  status line only printed while a job was unfinished, so both had run unobserved (G241) - and moved
+  claim commitment to a re-read taken after the world saves, with fallbacks for no read path, an
+  ending session and unanswered re-reads.
+- **First real numbers from both arms:** the audit re-read 10,591 columns at 16/s and disputed 81 in
+  one full pass over 10,431 claims; the snow refresh made 550 recaptures across 81 campaigns with
+  12,104 columns still queued.
+- Offline analysis traps recorded as G242 (two different clocks in the cache's timestamps) and G243
+  (the mod's own background arms invalidate its claims).
+
 ## 2026-09-20 - First play verdict on phase A, and a rejected brake (0.4.117)
 
 - The owner played 0.4.116 on `test2` and called it good. His log shows the savegame read path

@@ -4530,3 +4530,103 @@ warranted at all.
 
 **Found:** 2026-09-20, Session 104, while building a storage-pressure brake that turned out to be
 unnecessary; the plan's §11.3 direction and a recommendation to the owner were both reversed.
+
+### G239 - A whole-row hash reports a berry bush as loudly as a landslide
+
+**Trigger:** fingerprinting stored data to decide whether work can be skipped, by hashing the whole
+stored record because that is the obvious thing to hash.
+
+**Trap:** `LodSavegameScan` hashed every byte of a chunk row, and a chunk row carries far more than
+terrain: block light, light saturation, entities, every block entity's private state, other mods'
+chunk data, and placed/removed counters. Measured on the owner's world across 25 days of play,
+13,754 of 62,390 columns moved their fingerprint and **17.8% of those moved only for state a
+captured section cannot show** - berry-bush growth timers, mycelium, transient countdowns, mobs
+walking past, Watersheds' groundwater simulation. The cost is a load and a recapture per column,
+repeated every session. In byte terms the row is not mostly terrain either: other mods' chunk data
+was 84% of the bytes in a sample of his rows.
+
+**Safer action:** hash what the consumer reads, and express the rule as an exclusion list so an
+unrecognised field still counts as a change. Identify the exceptions from the game's own registry
+rather than by name - the capture reads chiselled blocks, and hard-coding `MicroBlock` and `Chisel`
+would have dropped a modded microblock subclass out of the fingerprint silently. Version the rule
+and drop stored claims when it changes: a claim under an older rule cannot match, so it would report
+its column as changed forever, quietly.
+
+**Found:** 2026-09-20, Session 105, measuring the terrain-change plan's section 10 question.
+
+### G240 - A claim recorded before the work is a claim about a state you never held
+
+**Trigger:** recording "we hold this version of X" using a reading taken before the operation that
+produced the holding.
+
+**Trap:** the sweep fingerprints the savegame once at world start, then loads a column and captures
+it. Loading a dormant column is itself what changes it: the engine catches up its transient blocks,
+its snow and its block entities on the way in, and the next save writes that. The capture is
+correct, because it reads the loaded chunk - but the claim carried the *pre-load* fingerprint, so
+the file no longer matched it and the next start loaded the column again for nothing. Measured at
+7.0% of claims on 0.4.116 and 399 of 10,439 columns (3.8%) on 0.4.118. Three independent signals
+agreed: claims made in the sweep's first 90 seconds were stale at 10.6% against 5.2% for later ones;
+in the sandbox, columns the sweep had loaded changed at 33.6% against 0.019% elsewhere; and 48 of
+162 disputed columns had had their cached section rewritten after the claim, against 2.2% of
+agreeing claims.
+
+**Safer action:** separate taking the work from claiming it. Wait for the write that follows, then
+read the state back and claim that. Keep a fallback for the tail - a session ending before the next
+save must still claim something, or a whole save interval's proven work is re-examined next start -
+and refuse to claim while any related work is still queued.
+
+**Found:** 2026-09-20, Session 105; fixed in 0.4.119.
+
+### G241 - An arm that starts when a job finishes has no voice if the log speaks only while jobs run
+
+**Trigger:** background work that begins at the completion of a startup job, in a system whose
+status line is gated on "something is still running".
+
+**Trap:** `LodServerCaptureSystem` printed its status only while `HasActiveCacheWork()` was true,
+and that returns false once the sweep is `Done` - which is exactly when the background audit and the
+dormant-terrain snow refresh start. Both ran for nine minutes on the owner's world on 2026-09-20 and
+the log recorded nothing about either, so the question "what does the audit actually catch on his
+setup?" stayed unanswerable after the feature had already run. Reading the cache afterwards showed
+336 claims written in those quiet minutes but could not attribute them between audit recaptures and
+the capture queue draining.
+
+**Safer action:** print on evidence of work done rather than on a job being incomplete, and give the
+arm a signature that changes when it acts so an idle world still stays quiet. This is G237's shape
+repeating: an arm with no voice cannot be checked, whether it is dead or merely unobserved.
+
+**Found:** 2026-09-20, Session 105; fixed in 0.4.119.
+
+### G242 - Section.ModifiedMs is uptime; ColumnFingerprint.ModifiedMs is wall clock
+
+**Trigger:** correlating cache rows with each other, with log timestamps, or with a session's
+timeline during offline analysis.
+
+**Trap:** `LodStore.ExecuteUpsert` stamps `Section.ModifiedMs` with `Environment.TickCount64`, which
+counts milliseconds since the machine booted, while `SaveColumnFingerprint` stamps
+`ColumnFingerprint.ModifiedMs` with `DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()`. Subtracting
+one from the other yields about -1.79 billion seconds, and rows written before the last reboot carry
+a *larger* value than rows written after it, so "newest" sorts backwards across a reboot.
+
+**Safer action:** convert through the machine's boot time and restrict any such comparison to a
+single boot, or the conclusion is an artefact. Worth remembering before reading a section's
+timestamp as evidence of when a capture happened.
+
+**Found:** 2026-09-20, Session 105, testing whether disputed claims had already been recaptured.
+
+### G243 - Background terrain maintenance invalidates the claims that let it be skipped
+
+**Trigger:** a feature that loads dormant terrain in the background, in a system that also records
+claims about what the savegame held.
+
+**Trap:** the dormant-terrain snow refresh issues about one priority load a second and the audit
+reloads whatever it disputes. Each of those wakes a dormant column, which the engine updates on the
+way in and writes at the next save - which disputes that column's claim. The mod therefore generates
+a floor of claim staleness proportional to how much dormant terrain it touches itself. On the
+owner's 0.4.119 session, 23 of 8,190 far claims went stale this way while he stood still, and the
+snow refresh still had 12,104 columns queued.
+
+**Safer action:** read a residual staleness rate as the cost of the maintenance rather than as a
+defect in the claim path, and account for the maintenance backlog when interpreting any measurement
+taken while it is draining. Expect it to converge one audit pass later, not immediately.
+
+**Found:** 2026-09-20, Session 105.

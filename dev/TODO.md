@@ -2,61 +2,44 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.113–0.4.116 need a play verdict, and phase A is built
+## Start here: 0.4.119 needs a session with a real sweep behind it
 
-Read [Session 103](sessions/SESSION_103.md) first: four builds landed without an in-game verdict and
-two of them change what happens at every world start. The startup sweep now reads the savegame
-through a private read-only connection instead of probing the engine 70,225 times, skips columns it
-has already proved it captured, and runs a background audit against those claims. Separately,
-**automatic dormant-terrain snow refresh runs for the first time since 2026-08-02** — it was
-unreachable behind an uncleared flag in every released build including the accepted 0.4.64 baseline
-(G237), and reviving it required giving that arm the load pass's gates.
+Read [Session 105](sessions/SESSION_105.md) first. Two builds landed and both were played on
+`test2`, so phase A is no longer waiting on a play verdict: the startup sweep demonstrably skips
+what it has already captured (10,172 of 17,296 columns, finishing in 27 seconds against 25 minutes
+for a first adoption), the background audit and the revived snow refresh have reported real numbers
+for the first time, and a clean quit left 0.34% of claims stale against 3.8% a session earlier.
 
-A4's clean-shutdown fast path was **not** built and is recommended against as specified: no hook
-exists after the engine's final save (G236), and the whole index measures 73.3 s on the owner's real
-world, so it would trade an unverifiable assumption for background reading that does not compete
-with the player. That is the owner's call to confirm.
-
-Then read [the Farseer handoff](plans/HANDOFF_HORIZON_SILHOUETTES.md) and
-[Session 100](sessions/SESSION_100.md), then
-[the horizon-silhouette and Terrain Ahead plan](plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
-P1-P4 are built and most P5 persistence/tuning work is complete through 0.4.111. The owner has
-human-seen instant client rejoin, accepted the coarse 0.4.93 geometry, rejected visible join bands,
-required exact no-overlap ownership, and selected a heavy atmospheric veil for the residual visual
-handoff. The 0.4.106 volume looked “very good”; the post-water 0.4.107 result was called excellent;
-0.4.109's swept ends were called excellent for the fog's ends but exposed a sawtooth at every
-staircase turn, which 0.4.110 rounds off. **The owner played 0.4.111 on 2026-09-19 and accepted the
-fog work**, so the shape gate is closed and dial tuning is unblocked. The absence of another player
-continues to defer the dedicated/multiplayer gate.
-
-Separately, 0.4.111's player-aware savegame-sweep scheduler was measured on a sustained virgin
-frontier and 0.4.112 gave its hold a rate floor, because the 5 s quiet window is renewed by every
-chunk crossing and so stopped the sweep outright above 6.4 blocks/s. The owner could not tell
-0.4.111 apart in play, which the server log explains: that session spent all five minutes in the
-probe pass and never reached the load phase the gate guards. He has said play feedback on the sweep
-will not be substantial or reliable, so measurement is the deciding evidence there, not a verdict.
+What is not settled is how the new claim path behaves under load. The 0.4.119 session captured 273
+columns; the interesting case is a session with a large sweep behind it, where hundreds of columns
+settle at once and the re-read queue matters.
 
 Open, in the order they block further work:
 
-- **Finish a world's sweep, then play it.** This is the blocking item. The owner played 0.4.116 on
-  `test2` and called it good, but the session ended before the sweep completed, so **the skip path,
-  the audit and the revived snow refresh have still never executed on his machine**. On `test2` that
-  needs roughly 16 minutes of play from a cold start. Afterwards, a second start should report a
-  large "already captured" count and finish in minutes, and the log should carry audit and
-  snow-refresh lines. It also settles the FPS-dip question for free: if the dips go once the sweep
-  is done, they were the sweep rather than vanilla generation.
-- **Explain the one unloaded-before-capture drop** in the owner's 0.4.116 session, or establish that
-  a single drop is the expected floor. The 32-column capture brake exists to prevent exactly this,
-  so one is either noise or a small leak in the brake. Noted rather than investigated.
-- **Confirm or overturn the A4 recommendation.** See Session 103 §7. Either drop the fast path, or
-  rebuild it around "record what the next save will touch and treat those columns as unverified",
-  which is the only shape available without a post-save hook.
-- **Measure the audit's real false-positive rate.** The sandbox's 33 mismatches are not a rate for
-  the owner's setup: it lacks mods his world's block entities need, so the engine discards them and
-  rewrites those chunks. Volatile state — light, snow, block entities — may also make columns look
-  changed when terrain did not. Plan §10 asks this; it is now measurable offline in 73 s.
-- **Prove the audit catches a real fault.** It is proven to run, not to catch anything. Staging real
-  corruption was not possible in a live world; its decision rules are covered offline.
+- **Play a world with a real sweep behind it, on 0.4.119.** A fresh world, or one with a lot of
+  newly generated terrain, so several thousand columns pass through the settle path in one session.
+  Afterwards the status line should report claims "read back after a world save" far outnumbering
+  ones "from the startup reading", and the next start should load only a few hundred columns.
+  This is the test that 0.4.119's claim change actually scales.
+- **Give claim re-reads priority over audit re-reads.** Measured on 2026-09-20: claims for the
+  20:54 save were not written until 20:56:39, because settle re-reads queue behind the audit's
+  steady 16/s stream. Not a correctness fault - a session ending inside that window simply falls
+  back to the index-time claim - but it makes the tail of every session fall back unnecessarily.
+- **Measure the snow refresh's backlog cost.** The arm that was dead for six weeks now has about
+  12,000 columns queued at 1/s on `test2`, roughly three hours of background priority loads. No FPS
+  or frame-time run has yet been taken with that trickle running, and the owner deliberately stood
+  still for both 0.4.118 and 0.4.119. This is the most likely source of any new in-play cost.
+- **Confirm or overturn the A4 recommendation.** See Session 103 §7 and Session 105. The
+  clean-shutdown marker still cannot be built (G236), but this session's measurement is the
+  argument for keeping A4's save-hook half - which 0.4.119 has now built in its own shape. What
+  remains is the owner's decision to record the plan's §4.1.5 fast path as dropped.
+- **Prove the audit catches a real fault.** Unchanged and still open. It is now proven to run and
+  to dispute claims - 81 in one pass on the owner's world - but every dispute so far is ordinary
+  change, not a cache that was wrong. Staging real corruption was not possible in a live world;
+  its decision rules are covered offline.
+- **Decide whether the measurement tools belong in the repository.** The content-churn comparison,
+  the audit replay and the fingerprint dumper built against the shipping code all live outside the
+  tree. Session 105's numbers cannot be reproduced without them.
 
 - ~~**0.4.110 shape and drift acceptance.**~~ **Closed 2026-09-19.** The owner accepted the fog work
   after playing 0.4.111. The log half of the gate was verified offline from that session:

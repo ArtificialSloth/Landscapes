@@ -8,6 +8,18 @@ first.
 
 ## [Unreleased]
 
+**The startup sweep's payoff is now visible in play, and the arms behind it have reported real
+numbers for the first time.** On the owner's `test2`, a first start under 0.4.118 read 17,219
+columns in 1.2 s and loaded 10,439 over about 25 minutes; the restart skipped 10,040 of them, loaded
+399 and finished in 37 seconds. Under 0.4.119 the same restart skipped 10,172 and loaded 267 in 27
+seconds, and after a clean quit only 35 of 10,423 claims no longer matched the file - 0.34%, against
+399 a session earlier. Both builds generated nothing, verified 256/256 sampled absent positions, and
+logged no capture errors or drops. The background audit re-read 10,591 columns at 16/s and disputed
+81 of them in one full pass over 10,431 claims (0.76%), and the dormant-terrain snow refresh made
+550 recaptures across 81 regional campaigns with 12,104 columns still queued at 1/s - a backlog from
+the six weeks it spent unreachable behind an uncleared flag. No frame-time measurement has been
+taken with that trickle running.
+
 **The fog work is accepted, and the terrain-change plan was independently reviewed.** The owner
 played 0.4.111 on 2026-09-19 and accepted the seam fog; the client log for that session shows both
 silhouette shaders compiled, no `InvalidOperation`, no GL errors and a clean exit. He could not
@@ -45,6 +57,50 @@ read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.119] - 2026-09-20
+
+**Claims are recorded after the world saves, and the arms that run after the sweep can be seen.**
+
+- A column's claim used to carry the fingerprint read at world start - before the column was loaded.
+  Loading a dormant column is itself what changes it: the engine catches up its transient blocks,
+  snow and block entities on the way in, the capture reads the corrected column, and the next save
+  then leaves the claim describing a file state this cache never held. Measured at 7.0% of claims on
+  0.4.116 and 3.8% on 0.4.118. Taking a durable capture and claiming it are now two steps, with the
+  world-save event scheduling a re-read a few seconds later and the claim taken from what the file
+  then holds. A column with a capture still queued, or one no longer durable, is left waiting.
+- Three fallbacks are deliberate: with no read path the claim is written from the startup reading as
+  before; a session that ends with columns still waiting claims them the same way, because losing a
+  save interval's proven captures would be worse than a stale claim; and re-read batches unanswered
+  three times say so once and turn the refresh off for that session.
+- The background audit and the dormant-terrain snow refresh both begin when the startup sweep
+  finishes, and the status line only printed while a job was unfinished - so both ran for nine
+  minutes on the owner's world with the log silent about either. The sweep now carries a signature
+  of what its background arms have done, and the status line prints while that moves and stays quiet
+  when it does not. It also reports how claims were recorded.
+- The fingerprint-rule purge announces itself whenever claims are really dropped, not only when a
+  rule marker was already stored - which is why 0.4.118 dropped 2,323 claims without a word.
+
+## [0.4.118] - 2026-09-20
+
+**The savegame fingerprint covers the landscape instead of the whole stored chunk row.**
+
+- Hashing every byte of a chunk row made a berry bush's growth timer cost the same reload as a
+  landslide. Measured on the owner's world across 25 days of play, 13,754 of 62,390 columns moved
+  their fingerprint and 17.8% of those moved only for state distant terrain cannot show: bushes and
+  mycelium and transient blocks ticking, creatures walking past, light, and other mods' per-chunk
+  data. The hash now keeps blocks, fluids, the contents of chiselled blocks, the layer count and the
+  structural markers, and drops the rest. On his real world this turns 13,754 flagged columns into
+  11,307, with no column flagged that the old hash did not already flag.
+- Which block entities count as chiselled is resolved from the game's own block registry at world
+  start rather than named in the mod, so a mod's own microblock variant is covered instead of
+  silently dropping out of the fingerprint. Decors are excluded on the owner's decision.
+- The rule is an exclusion list: a field a future game version adds still counts as a change. A row
+  that does not parse as the expected shape is hashed whole, which is the previous behaviour.
+- Stored claims carry a rule version and are dropped when it changes, with a line naming how many,
+  because a claim made under an older rule can never match and would report its column as changed
+  forever. They are also dropped now when a cache-format purge deletes the sections they describe -
+  previously those claims survived and let the sweep skip terrain the cache no longer held.
 
 ## [0.4.117] - 2026-09-20
 
