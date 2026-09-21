@@ -28,6 +28,7 @@ public partial class LodTerrainRenderer
     internal const float SilhouetteFogDriftWrapBlocks = 1 << 20;
     BeforeStageRenderer? silhouetteFogStageRenderer;
     IShaderProgram? silhouetteFogVolumeProg;
+    IShaderProgram? silhouetteFogUpsampleProg;
     int silhouetteFogFieldTexture;
     int silhouetteFogVao;
     bool silhouetteFogVolumeFailed;
@@ -56,6 +57,14 @@ public partial class LodTerrainRenderer
     float silhouetteFogCoreBlocks = LodSilhouetteFogVolume.MinCoreBlocks;
     float silhouetteFogStaircaseDeviation;
 
+    // The half-resolution march target: premultiplied fog, and the length of the ray each
+    // pixel marched, which the full-resolution upsample compares against the scene's depth.
+    int silhouetteFogLowFramebuffer;
+    int silhouetteFogLowFog;
+    int silhouetteFogLowDistance;
+    int silhouetteFogLowWidth;
+    int silhouetteFogLowHeight;
+
     /// <summary>
     /// The player's seam-fog switch. Off draws no fog pass and builds no fog field, so the
     /// difference in frame time is the fog's whole cost; Farseer is then not held for a field.
@@ -64,6 +73,7 @@ public partial class LodTerrainRenderer
     internal float SilhouetteFogCoreBlocks => silhouetteFogCoreBlocks;
     internal float SilhouetteFogStaircaseDeviation => silhouetteFogStaircaseDeviation;
     internal float SilhouetteFogStrength = LodSilhouetteFogVolume.DefaultStrength;
+    internal float SilhouetteFogSeamStrength = LodSilhouetteFogVolume.DefaultSeamStrength;
     internal float SilhouetteFogCoverage = LodSilhouetteFogVolume.DefaultCoverage;
     internal float SilhouetteFogSpillBlocks = LodSilhouetteFogVolume.DefaultSpillBlocks;
     internal float SilhouetteFogHeightBlocks = LodSilhouetteFogVolume.DefaultHeightBlocks;
@@ -105,7 +115,9 @@ public partial class LodTerrainRenderer
         try
         {
             LodSilhouetteFogVolume.Prepared prepared = LodSilhouetteFogVolume.Prepare(
-                silhouetteSeamMask, SilhouetteFogHeightAtGrid, SilhouetteFogSpillBlocks);
+                silhouetteSeamMask, SilhouetteFogHeightAtGrid, SilhouetteFogSpillBlocks,
+                LodSilhouetteFogVolume.TexelBlocksForReach(
+                    silhouettes.ReachBlocks, SilhouetteFogSpillBlocks));
             silhouetteFogPendingBuild = prepared;
             silhouetteFogPendingRevision = ++silhouetteFogBuildRevision;
             silhouetteFogGeometryDirty = false;
@@ -240,7 +252,7 @@ public partial class LodTerrainRenderer
     }
 
     internal void SetSilhouetteFogSettings(bool enabled,
-        float strength, float coverage, float spillBlocks, float heightBlocks,
+        float strength, float seamStrength, float coverage, float spillBlocks, float heightBlocks,
         float floorDepthBlocks, float billowSizeBlocks, float driftSpeed, float layerDetail,
         float edgeSoftness)
     {
@@ -249,6 +261,7 @@ public partial class LodTerrainRenderer
         // Turning off releases the field in the next prepared frame, on the render thread.
         SilhouetteFogEnabled = enabled;
         SilhouetteFogStrength = strength;
+        SilhouetteFogSeamStrength = seamStrength;
         SilhouetteFogCoverage = coverage;
         SilhouetteFogSpillBlocks = spillBlocks;
         SilhouetteFogHeightBlocks = heightBlocks;
@@ -291,10 +304,12 @@ public partial class LodTerrainRenderer
                 (int)TextureWrapMode.ClampToEdge);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT,
                 (int)TextureWrapMode.ClampToEdge);
-            // Half float keeps even the maximum bounded field compact. The CPU supplies float
-            // input and the driver performs the one-time conversion during an ownership change.
+            // Half float keeps even the maximum bounded field compact. The worker already
+            // converted it, so the render thread moves half the bytes and the driver converts
+            // nothing.
             GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba16f,
-                field.Width, field.Height, 0, PixelFormat.Rgba, PixelType.Float, field.Texels);
+                field.Width, field.Height, 0, PixelFormat.Rgba, PixelType.HalfFloat,
+                field.HalfTexels);
             ErrorCode uploadError = GL.GetError();
             if (uploadError != ErrorCode.NoError)
                 throw new InvalidOperationException(
@@ -424,7 +439,8 @@ public partial class LodTerrainRenderer
             || !SilhouetteFogEnabled || silhouetteFogFieldTexture == 0
             || silhouetteFogNoiseTexture == 0 || silhouetteFogBoundaryEdges == 0
             || silhouetteFogVolumeProg == null || silhouetteFogVolumeProg.LoadError
-            || SilhouetteFogStrength <= 0f) return;
+            || silhouetteFogUpsampleProg == null || silhouetteFogUpsampleProg.LoadError
+            || SilhouetteFogStrength <= 0f && SilhouetteFogSeamStrength <= 0f) return;
         FrameBufferRef? primary = PrimaryFrameBuffer();
         if (primary == null) return;
 
@@ -459,6 +475,7 @@ public partial class LodTerrainRenderer
         int textureUnit1 = GL.GetInteger(GetPName.TextureBinding2D);
         GL.ActiveTexture(TextureUnit.Texture2);
         int textureUnit2 = GL.GetInteger(GetPName.TextureBinding3D);
+        int textureUnit2Flat = GL.GetInteger(GetPName.TextureBinding2D);
         GL.ActiveTexture((TextureUnit)activeTexture);
         IShaderProgram? incoming = ShaderProgramBase.CurrentShaderProgram;
         bool depthTest = GL.IsEnabled(EnableCap.DepthTest);
@@ -478,26 +495,21 @@ public partial class LodTerrainRenderer
         try
         {
             incoming?.Stop();
-            AttachSilhouetteFogFramebuffer(primary);
-            GL.Viewport(0, 0, primary.Width, primary.Height);
-            // This target deliberately has no depth attachment. Sampling the engine's depth
-            // texture keeps it read-only and avoids attaching live engine storage to a second
-            // framebuffer, which raised InvalidOperation every frame in 0.4.103.
+            // Neither target has a depth attachment. Sampling the engine's depth texture keeps
+            // it read-only and avoids attaching live engine storage to a second framebuffer,
+            // which raised InvalidOperation every frame in 0.4.103.
             GL.Disable(EnableCap.DepthTest);
             GL.DepthMask(false);
             GL.Disable(EnableCap.CullFace);
             GL.Disable(EnableCap.ScissorTest);
-            // Primary alpha is owned by the later OIT/water composition. Fog changes RGB only.
-            GL.ColorMask(true, true, true, false);
-            // This framebuffer has only ColorAttachment0. The engine blend helper also
-            // configures the SSAO attachments when SSAO is enabled, which is invalid here.
-            GL.Enable(EnableCap.Blend);
-            GL.BlendEquationSeparate(BlendEquationMode.FuncAdd, BlendEquationMode.FuncAdd);
-            GL.BlendFuncSeparate(
-                BlendingFactorSrc.SrcAlpha,
-                BlendingFactorDest.OneMinusSrcAlpha,
-                BlendingFactorSrc.One,
-                BlendingFactorDest.OneMinusSrcAlpha);
+            GL.BindVertexArray(silhouetteFogVao);
+
+            // Pass one marches at half resolution, a quarter of the rays. Every pixel writes,
+            // so the target needs no clear.
+            EnsureSilhouetteFogLowTarget(primary.Width, primary.Height);
+            GL.Viewport(0, 0, silhouetteFogLowWidth, silhouetteFogLowHeight);
+            GL.ColorMask(true, true, true, true);
+            GL.Disable(EnableCap.Blend);
 
             Vec3d cam = capi.World.Player.Entity.CameraPos;
             IShaderProgram p = silhouetteFogVolumeProg;
@@ -522,16 +534,18 @@ public partial class LodTerrainRenderer
             // The tallest bank top is 1.3 heights, and its ceiling ends at 1.15 of that.
             p.Uniform("fieldMaxY",
                 silhouetteFogMaxGroundY + SilhouetteFogHeightBlocks * 1.5f + globeRise + 4f);
-            // One pixel's width in blocks per block of distance, from the vertical field of view.
+            // One marched pixel's width in blocks per block of distance, from the vertical
+            // field of view and the half-resolution target's height.
             float focal = MathF.Abs(projection[5]);
             p.Uniform("fogPixelScale",
-                focal > 1e-6f ? 2f / (focal * Math.Max(1, primary.Height)) : 0.001f);
+                focal > 1e-6f ? 2f / (focal * Math.Max(1, silhouetteFogLowHeight)) : 0.001f);
             p.Uniform("rgbaFogIn", capi.Ambient.BlendedFogColor);
             p.Uniform("sunPosition", capi.World.Calendar.SunPositionNormalized);
             p.Uniform("sunColor", capi.World.Calendar.SunColor);
             p.Uniform("dayLight", Math.Max(0, capi.World.Calendar.DayLightStrength));
             p.Uniform("fogCoreBlocks", silhouetteFogCoreBlocks);
             p.Uniform("fogStrength", SilhouetteFogStrength);
+            p.Uniform("fogSeamStrength", SilhouetteFogSeamStrength);
             p.Uniform("fogCoverage", SilhouetteFogCoverage);
             p.Uniform("fogSpillBlocks", SilhouetteFogSpillBlocks);
             p.Uniform("fogHeightBlocks", SilhouetteFogHeightBlocks);
@@ -554,7 +568,32 @@ public partial class LodTerrainRenderer
             GL.BindTexture(TextureTarget.Texture3D, silhouetteFogNoiseTexture);
             GL.Uniform1(silhouetteFogNoiseLocation, 2);
             GL.ActiveTexture(TextureUnit.Texture0);
-            GL.BindVertexArray(silhouetteFogVao);
+            GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+            p.Stop();
+
+            // Pass two rebuilds full resolution into the primary colour, depth-aware so fog
+            // does not spread across a near object's edge.
+            AttachSilhouetteFogFramebuffer(primary);
+            GL.Viewport(0, 0, primary.Width, primary.Height);
+            // Primary alpha is owned by the later OIT/water composition. Fog changes RGB only.
+            GL.ColorMask(true, true, true, false);
+            // This framebuffer has only ColorAttachment0. The engine blend helper also
+            // configures the SSAO attachments when SSAO is enabled, which is invalid here.
+            GL.Enable(EnableCap.Blend);
+            GL.BlendEquationSeparate(BlendEquationMode.FuncAdd, BlendEquationMode.FuncAdd);
+            // The fog arrives premultiplied.
+            GL.BlendFuncSeparate(
+                BlendingFactorSrc.One,
+                BlendingFactorDest.OneMinusSrcAlpha,
+                BlendingFactorSrc.One,
+                BlendingFactorDest.OneMinusSrcAlpha);
+            p = silhouetteFogUpsampleProg;
+            p.Use();
+            p.UniformMatrix("invProjection", silhouetteFogInvProjection);
+            p.BindTexture2D("sceneDepth", primary.DepthTextureId, 0);
+            p.BindTexture2D("fogLow", silhouetteFogLowFog, 1);
+            p.BindTexture2D("fogLowDistance", silhouetteFogLowDistance, 2);
+            GL.ActiveTexture(TextureUnit.Texture0);
             GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
             p.Stop();
         }
@@ -566,6 +605,8 @@ public partial class LodTerrainRenderer
         {
             if (ShaderProgramBase.CurrentShaderProgram == silhouetteFogVolumeProg)
                 silhouetteFogVolumeProg.Stop();
+            if (ShaderProgramBase.CurrentShaderProgram == silhouetteFogUpsampleProg)
+                silhouetteFogUpsampleProg!.Stop();
             GL.BlendEquationSeparate(
                 (BlendEquationMode)blendEquationRgb, (BlendEquationMode)blendEquationAlpha);
             GL.BlendFuncSeparate(
@@ -584,6 +625,7 @@ public partial class LodTerrainRenderer
             GL.BindTexture(TextureTarget.Texture2D, textureUnit1);
             GL.ActiveTexture(TextureUnit.Texture2);
             GL.BindTexture(TextureTarget.Texture3D, textureUnit2);
+            GL.BindTexture(TextureTarget.Texture2D, textureUnit2Flat);
             GL.ActiveTexture((TextureUnit)state.ActiveTexture);
             if (!LodGlStateGuard.TryRestore(silhouetteFogStateApi, state, out string restoreFailure))
                 failure ??= new InvalidOperationException(
@@ -616,6 +658,66 @@ public partial class LodTerrainRenderer
             + "session instead of corrupting later render stages: {0}", reason);
         silhouettes.SetEnabled(false);
         ReleaseSilhouetteMeshes();
+    }
+
+    /// <summary>
+    /// Render thread, inside the draw's state guard. Binds the half-resolution march target,
+    /// recreating its two textures when the screen size changes.
+    /// </summary>
+    void EnsureSilhouetteFogLowTarget(int fullWidth, int fullHeight)
+    {
+        int width = Math.Max(1, (fullWidth + 1) / 2);
+        int height = Math.Max(1, (fullHeight + 1) / 2);
+        if (silhouetteFogLowFramebuffer == 0) silhouetteFogLowFramebuffer = GL.GenFramebuffer();
+        GL.BindFramebuffer(FramebufferTarget.Framebuffer, silhouetteFogLowFramebuffer);
+        if (silhouetteFogLowFog != 0 && width == silhouetteFogLowWidth
+            && height == silhouetteFogLowHeight) return;
+
+        DisposeSilhouetteFogLowTextures();
+        GL.ActiveTexture(TextureUnit.Texture0);
+        silhouetteFogLowFog = LowTexture(PixelInternalFormat.Rgba16f, PixelFormat.Rgba);
+        silhouetteFogLowDistance = LowTexture(PixelInternalFormat.R32f, PixelFormat.Red);
+        GL.FramebufferTexture2D(FramebufferTarget.Framebuffer,
+            FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, silhouetteFogLowFog, 0);
+        GL.FramebufferTexture2D(FramebufferTarget.Framebuffer,
+            FramebufferAttachment.ColorAttachment1, TextureTarget.Texture2D,
+            silhouetteFogLowDistance, 0);
+        GL.DrawBuffers(2, new[] { DrawBuffersEnum.ColorAttachment0, DrawBuffersEnum.ColorAttachment1 });
+        FramebufferErrorCode status = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
+        if (status != FramebufferErrorCode.FramebufferComplete)
+            throw new InvalidOperationException("half-resolution seam fog target incomplete: " + status);
+        silhouetteFogLowWidth = width;
+        silhouetteFogLowHeight = height;
+
+        int LowTexture(PixelInternalFormat internalFormat, PixelFormat format)
+        {
+            int texture = GL.GenTexture();
+            if (texture == 0)
+                throw new InvalidOperationException("a half-resolution seam fog texture was not created");
+            GL.BindTexture(TextureTarget.Texture2D, texture);
+            // Read with texelFetch only: nearest, and no mipmaps to leave the texture incomplete.
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter,
+                (int)TextureMinFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter,
+                (int)TextureMagFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS,
+                (int)TextureWrapMode.ClampToEdge);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT,
+                (int)TextureWrapMode.ClampToEdge);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, internalFormat, width, height, 0, format,
+                PixelType.Float, IntPtr.Zero);
+            return texture;
+        }
+    }
+
+    void DisposeSilhouetteFogLowTextures()
+    {
+        if (silhouetteFogLowFog != 0) GL.DeleteTexture(silhouetteFogLowFog);
+        if (silhouetteFogLowDistance != 0) GL.DeleteTexture(silhouetteFogLowDistance);
+        silhouetteFogLowFog = 0;
+        silhouetteFogLowDistance = 0;
+        silhouetteFogLowWidth = 0;
+        silhouetteFogLowHeight = 0;
     }
 
     void AttachSilhouetteFogFramebuffer(FrameBufferRef primary)
@@ -657,11 +759,16 @@ public partial class LodTerrainRenderer
             if (silhouetteFogVao != 0) GL.DeleteVertexArray(silhouetteFogVao);
             if (silhouetteFogFramebuffer != 0) GL.DeleteFramebuffer(silhouetteFogFramebuffer);
             if (silhouetteFogNoiseTexture != 0) GL.DeleteTexture(silhouetteFogNoiseTexture);
+            DisposeSilhouetteFogLowTextures();
+            if (silhouetteFogLowFramebuffer != 0) GL.DeleteFramebuffer(silhouetteFogLowFramebuffer);
         }
         catch
         {
             // Teardown must continue over objects the driver already released.
         }
+        silhouetteFogLowFramebuffer = 0;
+        silhouetteFogLowFog = 0;
+        silhouetteFogLowDistance = 0;
         silhouetteFogVao = 0;
         silhouetteFogFramebuffer = 0;
         silhouetteFogAttachedColor = 0;

@@ -360,7 +360,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("sil-softness", "Hill softness", "Rounds and feathers the distant height profile. Higher produces broader rolling hills; regeneration is gradual and runs off-thread.",
             0, 100, 1, s => (int)MathF.Round(s.HillSoftness * 100),
             (s, v) => s with { HillSoftness = v / 100f }, HillSoftnessLabel),
-        new("sil-fog-strength", "Fog density", "How thick the fog over the Farseer/LOD seam is. 100% hides the seam; lower lets it show through; zero draws no fog.",
+        new("sil-fog-seam", "Fog seam density", "How thick the fog is right over the Farseer/LOD seam. Around 60% hides the stepped edge; lower lets it show through.",
+            0, 200, 5, s => (int)MathF.Round(s.FogSeamStrength * 100),
+            (s, v) => s with { FogSeamStrength = v / 100f }, v => $"{v}%"),
+        new("sil-fog-strength", "Fog outer density", "How thick the bank is away from the seam, out to its wispy edges. It blends into the seam density over the bank's shoulder.",
             0, 200, 5, s => (int)MathF.Round(s.FogStrength * 100),
             (s, v) => s with { FogStrength = v / 100f }, v => $"{v}%"),
         new("sil-fog-coverage", "Fog coverage", "How solid the bank is. Lower breaks it into separate billows and strands; higher makes one continuous blanket. The seam itself stays covered either way.",
@@ -685,7 +688,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         const double columnWidth = 250;
         const double columnGap = 29;
         const double sliderWidth = 160;
-        const double rowHeight = 78;
+        const double rowHeight = 70;
         for (int i = 0; i < SilhouetteRows.Length; i++)
         {
             SilhouetteRow row = SilhouetteRows[i];

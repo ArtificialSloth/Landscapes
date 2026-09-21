@@ -32,6 +32,11 @@ public partial class LodTerrainRenderer
         public required float[] FogHeightGrid;
         public required ulong FogHeightHash;
 
+        // The seam fog's view of this tile, kept whether or not the camera faces it: its latest
+        // replacement coverage and the frame that worked it out.
+        public LodSilhouetteCoverage FogReplacements;
+        public long FogCoverageFrame = -1;
+
         public MeshRef At(int quadsPerEdge) => quadsPerEdge switch
         {
             LodSilhouetteField.HighQuadsPerEdge => High,
@@ -62,6 +67,17 @@ public partial class LodTerrainRenderer
     readonly List<SilhouetteFrameDraw> silhouetteFrameDraws = new();
     readonly LodFrustum silhouetteFrustum = new();
     readonly LodSilhouetteSeamMask silhouetteSeamMask = new();
+    readonly List<SilhouetteGpuMesh> silhouetteFogTiles = new();
+    long silhouetteFogFrame;
+
+    /// <summary>
+    /// The fog outline comes from every Farseer tile within reach, not only those in view, so
+    /// turning the camera cannot move it. Tiles on screen refresh their coverage every frame as
+    /// they are drawn; this many off-screen tiles refresh per frame, each at most once per
+    /// <see cref="SilhouetteFogCoverageStaleFrames"/>.
+    /// </summary>
+    const int SilhouetteFogCoverageRefreshesPerFrame = 8;
+    const long SilhouetteFogCoverageStaleFrames = 30;
     IShaderProgram? silhouetteProg;
     bool silhouetteShaderOk;
     bool silhouetteShaderWanted;
@@ -124,9 +140,16 @@ public partial class LodTerrainRenderer
         silhouetteFogVolumeProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         silhouetteFogVolumeProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram("lodsilhouettefogvolume", silhouetteFogVolumeProg);
+        silhouetteFogUpsampleProg = capi.Shader.NewShaderProgram();
+        silhouetteFogUpsampleProg.AssetDomain = "vintagehorizons";
+        silhouetteFogUpsampleProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
+        silhouetteFogUpsampleProg.FragmentShader =
+            capi.Shader.NewShader(EnumShaderType.FragmentShader);
+        capi.Shader.RegisterFileShaderProgram("lodsilhouettefogupsample", silhouetteFogUpsampleProg);
         bool terrainOk = silhouetteProg.Compile();
         bool fogOk = silhouetteFogVolumeProg.Compile();
-        silhouetteShaderOk = terrainOk && fogOk;
+        bool upsampleOk = silhouetteFogUpsampleProg.Compile();
+        silhouetteShaderOk = terrainOk && fogOk && upsampleOk;
         if (terrainOk) LodTerrainSamplerLayout.Configure(silhouetteProg);
         if (silhouetteShaderOk)
         {
@@ -179,6 +202,7 @@ public partial class LodTerrainRenderer
         }
         if (!silhouetteShaderOk || silhouetteProg == null || silhouetteProg.LoadError
             || silhouetteFogVolumeProg == null || silhouetteFogVolumeProg.LoadError
+            || silhouetteFogUpsampleProg == null || silhouetteFogUpsampleProg.LoadError
             || silhouetteFogVolumeFailed)
         {
             ReleaseSilhouetteMeshes();
@@ -212,6 +236,9 @@ public partial class LodTerrainRenderer
         int maxTileX = int.MinValue, maxTileZ = int.MinValue;
         ulong signatureXor = 0;
         ulong signatureSum = 0;
+        silhouetteFogTiles.Clear();
+        silhouetteFogFrame++;
+        int offscreenRefreshes = SilhouetteFogCoverageRefreshesPerFrame;
 
         foreach (SilhouetteGpuMesh mesh in silhouetteMeshes.Values)
         {
@@ -221,39 +248,57 @@ public partial class LodTerrainRenderer
             double nearZ = Math.Clamp(0, relZ, relZ + tileBlocks);
             double nearestDistanceSq = nearX * nearX + nearZ * nearZ;
             if (nearestDistanceSq > reachSq) continue;
-            if (!silhouetteFrustum.BoxInView(relX, mesh.MinY - drop - cam.Y, relZ,
-                relX + tileBlocks, mesh.MaxY - cam.Y, relZ + tileBlocks)) continue;
-
-            LodSilhouetteCoverage replacements = SilhouetteStableReplacementCoverage(mesh);
-            int resolution = LodSilhouetteField.ResolutionFor(
-                ScreenBlockScale, Math.Max(1.0, Math.Sqrt(nearestDistanceSq)),
-                SilhouetteOutlineDetail);
-            silhouetteFrameDraws.Add(new SilhouetteFrameDraw(
-                mesh, (float)relX, (float)relZ, replacements, resolution));
+            if (silhouetteFrustum.BoxInView(relX, mesh.MinY - drop - cam.Y, relZ,
+                relX + tileBlocks, mesh.MaxY - cam.Y, relZ + tileBlocks))
+            {
+                LodSilhouetteCoverage replacements = SilhouetteStableReplacementCoverage(mesh);
+                mesh.FogReplacements = replacements;
+                mesh.FogCoverageFrame = silhouetteFogFrame;
+                int resolution = LodSilhouetteField.ResolutionFor(
+                    ScreenBlockScale, Math.Max(1.0, Math.Sqrt(nearestDistanceSq)),
+                    SilhouetteOutlineDetail);
+                silhouetteFrameDraws.Add(new SilhouetteFrameDraw(
+                    mesh, (float)relX, (float)relZ, replacements, resolution));
+            }
+            else if (SilhouetteFogEnabled && offscreenRefreshes > 0
+                && (mesh.FogCoverageFrame < 0
+                    || silhouetteFogFrame - mesh.FogCoverageFrame
+                        >= SilhouetteFogCoverageStaleFrames))
+            {
+                offscreenRefreshes--;
+                mesh.FogReplacements = SilhouetteStableReplacementCoverage(mesh);
+                mesh.FogCoverageFrame = silhouetteFogFrame;
+            }
+            // A tile joins the fog outline once its coverage is known, wherever the camera is
+            // facing, so the outline follows the terrain and not the view.
+            if (mesh.FogCoverageFrame < 0) continue;
+            silhouetteFogTiles.Add(mesh);
             minTileX = Math.Min(minTileX, mesh.TileX);
             minTileZ = Math.Min(minTileZ, mesh.TileZ);
             maxTileX = Math.Max(maxTileX, mesh.TileX);
             maxTileZ = Math.Max(maxTileZ, mesh.TileZ);
-            ulong tileSignature = SilhouetteSeamTileSignature(mesh, replacements);
+            ulong tileSignature = SilhouetteSeamTileSignature(mesh, mesh.FogReplacements);
             signatureXor ^= tileSignature;
             signatureSum += tileSignature;
         }
 
-        if (silhouetteFrameDraws.Count == 0)
+        // With the fog switched off its outline is not built either.
+        if (!SilhouetteFogEnabled || silhouetteFogTiles.Count == 0)
         {
-            silhouetteSeamMask.Deactivate();
-            ClearSilhouetteFogField();
+            if (silhouetteSeamMask.Active) silhouetteSeamMask.Deactivate();
+            if (silhouetteFogFieldTexture != 0 || silhouetteFogBuildTask != null
+                || silhouetteFogPendingBuild != null)
+                ClearSilhouetteFogField();
             return;
         }
 
         ulong signature = signatureXor ^ RotateLeft(signatureSum, 23)
-            ^ ((ulong)silhouetteFrameDraws.Count * 0x9E3779B97F4A7C15UL);
+            ^ ((ulong)silhouetteFogTiles.Count * 0x9E3779B97F4A7C15UL);
         if (silhouetteSeamMask.BeginBuild(
             minTileX, minTileZ, maxTileX, maxTileZ, signature))
         {
-            foreach (SilhouetteFrameDraw draw in silhouetteFrameDraws)
-                silhouetteSeamMask.SetTile(
-                    draw.Mesh.TileX, draw.Mesh.TileZ, draw.Replacements);
+            foreach (SilhouetteGpuMesh mesh in silhouetteFogTiles)
+                silhouetteSeamMask.SetTile(mesh.TileX, mesh.TileZ, mesh.FogReplacements);
             silhouetteSeamMask.CompleteBuild();
             QueueSilhouetteFogVolume(silhouettes);
         }

@@ -10,6 +10,9 @@ namespace VintageHorizons;
 internal sealed class LodSilhouetteFogFieldArrays
 {
     public required float[] Texels;
+
+    /// <summary>The same texels as half floats, converted on the worker for the upload.</summary>
+    public required ushort[] HalfTexels;
     public required int Width;
     public required int Height;
     public required int OriginBlockX;
@@ -68,10 +71,11 @@ internal static class LodSilhouetteFogVolume
 
     /// <summary>
     /// The fog model a saved config's dials were tuned for. 2 is the natural bank of 0.4.123;
-    /// a file written for an older model has its fog dials reset once, because the same numbers
-    /// no longer describe the same fog.
+    /// 3 splits its density into seam and outer dials (0.4.124). A file written for model 1 has
+    /// every fog dial reset once, because the same numbers no longer describe the same fog; a
+    /// model-2 file has only its densities reset, the one dial whose meaning changed.
     /// </summary>
-    public const int FogModel = 2;
+    public const int FogModel = 3;
 
     // The shader's medium, mirrored here for the checks (lodsilhouettefogvolume.fsh). Optical
     // depths are quoted through one vertical column. A slanted view of ground near the core's
@@ -140,31 +144,41 @@ internal static class LodSilhouetteFogVolume
 
     public const float MinStrength = 0f;
     public const float MaxStrength = 2f;
-    public const float DefaultStrength = 1f;
+
+    /// <summary>
+    /// Density of the bank away from the seam, and of its haze. The owner's in-game values
+    /// (2026-09-21): 35% outside, 60% over the seam, where 35% alone let the staircase show.
+    /// </summary>
+    public const float DefaultStrength = 0.35f;
+
+    /// <summary>Density of the sealed core and the bank over it.</summary>
+    public const float DefaultSeamStrength = 0.6f;
+    // The remaining defaults are the owner's in-game tuning of 0.4.123 (2026-09-21), which
+    // hid the seam better than the first defaults at the same densities.
     public const float MinCoverage = 0f;
     public const float MaxCoverage = 1f;
-    public const float DefaultCoverage = 0.5f;
+    public const float DefaultCoverage = 1f;
     public const float MinSpillBlocks = 8f;
     public const float MaxSpillBlocks = 128f;
-    public const float DefaultSpillBlocks = 48f;
+    public const float DefaultSpillBlocks = 40f;
     public const float MinHeightBlocks = 16f;
     public const float MaxHeightBlocks = 192f;
-    public const float DefaultHeightBlocks = 40f;
+    public const float DefaultHeightBlocks = 24f;
     public const float MinFloorDepthBlocks = 0f;
     public const float MaxFloorDepthBlocks = 64f;
     public const float DefaultFloorDepthBlocks = 16f;
     public const float MinBillowSizeBlocks = 12f;
     public const float MaxBillowSizeBlocks = 160f;
-    public const float DefaultBillowSizeBlocks = 48f;
+    public const float DefaultBillowSizeBlocks = 12f;
     public const float MinDriftSpeed = 0f;
     public const float MaxDriftSpeed = 3f;
     public const float DefaultDriftSpeed = 1f;
     public const float MinEdgeSoftness = 0f;
     public const float MaxEdgeSoftness = 1f;
-    public const float DefaultEdgeSoftness = 0.6f;
+    public const float DefaultEdgeSoftness = 0.5f;
     public const float MinLayerDetail = 0f;
     public const float MaxLayerDetail = 1f;
-    public const float DefaultLayerDetail = 0.67f;
+    public const float DefaultLayerDetail = 0.52f;
 
     const int InfiniteCellDistance = 1_000_000_000;
 
@@ -183,6 +197,7 @@ internal static class LodSilhouetteFogVolume
         internal required List<FogPath> Paths;
         internal required LodSilhouetteBoundaryEdge[] Boundaries;
         internal required float SpillBlocks;
+        internal required float MinimumTexelBlocks;
         internal required float MinX;
         internal required float MinZ;
         internal required float MaxX;
@@ -201,12 +216,26 @@ internal static class LodSilhouetteFogVolume
         => Build(Prepare(mask, heightAtGrid, spillBlocks));
 
     /// <summary>
+    /// The field's texel size for everything within a reach. It depends on the reach and spread
+    /// only, never on the momentary tile window, so moving about cannot flip the field between
+    /// resolutions and nudge the fog.
+    /// </summary>
+    internal static float TexelBlocksForReach(float reachBlocks, float spillBlocks)
+    {
+        float extent = 2f * (MathF.Max(0f, reachBlocks) + Silhouette.LodSilhouetteTile.TileBlocks
+            + BankReach(spillBlocks, MaxEdgeSoftness, MaxCoreBlocks) + BaseFieldTexelBlocks * 2f);
+        float texel = BaseFieldTexelBlocks;
+        while (extent / texel > MaxFieldTextureEdge && texel < 4096f) texel *= 2f;
+        return texel;
+    }
+
+    /// <summary>
     /// Owning-thread snapshot. This is the only phase that calls back into live GPU-mesh metadata;
     /// the expensive rasterization and distance transform consume this immutable result on a worker.
     /// </summary>
     internal static Prepared Prepare(
         LodSilhouetteSeamMask mask, Func<int, int, float> heightAtGrid,
-        float spillBlocks = DefaultSpillBlocks)
+        float spillBlocks = DefaultSpillBlocks, float minimumTexelBlocks = BaseFieldTexelBlocks)
     {
         ArgumentNullException.ThrowIfNull(mask);
         ArgumentNullException.ThrowIfNull(heightAtGrid);
@@ -251,6 +280,7 @@ internal static class LodSilhouetteFogVolume
             Paths = paths,
             Boundaries = mask.Boundaries.ToArray(),
             SpillBlocks = spillBlocks,
+            MinimumTexelBlocks = MathF.Max(BaseFieldTexelBlocks, minimumTexelBlocks),
             MinX = minX,
             MinZ = minZ,
             MaxX = maxX,
@@ -277,7 +307,7 @@ internal static class LodSilhouetteFogVolume
         // core, the Farseer shoulder, and the rim's largest wander.
         float padding = BankReach(spillBlocks, MaxEdgeSoftness, MaxCoreBlocks)
             + BaseFieldTexelBlocks * 2f;
-        float texelBlocks = BaseFieldTexelBlocks;
+        float texelBlocks = prepared.MinimumTexelBlocks;
         int originX, originZ, width, height;
         while (true)
         {
@@ -403,9 +433,14 @@ internal static class LodSilhouetteFogVolume
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
+        var halfTexels = new ushort[texels.Length];
+        for (int i = 0; i < texels.Length; i++)
+            halfTexels[i] = BitConverter.HalfToUInt16Bits((Half)texels[i]);
         var field = new LodSilhouetteFogFieldArrays
         {
             Texels = texels,
+            HalfTexels = halfTexels,
             Width = width,
             Height = height,
             OriginBlockX = originX,
@@ -488,16 +523,13 @@ internal static class LodSilhouetteFogVolume
     static FogPath BuildPath(
         GridPath path, Func<int, int, float> heightAtGrid, float spillBlocks)
     {
-        float tolerance = MathF.Min(24f, spillBlocks * 0.5f);
-        List<PlanPoint> centreline = Simplify(path, tolerance);
-        // Bound control-point spacing before corner cutting so macro corners round over a useful
-        // distance. The distance field then removes the offset-ribbon self-intersection that wide
-        // geometry used to create inside those same corners.
-        float curveStep = Math.Clamp(spillBlocks * 1.33f, 16f, 96f);
-        centreline = Resample(centreline, path.Closed, curveStep);
-        float cornerCut = MathF.Min(0.25f,
-            spillBlocks / (4f * LodSilhouetteSeamMask.CellBlocks));
-        centreline = Smooth(centreline, path.Closed, cornerCut);
+        // Every point of the curve is a weighted average of the staircase within a fixed arc
+        // window around it, then corner-cut once, so the curve anywhere depends only on the
+        // ownership nearby. A change far along the frontier, or where the tile window ends,
+        // cannot bend it. 0.4.123's whole-path simplification could, which moved the fog as
+        // the player moved.
+        List<PlanPoint> centreline = SmoothLocally(path, SmoothingWindowBlocks(spillBlocks));
+        centreline = Smooth(centreline, path.Closed, 0.25f);
         float fieldStep = Math.Clamp(spillBlocks * 0.25f, 6f, 12f);
         centreline = Resample(centreline, path.Closed, fieldStep);
 
@@ -627,56 +659,48 @@ internal static class LodSilhouetteFogVolume
         }
     }
 
-    static List<PlanPoint> Simplify(GridPath path, float tolerance)
-    {
-        var points = path.Points.Select(point => new PlanPoint(
-            point.X * LodSilhouetteSeamMask.CellBlocks,
-            point.Z * LodSilhouetteSeamMask.CellBlocks)).ToList();
-        if (!path.Closed) return SimplifyOpen(points, tolerance);
+    /// <summary>The arc window each curve point averages over: wider for a wider bank.</summary>
+    internal static float SmoothingWindowBlocks(float spillBlocks) =>
+        Math.Clamp(Dial(spillBlocks, DefaultSpillBlocks, MinSpillBlocks, MaxSpillBlocks) * 1.5f,
+            48f, 144f);
 
-        int ringCount = points.Count - 1;
-        if (ringCount < 4) return points;
-        var ring = points.Take(ringCount).ToList();
-        int opposite = Farthest(ring, 0);
-        int other = Farthest(ring, opposite);
-        List<PlanPoint> arcA = SimplifyOpen(Arc(ring, opposite, other), tolerance);
-        List<PlanPoint> arcB = SimplifyOpen(Arc(ring, other, opposite), tolerance);
-        var simplified = new List<PlanPoint>(arcA.Count + arcB.Count - 1);
-        simplified.AddRange(arcA);
-        simplified.AddRange(arcB.Skip(1));
-        if (simplified.Take(simplified.Count - 1).Distinct().Count() < 3) return points;
-        return simplified;
-    }
-
-    static List<PlanPoint> SimplifyOpen(List<PlanPoint> points, float tolerance)
+    /// <summary>
+    /// A biweight moving average over the staircase's own vertices. Every traced edge is one
+    /// 32-block cell, so the window is a fixed count of neighbours on each side; a closed loop
+    /// wraps, and an open path's ends simply see fewer neighbours.
+    /// </summary>
+    static List<PlanPoint> SmoothLocally(GridPath path, float windowBlocks)
     {
-        if (points.Count <= 2) return new List<PlanPoint>(points);
-        var keep = new bool[points.Count];
-        keep[0] = keep[^1] = true;
-        var ranges = new Stack<(int First, int Last)>();
-        ranges.Push((0, points.Count - 1));
-        float toleranceSquared = tolerance * tolerance;
-        while (ranges.Count > 0)
+        List<GridPoint> points = path.Points;
+        int count = path.Closed ? points.Count - 1 : points.Count;
+        var result = new List<PlanPoint>(count + 1);
+        if (count < 2)
         {
-            (int first, int last) = ranges.Pop();
-            float furthest = -1f;
-            int furthestAt = -1;
-            for (int i = first + 1; i < last; i++)
-            {
-                float distance = SegmentDistanceSquared(points[i], points[first], points[last]);
-                if (distance <= furthest) continue;
-                furthest = distance;
-                furthestAt = i;
-            }
-            if (furthestAt < 0 || furthest <= toleranceSquared) continue;
-            keep[furthestAt] = true;
-            ranges.Push((first, furthestAt));
-            ranges.Push((furthestAt, last));
+            foreach (GridPoint point in points)
+                result.Add(new PlanPoint(point.X * LodSilhouetteSeamMask.CellBlocks,
+                    point.Z * LodSilhouetteSeamMask.CellBlocks));
+            return result;
         }
-
-        var result = new List<PlanPoint>();
-        for (int i = 0; i < points.Count; i++)
-            if (keep[i]) result.Add(points[i]);
+        int reach = Math.Max(1, (int)MathF.Ceiling(windowBlocks / LodSilhouetteSeamMask.CellBlocks));
+        for (int i = 0; i < count; i++)
+        {
+            float sumX = 0f, sumZ = 0f, sumWeight = 0f;
+            for (int k = -reach; k <= reach; k++)
+            {
+                int j = i + k;
+                if (path.Closed) j = ((j % count) + count) % count;
+                else if (j < 0 || j >= count) continue;
+                float t = MathF.Abs(k) * LodSilhouetteSeamMask.CellBlocks / windowBlocks;
+                if (t >= 1f) continue;
+                float weight = (1f - t * t) * (1f - t * t);
+                sumX += weight * points[j].X;
+                sumZ += weight * points[j].Z;
+                sumWeight += weight;
+            }
+            result.Add(new PlanPoint(sumX / sumWeight * LodSilhouetteSeamMask.CellBlocks,
+                sumZ / sumWeight * LodSilhouetteSeamMask.CellBlocks));
+        }
+        if (path.Closed) result.Add(result[0]);
         return result;
     }
 
@@ -738,52 +762,6 @@ internal static class LodSilhouetteFogVolume
         float south = Lerp(FiniteHeight(heightAtGrid(x0, z0 + 1)),
             FiniteHeight(heightAtGrid(x0 + 1, z0 + 1)), tx);
         return Lerp(north, south, tz);
-    }
-
-    static int Farthest(List<PlanPoint> points, int from)
-    {
-        int result = from;
-        float furthest = -1f;
-        for (int i = 0; i < points.Count; i++)
-        {
-            float dx = points[i].X - points[from].X;
-            float dz = points[i].Z - points[from].Z;
-            float distance = dx * dx + dz * dz;
-            if (distance <= furthest) continue;
-            furthest = distance;
-            result = i;
-        }
-        return result;
-    }
-
-    static List<PlanPoint> Arc(List<PlanPoint> ring, int first, int last)
-    {
-        var result = new List<PlanPoint> { ring[first] };
-        int at = first;
-        while (at != last)
-        {
-            at = (at + 1) % ring.Count;
-            result.Add(ring[at]);
-        }
-        return result;
-    }
-
-    static float SegmentDistanceSquared(PlanPoint point, PlanPoint start, PlanPoint end)
-    {
-        float dx = end.X - start.X, dz = end.Z - start.Z;
-        float lengthSquared = dx * dx + dz * dz;
-        if (lengthSquared <= 0.000001f)
-        {
-            dx = point.X - start.X;
-            dz = point.Z - start.Z;
-            return dx * dx + dz * dz;
-        }
-        float t = Math.Clamp(
-            ((point.X - start.X) * dx + (point.Z - start.Z) * dz) / lengthSquared,
-            0f, 1f);
-        float offsetX = point.X - (start.X + dx * t);
-        float offsetZ = point.Z - (start.Z + dz * t);
-        return offsetX * offsetX + offsetZ * offsetZ;
     }
 
     static PlanPoint Unit(float x, float z)

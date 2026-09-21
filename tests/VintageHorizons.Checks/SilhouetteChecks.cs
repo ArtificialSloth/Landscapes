@@ -202,6 +202,42 @@ public static class SilhouetteChecks
         c.True(strayed <= stairVolume.CoreBlocks,
             "every full-strength point of the real staircase lies inside the sealed core");
 
+        // The curve is local: continuing the same frontier into a second tile, far from here,
+        // must not move the fog here. The whole-path simplification of 0.4.123 could, which
+        // is how the ribbon moved with the camera's tile window.
+        var continued = LodSilhouetteCoverage.Empty;
+        for (int z = 0; z < LodSilhouetteField.CoverageCellsPerEdge; z++)
+            for (int x = 0; x < Math.Min(LodSilhouetteField.CoverageCellsPerEdge, 12 + z / 2); x++)
+                continued = continued.WithCovered(x, z);
+        var longMask = new LodSilhouetteSeamMask();
+        longMask.BeginBuild(0, 0, 0, 1, 21);
+        longMask.SetTile(0, 0, stairReplacements);
+        longMask.SetTile(0, 1, continued);
+        longMask.CompleteBuild();
+        LodSilhouetteFogFieldArrays shortField = LodSilhouetteFogVolume.Build(
+            LodSilhouetteFogVolume.Prepare(stairMask, (x, z) => 80f + x + z, spill, 8f));
+        LodSilhouetteFogFieldArrays longField = LodSilhouetteFogVolume.Build(
+            LodSilhouetteFogVolume.Prepare(longMask, (x, z) => 80f + x + z, spill, 8f));
+        float largestShift = 0f;
+        for (int row = 2; row <= 6; row++)
+        {
+            float z = row * LodSilhouetteSeamMask.CellBlocks;
+            float frontier = (4 + row / 2) * LodSilhouetteSeamMask.CellBlocks;
+            for (float x = frontier - 48f; x <= frontier + 48f; x += 8f)
+                largestShift = MathF.Max(largestShift, MathF.Abs(
+                    shortField.SampleChannel(x, z, 0) - longField.SampleChannel(x, z, 0)));
+        }
+        c.True(largestShift < 1f,
+            $"extending the frontier 300+ blocks away leaves the fog here in place (moved {largestShift:0.00})");
+        c.Eq(8f, LodSilhouetteFogVolume.TexelBlocksForReach(4096f, spill),
+            "a 4,096-block reach keeps the finest field texels");
+        c.True(LodSilhouetteFogVolume.TexelBlocksForReach(16384f, spill) > 8f
+                && LodSilhouetteFogVolume.TexelBlocksForReach(16384f, spill)
+                    == LodSilhouetteFogVolume.TexelBlocksForReach(16384f, spill),
+            "the field's texel size follows the reach, not the momentary tile window");
+        c.Eq(volume.Texels.Length, volume.HalfTexels.Length,
+            "the worker converts every texel to half floats for the upload");
+
         var islandReplacements = LodSilhouetteCoverage.Empty;
         for (int z = 4; z < 12; z++)
             for (int x = 4; x < 12; x++)
@@ -1656,6 +1692,8 @@ public static class SilhouetteChecks
             + Source("assets", "vintagehorizons", "shaders", "lodsilhouette.fsh")
             + Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogvolume.vsh")
             + Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogvolume.fsh")
+            + Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogupsample.vsh")
+            + Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogupsample.fsh")
             + File.ReadAllText(Path.Combine(engine, "fogandlight.vsh"))
             + File.ReadAllText(Path.Combine(engine, "fogandlight.fsh"));
         c.True(names.Count >= 15, $"found the silhouette pass's uniform uploads ({names.Count})");
@@ -1802,7 +1840,7 @@ public static class SilhouetteChecks
                 && fogPass.Contains("GL.DepthMask(false);", StringComparison.Ordinal)
                 && fogPass.Contains("GL.Enable(EnableCap.Blend);", StringComparison.Ordinal)
                 && fogPass.Contains("GL.BlendEquationSeparate(", StringComparison.Ordinal)
-                && fogPass.Contains("BlendingFactorSrc.SrcAlpha", StringComparison.Ordinal)
+                && fogPass.Contains("BlendingFactorSrc.One,", StringComparison.Ordinal)
                 && fogPass.Contains("BlendingFactorDest.OneMinusSrcAlpha", StringComparison.Ordinal)
                 && !fogPass.Contains("GlToggleBlend(true);", StringComparison.Ordinal)
                 && fogPass.Contains("GL.ColorMask(true, true, true, false);", StringComparison.Ordinal)
@@ -1816,8 +1854,8 @@ public static class SilhouetteChecks
                     StringComparison.Ordinal)
                 && !fogPass.Contains("RenderMesh", StringComparison.Ordinal)
                 && !fogPass.Contains("FramebufferAttachment.DepthAttachment", StringComparison.Ordinal)
-                && fogVolume.Contains("DefaultSpillBlocks = 48f", StringComparison.Ordinal)
-                && fogVolume.Contains("DefaultHeightBlocks = 40f", StringComparison.Ordinal)
+                && fogVolume.Contains("DefaultSpillBlocks = 40f", StringComparison.Ordinal)
+                && fogVolume.Contains("DefaultHeightBlocks = 24f", StringComparison.Ordinal)
                 && fogVolume.Contains("Felzenszwalb", StringComparison.Ordinal)
                 && fogVertex.Contains("gl_VertexID", StringComparison.Ordinal)
                 && fogFragment.Contains("vhFogFbm", StringComparison.Ordinal)
@@ -1829,7 +1867,9 @@ public static class SilhouetteChecks
                     StringComparison.Ordinal)
                 && fogFragment.Contains("segmentAlpha", StringComparison.Ordinal)
                 && fogFragment.Contains("vhFogExtinction", StringComparison.Ordinal)
-                && fogFragment.Contains("max(bank, seal) + haze", StringComparison.Ordinal)
+                && fogFragment.Contains(
+                    "max(bank * bankStrength, seal * max(0.0, fogSeamStrength))",
+                    StringComparison.Ordinal)
                 && fogFragment.Contains("fogCoverage", StringComparison.Ordinal)
                 && !inputs.Contains("lodsilhouettefog.fsh", StringComparison.Ordinal)
                 && !fragment.Contains("vhSilhouetteSeamFog", StringComparison.Ordinal)
@@ -1859,6 +1899,7 @@ public static class SilhouetteChecks
             "fogStrength", "fogCoverage", "fogSpillBlocks", "fogHeightBlocks",
             "fogFloorDepthBlocks", "fogBillowSizeBlocks", "fogEdgeSoftness",
             "fogLayerDetail", "fogDriftBlocks", "fogCoreBlocks", "fogPixelScale", "dayLight",
+            "fogSeamStrength",
         })
             c.True(fogFragment.Contains("uniform float " + uniform + ";", StringComparison.Ordinal)
                     && fogPass.Contains("p.Uniform(\"" + uniform + "\"", StringComparison.Ordinal),
@@ -1940,6 +1981,47 @@ public static class SilhouetteChecks
                     StringComparison.Ordinal)
                 && mod.Contains("public int SilhouetteFogModel;", StringComparison.Ordinal),
             "fog dials saved for an older fog model are reset once, and an unreadable file is never overwritten");
+        string upsample = Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogupsample.fsh");
+        c.True(fogFragment.Contains("layout(location = 1) out float outDistance;", StringComparison.Ordinal)
+                && fogFragment.Contains("bool wantFar = ((lowTexel.x + lowTexel.y) & 1) == 0;",
+                    StringComparison.Ordinal)
+                && !fogFragment.Contains("discard", StringComparison.Ordinal)
+                && upsample.Contains("exp(-gap / tolerance)", StringComparison.Ordinal)
+                && fogPass.Contains("EnsureSilhouetteFogLowTarget(primary.Width, primary.Height);",
+                    StringComparison.Ordinal)
+                && fogPass.Contains("PixelInternalFormat.R32f", StringComparison.Ordinal)
+                && fogPass.Contains("DrawBuffersEnum.ColorAttachment1", StringComparison.Ordinal)
+                && fogPass.Contains("p = silhouetteFogUpsampleProg;", StringComparison.Ordinal)
+                && pass.Contains("bool upsampleOk = silhouetteFogUpsampleProg.Compile();",
+                    StringComparison.Ordinal),
+            "the fog marches a quarter of the rays at half resolution, recording each ray's length, "
+                + "and a depth-aware upsample rebuilds full resolution");
+        c.True(fogFragment.Contains("lod + 1.02 < NoiseFlatLod", StringComparison.Ordinal)
+                && fogFragment.Contains("if (contribution >= 0.0005)", StringComparison.Ordinal)
+                && fogFragment.Contains("scattered += litColour * contribution;",
+                    StringComparison.Ordinal)
+                && fogPass.Contains("PixelType.HalfFloat", StringComparison.Ordinal),
+            "sub-pixel octaves are skipped, faint steps reuse the last lighting, and the field uploads as half floats");
+        c.True(fogFragment.Contains("float farStep = max(baseStep, rayDistance * FarStepFraction);",
+                    StringComparison.Ordinal)
+                && fogFragment.Contains("clamp(0.35 / previousExtinction, 0.75, farStep)",
+                    StringComparison.Ordinal)
+                && fogFragment.Contains("float middle = rayDistance + stepBlocks * 0.5;",
+                    StringComparison.Ordinal),
+            "thin fog far away is crossed in longer strides, dense fog keeps short ones, and each "
+                + "segment is sampled at its middle so longer strides do not undercount thickening fog");
+        c.True(pass.Contains("silhouetteFogTiles.Add(mesh);", StringComparison.Ordinal)
+                && pass.Contains("SilhouetteFogCoverageRefreshesPerFrame", StringComparison.Ordinal)
+                && pass.Contains("silhouetteSeamMask.SetTile(mesh.TileX, mesh.TileZ, mesh.FogReplacements);",
+                    StringComparison.Ordinal)
+                && !pass.Contains("foreach (SilhouetteFrameDraw draw in silhouetteFrameDraws)\n                silhouetteSeamMask.SetTile",
+                    StringComparison.Ordinal)
+                && fogPass.Contains("LodSilhouetteFogVolume.TexelBlocksForReach(", StringComparison.Ordinal),
+            "the fog outline is built from every Farseer tile within reach, not only those in view");
+        c.True(mod.Contains("if (previous == 2)", StringComparison.Ordinal)
+                && mod.Contains("config.SilhouetteFogSeamStrength = defaults.FogSeamStrength;",
+                    StringComparison.Ordinal),
+            "moving from the single-density fog resets only the densities, keeping the player's other fog dials");
         c.True(field.Contains("DefaultUnderlayDepthBlocks = 64f", StringComparison.Ordinal)
                 && field.Contains("DefaultUnderlayWidthBlocks = 384f", StringComparison.Ordinal)
                 && field.Contains("EdgeDistance(", StringComparison.Ordinal)
@@ -1989,7 +2071,8 @@ public static class SilhouetteChecks
                 && dialog.Contains("LOD edge width", StringComparison.Ordinal)
                 && dialog.Contains("Geometry detail", StringComparison.Ordinal)
                 && dialog.Contains("Hill softness", StringComparison.Ordinal)
-                && dialog.Contains("Fog density", StringComparison.Ordinal)
+                && dialog.Contains("Fog seam density", StringComparison.Ordinal)
+                && dialog.Contains("Fog outer density", StringComparison.Ordinal)
                 && dialog.Contains("Fog coverage", StringComparison.Ordinal)
                 && dialog.Contains("Fog spread", StringComparison.Ordinal)
                 && dialog.Contains("Fog height", StringComparison.Ordinal)
@@ -2026,6 +2109,7 @@ public static class SilhouetteChecks
             "SilhouetteFogHeightBlocks", "SilhouetteFogFloorDepthBlocks",
             "SilhouetteFogBillowSizeBlocks", "SilhouetteFogDriftSpeed",
             "SilhouetteFogLayerDetail", "SilhouetteFogEdgeSoftness", "SilhouetteFogModel",
+            "SilhouetteFogSeamStrength",
         })
             c.True(mod.Contains(name, StringComparison.Ordinal), name + " is persisted in client config");
     }

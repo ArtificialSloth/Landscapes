@@ -124,7 +124,8 @@ public partial class VintageHorizonsModSystem
 
     string DescribeSeamFog() => !renderer.SilhouetteFogEnabled
         ? "seam fog off: no fog pass is drawn and no fog field is built"
-        : $"seam fog on: {renderer.SilhouetteFogStrength * 100f:0}% density, "
+        : $"seam fog on: {renderer.SilhouetteFogSeamStrength * 100f:0}% density over the seam, "
+            + $"{renderer.SilhouetteFogStrength * 100f:0}% outside it, "
             + $"{renderer.SilhouetteFogSpillBlocks:0}-block spread, "
             + $"{renderer.SilhouetteFogHeightBlocks:0} blocks high, sealed core "
             + $"{renderer.SilhouetteFogCoreBlocks:0} blocks each side of the seam "
@@ -183,6 +184,7 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteHillSoftness,
         config.SilhouetteFog,
         config.SilhouetteFogStrength,
+        config.SilhouetteFogSeamStrength,
         config.SilhouetteFogCoverage,
         config.SilhouetteFogSpillBlocks,
         config.SilhouetteFogHeightBlocks,
@@ -212,6 +214,7 @@ public partial class VintageHorizonsModSystem
             silhouettes.HillSoftness,
             renderer.SilhouetteFogEnabled,
             renderer.SilhouetteFogStrength,
+            renderer.SilhouetteFogSeamStrength,
             renderer.SilhouetteFogCoverage,
             renderer.SilhouetteFogSpillBlocks,
             renderer.SilhouetteFogHeightBlocks,
@@ -241,7 +244,7 @@ public partial class VintageHorizonsModSystem
         renderer.SilhouetteUnderlayWidthBlocks = value.UnderlayWidthBlocks;
         renderer.SilhouetteOutlineDetail = value.OutlineDetail;
         renderer.SetSilhouetteFogSettings(value.FogEnabled,
-            value.FogStrength, value.FogCoverage, value.FogSpillBlocks,
+            value.FogStrength, value.FogSeamStrength, value.FogCoverage, value.FogSpillBlocks,
             value.FogHeightBlocks, value.FogFloorDepthBlocks,
             value.FogBillowSizeBlocks, value.FogDriftSpeed, value.FogLayerDetail,
             value.FogEdgeSoftness);
@@ -270,6 +273,7 @@ public partial class VintageHorizonsModSystem
         config.SilhouetteHillSoftness = value.HillSoftness;
         config.SilhouetteFog = value.FogEnabled;
         config.SilhouetteFogStrength = value.FogStrength;
+        config.SilhouetteFogSeamStrength = value.FogSeamStrength;
         config.SilhouetteFogCoverage = value.FogCoverage;
         config.SilhouetteFogSpillBlocks = value.FogSpillBlocks;
         config.SilhouetteFogHeightBlocks = value.FogHeightBlocks;

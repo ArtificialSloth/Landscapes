@@ -174,6 +174,7 @@ public class VintageHorizonsConfig
     /// </summary>
     public int SilhouetteFogModel;
     public float SilhouetteFogStrength = LodSilhouetteFogVolume.DefaultStrength;
+    public float SilhouetteFogSeamStrength = LodSilhouetteFogVolume.DefaultSeamStrength;
     public float SilhouetteFogCoverage = LodSilhouetteFogVolume.DefaultCoverage;
     public float SilhouetteFogSpillBlocks = LodSilhouetteFogVolume.DefaultSpillBlocks;
     public float SilhouetteFogHeightBlocks = LodSilhouetteFogVolume.DefaultHeightBlocks;
@@ -4672,13 +4673,28 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// <summary>
     /// Put the seam-fog dials back to the current model's defaults once, when the file was
     /// written for an older fog. The on/off switch is kept. A file that could not be read is
-    /// never written here, and a fresh install only records the model.
+    /// never written here, and a fresh install only records the model. From model 2 only the
+    /// densities change: that is the one dial whose meaning moved, and the rest are the
+    /// player's tuning of the same fog.
     /// </summary>
     void ResetOutdatedFogDials(bool fromFile)
     {
         if (config.SilhouetteFogModel >= LodSilhouetteFogVolume.FogModel) return;
         LodSilhouetteSettings defaults = LodSilhouetteSettings.Default;
+        int previous = config.SilhouetteFogModel;
         config.SilhouetteFogStrength = defaults.FogStrength;
+        config.SilhouetteFogSeamStrength = defaults.FogSeamStrength;
+        config.SilhouetteFogModel = LodSilhouetteFogVolume.FogModel;
+        if (previous == 2)
+        {
+            if (!fromFile) return;
+            capi.StoreModConfig(config, "vintagehorizons.json");
+            Mod.Logger.Notification(
+                "[VintageHorizons] the seam fog's density is now two dials, over the seam and "
+                + "outside it. They were set once to {0:0}% and {1:0}%; your other fog dials are "
+                + "unchanged.", defaults.FogSeamStrength * 100f, defaults.FogStrength * 100f);
+            return;
+        }
         config.SilhouetteFogCoverage = defaults.FogCoverage;
         config.SilhouetteFogSpillBlocks = defaults.FogSpillBlocks;
         config.SilhouetteFogHeightBlocks = defaults.FogHeightBlocks;
