@@ -37,9 +37,6 @@ Open, in the order they block further work:
   to dispute claims - 81 in one pass on the owner's world - but every dispute so far is ordinary
   change, not a cache that was wrong. Staging real corruption was not possible in a live world;
   its decision rules are covered offline.
-- **Decide whether the measurement tools belong in the repository.** The content-churn comparison,
-  the audit replay and the fingerprint dumper built against the shipping code all live outside the
-  tree. Session 105's numbers cannot be reproduced without them.
 
 - ~~**0.4.110 shape and drift acceptance.**~~ **Closed 2026-09-19.** The owner accepted the fog work
   after playing 0.4.111. The log half of the gate was verified offline from that session:

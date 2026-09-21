@@ -207,10 +207,22 @@ background arms waking dormant columns further out.
 - The rule-version purge announces itself whenever claims are really dropped.
 - Checks: 25,352 assertions.
 
-**Measurements** (offline, read-only, none of them in the repository): content churn and field
-attribution over two savegame pairs; an audit replay against two caches; a fingerprint dumper built
-against the shipping code that verified 0.4.118 on the owner's real world; a section-write
-correlation; and the post-quit claim comparison.
+**Measurement tools**, kept at the owner's request after the session's numbers were taken:
+
+- `scripts/savegame-churn.py` - two settled snapshots of one world in, what changed and why out,
+  by protobuf field and block-entity class. Compares raw bytes rather than reimplementing the
+  mod's hash, so a rule change cannot invalidate it.
+- `scripts/fingerprint-dump` - dumps the mod's own column fingerprints by calling
+  `LodSavegameScan` itself. An earlier Python copy of the rule reported every claim as stale the
+  moment 0.4.118 shipped, which is why this one runs the shipping code.
+- `scripts/claim-check.py` - a dump against a cache's stored claims: how many the savegame still
+  agrees with, optionally split by when each claim was written.
+
+Re-run against the owner's `test2` after this session they reproduce its headline figures: 10,423
+claims, 35 of them stale, 0.34%.
+
+Measurements not reduced to a tool: the section-write correlation, the spatial clustering tests and
+the byte-share breakdown were one-off analyses over the same files.
 
 ## Decisions
 

@@ -777,22 +777,19 @@ Begin with [Session 105](dev/sessions/SESSION_105.md) and [Session 104](dev/sess
 5. **Prove the audit catches a real fault.** It is now proven to run and to dispute claims - 81 in
    one pass - but every dispute so far is ordinary change, not a cache that was wrong. Staging real
    corruption was not possible in a live world; its decision rules are covered offline.
-6. **Decide whether the measurement tools belong in the repository.** Session 105's numbers came
-   from a content-churn comparator, an audit replay and a fingerprint dumper built against the
-   shipping code, none of which is in the tree. They cannot be reproduced without them.
-7. **Close P3's deferred integration debt** when another player is available: a complete
+6. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
-8. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
+7. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
    observations beneath the veil; tune Outline detail, Hill softness, apron and the nine fog dials
    only after the shape is accepted; measure controlled Farseer off/on and fog-detail cost,
    including the swept arc's extra cross-section per end.
-9. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
+8. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
    player-facing Farseer rename plus bundled MIT notice.
-10. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
-11. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
+9. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
+10. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
    offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
-12. **Older TODO debt:** keep the debt including:
+11. **Older TODO debt:** keep the debt including:
    - P3's after-comparison;
    - winter convergence, which G237 showed was never reachable and which the refresh arm has now
      begun working through - re-judge once its backlog has drained;

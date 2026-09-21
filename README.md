@@ -203,6 +203,25 @@ dotnet build VintageHorizons
 
 The build assembles a loadable mod folder at `VintageHorizons/bin/Debug/net10.0/Mods/vintagehorizons`.
 `scripts/package.sh` produces a ModDB-ready zip in `dist/`.
+
+### Offline savegame measurement
+
+Three read-only tools answer questions about a world and its LOD cache without launching the game.
+None of them writes to a savegame; a settled snapshot (the game closed, or a frozen copy) gives a
+clean answer, and a world mid-session does not.
+
+```
+scripts/savegame-churn.py BEFORE.vcdbs AFTER.vcdbs      # what changed between two snapshots, and why
+dotnet run --project scripts/fingerprint-dump -- WORLD.vcdbs out.tsv
+scripts/claim-check.py out.tsv <worldid>-server.db --by-minute
+```
+
+`savegame-churn.py` groups `chunk` rows into columns and decodes the differing ones into protobuf
+fields, so a column that moved only because a berry bush grew is reported separately from one whose
+blocks changed. `fingerprint-dump` writes the mod's own column fingerprints by calling
+`LodSavegameScan` itself rather than copying its rule, and `claim-check.py` compares that dump
+against the claims stored in a cache's `ColumnFingerprint` table - which is exactly what the
+background audit does in game.
 Before creating or installing any changed playable artifact, increment the patch version
 by exactly one in both `modinfo.json` and the project file. Ordinary compile and check runs
 do not consume a version number.
