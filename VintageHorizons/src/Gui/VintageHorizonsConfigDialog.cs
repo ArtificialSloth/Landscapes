@@ -392,9 +392,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("sil-fog-edge", "Fog edge softness", "How far a broad world-anchored wobble pushes the fog's rim in and out. Higher dissolves the chunk-grid outline and rounds its corners; zero leaves the bare geometric edge.",
             0, 100, 5, s => (int)MathF.Round(s.FogEdgeSoftness * 100),
             (s, v) => s with { FogEdgeSoftness = v / 100f }, v => $"{v}%"),
-        new("sil-fog-detail", "Fog layer detail", "Number of crossing layers used to give the fog depth. Higher hides individual planes better but costs more geometry and blending.",
+        new("sil-fog-detail", "Fog quality", "Raymarch precision through the continuous fog volume. Higher preserves finer billow and terrain detail but costs more fragment work.",
             0, 100, 1, s => (int)MathF.Round(s.FogLayerDetail * 100),
-            (s, v) => s with { FogLayerDetail = v / 100f }, FogLayerDetailLabel),
+            (s, v) => s with { FogLayerDetail = v / 100f }, FogQualityLabel),
     };
 
     static string OutlineDetailLabel(int value) => $"{value}% " + (value switch
@@ -414,7 +414,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         _ => "Very soft",
     });
 
-    static string FogLayerDetailLabel(int value) => $"{value}% " + (value switch
+    static string FogQualityLabel(int value) => $"{value}% " + (value switch
     {
         <= 20 => "Low",
         <= 55 => "Medium",

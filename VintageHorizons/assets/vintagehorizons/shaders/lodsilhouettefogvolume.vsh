@@ -1,47 +1,9 @@
 #version 330 core
-#extension GL_ARB_explicit_attrib_location: enable
 
-// Layered fog cards around the exact Farseer/real-terrain frontier. Geometry gives the fog
-// height and depth; the fragment shader breaks the regular sheets into one continuous cloud.
-
-layout(location = 0) in vec3 vertexPositionIn;
-layout(location = 1) in vec2 fogDataIn;
-
-uniform mat4 viewMatrix;
-uniform mat4 projectionMatrix;
-uniform vec3 volumeOrigin;
-uniform float volumeWorldOriginX;
-uniform float volumeWorldOriginZ;
-uniform float farViewDistance;
-uniform float globeStart;
-uniform float globeEffect;
-
-out vec3 fogWorldPosition;
-out float fogWeight;
-out float fogProfile;
-
-#include vertexflagbits.ash
-#include colorutil.ash
-#include shadowcoords.vsh
-#include fogandlight.vsh
-#include vertexwarp.vsh
-
+// One full-screen triangle. Fog shape and depth come from the continuous field and the scene's
+// depth texture, so adding geometry here would only reintroduce the surfaces this pass removes.
 void main()
 {
-    fogWorldPosition = vec3(
-        vertexPositionIn.x + volumeWorldOriginX,
-        vertexPositionIn.y,
-        vertexPositionIn.z + volumeWorldOriginZ);
-    fogWeight = fogDataIn.x;
-    // How far across its layer this vertex sits: one at the dense rail, zero at every rim and
-    // along a swept end. The fragment shader shapes and wobbles it.
-    fogProfile = fogDataIn.y;
-
-    vec4 relative = vec4(vertexPositionIn + volumeOrigin, 1.0);
-    relative = applyGlobalWarping(relative);
-    float horizontal = length(relative.xz);
-    float globe = clamp(
-        (horizontal - globeStart) / max(1.0, farViewDistance - globeStart), 0.0, 1.0);
-    relative.y -= globeEffect * globe * globe * farViewDistance;
-    gl_Position = projectionMatrix * (viewMatrix * relative);
+    vec2 corner = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+    gl_Position = vec4(corner * 2.0 - 1.0, 0.0, 1.0);
 }

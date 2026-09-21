@@ -1,60 +1,70 @@
 namespace VintageHorizons;
 
-/// <summary>Plain arrays for the one-draw layered fog volume around a Farseer frontier.</summary>
-internal sealed class LodSilhouetteFogMeshArrays
+/// <summary>
+/// CPU-authored description of the seam fog. RGBA stores effective signed distance to the
+/// rounded ownership frontier, frontier ground height, unsigned distance, and open-end fade.
+/// The texture is only a compact spatial field; the actual medium is integrated in screen space.
+/// </summary>
+internal sealed class LodSilhouetteFogFieldArrays
 {
-    public required float[] Xyz;
-    public required float[] FogWeights;
-    public required int[] Indices;
-    public required int VertexCount;
-    public required int IndexCount;
+    public required float[] Texels;
+    public required int Width;
+    public required int Height;
     public required int OriginBlockX;
     public required int OriginBlockZ;
+    public required float TexelBlocks;
+    public required float MinGroundY;
+    public required float MaxGroundY;
     public required int BoundaryEdges;
     public required int PathCount;
     public required int OpenPathEnds;
-    public required int PathColumns;
-    public required int PathSpans;
+    public required int PathSamples;
     public required int CenterlineSpans;
     public required int DiagonalCenterlineSpans;
-    public required int VerticalLayers;
-    public required int HorizontalLayers;
+
+    internal float SampleChannel(float worldX, float worldZ, int channel)
+    {
+        if ((uint)channel >= 4u) throw new ArgumentOutOfRangeException(nameof(channel));
+        float px = (worldX - OriginBlockX) / TexelBlocks - 0.5f;
+        float pz = (worldZ - OriginBlockZ) / TexelBlocks - 0.5f;
+        int x0 = Math.Clamp((int)MathF.Floor(px), 0, Width - 1);
+        int z0 = Math.Clamp((int)MathF.Floor(pz), 0, Height - 1);
+        int x1 = Math.Min(x0 + 1, Width - 1);
+        int z1 = Math.Min(z0 + 1, Height - 1);
+        float tx = Math.Clamp(px - MathF.Floor(px), 0f, 1f);
+        float tz = Math.Clamp(pz - MathF.Floor(pz), 0f, 1f);
+        float north = Lerp(Texels[(z0 * Width + x0) * 4 + channel],
+            Texels[(z0 * Width + x1) * 4 + channel], tx);
+        float south = Lerp(Texels[(z1 * Width + x0) * 4 + channel],
+            Texels[(z1 * Width + x1) * 4 + channel], tx);
+        return Lerp(north, south, tz);
+    }
+
+    static float Lerp(float from, float to, float amount) => from + (to - from) * amount;
 }
 
 /// <summary>
-/// Turns the exact ownership frontier into continuous translucent ribbons. The ownership mask
-/// remains on its 32-block grid, but its visual centreline is simplified within the fog's reach,
-/// rounded and resampled before any sheets are built. A staircase therefore becomes one flowing
-/// bank instead of a row of independently capped chunk-edge strips.
-///
-/// Every boundary edge is directed with Farseer on its right. Horizontal sheets use that fact to
-/// carry a wider shoulder over Farseer terrain, while a negative-profile guard band gives the
-/// fragment shader room to move the visible rim without clipping it against mesh geometry.
+/// Converts the exact 32-block ownership frontier into a smooth, directed distance field. The
+/// field has no rendered surfaces: it tells a full-screen raymarch where the bank is, which side
+/// is Farseer, the terrain height beneath it, and how true path endpoints taper away. Because
+/// opacity is integrated once along the camera ray, curves cannot produce card intersections,
+/// doubled alpha, triangular fans, or visible horizontal strata.
 /// </summary>
 internal static class LodSilhouetteFogVolume
 {
-    /// <summary>Lower rim, dense middle and upper rim of a vertical-sheet cross-section.</summary>
-    public const int VerticalVerticesPerColumn = 3;
+    /// <summary>Eight blocks retains sub-chunk curvature without making wide fields excessive.</summary>
+    public const float BaseFieldTexelBlocks = 8f;
 
-    /// <summary>Two quads bridge a vertical-sheet cross-section to the next.</summary>
-    public const int VerticalIndicesPerSpan = 12;
+    /// <summary>Bound both driver allocation and temporary CPU distance-transform storage.</summary>
+    public const int MaxFieldTextureEdge = 2048;
+    public const int MaxFieldTexels = 2048 * 2048;
 
-    /// <summary>Guard, rim, plateau, plateau, rim and guard across a horizontal sheet.</summary>
-    public const int HorizontalVerticesPerColumn = 6;
-
-    /// <summary>Five quads bridge a horizontal-sheet cross-section to the next.</summary>
-    public const int HorizontalIndicesPerSpan = 30;
+    /// <summary>Half-float-safe range; the shader never needs a larger conservative skip.</summary>
+    public const float StoredDistanceLimit = 2048f;
 
     /// <summary>
-    /// The shader's largest possible positive rim displacement is 0.52 profile units. Keeping
-    /// the outer rail below that makes it mathematically transparent even at full softness.
-    /// </summary>
-    public const float GuardProfile = -0.55f;
-
-    /// <summary>
-    /// A true open path grows a rounded, fading cap past its endpoint. Grid turns are part of the
-    /// same path and never receive caps. Profile controls the longitudinal fade independently of
-    /// the cap's rounded width.
+    /// A true open path grows a rounded, fading cap past its endpoint. Width contracts the bank
+    /// laterally while Profile guarantees that the final sample remains invisible under wobble.
     /// </summary>
     public static readonly (float Along, float Width, float Profile)[] SweptEnd =
     {
@@ -65,6 +75,7 @@ internal static class LodSilhouetteFogVolume
 
     public static int ColumnsPerOpenEnd => SweptEnd.Length;
 
+    public const float GuardProfile = -0.55f;
     public const float MinStrength = 0f;
     public const float MaxStrength = 2f;
     public const float DefaultStrength = 1f;
@@ -93,35 +104,54 @@ internal static class LodSilhouetteFogVolume
     public const float MaxLayerDetail = 1f;
     public const float DefaultLayerDetail = 0.67f;
 
+    const int InfiniteCellDistance = 1_000_000_000;
+
     readonly record struct GridPoint(int X, int Z);
     readonly record struct PlanPoint(float X, float Z);
     readonly record struct GridPath(List<GridPoint> Points, bool Closed);
-    readonly record struct FogColumn(
+    internal readonly record struct FogColumn(
         float X, float Z, float Y, float Scale, float Width, float NormalX, float NormalZ);
-    readonly record struct FogPath(
+    internal readonly record struct FogPath(
         List<FogColumn> Columns, int CenterlineSpans, int DiagonalCenterlineSpans, bool Closed);
+    readonly record struct FogSample(
+        float X, float Z, float Y, float Scale, float Width, float NormalX, float NormalZ);
 
-    public static LodSilhouetteFogMeshArrays Build(
+    internal sealed class Prepared
+    {
+        internal required List<FogPath> Paths;
+        internal required float SpillBlocks;
+        internal required float MinX;
+        internal required float MinZ;
+        internal required float MaxX;
+        internal required float MaxZ;
+        internal required float MinGround;
+        internal required float MaxGround;
+        internal required int BoundaryEdges;
+        internal required int OpenPathEnds;
+        internal required int CenterlineSpans;
+        internal required int DiagonalCenterlineSpans;
+    }
+
+    public static LodSilhouetteFogFieldArrays Build(
         LodSilhouetteSeamMask mask, Func<int, int, float> heightAtGrid,
-        float spillBlocks = DefaultSpillBlocks,
-        float heightBlocks = DefaultHeightBlocks,
-        float floorDepthBlocks = DefaultFloorDepthBlocks,
-        float layerDetail = DefaultLayerDetail)
+        float spillBlocks = DefaultSpillBlocks)
+        => Build(Prepare(mask, heightAtGrid, spillBlocks));
+
+    /// <summary>
+    /// Owning-thread snapshot. This is the only phase that calls back into live GPU-mesh metadata;
+    /// the expensive rasterization and distance transform consume this immutable result on a worker.
+    /// </summary>
+    internal static Prepared Prepare(
+        LodSilhouetteSeamMask mask, Func<int, int, float> heightAtGrid,
+        float spillBlocks = DefaultSpillBlocks)
     {
         ArgumentNullException.ThrowIfNull(mask);
         ArgumentNullException.ThrowIfNull(heightAtGrid);
         spillBlocks = Dial(spillBlocks, DefaultSpillBlocks, MinSpillBlocks, MaxSpillBlocks);
-        heightBlocks = Dial(heightBlocks, DefaultHeightBlocks, MinHeightBlocks, MaxHeightBlocks);
-        floorDepthBlocks = Dial(floorDepthBlocks, DefaultFloorDepthBlocks,
-            MinFloorDepthBlocks, MaxFloorDepthBlocks);
-        layerDetail = Dial(layerDetail, DefaultLayerDetail, MinLayerDetail, MaxLayerDetail);
-        (int verticalLayers, int horizontalLayers) = LayerCounts(layerDetail);
 
         List<GridPath> traced = TracePaths(mask.Boundaries);
         var paths = new List<FogPath>(traced.Count);
         int openPathEnds = 0;
-        int pathColumns = 0;
-        int pathSpans = 0;
         int centerlineSpans = 0;
         int diagonalCenterlineSpans = 0;
         foreach (GridPath path in traced)
@@ -130,167 +160,242 @@ internal static class LodSilhouetteFogVolume
             if (geometry.Columns.Count < 2) continue;
             paths.Add(geometry);
             if (!geometry.Closed) openPathEnds += 2;
-            pathColumns = checked(pathColumns + geometry.Columns.Count);
-            pathSpans = checked(pathSpans + geometry.Columns.Count - 1);
             centerlineSpans = checked(centerlineSpans + geometry.CenterlineSpans);
             diagonalCenterlineSpans = checked(
                 diagonalCenterlineSpans + geometry.DiagonalCenterlineSpans);
         }
+        if (paths.Count == 0)
+            throw new InvalidOperationException("a seam-fog field requires at least one path");
 
-        int verticesPerColumn = checked(
-            verticalLayers * VerticalVerticesPerColumn
-            + horizontalLayers * HorizontalVerticesPerColumn);
-        int indicesPerSpan = checked(
-            verticalLayers * VerticalIndicesPerSpan
-            + horizontalLayers * HorizontalIndicesPerSpan);
-        int vertexCount = checked(pathColumns * verticesPerColumn);
-        int indexCount = checked(pathSpans * indicesPerSpan);
-        var xyz = new float[checked(vertexCount * 3)];
-        var weights = new float[checked(vertexCount * 2)];
-        var indices = new int[indexCount];
-        int originX = checked(mask.MinCellX * LodSilhouetteSeamMask.CellBlocks);
-        int originZ = checked(mask.MinCellZ * LodSilhouetteSeamMask.CellBlocks);
-        int vertex = 0, index = 0;
-        float innerHeight = Math.Min(8f, heightBlocks * 0.16f);
-
-        float lodVisible = spillBlocks;
-        float farseerExtra = MathF.Min(32f, spillBlocks * 0.67f);
-        float farseerVisible = spillBlocks + farseerExtra;
-        float guardWidth = Math.Clamp(spillBlocks * 0.33f, 6f, 24f);
-        float lodPlateau = -MathF.Min(14f, spillBlocks * 0.29f);
-        float farseerPlateau = MathF.Min(32f, spillBlocks * 0.67f);
-        (float Offset, float Profile)[] horizontalSection =
+        float minX = float.PositiveInfinity, minZ = float.PositiveInfinity;
+        float maxX = float.NegativeInfinity, maxZ = float.NegativeInfinity;
+        float minGround = float.PositiveInfinity, maxGround = float.NegativeInfinity;
+        foreach (FogPath path in paths)
         {
-            (-lodVisible - guardWidth, GuardProfile),
-            (-lodVisible, 0f),
-            (lodPlateau, 1f),
-            (farseerPlateau, 1f),
-            (farseerVisible, 0f),
-            (farseerVisible + guardWidth, GuardProfile),
+            foreach (FogColumn column in path.Columns)
+            {
+                minX = MathF.Min(minX, column.X);
+                minZ = MathF.Min(minZ, column.Z);
+                maxX = MathF.Max(maxX, column.X);
+                maxZ = MathF.Max(maxZ, column.Z);
+                minGround = MathF.Min(minGround, column.Y);
+                maxGround = MathF.Max(maxGround, column.Y);
+            }
+        }
+
+        return new Prepared
+        {
+            Paths = paths,
+            SpillBlocks = spillBlocks,
+            MinX = minX,
+            MinZ = minZ,
+            MaxX = maxX,
+            MaxZ = maxZ,
+            MinGround = minGround,
+            MaxGround = maxGround,
+            BoundaryEdges = mask.Boundaries.Count,
+            OpenPathEnds = openPathEnds,
+            CenterlineSpans = centerlineSpans,
+            DiagonalCenterlineSpans = diagonalCenterlineSpans,
+        };
+    }
+
+    internal static LodSilhouetteFogFieldArrays Build(
+        Prepared prepared, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(prepared);
+        cancellationToken.ThrowIfCancellationRequested();
+        List<FogPath> paths = prepared.Paths;
+        float spillBlocks = prepared.SpillBlocks;
+        float minX = prepared.MinX, minZ = prepared.MinZ;
+        float maxX = prepared.MaxX, maxZ = prepared.MaxZ;
+        float farseerReach = FarseerReach(spillBlocks);
+        float guard = Math.Clamp(spillBlocks * 0.40f, 12f, 32f);
+        float padding = farseerReach + guard + BaseFieldTexelBlocks * 2f;
+        float texelBlocks = BaseFieldTexelBlocks;
+        int originX, originZ, width, height;
+        while (true)
+        {
+            originX = checked((int)(MathF.Floor((minX - padding) / texelBlocks) * texelBlocks));
+            originZ = checked((int)(MathF.Floor((minZ - padding) / texelBlocks) * texelBlocks));
+            width = Math.Max(2, checked((int)MathF.Ceiling(
+                (maxX + padding - originX) / texelBlocks)));
+            height = Math.Max(2, checked((int)MathF.Ceiling(
+                (maxZ + padding - originZ) / texelBlocks)));
+            if (width <= MaxFieldTextureEdge && height <= MaxFieldTextureEdge
+                && (long)width * height <= MaxFieldTexels) break;
+            texelBlocks *= 2f;
+            if (texelBlocks > 4096f)
+                throw new InvalidOperationException("the seam-fog field exceeds its safe texture bounds");
+        }
+
+        List<FogSample> samples = RasterSamples(paths, texelBlocks);
+        cancellationToken.ThrowIfCancellationRequested();
+        int cellCount = checked(width * height);
+        var seedByCell = new int[cellCount];
+        Array.Fill(seedByCell, -1);
+        for (int seed = 0; seed < samples.Count; seed++)
+        {
+            if ((seed & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
+            FogSample sample = samples[seed];
+            int x = Math.Clamp((int)MathF.Floor((sample.X - originX) / texelBlocks), 0, width - 1);
+            int z = Math.Clamp((int)MathF.Floor((sample.Z - originZ) / texelBlocks), 0, height - 1);
+            int cell = z * width + x;
+            int previous = seedByCell[cell];
+            if (previous < 0 || DistanceToCellCenterSquared(sample, x, z) <
+                    DistanceToCellCenterSquared(samples[previous], x, z))
+                seedByCell[cell] = seed;
+        }
+
+        // First pass of the exact squared Euclidean distance transform. Along a column all seeds
+        // have zero cost, so two linear scans produce its nearest occupied row and squared cost.
+        var verticalDistance = new int[cellCount];
+        var verticalSeed = new int[cellCount];
+        Array.Fill(verticalDistance, InfiniteCellDistance);
+        Array.Fill(verticalSeed, -1);
+        for (int x = 0; x < width; x++)
+        {
+            if ((x & 31) == 0) cancellationToken.ThrowIfCancellationRequested();
+            int last = -1;
+            for (int z = 0; z < height; z++)
+            {
+                int cell = z * width + x;
+                if (seedByCell[cell] >= 0) last = z;
+                if (last < 0) continue;
+                int d = z - last;
+                verticalDistance[cell] = d * d;
+                verticalSeed[cell] = seedByCell[last * width + x];
+            }
+            last = -1;
+            for (int z = height - 1; z >= 0; z--)
+            {
+                int cell = z * width + x;
+                if (seedByCell[cell] >= 0) last = z;
+                if (last < 0) continue;
+                int d = last - z;
+                int cost = d * d;
+                if (cost >= verticalDistance[cell]) continue;
+                verticalDistance[cell] = cost;
+                verticalSeed[cell] = seedByCell[last * width + x];
+            }
+        }
+
+        // The horizontal lower envelope completes Felzenszwalb's linear-time 2D transform. It
+        // carries the path sample identity through the transform, so all four channels describe
+        // the same nearest point and remain coherent when the GPU filters them.
+        var texels = new float[checked(cellCount * 4)];
+        var candidates = new int[width];
+        var intersections = new float[width + 1];
+        for (int row = 0; row < height; row++)
+        {
+            if ((row & 15) == 0) cancellationToken.ThrowIfCancellationRequested();
+            int candidateCount = 0;
+            for (int q = 0; q < width; q++)
+            {
+                int cost = verticalDistance[row * width + q];
+                if (cost >= InfiniteCellDistance) continue;
+                float intersection = float.NegativeInfinity;
+                while (candidateCount > 0)
+                {
+                    int p = candidates[candidateCount - 1];
+                    int previousCost = verticalDistance[row * width + p];
+                    intersection = ((cost + (long)q * q) - (previousCost + (long)p * p))
+                        / (2f * (q - p));
+                    if (intersection > intersections[candidateCount - 1]) break;
+                    candidateCount--;
+                }
+                if (candidateCount == 0) intersection = float.NegativeInfinity;
+                candidates[candidateCount] = q;
+                intersections[candidateCount] = intersection;
+                candidateCount++;
+                intersections[candidateCount] = float.PositiveInfinity;
+            }
+            if (candidateCount == 0)
+                throw new InvalidOperationException("the seam-fog distance transform lost every seed");
+
+            int envelope = 0;
+            for (int x = 0; x < width; x++)
+            {
+                while (envelope + 1 < candidateCount && intersections[envelope + 1] < x)
+                    envelope++;
+                int sourceColumn = candidates[envelope];
+                int seed = verticalSeed[row * width + sourceColumn];
+                if (seed < 0)
+                    throw new InvalidOperationException("the seam-fog distance transform lost a seed identity");
+                FogSample nearest = samples[seed];
+                float worldX = originX + (x + 0.5f) * texelBlocks;
+                float worldZ = originZ + (row + 0.5f) * texelBlocks;
+                float dx = worldX - nearest.X;
+                float dz = worldZ - nearest.Z;
+                float unsigned = MathF.Sqrt(dx * dx + dz * dz);
+                float signed = (dx * nearest.NormalX + dz * nearest.NormalZ)
+                    / MathF.Max(0.08f, nearest.Width);
+                int at = (row * width + x) * 4;
+                texels[at] = Math.Clamp(signed, -StoredDistanceLimit, StoredDistanceLimit);
+                texels[at + 1] = nearest.Y;
+                texels[at + 2] = MathF.Min(unsigned, StoredDistanceLimit);
+                texels[at + 3] = Math.Clamp(nearest.Scale, 0f, 1f);
+            }
+        }
+
+        return new LodSilhouetteFogFieldArrays
+        {
+            Texels = texels,
+            Width = width,
+            Height = height,
+            OriginBlockX = originX,
+            OriginBlockZ = originZ,
+            TexelBlocks = texelBlocks,
+            MinGroundY = prepared.MinGround,
+            MaxGroundY = prepared.MaxGround,
+            BoundaryEdges = prepared.BoundaryEdges,
+            PathCount = paths.Count,
+            OpenPathEnds = prepared.OpenPathEnds,
+            PathSamples = samples.Count,
+            CenterlineSpans = prepared.CenterlineSpans,
+            DiagonalCenterlineSpans = prepared.DiagonalCenterlineSpans,
         };
 
+        float DistanceToCellCenterSquared(FogSample sample, int x, int z)
+        {
+            float dx = sample.X - (originX + (x + 0.5f) * texelBlocks);
+            float dz = sample.Z - (originZ + (z + 0.5f) * texelBlocks);
+            return dx * dx + dz * dz;
+        }
+    }
+
+    static List<FogSample> RasterSamples(List<FogPath> paths, float texelBlocks)
+    {
+        var result = new List<FogSample>();
+        float maxStep = MathF.Max(1f, texelBlocks * 0.45f);
         foreach (FogPath path in paths)
         {
             List<FogColumn> columns = path.Columns;
-            for (int layer = 0; layer < verticalLayers; layer++)
+            result.Add(ToSample(columns[0]));
+            for (int i = 0; i + 1 < columns.Count; i++)
             {
-                float t = verticalLayers == 1 ? 0.5f : layer / (verticalLayers - 1f);
-                float offset = Lerp(-lodVisible * 0.78f, farseerVisible * 0.78f, t);
-                float sideReach = offset < 0f ? lodVisible * 0.78f : farseerVisible * 0.78f;
-                float across = sideReach <= 0f ? 0f : offset / sideReach;
-                // More cards reduce the per-card weight. Their sum stays nearly stable while
-                // higher detail makes individual planes much harder to perceive.
-                float density = 0.16f * MathF.Exp(-2.4f * across * across)
-                    * 7f / verticalLayers;
-                int first = vertex;
-                foreach (FogColumn column in columns)
+                FogColumn start = columns[i], end = columns[i + 1];
+                float dx = end.X - start.X, dz = end.Z - start.Z;
+                int steps = Math.Max(1,
+                    (int)MathF.Ceiling(MathF.Sqrt(dx * dx + dz * dz) / maxStep));
+                for (int step = 1; step <= steps; step++)
                 {
-                    float side = offset * column.Width;
-                    float x = column.X + column.NormalX * side;
-                    float z = column.Z + column.NormalZ * side;
-                    AddVertex(x, column.Y - floorDepthBlocks, z, density,
-                        FadeProfile(0f, column.Scale));
-                    AddVertex(x, column.Y + innerHeight, z, density,
-                        FadeProfile(1f, column.Scale));
-                    AddVertex(x, column.Y + heightBlocks, z, density,
-                        FadeProfile(0f, column.Scale));
+                    float t = step / (float)steps;
+                    PlanPoint normal = Unit(
+                        Lerp(start.NormalX, end.NormalX, t),
+                        Lerp(start.NormalZ, end.NormalZ, t));
+                    result.Add(new FogSample(
+                        Lerp(start.X, end.X, t), Lerp(start.Z, end.Z, t),
+                        Lerp(start.Y, end.Y, t), Lerp(start.Scale, end.Scale, t),
+                        Lerp(start.Width, end.Width, t), normal.X, normal.Z));
                 }
-                Stitch(first, columns.Count, VerticalVerticesPerColumn);
-            }
-
-            for (int layer = 0; layer < horizontalLayers; layer++)
-            {
-                float up = horizontalLayers == 1 ? 0f : layer / (horizontalLayers - 1f);
-                float height = up * up * heightBlocks * 0.80f;
-                float density = (0.18f * MathF.Pow(1f - up, 1.2f) + 0.025f)
-                    * 5f / horizontalLayers;
-                int first = vertex;
-                foreach (FogColumn column in columns)
-                {
-                    foreach ((float offset, float profile) in horizontalSection)
-                    {
-                        float side = offset * column.Width;
-                        AddVertex(
-                            column.X + column.NormalX * side,
-                            column.Y + height,
-                            column.Z + column.NormalZ * side,
-                            density, FadeProfile(profile, column.Scale));
-                    }
-                }
-                Stitch(first, columns.Count, HorizontalVerticesPerColumn);
             }
         }
+        return result;
 
-        if (vertex != vertexCount || index != indexCount)
-            throw new InvalidOperationException("seam-fog path sizing no longer matches its mesh");
-
-        return new LodSilhouetteFogMeshArrays
-        {
-            Xyz = xyz,
-            FogWeights = weights,
-            Indices = indices,
-            VertexCount = vertex,
-            IndexCount = index,
-            OriginBlockX = originX,
-            OriginBlockZ = originZ,
-            BoundaryEdges = mask.Boundaries.Count,
-            PathCount = paths.Count,
-            OpenPathEnds = openPathEnds,
-            PathColumns = pathColumns,
-            PathSpans = pathSpans,
-            CenterlineSpans = centerlineSpans,
-            DiagonalCenterlineSpans = diagonalCenterlineSpans,
-            VerticalLayers = verticalLayers,
-            HorizontalLayers = horizontalLayers,
-        };
-
-        // Density and crossing profile remain separate. The profile is one on the broad inner
-        // plateau, zero at the visible rim, and negative at the geometry-only guard rail.
-        void AddVertex(float x, float y, float z, float density, float profile)
-        {
-            int xyzAt = vertex * 3;
-            xyz[xyzAt] = x - originX;
-            xyz[xyzAt + 1] = y;
-            xyz[xyzAt + 2] = z - originZ;
-            weights[vertex * 2] = density;
-            weights[vertex * 2 + 1] = profile;
-            vertex++;
-        }
-
-        void Stitch(int first, int columnCount, int verticesInColumn)
-        {
-            for (int c = 0; c + 1 < columnCount; c++)
-            {
-                int near = first + c * verticesInColumn;
-                int far = first + (c + 1) * verticesInColumn;
-                for (int across = 0; across + 1 < verticesInColumn; across++)
-                    AddQuad(near + across, far + across, near + across + 1, far + across + 1);
-            }
-        }
-
-        // Choose the diagonal whose endpoints carry the larger combined profile. That keeps a
-        // fading cap's remaining density on both triangles instead of cutting a diagonal bite.
-        void AddQuad(int a, int b, int c, int d)
-        {
-            if (weights[b * 2 + 1] + weights[c * 2 + 1]
-                >= weights[a * 2 + 1] + weights[d * 2 + 1])
-            {
-                AddTriangle(a, b, c);
-                AddTriangle(c, b, d);
-            }
-            else
-            {
-                AddTriangle(a, b, d);
-                AddTriangle(a, d, c);
-            }
-        }
-
-        void AddTriangle(int a, int b, int c)
-        {
-            indices[index++] = a;
-            indices[index++] = b;
-            indices[index++] = c;
-        }
+        static FogSample ToSample(FogColumn column) => new(
+            column.X, column.Z, column.Y, column.Scale, column.Width,
+            column.NormalX, column.NormalZ);
     }
 
     static FogPath BuildPath(
@@ -298,16 +403,16 @@ internal static class LodSilhouetteFogVolume
     {
         float tolerance = MathF.Min(24f, spillBlocks * 0.5f);
         List<PlanPoint> centreline = Simplify(path, tolerance);
-        // Bound the control-point spacing before corner cutting so a macro corner can round over
-        // a useful distance without ever allowing a very long simplified segment to move it by
-        // hundreds of blocks. A second, denser resample keeps curved ribbon triangles smooth.
+        // Bound control-point spacing before corner cutting so macro corners round over a useful
+        // distance. The distance field then removes the offset-ribbon self-intersection that wide
+        // geometry used to create inside those same corners.
         float curveStep = Math.Clamp(spillBlocks * 1.33f, 16f, 96f);
         centreline = Resample(centreline, path.Closed, curveStep);
         float cornerCut = MathF.Min(0.25f,
             spillBlocks / (4f * LodSilhouetteSeamMask.CellBlocks));
         centreline = Smooth(centreline, path.Closed, cornerCut);
-        float meshStep = Math.Clamp(spillBlocks * 0.33f, 8f, 16f);
-        centreline = Resample(centreline, path.Closed, meshStep);
+        float fieldStep = Math.Clamp(spillBlocks * 0.25f, 6f, 12f);
+        centreline = Resample(centreline, path.Closed, fieldStep);
 
         int diagonalSpans = 0;
         for (int i = 0; i + 1 < centreline.Count; i++)
@@ -327,7 +432,6 @@ internal static class LodSilhouetteFogVolume
             PlanPoint start = centreline[0];
             PlanPoint startTangent = Unit(centreline[1].X - start.X, centreline[1].Z - start.Z);
             float startY = centres[0].Y;
-            // Insert near-to-far at index zero so the final path order is far-to-near-to-start.
             for (int i = 0; i < SweptEnd.Length; i++)
             {
                 (float along, float width, float profile) = SweptEnd[i];
@@ -357,7 +461,7 @@ internal static class LodSilhouetteFogVolume
             PlanPoint tangent = Unit(
                 centres[next].Point.X - centres[previous].Point.X,
                 centres[next].Point.Z - centres[previous].Point.Z);
-            // The directed ownership edge keeps Farseer on the right-hand normal.
+            // Directed ownership edges keep Farseer on the right-hand normal.
             float normalX = -tangent.Z;
             float normalZ = tangent.X;
             var centre = centres[i];
@@ -601,18 +705,35 @@ internal static class LodSilhouetteFogVolume
         return length > 0.000001f ? new PlanPoint(x / length, z / length) : new PlanPoint(1f, 0f);
     }
 
-    // A cap must fade below the full possible shader wobble, not merely to profile zero: a
-    // positive wobble can make zero visible again. Interpolating every rail toward the guard
-    // profile makes the final cap column provably transparent.
-    static float FadeProfile(float profile, float scale) =>
-        GuardProfile + (profile - GuardProfile) * scale;
+    internal static float FarseerReach(float spillBlocks)
+    {
+        spillBlocks = Dial(spillBlocks, DefaultSpillBlocks, MinSpillBlocks, MaxSpillBlocks);
+        return spillBlocks + MathF.Min(32f, spillBlocks * 0.67f);
+    }
 
-    internal static (int Vertical, int Horizontal) LayerCounts(float detail)
+    internal static float MarchStepBlocks(float detail)
     {
         detail = Dial(detail, DefaultLayerDetail, MinLayerDetail, MaxLayerDetail);
-        int vertical = 3 + 2 * (int)MathF.Round(detail * 3f);
-        int horizontal = 2 + (int)MathF.Round(detail * 4f);
-        return (vertical, horizontal);
+        return Lerp(7.5f, 3f, detail);
+    }
+
+    /// <summary>CPU counterpart of the shader's asymmetric lateral bank profile.</summary>
+    internal static float CrossingProfile(float effectiveSignedDistance, float spillBlocks)
+    {
+        spillBlocks = Dial(spillBlocks, DefaultSpillBlocks, MinSpillBlocks, MaxSpillBlocks);
+        float lodPlateau = -MathF.Min(14f, spillBlocks * 0.29f);
+        float farseerPlateau = MathF.Min(32f, spillBlocks * 0.67f);
+        float farseerReach = FarseerReach(spillBlocks);
+        float linear;
+        if (effectiveSignedDistance < lodPlateau)
+            linear = (effectiveSignedDistance + spillBlocks) / (lodPlateau + spillBlocks);
+        else if (effectiveSignedDistance <= farseerPlateau)
+            linear = 1f;
+        else
+            linear = (farseerReach - effectiveSignedDistance)
+                / (farseerReach - farseerPlateau);
+        float across = Math.Clamp(linear, 0f, 1f);
+        return across * across * (3f - 2f * across);
     }
 
     static float Lerp(float from, float to, float amount) => from + (to - from) * amount;

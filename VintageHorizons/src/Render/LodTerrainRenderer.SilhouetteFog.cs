@@ -8,6 +8,9 @@ namespace VintageHorizons;
 
 public partial class LodTerrainRenderer
 {
+    readonly record struct SilhouetteFogBuildOutcome(
+        long Revision, LodSilhouetteFogFieldArrays? Field, string Failure, bool Cancelled);
+
     internal const double SilhouetteFogAfterOitOrder = 1.0;
 
     /// <summary>
@@ -25,14 +28,25 @@ public partial class LodTerrainRenderer
     internal const float SilhouetteFogDriftWrapBlocks = 1 << 20;
     BeforeStageRenderer? silhouetteFogStageRenderer;
     IShaderProgram? silhouetteFogVolumeProg;
-    MeshRef? silhouetteFogVolumeMesh;
+    int silhouetteFogFieldTexture;
+    int silhouetteFogVao;
     bool silhouetteFogVolumeFailed;
-    int silhouetteFogOriginX;
-    int silhouetteFogOriginZ;
+    int silhouetteFogFieldOriginX;
+    int silhouetteFogFieldOriginZ;
+    int silhouetteFogFieldWidth;
+    int silhouetteFogFieldHeight;
+    float silhouetteFogFieldTexelBlocks;
+    float silhouetteFogMinGroundY;
+    float silhouetteFogMaxGroundY;
     int silhouetteFogBoundaryEdges;
     int silhouetteFogFramebuffer;
     int silhouetteFogAttachedColor;
     bool silhouetteFogGeometryDirty;
+    Task<SilhouetteFogBuildOutcome>? silhouetteFogBuildTask;
+    CancellationTokenSource? silhouetteFogBuildCancellation;
+    LodSilhouetteFogVolume.Prepared? silhouetteFogPendingBuild;
+    long silhouetteFogBuildRevision;
+    long silhouetteFogPendingRevision;
     int silhouetteFogErrorChecksLeft = 240;
     bool silhouetteFogReportedPendingError;
     float silhouetteFogDriftBlocks;
@@ -48,6 +62,8 @@ public partial class LodTerrainRenderer
     readonly LodOpenGlStateApi silhouetteFogStateApi = new();
     readonly int[] silhouetteFogViewport = new int[4];
     readonly bool[] silhouetteFogColorMask = new bool[4];
+    readonly float[] silhouetteFogInvProjection = new float[16];
+    readonly float[] silhouetteFogInvView = new float[16];
 
     void RegisterSilhouetteFogStage()
     {
@@ -64,40 +80,134 @@ public partial class LodTerrainRenderer
         silhouetteFogStageRenderer = null;
     }
 
-    void UploadSilhouetteFogVolume(LodSilhouetteClient silhouettes)
+    void QueueSilhouetteFogVolume(LodSilhouetteClient silhouettes)
     {
         if (!silhouetteSeamMask.HasEdges)
         {
-            DisposeSilhouetteFogMesh();
+            ClearSilhouetteFogField();
             silhouetteSeamMask.MarkUploaded();
             return;
         }
 
         try
         {
-            LodSilhouetteFogMeshArrays arrays = LodSilhouetteFogVolume.Build(
-                silhouetteSeamMask, SilhouetteFogHeightAtGrid,
-                SilhouetteFogSpillBlocks, SilhouetteFogHeightBlocks,
-                SilhouetteFogFloorDepthBlocks, SilhouetteFogLayerDetail);
-            MeshRef next = UploadSilhouetteFogMesh(arrays);
-            MeshRef? old = silhouetteFogVolumeMesh;
-            silhouetteFogVolumeMesh = next;
-            silhouetteFogOriginX = arrays.OriginBlockX;
-            silhouetteFogOriginZ = arrays.OriginBlockZ;
-            silhouetteFogBoundaryEdges = arrays.BoundaryEdges;
+            LodSilhouetteFogVolume.Prepared prepared = LodSilhouetteFogVolume.Prepare(
+                silhouetteSeamMask, SilhouetteFogHeightAtGrid, SilhouetteFogSpillBlocks);
+            silhouetteFogPendingBuild = prepared;
+            silhouetteFogPendingRevision = ++silhouetteFogBuildRevision;
             silhouetteFogGeometryDirty = false;
-            silhouetteSeamMask.MarkUploaded();
-            old?.Dispose();
+            // One transform at a time. A moving visible window replaces the pending snapshot but
+            // does not repeatedly cancel the running job and starve publication under motion.
+            if (silhouetteFogBuildTask == null)
+                StartPendingSilhouetteFogBuild();
         }
         catch (Exception e)
         {
-            silhouetteFogVolumeFailed = true;
-            capi.Logger.Error(
-                "[VintageHorizons] volumetric Farseer seam fog failed; Farseer is off for this "
-                + "session instead of drawing an exposed join: {0}", e.Message);
-            silhouettes.SetEnabled(false);
-            ReleaseSilhouetteMeshes();
+            StopSilhouetteFog(silhouettes, e.Message);
         }
+    }
+
+    void StartPendingSilhouetteFogBuild()
+    {
+        LodSilhouetteFogVolume.Prepared? prepared = silhouetteFogPendingBuild;
+        if (prepared == null || silhouetteFogBuildTask != null) return;
+        long revision = silhouetteFogPendingRevision;
+        silhouetteFogPendingBuild = null;
+        silhouetteFogBuildCancellation = new CancellationTokenSource();
+        CancellationToken token = silhouetteFogBuildCancellation.Token;
+        silhouetteFogBuildTask = Task.Run(() =>
+        {
+            try
+            {
+                return new SilhouetteFogBuildOutcome(
+                    revision, LodSilhouetteFogVolume.Build(prepared, token), "", false);
+            }
+            catch (OperationCanceledException)
+            {
+                return new SilhouetteFogBuildOutcome(revision, null, "", true);
+            }
+            catch (Exception e)
+            {
+                return new SilhouetteFogBuildOutcome(revision, null, e.Message, false);
+            }
+        });
+    }
+
+    /// <summary>Main/render thread. Publishes only the newest completed immutable field.</summary>
+    bool PublishSilhouetteFogVolume(LodSilhouetteClient silhouettes)
+    {
+        Task<SilhouetteFogBuildOutcome>? task = silhouetteFogBuildTask;
+        if (task == null)
+        {
+            try { StartPendingSilhouetteFogBuild(); }
+            catch (Exception e)
+            {
+                StopSilhouetteFog(silhouettes, e.Message);
+                return false;
+            }
+            return true;
+        }
+        if (!task.IsCompleted) return true;
+
+        SilhouetteFogBuildOutcome outcome = task.GetAwaiter().GetResult();
+        silhouetteFogBuildCancellation?.Dispose();
+        silhouetteFogBuildCancellation = null;
+        silhouetteFogBuildTask = null;
+
+        bool newest = outcome.Revision == silhouetteFogBuildRevision
+            && silhouetteFogPendingBuild == null;
+        if (newest && !outcome.Cancelled && outcome.Field == null)
+        {
+            StopSilhouetteFog(silhouettes, outcome.Failure);
+            return false;
+        }
+        if (newest && outcome.Field != null)
+        {
+            try
+            {
+                PublishSilhouetteFogField(outcome.Field);
+            }
+            catch (Exception e)
+            {
+                StopSilhouetteFog(silhouettes, e.Message);
+                return false;
+            }
+        }
+        try { StartPendingSilhouetteFogBuild(); }
+        catch (Exception e)
+        {
+            StopSilhouetteFog(silhouettes, e.Message);
+            return false;
+        }
+        return true;
+    }
+
+    void PublishSilhouetteFogField(LodSilhouetteFogFieldArrays arrays)
+    {
+        int next = UploadSilhouetteFogField(arrays);
+        int old = silhouetteFogFieldTexture;
+        silhouetteFogFieldTexture = next;
+        silhouetteFogFieldOriginX = arrays.OriginBlockX;
+        silhouetteFogFieldOriginZ = arrays.OriginBlockZ;
+        silhouetteFogFieldWidth = arrays.Width;
+        silhouetteFogFieldHeight = arrays.Height;
+        silhouetteFogFieldTexelBlocks = arrays.TexelBlocks;
+        silhouetteFogMinGroundY = arrays.MinGroundY;
+        silhouetteFogMaxGroundY = arrays.MaxGroundY;
+        silhouetteFogBoundaryEdges = arrays.BoundaryEdges;
+        silhouetteSeamMask.MarkUploaded();
+        if (old != 0) GL.DeleteTexture(old);
+    }
+
+    void CancelSilhouetteFogBuild()
+    {
+        silhouetteFogBuildRevision++;
+        silhouetteFogPendingBuild = null;
+        silhouetteFogBuildCancellation?.Cancel();
+        silhouetteFogBuildCancellation?.Dispose();
+        silhouetteFogBuildCancellation = null;
+        // Worker outcomes never fault; a cancelled transform can finish harmlessly after teardown.
+        silhouetteFogBuildTask = null;
     }
 
     internal void SetSilhouetteFogSettings(
@@ -105,10 +215,7 @@ public partial class LodTerrainRenderer
         float floorDepthBlocks, float billowSizeBlocks, float driftSpeed, float layerDetail,
         float edgeSoftness)
     {
-        bool geometryChanged = SilhouetteFogSpillBlocks != spillBlocks
-            || SilhouetteFogHeightBlocks != heightBlocks
-            || SilhouetteFogFloorDepthBlocks != floorDepthBlocks
-            || SilhouetteFogLayerDetail != layerDetail;
+        bool geometryChanged = SilhouetteFogSpillBlocks != spillBlocks;
         SilhouetteFogStrength = strength;
         SilhouetteFogCoverage = coverage;
         SilhouetteFogSpillBlocks = spillBlocks;
@@ -121,15 +228,60 @@ public partial class LodTerrainRenderer
         silhouetteFogGeometryDirty |= geometryChanged;
     }
 
-    MeshRef UploadSilhouetteFogMesh(LodSilhouetteFogMeshArrays mesh)
+    int UploadSilhouetteFogField(LodSilhouetteFogFieldArrays field)
     {
-        var data = new MeshData(false);
-        data.SetVerticesCount(mesh.VertexCount);
-        data.SetIndicesCount(mesh.IndexCount);
-        data.xyz = mesh.Xyz;
-        data.Uv = mesh.FogWeights;
-        data.Indices = mesh.Indices;
-        return capi.Render.UploadMesh(data);
+        if (!LodGlErrorIsolation.TryEstablishBaseline(
+                () => (int)GL.GetError(), out string advisory, out string baselineFailure))
+            throw new InvalidOperationException(baselineFailure);
+        if (advisory.Length > 0 && !silhouetteFogReportedPendingError)
+        {
+            silhouetteFogReportedPendingError = true;
+            capi.Logger.Warning(
+                "[VintageHorizons] {0} before seam-fog field upload; those errors came from an "
+                + "earlier renderer.", advisory);
+        }
+        LodGlStateSnapshot state = LodGlStateGuard.Capture(
+            silhouetteFogStateApi, LodGlStateMask.Texture2DUnit0);
+        int texture = 0;
+        Exception? failure = null;
+        try
+        {
+            GL.ActiveTexture(TextureUnit.Texture0);
+            texture = GL.GenTexture();
+            if (texture == 0)
+                throw new InvalidOperationException("the seam-fog field texture was not created");
+            GL.BindTexture(TextureTarget.Texture2D, texture);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter,
+                (int)TextureMinFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter,
+                (int)TextureMagFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS,
+                (int)TextureWrapMode.ClampToEdge);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT,
+                (int)TextureWrapMode.ClampToEdge);
+            // Half float keeps even the maximum bounded field compact. The CPU supplies float
+            // input and the driver performs the one-time conversion during an ownership change.
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba16f,
+                field.Width, field.Height, 0, PixelFormat.Rgba, PixelType.Float, field.Texels);
+            ErrorCode uploadError = GL.GetError();
+            if (uploadError != ErrorCode.NoError)
+                throw new InvalidOperationException(
+                    "seam-fog field upload raised OpenGL " + uploadError);
+        }
+        catch (Exception e)
+        {
+            failure = e;
+        }
+        finally
+        {
+            if (!LodGlStateGuard.TryRestore(
+                    silhouetteFogStateApi, state, out string restoreFailure))
+                failure ??= new InvalidOperationException(
+                    "state restore after seam-fog field upload failed: " + restoreFailure);
+        }
+        if (failure == null) return texture;
+        if (texture != 0) GL.DeleteTexture(texture);
+        throw failure;
     }
 
     float SilhouetteFogHeightAtGrid(int gridX, int gridZ)
@@ -188,11 +340,18 @@ public partial class LodTerrainRenderer
         AdvanceSilhouetteFogDrift(deltaSeconds);
         LodSilhouetteClient? silhouettes = Silhouettes;
         if (silhouettes == null || !silhouettes.Enabled || silhouetteFogVolumeFailed
-            || silhouetteFogVolumeMesh == null || silhouetteFogBoundaryEdges == 0
+            || silhouetteFogFieldTexture == 0 || silhouetteFogBoundaryEdges == 0
             || silhouetteFogVolumeProg == null || silhouetteFogVolumeProg.LoadError
             || SilhouetteFogStrength <= 0f) return;
         FrameBufferRef? primary = PrimaryFrameBuffer();
         if (primary == null) return;
+
+        float[] projection = capi.Render.CurrentProjectionMatrix;
+        float[] view = capi.Render.CameraMatrixOriginf;
+        if (Mat4f.Invert(silhouetteFogInvProjection, projection) == null
+            || Mat4f.Invert(silhouetteFogInvView, view) == null)
+            return;
+        if (silhouetteFogVao == 0) silhouetteFogVao = GL.GenVertexArray();
 
         bool checkErrors = silhouetteFogErrorChecksLeft > 0;
         string advisory = "";
@@ -212,7 +371,11 @@ public partial class LodTerrainRenderer
 
         LodGlStateSnapshot state = LodGlStateGuard.Capture(silhouetteFogStateApi,
             LodGlStateMask.Program | LodGlStateMask.Framebuffers
-            | LodGlStateMask.Texture2DUnit0);
+            | LodGlStateMask.Texture2DUnit0 | LodGlStateMask.VertexArray);
+        int activeTexture = GL.GetInteger(GetPName.ActiveTexture);
+        GL.ActiveTexture(TextureUnit.Texture1);
+        int textureUnit1 = GL.GetInteger(GetPName.TextureBinding2D);
+        GL.ActiveTexture((TextureUnit)activeTexture);
         IShaderProgram? incoming = ShaderProgramBase.CurrentShaderProgram;
         bool depthTest = GL.IsEnabled(EnableCap.DepthTest);
         bool depthWrite = GL.GetBoolean(GetPName.DepthWritemask);
@@ -255,24 +418,39 @@ public partial class LodTerrainRenderer
             Vec3d cam = capi.World.Player.Entity.CameraPos;
             IShaderProgram p = silhouetteFogVolumeProg;
             p.Use();
-            p.UniformMatrix("viewMatrix", capi.Render.CameraMatrixOriginf);
-            p.UniformMatrix("projectionMatrix", capi.Render.CurrentProjectionMatrix);
-            p.Uniform("volumeOrigin", new Vec3f(
-                (float)(silhouetteFogOriginX - cam.X), (float)-cam.Y,
-                (float)(silhouetteFogOriginZ - cam.Z)));
-            p.Uniform("volumeWorldOriginX", (float)silhouetteFogOriginX);
-            p.Uniform("volumeWorldOriginZ", (float)silhouetteFogOriginZ);
+            p.UniformMatrix("invProjection", silhouetteFogInvProjection);
+            p.UniformMatrix("invView", silhouetteFogInvView);
+            p.Uniform("cameraInField", new Vec3f(
+                (float)(cam.X - silhouetteFogFieldOriginX), (float)cam.Y,
+                (float)(cam.Z - silhouetteFogFieldOriginZ)));
+            p.Uniform("fieldWorldOriginX", (float)silhouetteFogFieldOriginX);
+            p.Uniform("fieldWorldOriginZ", (float)silhouetteFogFieldOriginZ);
+            p.Uniform("fieldWidth", (float)silhouetteFogFieldWidth);
+            p.Uniform("fieldHeight", (float)silhouetteFogFieldHeight);
+            p.Uniform("fieldTexelBlocks", silhouetteFogFieldTexelBlocks);
             p.Uniform("farViewDistance", (float)silhouettes.ReachBlocks);
             p.Uniform("globeStart", EffectiveFarDistance);
             p.Uniform("globeEffect", SilhouetteGlobeEffect);
+            float globeDrop = MathF.Max(0f, SilhouetteGlobeEffect) * silhouettes.ReachBlocks;
+            float globeRise = MathF.Max(0f, -SilhouetteGlobeEffect) * silhouettes.ReachBlocks;
+            p.Uniform("fieldMinY",
+                silhouetteFogMinGroundY - SilhouetteFogFloorDepthBlocks - globeDrop - 4f);
+            p.Uniform("fieldMaxY",
+                silhouetteFogMaxGroundY + SilhouetteFogHeightBlocks + globeRise + 4f);
             p.Uniform("rgbaFogIn", capi.Ambient.BlendedFogColor);
             p.Uniform("fogStrength", SilhouetteFogStrength);
             p.Uniform("fogCoverage", SilhouetteFogCoverage);
+            p.Uniform("fogSpillBlocks", SilhouetteFogSpillBlocks);
+            p.Uniform("fogHeightBlocks", SilhouetteFogHeightBlocks);
+            p.Uniform("fogFloorDepthBlocks", SilhouetteFogFloorDepthBlocks);
             p.Uniform("fogBillowSizeBlocks", SilhouetteFogBillowSizeBlocks);
             p.Uniform("fogEdgeSoftness", SilhouetteFogEdgeSoftness);
+            p.Uniform("fogLayerDetail", SilhouetteFogLayerDetail);
             p.Uniform("fogDriftBlocks", silhouetteFogDriftBlocks);
             p.BindTexture2D("sceneDepth", primary.DepthTextureId, 0);
-            capi.Render.RenderMesh(silhouetteFogVolumeMesh);
+            p.BindTexture2D("fogField", silhouetteFogFieldTexture, 1);
+            GL.BindVertexArray(silhouetteFogVao);
+            GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
             p.Stop();
         }
         catch (Exception e)
@@ -297,6 +475,9 @@ public partial class LodTerrainRenderer
                 silhouetteFogViewport[2], silhouetteFogViewport[3]);
             GL.ColorMask(silhouetteFogColorMask[0], silhouetteFogColorMask[1],
                 silhouetteFogColorMask[2], silhouetteFogColorMask[3]);
+            GL.ActiveTexture(TextureUnit.Texture1);
+            GL.BindTexture(TextureTarget.Texture2D, textureUnit1);
+            GL.ActiveTexture((TextureUnit)state.ActiveTexture);
             if (!LodGlStateGuard.TryRestore(silhouetteFogStateApi, state, out string restoreFailure))
                 failure ??= new InvalidOperationException(
                     "state restore after volumetric seam fog failed: " + restoreFailure);
@@ -348,24 +529,32 @@ public partial class LodTerrainRenderer
         silhouetteFogAttachedColor = color;
     }
 
-    void DisposeSilhouetteFogMesh()
+    void DisposeSilhouetteFogField()
     {
-        silhouetteFogVolumeMesh?.Dispose();
-        silhouetteFogVolumeMesh = null;
+        if (silhouetteFogFieldTexture != 0) GL.DeleteTexture(silhouetteFogFieldTexture);
+        silhouetteFogFieldTexture = 0;
         silhouetteFogBoundaryEdges = 0;
+    }
+
+    void ClearSilhouetteFogField()
+    {
+        CancelSilhouetteFogBuild();
+        DisposeSilhouetteFogField();
     }
 
     void ReleaseSilhouetteFogVolume()
     {
         try
         {
-            DisposeSilhouetteFogMesh();
+            ClearSilhouetteFogField();
+            if (silhouetteFogVao != 0) GL.DeleteVertexArray(silhouetteFogVao);
             if (silhouetteFogFramebuffer != 0) GL.DeleteFramebuffer(silhouetteFogFramebuffer);
         }
         catch
         {
             // Teardown must continue over objects the driver already released.
         }
+        silhouetteFogVao = 0;
         silhouetteFogFramebuffer = 0;
         silhouetteFogAttachedColor = 0;
     }

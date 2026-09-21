@@ -30,6 +30,7 @@ public partial class LodTerrainRenderer
         public required float MaxY;
         public required LodSilhouetteCoverage ApronCells;
         public required float[] FogHeightGrid;
+        public required ulong FogHeightHash;
 
         public MeshRef At(int quadsPerEdge) => quadsPerEdge switch
         {
@@ -89,7 +90,9 @@ public partial class LodTerrainRenderer
 
     /// <summary>Cached terrain changes its fade target only when a silhouette can actually draw.</summary>
     bool SilhouetteFadeTargetActive => Silhouettes is { Enabled: true }
-        && silhouetteShaderOk && silhouetteMeshes.Count > 0;
+        && silhouetteShaderOk && silhouetteMeshes.Count > 0 && SilhouetteFogReady;
+
+    bool SilhouetteFogReady => !silhouetteSeamMask.HasEdges || silhouetteFogFieldTexture != 0;
 
     internal string SilhouetteShaderState => !silhouetteShaderWanted
         ? "not compiled (never switched on)"
@@ -140,7 +143,7 @@ public partial class LodTerrainRenderer
 
     /// <summary>
     /// Uploads and selects the Farseer tiles before cached terrain draws, then publishes one
-    /// layered fog mesh over the exact current ownership edge. Preparing first keeps the fog
+    /// continuous fog field over the exact current ownership edge. Preparing first keeps the fog
     /// centreline synchronized with the geometry that will draw later in the same frame.
     /// </summary>
     void PrepareSilhouetteFrame()
@@ -149,7 +152,7 @@ public partial class LodTerrainRenderer
         LodSilhouetteClient? silhouettes = Silhouettes;
         if (silhouettes == null || !silhouettes.Enabled)
         {
-            if (silhouetteMeshes.Count > 0 || silhouetteFogVolumeMesh != null
+            if (silhouetteMeshes.Count > 0 || silhouetteFogFieldTexture != 0
                 || silhouetteFogFramebuffer != 0)
                 ReleaseSilhouetteMeshes();
             return;
@@ -165,7 +168,7 @@ public partial class LodTerrainRenderer
         if (silhouetteMeshes.Count == 0)
         {
             silhouetteSeamMask.Deactivate();
-            DisposeSilhouetteFogMesh();
+            ClearSilhouetteFogField();
             return;
         }
         if (!silhouetteShaderWanted)
@@ -188,9 +191,10 @@ public partial class LodTerrainRenderer
         if (rapi.FrameWidth == 0)
         {
             silhouetteSeamMask.Deactivate();
-            DisposeSilhouetteFogMesh();
+            ClearSilhouetteFogField();
             return;
         }
+        if (!PublishSilhouetteFogVolume(silhouettes)) return;
 
         Vec3d cam = capi.World.Player.Entity.CameraPos;
         silhouetteFrustum.Update(rapi.CurrentProjectionMatrix, rapi.CameraMatrixOriginf);
@@ -233,7 +237,7 @@ public partial class LodTerrainRenderer
         if (silhouetteFrameDraws.Count == 0)
         {
             silhouetteSeamMask.Deactivate();
-            DisposeSilhouetteFogMesh();
+            ClearSilhouetteFogField();
             return;
         }
 
@@ -246,11 +250,13 @@ public partial class LodTerrainRenderer
                 silhouetteSeamMask.SetTile(
                     draw.Mesh.TileX, draw.Mesh.TileZ, draw.Replacements);
             silhouetteSeamMask.CompleteBuild();
-            UploadSilhouetteFogVolume(silhouettes);
+            QueueSilhouetteFogVolume(silhouettes);
         }
         else if (silhouetteSeamMask.HasEdges
-            && (silhouetteFogVolumeMesh == null || silhouetteFogGeometryDirty))
-            UploadSilhouetteFogVolume(silhouettes);
+            && (silhouetteFogGeometryDirty
+                || silhouetteFogFieldTexture == 0
+                    && silhouetteFogBuildTask == null && silhouetteFogPendingBuild == null))
+            QueueSilhouetteFogVolume(silhouettes);
     }
 
     void DrawSilhouettes()
@@ -262,7 +268,8 @@ public partial class LodTerrainRenderer
         SilhouetteTrianglesLastFrame = 0;
         LodSilhouetteClient? silhouettes = Silhouettes;
         if (silhouettes == null || !silhouettes.Enabled || silhouetteFrameDraws.Count == 0
-            || !silhouetteShaderOk || silhouetteProg == null || silhouetteProg.LoadError) return;
+            || !silhouetteShaderOk || silhouetteProg == null || silhouetteProg.LoadError
+            || !SilhouetteFogReady) return;
 
         var rapi = capi.Render;
         if (rapi.FrameWidth == 0) return;
@@ -339,6 +346,7 @@ public partial class LodTerrainRenderer
         Add(replacements.Word1);
         Add(replacements.Word2);
         Add(replacements.Word3);
+        Add(mesh.FogHeightHash);
         hash ^= hash >> 32;
         hash *= 0xD6E8FEB86659FD93UL;
         return hash ^ (hash >> 32);
@@ -378,6 +386,7 @@ public partial class LodTerrainRenderer
                     catch { medium.Dispose(); throw; }
                 }
                 catch { high.Dispose(); throw; }
+                float[] fogHeightGrid = ExtractSilhouetteFogHeights(result.Meshes.High);
                 next = new SilhouetteGpuMesh
                 {
                     High = high,
@@ -391,7 +400,8 @@ public partial class LodTerrainRenderer
                     MinY = result.Meshes.MinY,
                     MaxY = result.Meshes.MaxY,
                     ApronCells = result.Meshes.CoveredCells,
-                    FogHeightGrid = ExtractSilhouetteFogHeights(result.Meshes.High),
+                    FogHeightGrid = fogHeightGrid,
+                    FogHeightHash = SilhouetteFogHeightHash(fogHeightGrid),
                 };
             }
             catch (Exception e)
@@ -411,6 +421,17 @@ public partial class LodTerrainRenderer
             if (bytes >= SilhouetteUploadBytesPerFrame
                 || elapsed >= SilhouetteUploadMillisecondsPerFrame) break;
         }
+    }
+
+    static ulong SilhouetteFogHeightHash(float[] heights)
+    {
+        ulong hash = 1469598103934665603UL;
+        foreach (float height in heights)
+        {
+            hash ^= BitConverter.SingleToUInt32Bits(height);
+            hash *= 1099511628211UL;
+        }
+        return hash;
     }
 
     MeshRef UploadSilhouetteMesh(LodSilhouetteMeshArrays mesh)
