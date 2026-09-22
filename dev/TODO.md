@@ -4,9 +4,32 @@
 
 ## Start here
 
-Read [Session 108](sessions/SESSION_108.md). Of 0.4.125's seam fog the owner said "Everything
-looked good", so the fog is not the next task by default: ask him what comes next before choosing
-work. Two things are recorded for when he wants them.
+Read [Session 109](sessions/SESSION_109.md), then [Session 108](sessions/SESSION_108.md).
+Section sync - the terrain-change plan's Phase B - is built (0.4.126-0.4.127) and passed a four-join
+dedicated sandbox test. Of 0.4.125's seam fog the owner said "Everything looked good". Neither is the
+next task by default: ask him what comes next before choosing work. Three things are recorded for
+when he wants them.
+
+### Section sync: what 0.4.127 left open
+
+- **The owner has not played 0.4.127.** In singleplayer the client side is idle. The server cache
+  should log "Adding section versions to this server cache" once, on its first open, and nothing
+  should look different.
+- **No second player has been involved.** The sandbox's "changed while away" was written into the
+  server cache between joins, the way a server save would make it. A dedicated server with a second
+  player changing terrain while the first is offline is the remaining real test. After it, the first
+  player's rejoin should log "N held sections changed on the server since this client last caught
+  up", then "caught up".
+- **The large-world re-check is arithmetic, not measured.** About 15,000 held sections at the
+  server's default 8 per second is roughly 30 minutes and 700 MB per player on a bodanboys-sized
+  world. Measure it once when a dedicated copy of a large world is at hand. It has to finish across
+  quits; the owed list makes that possible, but a real multi-session re-check has not been observed.
+- **A server cache restored from an older backup** is detected only when a client's record is newer
+  than the restored copy. That is a limit of the design, recorded rather than open work, unless
+  backups become a normal workflow.
+- Re-run the sandbox test with [`bench/routes/section-sync.txt`](../bench/routes/section-sync.txt)
+  and [`scripts/section-sync-inject.py`](../scripts/section-sync-inject.py). Session 109's profile
+  is `.testdata/profiles/phaseb`.
 
 ### For the future: hitches while exploring new terrain (owner, 2026-09-21)
 
@@ -28,6 +51,10 @@ What is already known that bears on it, none of it a conclusion:
   hitches were already an open question for 0.4.124.
 - Farseer previews, decode and meshing are worker-bound, and their uploads are capped at four tiles,
   2 MiB and 2 ms per frame (Session 100 found Farseer idle on 73% of its ticks while exploring).
+- On a dedicated server the client re-fetches every held section the server re-saves near it.
+  Session 109's sandbox saw about 66 merges in two minutes with the player standing still, as ticking
+  blocks changed the ground. This is behaviour from before section sync, but it is steady background
+  network, decode and disk work, and not yet measured for frame cost.
 
 A first pass would separate the candidates on one route, turning each off in turn: `.vhfog off`,
 `.vhsilhouette off`, the savegame sweep off, and then vanilla. Ask him how often the hitches come
@@ -210,8 +237,8 @@ Open, in the order they block further work:
   engine-generation gate and the player-activity hold with its rate floor. **Its cost has never been
   measured**, because until 0.4.116 there was nothing to measure.
 - **Implement terrain change detection.** ~~Phase A~~ **A1–A3 and A5 are built (0.4.113–0.4.116)**;
-  see Session 103 and `STATUS.md`. Phase B — section versions, so a returning client receives
-  changes made while it was offline — remains unstarted and is independent of A. **A4 was not built
+  see Session 103 and `STATUS.md`. ~~Phase B~~ **Built (0.4.126–0.4.127), Session 109**; its open
+  items are under "Section sync" at the top. **A4 was not built
   and is recommended against as specified** (Session 103 §7): there is no hook after the engine's
   final save, so its marker cannot record the file's post-save state, and the payoff fell from
   5m35s of contention to 73.3 s of off-thread reading once A3 removed the probe pass.

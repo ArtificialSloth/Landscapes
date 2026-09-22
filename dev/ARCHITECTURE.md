@@ -508,7 +508,7 @@ live until the exact replacement persistence revision is acknowledged.
     sparse canaries. Continuous full-world column cycling is intentionally absent.
 32. **Live server refresh transfers durable L0 only.** Connected clients may replace older rows
     after a refresh notification, but local capture wins revision races and mip ancestors rebuild
-    locally.
+    locally. Since 0.4.126 a syncing client learns of those rows from versioned spans (decision 52).
 33. **Range ownership is decided from the player block the engine will draw with.** An ownership
     decision that predicts vanilla's range clause must use the block position the culler is
     given, which exists only after the player's physics step at Before/1.0. The preparation stays
@@ -653,6 +653,20 @@ live until the exact replacement persistence revision is acknowledged.
     update arriving mid-fade carries the fade on instead of cutting it (G254). Fields on different
     lattices, which only a reach change produces, do not blend. The new seam is never left
     uncovered while old fog fades.
+52. **A returning client is owed exactly what its server's cache changed since it last caught up.**
+    Every server-cache row carries a version that only grows, committed with the counter in the same
+    transaction, and the cache has a generation that changes whenever its versions stop being one
+    ordered lineage (a format purge, or a write by a build without versions). A client records the
+    generation and version it caught up to, plus the held sections announced but not yet merged and
+    saved, and writes a span's debts with its version in one transaction. The server answers a join
+    with every level-0 section written since that version, then keeps each player's live spans
+    contiguous: joins and broadcasts share one FIFO and are applied in that order. A client with no
+    record, or one for another generation, re-checks every section it holds, newest winning (owner,
+    2026-09-22). This was chosen over keeping what it has; the re-check is resumable, so it happens
+    once. A debt settles only when a copy at least as new as announced is durable (G16, G7); a merge
+    frees its fetch slot at once (G256). Owed sections are fetched nearest first, inside the serving
+    radius. Integrated play does not take part, because the sibling cache's rowids already say what
+    changed.
 
 ## Concurrency invariants
 

@@ -3,17 +3,51 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-09-21`
-**Mod version:** `0.4.125` - current private test build: the Farseer seam fog hides the seam with a shallow strip resting on the ground, under a bank thin enough to see Farseer through, and fog left behind by a moved seam dissolves. Verified, copy-installed and checkpointed; **owner-played: "Everything looked good"**. The fog defaults changed to his tuning afterwards, in source only
+**Status date:** `2026-09-22`
+**Mod version:** `0.4.127` - current private test build: section sync (the terrain-change plan's Phase B) - a player returning to a dedicated server gets the distant terrain that changed while away - with 0.4.127's fix that frees a fetch slot at merge instead of at save. Verified, copy-installed, checkpointed and **integration-tested in a dedicated sandbox; not owner-played**. It is the first build carrying the owner's fog defaults. The last owner-played build is 0.4.125: "Everything looked good"
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.121 `a5f528d`, 0.4.122 `d46b776`, 0.4.123 `b46cf0a`, 0.4.124 `1fb10f5`, 0.4.125 `92eb9c3`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.121 `a5f528d`, 0.4.122 `d46b776`, 0.4.123 `b46cf0a`, 0.4.124 `1fb10f5`, 0.4.125 `92eb9c3`, 0.4.126 `e668f81`, 0.4.127 `89509e9`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `138` C# files under `VintageHorizons/src`
+**Source files:** `140` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
+
+**Section sync is built and passed a dedicated sandbox test (0.4.126-0.4.127).** Session 109; the
+plan's Phase B, previously unstarted.
+
+- **The defect it fixes:** a player's game asked a server only for sections it did not hold, and the
+  live refresh reached only players online at the time. A section changed while someone was away was
+  never offered to them again, and their cached copy stayed stale for good.
+- **Server:** every server-cache row carries a version, stamped once per checkpoint and committed with
+  the counter. A generation names the cache's lineage and is re-minted on a format purge or a
+  version-less write by an older build, which a trigger catches. The server answers a join with
+  every level-0 section written since the client's recorded version, then broadcasts every 30
+  seconds. Joins and broadcasts share one FIFO, which keeps each player's spans contiguous.
+- **Client:** it records the generation and version it caught up to, plus the held sections still
+  owed, written with each span's version in one transaction. It fetches owed sections nearest
+  first, 32 at a time, inside the serving radius. A debt settles only when a copy at least as new
+  as announced is merged and durable. A merge frees its fetch slot at once (G256). Integrated play
+  does not take part.
+- **No record** (first join after the update, or a rebuilt cache) re-checks every held section,
+  newest winning: the owner's choice on 2026-09-22, over keeping what the client has. It is
+  resumable, so it happens once.
+- **Measured** on a copy of the owner's 1.85 GB server cache: the in-place migration takes 3.6 ms
+  for the column and 62 ms for the index. A full re-check list reads in 9.5 ms and a live broadcast
+  in 0.02 ms, from a covering index. The first index shape was ignored by the planner (G255).
+
+| Sandbox join (dedicated, default serving limits) | Result |
+|---|---|
+| 1, 0.4.126: first join, fresh caches | Server's live saves arrived as spans; 71 sections merged; catch-up measured at ~1 section/s (G256) |
+| 2, 0.4.127: 10 held sections rewritten while away | Exactly 16 changed sections announced; 18 owed merged and saved within ~30 s |
+| 3, 0.4.127: nothing changed by the test | Exactly the 19 rows of the server's final save announced; caught up in 31 s |
+| 4, 0.4.127: a version-less write, as an older build makes | Generation re-minted; all 59 held sections re-checked in 31 s |
+
+- **Not established:** a real second player, the owner's own play, and the large-world re-check
+  time. About 15,000 held sections at 8/s is an estimate of roughly 30 minutes and 700 MB per player
+  on a bodanboys-sized world.
 
 **Farseer's seam fog is in a state the owner is happy with; exploring shows hitches of unknown
 cause.** Sessions 107-108.
@@ -127,6 +161,7 @@ about either - G237's shape a second time (G241).
   until 20:56:39. Not a correctness fault, but a session ending in that window falls back.
 
 **Terrain change detection: phase A is built and played (0.4.113-0.4.119).** Sessions 103-105.
+Phase B is section sync, at the top of this section.
 
 - **The probe pass is gone.** The sweep reads the savegame itself through a private read-only
   connection on its own thread, rather than asking the engine 70,225 times at ~320/s through the
@@ -558,7 +593,7 @@ from 0.4.13.
 | Loaded updates | Vanilla `ChunkDirty` queues exact recapture | Source/check evidence; movement-driven updates mostly matched vanilla |
 | Dormant updates | Every 30 seconds, vanilla regional snow snapshots may start a finite accumulation/melt campaign; one dormant region is woken as a canary per poll | Built and bounded; a complete real-time accumulation and melt were not clearly observed |
 | Manual update | `/vhrefresh [radius]`, default 32 chunks/max 128, recaptures only proven-existing safe columns; `status` and `stop` are available | Source/check evidence; human command matrix remains open |
-| Live delivery | Durable changed L0 rows reach clients: integrated play through the sibling cache's rowids, dedicated play through refresh manifests. A held section merges them column by column, the newer copy winning, never erasing client-only columns (0.4.68); clients rebuild parents | Source/check evidence; integrated merge human-tested in 0.4.68; dedicated multiplayer temporal run remains open |
+| Live delivery | Durable changed L0 rows reach clients: integrated play through the sibling cache's rowids; dedicated play through versioned spans since 0.4.126, at join for changes made while away and every 30 s while online (older clients still read them as refresh manifests). A held section merges them column by column, the newer copy winning, never erasing client-only columns (0.4.68); clients rebuild parents | Source/check evidence; integrated merge human-tested in 0.4.68; dedicated delivery sandbox-integration-tested in Session 109; no second-player run |
 
 Snow accumulation and melt are rare transitions, so the scheduler does no column work between
 relevant weather changes.
@@ -588,7 +623,11 @@ No cache purge or schema-meaning change is required.
 - in 0.4.85: `AssistServerSettings` field 24 reports accelerator use;
 - in 0.4.86: settings fields 25-26 report the dedicated reach and preview rate; append-only
   transport-generation and world-session fields activate the registered manifest/request path
-  between current peers while retaining direct push for an older peer.
+  between current peers while retaining direct push for an older peer;
+- in 0.4.126: section sync. `AssistHello` fields 3-5 carry the client's recorded generation and
+  version, `AssistWelcome` field 9 the cache generation, `AssistKeyManifest` fields 5-7 a versioned
+  span's bounds and per-key versions, and `AssistSection` field 4 the served row's version. The
+  refresh flag stays set on spans for older clients.
 
 Older protobuf peers ignore the new fields. Feature bits reserve 0 for Generate, 1 for frontier and
 2 for silhouettes.
@@ -617,6 +656,12 @@ so neither the blob format nor the schema meaning moved; `dev/WIRE_HISTORY.md` c
   offers silhouettes, not every server holding a builder (`dev/WIRE_HISTORY.md`).
 - Sessions 95-98 changed no section blob or section database meaning. Silhouette transport
   generation 1 is append-compatible protocol 1; the tile payload and tile-store schema remain 1.
+- Session 109 added section versions without a schema-meaning bump:
+  - Server caches gain `Section.Version` in place, the covering index `SectionVersions`, the
+    `SectionLegacyWrite` trigger and `Meta` keys for the generation and version.
+  - Client caches gain the `AssistOwed` table and `Meta` keys for the caught-up generation and
+    version.
+  - A format purge clears both halves' records.
 
 The numbers stay `1 / 4 / 6`.
 
@@ -664,9 +709,10 @@ to the server log.
 
 ## Performance and artifact evidence
 
-**Checks and builds.** The final fast tier passed **25,443 assertions with zero failures** at
-0.4.125 and again after the defaults change. The Release mod build completed with zero warnings and zero errors; no benchmark build was
-needed for the fog work.
+**Checks and builds.** The final fast tier passed **25,610 assertions with zero failures** at
+0.4.127, including 148 in `SectionSyncChecks`, whose whole-session check walks the plan's
+acceptance tests 8-10 against real SQLite files. The Release mod build completed with zero warnings
+and zero errors. Session 109 also built the Debug mod and benchmark mod for the sandbox runs.
 
 Measured costs, and what is not measured:
 - **Sibling-cache scanner.** Its cost is in the current-result table. Merging into held sections
@@ -724,6 +770,12 @@ Measured costs, and what is not measured:
     had generated it took under 0.01 ms, and under 1 ms for a new region's first sample (Session 95).
     Sampling beside real generation is not measured.
 
+**The 0.4.127 artifact.** The verified `dist/vintagehorizons_0.4.127.zip` is 725,515 bytes, 45
+entries, SHA-256 `B3B4A01AE824A563B6393E597A373E91A4944D9D7A7203D3465253DC21AE8CAF`. Its DLL matches
+Release and contains the merge-frees-the-slot fix. It has no PDB or wrapper directory, reports
+0.4.127, and was copy-installed as an identical file. 0.4.126's artifact is 725,445 bytes, SHA-256
+`3484247FC240B01C4675CA01CB5C1893B82309A347A2448F631A6BD6B922831D`.
+
 **The 0.4.125 artifact.** The verified `dist/vintagehorizons_0.4.125.zip` is 708,897 bytes and has
 SHA-256 `03BC8AE3A662549B9A7A0A7F207DCCBD6FFF0A17B040B4F5D75C889392E8B1C4`. Its 45 root-relative file
 entries are readable, its DLL matches Release and carries the new dial strings, `modinfo.json`
@@ -760,9 +812,13 @@ verification and installation. This does not authorize a push, tag, publication 
   screenshots, the FPS comparison and the verdicts; his 0.4.124 client log was read offline.
 - Session 108 launched no game. The owner ran 0.4.125 and supplied the verdict and the exploring-hitch
   report; his client log and saved config were read offline.
+- Session 109 launched a dedicated sandbox server and client four times, through
+  `scripts/bench-windows.ps1` and a sandbox profile seeded from the default benchmark world. The
+  owner asked for the tests to be run for him. His game was confirmed closed first, and no test
+  process was left running.
 - Session 91's controlled servers ran only after the owner's approval.
 
-**Documentation.** Validation passed **10,803 checks** with no failures at the Session 108 doc pass.
+**Documentation.** Validation passed **10,919 checks** with no failures at the Session 109 doc pass.
 It covers:
 - current version and changelog coverage;
 - source count;
@@ -792,6 +848,9 @@ It covers:
 - **Held sections merge.** A held section is merged, never replaced. First sightings and parents
   fill only; a level-0 row the server rewrote after the client saw it wins column by column (owner,
   2026-09-12; G188).
+- **Section sync.** A client on a dedicated server is owed exactly what its server's cache changed
+  since it last caught up, settled only by a durable, new-enough merge. A client with no record
+  re-checks everything it holds, newest winning (owner, 2026-09-22; settled decision 52).
 - **Writing real terrain.** Real saved terrain is generated only by an explicit, privileged,
   confirmed `/vhworldgen` job. Sweep, `/vhgen`, automatic frontier work and silhouette previews keep
   the generates-nothing promise (settled decision 38).
@@ -818,15 +877,19 @@ It covers:
 
 ## Next work
 
-Begin with [Session 108](dev/sessions/SESSION_108.md), [Session 105](dev/sessions/SESSION_105.md) and the top of [TODO](dev/TODO.md),
+Begin with [Session 109](dev/sessions/SESSION_109.md), [Session 108](dev/sessions/SESSION_108.md), [Session 105](dev/sessions/SESSION_105.md) and the top of [TODO](dev/TODO.md),
 [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. **Ask the owner what comes next.** The seam fog is in a state he is happy with. Two things are
-   recorded in TODO for when he wants them:
+1. **Ask the owner what comes next.** Section sync passed its sandbox test and the seam fog is in a
+   state he is happy with. Three things are recorded in TODO for when he wants them:
+   - **Section sync's remaining evidence:** his own play of 0.4.127 (one log line, nothing visible in
+     singleplayer), a dedicated server with a second player changing terrain while the first is
+     offline, and a measured large-world re-check.
    - **Hitches while exploring new terrain**, with low minimum FPS, cause unknown: separate the fog,
      Farseer, the savegame sweep and vanilla on one route, and ask him for the hitches' frequency and
-     depth from his frame-time graph.
+     depth from his frame-time graph. On a dedicated server, the client's re-fetch of every nearby
+     section the server re-saves is a further candidate (Session 109).
    - **Seam fog questions** not separately reported: the strip from above, straight-down coverage,
      edges taller than the strip, camera steadiness, upsample edges, the fade time and a fade-in.
 
@@ -868,6 +931,7 @@ Begin with [Session 108](dev/sessions/SESSION_108.md), [Session 105](dev/session
    - pause loading;
    - Session 84 diagnostic cleanup.
 
+[Session 109](dev/sessions/SESSION_109.md) is the authoritative section-sync continuation point;
 [Session 108](dev/sessions/SESSION_108.md) is the authoritative Farseer-fog continuation point;
 [Session 107](dev/sessions/SESSION_107.md) retains the natural bank and the terrain-built outline, and
 [Session 106](dev/sessions/SESSION_106.md) retains the continuous-medium replacement of the cards;
@@ -882,7 +946,7 @@ Begin with [Session 108](dev/sessions/SESSION_108.md), [Session 105](dev/session
   look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G254 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+- G166-G256 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
   buried joins, bounded regeneration, stable all-level ownership, post-water volumetric fog, the
   distinction between pacing priority-load submissions and yielding their downstream engine work,
   the engine generation counter's saved-load blind spot, route-halo generation, and now what a
@@ -892,8 +956,10 @@ Begin with [Session 108](dev/sessions/SESSION_108.md), [Session 105](dev/session
   many times denser than its fog paints a wall, why the vertical column is not the shortest path at
   a band's edge, why a frustum-built outline moves with the camera, why a fixed step budget misses
   far fog, that the engine's uniform collector ignores `sampler3D`, why a column-normalized bank is
-  a wall from the side, why a thin layer is stepped over or buried on slopes, and why replacing a
-  field makes its fog vanish.
+  a wall from the side, why a thin layer is stepped over or buried on slopes, why replacing a
+  field makes its fog vanish, why SQLite reads a column added after a blob from the row unless an
+  index leads with the equality, and why a fetch slot released only at durability throttles
+  catch-up to the save checkpoint.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work

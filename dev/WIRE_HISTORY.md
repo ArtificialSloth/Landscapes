@@ -130,6 +130,30 @@ sequence it cannot perform. Unknown server-setting fields keep their ordinary de
 message, field, payload or required old-peer sequence changed meaning, so assist protocol, section
 blob and database schema remain `1 / 4 / 6`; the silhouette payload and tile-store schema remain 1.
 
+**Append-compatible protocol-1 additions for section sync (0.4.126-0.4.127).** The
+terrain-change plan's Phase B. No message type was added and none changed meaning:
+- `AssistHello` field 3 `SectionSync`, 4 `SyncGeneration` and 5 `SyncVersion`: a client that keeps
+  a record of the server's cache says so (`LodAssist.SectionSyncVersion` = 1) and names the
+  generation and version it caught up to, or an empty generation for none. Older clients send none
+  of these, which reads as a client that does not sync.
+- `AssistWelcome` field 9 `CacheGeneration`: set only when the server versions its cache and the
+  client asked to sync. Empty means no versioned span follows, which is what every older server
+  sends.
+- `AssistKeyManifest` field 5 `VersionFrom`, 6 `VersionTo` and 7 `Versions`: a refresh manifest with
+  `VersionTo` above zero is a versioned span - every level-0 section whose version lies in
+  (`VersionFrom`, `VersionTo`], with each key's version, chunked with the existing
+  `Sequence`/`Last`. A span may be empty; its `Last` chunk still ends it. `VersionFrom` -1 asks the
+  client to re-check every section it holds.
+- `AssistSection` field 4 `Version`: the version of the row a served blob was read from, 0 from an
+  unversioned server.
+
+`Refresh` (field 4) keeps its meaning and is still set on every span, so an older client reads a
+span as the refresh it always handled. On the server, the refresh keys now come from version queries
+over the cache rather than from an in-memory set of persisted keys. Integrated play sends no
+`SectionSync` and keeps using the sibling cache's rowids. Mixed peers each behave as their own
+version did, and the pairings are pinned by `WireFormatChecks` against the 0.4.125 shapes. The
+compatibility numbers therefore remain `1 / 4 / 6`.
+
 ## Section blob-format ledger
 
 | Blob format | Current schema | Meaning |
@@ -189,6 +213,27 @@ The database table layout may remain SQL-compatible while `SchemaVersion` change
 Session 105 (0.4.118) changes what a `ColumnFingerprint` value MEANS without changing the table or the schema version. The hash now covers only the part of a stored chunk row a capture reads - blocks, fluids, and the block entities whose classes the block registry reports as microblock types - and drops block light, light saturation, entities and their count, the block-entity count, mod data, server mod data, light positions, decors and the placed/removed counters. A row that does not parse as that shape is hashed whole, which is the previous behaviour. Because the meaning changed, a value stored under the old rule can never match and would report its column as changed forever: the cache therefore carries `Meta.FingerprintRule` (now `2`, where the whole-row rule was `1`), and every stored claim is deleted when the stored rule differs, with a log line naming how many went. This is deliberately NOT a schema-meaning bump: the captured sections remain exactly as valid as before, and bumping `SchemaVersion` would discard them for nothing. The same session also makes a schema purge delete `ColumnFingerprint` alongside `Section`, because a claim that survives the deletion of the section it describes lets the sweep skip terrain the cache no longer holds.
 
 Session 105 (0.4.119) changes WHEN a claim is written, not its meaning: a durable capture waits for the next world save, and the claim is then taken from a fresh read of the file rather than from the startup index. Stored rows are unchanged in shape and rule, and a session that ends before that re-read still writes the index-time value.
+
+Session 109 (0.4.126) versions the server cache's sections, without a schema-meaning bump:
+- **Server caches only** (`-server.db`; a client cache never gets these): `Section` gains
+  `Version INTEGER NOT NULL DEFAULT 0` by `ALTER TABLE ADD COLUMN`, plus the covering index
+  `SectionVersions (Detail, Version, SX, SZ)` (G255). Rows written before it read as version 0.
+  Every checkpoint transaction stamps its rows with one new version and writes the counter to
+  `Meta.SectionVersion` in the same transaction, so a reader that sees the counter sees every row at
+  or below it.
+- `Meta.SectionGeneration` names the cache's lineage. It is minted when the cache is first versioned,
+  again after a format purge (which now deletes it), and again when the insert trigger
+  `SectionLegacyWrite` has set `Meta.LegacyWrite`: the trigger marks any row written with version 0,
+  which is how a build from before section sync writes. That costs such an older build one small
+  Meta write per row, and the next start re-mints the generation so every client re-checks.
+- **Client caches:** the table `AssistOwed (Detail, SX, SZ, Version)` holds the held sections a server
+  announced as changed and the client has not yet merged and saved, and `Meta.AssistGeneration` and
+  `Meta.AssistVersion` record how far it caught up. A span's owed rows and the version it reaches are
+  written in one transaction. The table is created in every cache, empty on the server's. A format
+  purge clears the table and both Meta keys with the sections they describe.
+
+An older build ignores the column, the index and the new table, and an older reader of a server cache
+reads `Section` exactly as before. The blob format and schema meaning are unchanged (4/6).
 
 Session 103 (0.4.113) adds the table `ColumnFingerprint (CX, CZ, Fingerprint, Rows, ModifiedMs)`: per chunk column, a 64-bit content hash of what the savegame held at the moment this cache proved it had captured that column, so a later sweep can skip it. It is additive and created with `CREATE TABLE IF NOT EXISTS`. The Section table, the blob format and the schema meaning are unchanged (4/6); older builds never read the table, a format purge clears it with the sections, and a missing row reads as "assume changed", which is exactly the behaviour before the table existed. Deliberately not a column on `Section`: that is keyed by `(Detail, SX, SZ)` and this by chunk column, which are different key spaces at different granularities. Deliberately not a schema-meaning bump either, because a bump wipes the cache and the cache is the baseline any measurement of this feature has to be made against. The fingerprint stays advisory: it may cause work to be skipped, never a claim about content, and it is written only once a column's capture has reached the durable row.
 

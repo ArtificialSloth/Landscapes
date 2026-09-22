@@ -2,6 +2,34 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-22 - Section versions: a returning player gets what changed while away (0.4.126-0.4.127)
+
+- A review of the savegame-sweep plans found Phase B of the terrain-change plan unstarted: a section
+  that changed while a player was away was never offered to them again.
+- The owner chose that a client with no record re-checks everything it holds, newest winning, over
+  keeping what it has.
+- 0.4.126 built it:
+  - **Server:** every server-cache row carries a version, stamped once per checkpoint and committed
+    with the counter. A generation names the lineage and is re-minted on a format purge or on a
+    version-less write, caught by a trigger. The server answers joins and 30-second broadcasts from
+    one FIFO, which keeps every player's spans contiguous.
+  - **Client:** it records the version it caught up to plus the held sections still owed, in one
+    transaction, and fetches them nearest first inside the serving radius. A debt settles only on a
+    durable, new-enough merge.
+  - The refresh flag stays on the wire for older clients; integrated play is unchanged.
+- The migration measured 62 ms on a copy of the owner's 1.85 GB cache. The first index shape was
+  ignored by the planner (G255) and was corrected before the build.
+- The owner asked for the tests to be run for him. A four-join dedicated sandbox run matched every
+  prediction: 16 changes while away, exactly the 19 rows of a final save, and a full 59-section
+  re-check after a simulated older-build write.
+- The run also found catch-up at about one section a second: a merged section held its slot until
+  its 30-second save (G256). 0.4.127 frees the slot at merge; the same sandbox then caught up in
+  about 30 seconds.
+- Closed from TODO: "Implement terrain change detection" Phase B. Carried forward: the owner's own
+  play, a real second-player test, a measured large-world re-check, and the stationary re-fetch cost
+  in the hitch investigation.
+- Checkpoints `e668f81` and `89509e9`; 25,610 assertions pass.
+
 ## 2026-09-21 - A shallow seam strip, a see-through bank, and fog that dissolves (0.4.125)
 
 - The owner asked for a strip no more than 2-3 blocks deep dedicated to the seam, a much thinner

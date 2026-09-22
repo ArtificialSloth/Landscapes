@@ -8,6 +8,20 @@ first.
 
 ## [Unreleased]
 
+**A player returning to a dedicated server now gets the distant terrain that changed while they
+were away.** Before, a player's game asked a server only for sections it did not already hold, and
+the live refresh reached only players online at the time. A section that changed while someone was
+away was therefore never offered to them again, and their cached copy stayed stale for good.
+0.4.126 numbers every section the server saves with a version that only grows. Each player's game
+remembers how far it has caught up. On rejoin the server lists everything saved since then, and the
+game re-downloads the sections it holds, nearest first, in the background. Progress is saved as it
+goes, so quitting halfway loses nothing. The first time a player joins after this update, or after
+a server's LOD cache is deleted or rebuilt, their game re-checks every section it holds: the owner's
+choice, costing one background re-download of the overlap. Integrated singleplayer is unchanged,
+because it already reads the server's cache directly. A four-join dedicated sandbox test matched
+every prediction. It also found catch-up running at about one section a second, which 0.4.127
+fixes. No second player has been involved yet.
+
 **Farseer's seam fog is now a natural fog bank that follows the terrain.** The rounded 0.4.120
 ribbon improved the distant sawtooth outline but showed hard lines where its translucent cards
 crossed, so 0.4.121 replaced every card with one continuous medium, and the owner said the fog
@@ -21,7 +35,7 @@ cost he measured at 400 against 550 FPS. 0.4.125 hides the seam with a strip of 
 blocks deep, so the bank above it can be thin enough to see Farseer through, and lets the fog a
 moved seam leaves behind dissolve instead of vanishing. The owner said everything looked good.
 
-**The seam fog's defaults are now the owner's own tuning** (after 0.4.125, in no build yet):
+**The seam fog's defaults are now the owner's own tuning** (after 0.4.125, first shipped in 0.4.126):
 spread 36 blocks, floor depth 20 blocks and edge softness 35%; the densities (100%), strip height
 (3 blocks) and fade time (0.8 s) already matched. A saved config keeps its own values.
 
@@ -62,8 +76,8 @@ presets.
 periodically, reported by the owner on 0.4.125 with no known cause (the fog or Farseer, the
 savegame sweep changes, or something else) and noted for future performance work; the seam fog's
 `.vhfog` on/off cost; human-check 0.4.111's player-aware sweep behavior and run the sustained
-virgin-frontier three-way comparison; independently review and then implement the terrain-change
-plan; complete
+virgin-frontier three-way comparison; play section sync (0.4.127) on a dedicated server with a
+second player; complete
 the rapid-loading/excavation/weather Farseer matrix; measure controlled Farseer/fog GPU cost and
 reach/shape hitching; finish the deliberate player-facing Farseer rename and bundle its MIT
 license; let a
@@ -76,6 +90,39 @@ read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.127] - 2026-09-22
+
+**Catching up with a server runs at the server's speed.**
+
+- In 0.4.126 a downloaded section kept its place in the 32-at-a-time fetch queue until the next save
+  to disk, and saves happen every 30 seconds. The first dedicated sandbox test measured catch-up at
+  about one section a second, where the server serves eight. A full re-check of a large world would
+  have taken hours instead of about half an hour.
+- A merged section now frees its place at once and waits for its save without being fetched again.
+  It still leaves the owed list only once saved. In the same sandbox a rejoin fetched, merged and
+  saved its 18 owed sections within about 30 seconds, and a full re-check of 59 sections took 31
+  seconds.
+
+## [0.4.126] - 2026-09-22
+
+**A returning player gets what changed on the server while they were away.**
+
+- The server numbers every section it saves with a version that only grows. On an existing server
+  cache this is added in place the first time 0.4.126 opens it, with a log line saying so. It took
+  62 ms on a copy of the owner's 1.85 GB cache, and nothing is discarded.
+- A player's game records the version it has caught up to and the held sections still owed. On
+  rejoin the server lists every level-0 section saved since. The game re-downloads the ones it holds,
+  nearest first and only within the server's serving range, merges them with the newer copy winning,
+  and saves its progress as it goes. While a player is online the same announcements replace the old
+  live refresh, so a change made while they play reaches them the same way.
+- The first join after this update, or after a server's LOD cache is deleted, rebuilt or written by
+  an older mod version, re-checks every section the player holds, in the background, once.
+- Older clients and older servers behave exactly as before; the new message fields are ignored by a
+  peer that does not know them. Integrated singleplayer keeps reading the server's cache directly.
+- The seam fog's defaults are the owner's tuning from Session 108.
+- The server's `/vhserver` status reports the cache's version, how many players sync by version, and
+  the join and live spans sent; the client log reports each join's catch-up and when it is caught up.
 
 ## [0.4.125] - 2026-09-21
 

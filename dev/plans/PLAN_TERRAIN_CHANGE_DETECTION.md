@@ -1,9 +1,36 @@
 # Plan - Terrain change detection: savegame fingerprints and section versions
 
 **Status:** **A1, A2, A3 and A5 are built (0.4.113–0.4.116, Session 103). A4 was not built and is
-recommended against as specified. Phase B is unstarted.** Written 2026-09-18 against `2fbf2d1`
-(`0.4.110`); its required scheduling A/B was completed on 2026-09-19 in 0.4.111, and the sustained
-virgin-frontier follow-up on 2026-09-19 produced 0.4.112's rate floor.
+recommended against as specified. Phase B (B1–B3) is built (0.4.126–0.4.127, Session 109) and
+integration-tested in a dedicated sandbox; it has no play verdict yet.** Written 2026-09-18 against
+`2fbf2d1` (`0.4.110`); its required scheduling A/B was completed on 2026-09-19 in 0.4.111, and the
+sustained virgin-frontier follow-up on 2026-09-19 produced 0.4.112's rate floor.
+
+> **How Phase B was built, and where it differs from §4.2** (Session 109; the wire and storage
+> details are in `dev/WIRE_HISTORY.md`, the invariant in `dev/ARCHITECTURE.md` decision 52):
+>
+> - **B1.** One version per checkpoint transaction, not per row, committed with the counter in
+>   `Meta`. The generation is minted when the cache is first versioned and again after a format purge
+>   or a write by a build without versions, which an insert trigger detects. A dedicated column
+>   rather than SQLite's rowid, which is reused after the highest row is deleted.
+> - **B2 records more than one number.** Besides its generation and version, the client keeps the
+>   held sections announced but not yet merged and saved. Without them, a span interrupted by a quit,
+>   or refused because the section was beyond the serving radius (default 8,192 blocks), would have to
+>   be announced again and re-fetched whole on every join. With them, the version can move on at once
+>   and the debts resume.
+> - **B3.** The server no longer keeps a separate record of refreshed keys: live refreshes come from
+>   the same version queries as joins. The `Refresh` flag stays set on the wire because §4.2.4
+>   requires an older client to keep behaving as it does today.
+> - **No record** (first join after the update, or a rebuilt cache): the owner chose on 2026-09-22
+>   that the client re-checks every section it holds, newest winning, over keeping what it has, which
+>   was the recommendation. The re-check is resumable, so it is paid once.
+> - **Not in the plan:** owed sections are fetched nearest first inside the serving radius, and
+>   integrated play does not take part, because the sibling cache's rowids already say what changed.
+> - **Acceptance** (§7): tests 8, 10 and 11 pass at harness level. In the sandbox, a rejoin was told
+>   exactly the 16 sections changed while away (test 8), and a simulated older-build write forced a
+>   full re-check (test 10's path). Test 9 cannot be staged literally, because the server always
+>   saves once more at shutdown; its stricter form passed: a rejoin announced exactly the 19 rows of
+>   that final save. No second player has been involved.
 
 > **§4.1.5's fast path rests on a hook that does not exist.** Decompiling the installed engine on
 > 2026-09-20 showed `ServerMain.EnterRunPhase` returns immediately for `EnumServerRunPhase.Exit`

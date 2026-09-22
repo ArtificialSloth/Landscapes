@@ -4861,3 +4861,48 @@ never exposed.
 
 **Found:** 2026-09-21, Session 108 (owner-observed in 0.4.124; fixed in 0.4.125, which he said
 looked good).
+
+### G255 - SQLite reads a column added after a blob from the row, unless an index leads with the equality
+
+**Trigger:** adding a column to the `Section` table with `ALTER TABLE ... ADD COLUMN` and querying it
+with an equality on another column, as section sync asks "level-0 rows with a version above N".
+
+**Trap:** an added column is stored after `Data`, the section blob. The first index tried was
+`(Version, Detail, SX, SZ)`. Without statistics, SQLite's planner preferred the existing
+`SectionKeys (Detail, ...)` for the equality on `Detail` and sorted in a temporary B-tree, measured
+with `EXPLAIN QUERY PLAN` on a copy of the owner's 1.85 GB server cache. Every broadcast would then
+visit all 22,801 level-0 rows and read each one's version from the row itself. On the copy that took
+50 ms, because no row had yet been rewritten: a row written before the column existed has no such
+column, and its header says so. A row written since stores the version past the blob, which means
+reading through the blob's overflow pages. That cost is reasoned from SQLite's record format, not
+measured. It would have grown toward a read of most of the file every 30 seconds as the cache was
+rewritten.
+
+**Safer action:** lead the index with the equality column and follow it with the range column
+(`SectionVersions (Detail, Version, SX, SZ)`), name it with `INDEXED BY` in the query, read maxima
+through it too, and check `EXPLAIN QUERY PLAN` on a copy of a real cache. The plan became a
+covering-index search: a full re-check list took 9.5 ms and a live broadcast 0.02 ms. Building the
+index took 62 ms, because an old row's missing column is read from its header, not its blob.
+
+**Found:** 2026-09-22, Session 109 (measured on a copy of the owner's cache before 0.4.126 was
+built; the shipped index is the corrected one).
+
+### G256 - A fetch slot released only at durability throttles catch-up to the checkpoint
+
+**Trigger:** capping how many owed sections are being fetched at once, and releasing a slot when the
+merged copy is saved, as the section-sync tracker did in 0.4.126.
+
+**Trap:** client saves are coarse checkpoints, every 30 seconds (settled decision 20), so a merged
+section held its slot for up to 30 seconds after its fetch had ended. Each checkpoint could then move
+at most one cap's worth (32). The first dedicated sandbox run measured catch-up at about one section
+a second, against the server's eight. Offline checks could not see it: they call the durability
+report directly.
+
+**Safer action:** report "merged" and "durable" as two events. A merge frees the slot at once and
+parks the section as awaiting its save, never to be fetched again while it waits. Only the durable
+report settles the debt (G16), and a newer announcement releases a parked section to be fetched
+again. In 0.4.127 the same run caught up 18 owed sections within 30 seconds of joining, and a full
+re-check of 59 in 31 seconds.
+
+**Found:** 2026-09-22, Session 109 (sandbox integration run of 0.4.126; fixed in 0.4.127 and
+re-measured in the same sandbox).
