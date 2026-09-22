@@ -1946,7 +1946,7 @@ public static class SilhouetteChecks
                     StringComparison.Ordinal)
                 && !fogPass.Contains("RenderMesh", StringComparison.Ordinal)
                 && !fogPass.Contains("FramebufferAttachment.DepthAttachment", StringComparison.Ordinal)
-                && fogVolume.Contains("DefaultSpillBlocks = 40f", StringComparison.Ordinal)
+                && fogVolume.Contains("DefaultSpillBlocks = 36f", StringComparison.Ordinal)
                 && fogVolume.Contains("DefaultHeightBlocks = 24f", StringComparison.Ordinal)
                 && fogVolume.Contains("Felzenszwalb", StringComparison.Ordinal)
                 && fogVertex.Contains("gl_VertexID", StringComparison.Ordinal)

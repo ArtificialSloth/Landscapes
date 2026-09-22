@@ -222,20 +222,19 @@ internal static class LodSilhouetteFogVolume
     public const float MinFadeSeconds = 0f;
     public const float MaxFadeSeconds = 3f;
     public const float DefaultFadeSeconds = 0.8f;
-    // The remaining defaults are the owner's in-game tuning of 0.4.123 (2026-09-21), which
-    // hid the seam better than the first defaults at the same densities.
+    // The remaining defaults are the owner's in-game tuning of 0.4.125 (2026-09-21).
     public const float MinCoverage = 0f;
     public const float MaxCoverage = 1f;
     public const float DefaultCoverage = 1f;
     public const float MinSpillBlocks = 8f;
     public const float MaxSpillBlocks = 128f;
-    public const float DefaultSpillBlocks = 40f;
+    public const float DefaultSpillBlocks = 36f;
     public const float MinHeightBlocks = 16f;
     public const float MaxHeightBlocks = 192f;
     public const float DefaultHeightBlocks = 24f;
     public const float MinFloorDepthBlocks = 0f;
     public const float MaxFloorDepthBlocks = 64f;
-    public const float DefaultFloorDepthBlocks = 16f;
+    public const float DefaultFloorDepthBlocks = 20f;
     public const float MinBillowSizeBlocks = 12f;
     public const float MaxBillowSizeBlocks = 160f;
     public const float DefaultBillowSizeBlocks = 12f;
@@ -244,7 +243,7 @@ internal static class LodSilhouetteFogVolume
     public const float DefaultDriftSpeed = 1f;
     public const float MinEdgeSoftness = 0f;
     public const float MaxEdgeSoftness = 1f;
-    public const float DefaultEdgeSoftness = 0.5f;
+    public const float DefaultEdgeSoftness = 0.35f;
     public const float MinLayerDetail = 0f;
     public const float MaxLayerDetail = 1f;
     public const float DefaultLayerDetail = 0.52f;
