@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Offline mock-up of the Farseer seam fog: renders a synthetic 32-block staircase seam from
+    several viewpoints through a C# port of lodsilhouettefogvolume.fsh, and reports how much of
+    the seam shows through. It needs no game install and launches nothing. The noise is the
+    mod's own baked texture (the generator source is compiled in, not copied), and the shader's
+    constants are read from the .fsh file itself, so only the ported functions can drift.
+
+    See Program.cs for the command line; MSBuild forbids a double dash in a comment.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>fog-mockup</AssemblyName>
+    <RootNamespace>VintageHorizons.Tools</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Never shipped; this exists to be run from the repository. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../VintageHorizons/src/Render/LodSilhouetteFogNoise.cs" Link="LodSilhouetteFogNoise.cs" />
+  </ItemGroup>
+
+</Project>
