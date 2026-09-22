@@ -830,6 +830,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 switch (outcome.End)
                 {
                     case LodNetworkRefreshEnd.Durable: serverSync.Absorbed(outcome.Key, outcome.Version); break;
+                    case LodNetworkRefreshEnd.Merged: serverSync.Merged(outcome.Key, outcome.Version); break;
                     case LodNetworkRefreshEnd.Failed: serverSync.Failed(outcome.Key, now); break;
                     case LodNetworkRefreshEnd.NotHeld: serverSync.NotHeld(outcome.Key); break;
                 }

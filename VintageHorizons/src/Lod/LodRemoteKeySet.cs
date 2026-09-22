@@ -24,6 +24,12 @@ public enum LodNetworkRefreshEnd
     /// <summary>The server's copy, at <see cref="LodNetworkRefreshOutcome.Version"/>, is merged and durable.</summary>
     Durable,
 
+    /// <summary>
+    /// The server's copy is merged but not yet saved. The fill is over, so its fetch slot is
+    /// free; the debt is not, until <see cref="Durable"/> follows for the same section.
+    /// </summary>
+    Merged,
+
     /// <summary>The server refused it or its copy was unusable; the client's own copy is untouched.</summary>
     Failed,
 
@@ -493,6 +499,11 @@ public class LodRemoteKeySet
             return;
         }
         networkAwaitingDurable[key] = (version, world.PersistenceRevision(key));
+        // Saves are checkpointed every 30 seconds. Holding the fetch slot until then capped a
+        // re-check at one checkpoint's worth of sections per checkpoint - about one a second
+        // where the server serves eight - which the first sandbox test measured.
+        if (finished)
+            networkOutcomes.Add(new LodNetworkRefreshOutcome(key, LodNetworkRefreshEnd.Merged, version));
     }
 
     /// <summary>

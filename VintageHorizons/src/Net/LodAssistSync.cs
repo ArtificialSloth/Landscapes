@@ -124,6 +124,13 @@ public sealed class LodAssistSync
 
     /// <summary>Owed sections handed to the pipeline and not yet finished.</summary>
     readonly HashSet<long> active = new();
+
+    /// <summary>
+    /// Owed sections whose newer copy is merged and waiting for the next save. They no longer
+    /// hold a fetch slot, and are never handed over again while they wait: the durable report
+    /// settles them, and a newer announcement releases them to be fetched again.
+    /// </summary>
+    readonly HashSet<long> awaitingSave = new();
     readonly Dictionary<long, long> notBeforeMs = new();
     readonly Dictionary<long, int> failures = new();
     long nextPumpMs;
@@ -201,10 +208,11 @@ public sealed class LodAssistSync
             if (owed.TryGetValue(key, out long before) && before >= version) continue;
             owed[key] = version;
             spanOwed.Add(key);
-            // Already being fetched for an older announcement: the copy on its way may predate
-            // this one. Release it so the next pump asks again for this version; the merge of the
+            // Already being fetched, or merged and saving, for an older announcement: that copy
+            // may predate this one. Release it so the next pump asks again for this version; the
             // older copy then settles nothing (Absorbed compares versions).
             active.Remove(key);
+            awaitingSave.Remove(key);
         }
 
         return last ? CommitSpan() : null;
@@ -225,6 +233,7 @@ public sealed class LodAssistSync
             owed.Clear();
             owedRecorded.Clear();
             active.Clear();
+            awaitingSave.Clear();
             spanOwed.Clear();
             failures.Clear();
             notBeforeMs.Clear();
@@ -294,9 +303,23 @@ public sealed class LodAssistSync
     {
         if (!owed.TryGetValue(key, out long announced)) return;
         active.Remove(key);
+        awaitingSave.Remove(key);
         if (mergedVersion < announced) return;
         Settle(key);
         SettledThisSession++;
+    }
+
+    /// <summary>
+    /// A merge of the server's copy is done but not yet saved. Frees its fetch slot at once, so
+    /// the next section can be asked for while this one waits for the checkpoint; the debt
+    /// itself stays until <see cref="Absorbed"/> reports the save. An older copy than was
+    /// announced frees the slot too, and the section is fetched again.
+    /// </summary>
+    public void Merged(long key, long mergedVersion)
+    {
+        if (!owed.TryGetValue(key, out long announced)) return;
+        active.Remove(key);
+        if (mergedVersion >= announced) awaitingSave.Add(key);
     }
 
     /// <summary>
@@ -307,6 +330,7 @@ public sealed class LodAssistSync
     {
         if (!owed.ContainsKey(key)) return;
         active.Remove(key);
+        awaitingSave.Remove(key);
         Settle(key);
     }
 
@@ -318,6 +342,7 @@ public sealed class LodAssistSync
     {
         if (!owed.ContainsKey(key)) return;
         active.Remove(key);
+        awaitingSave.Remove(key);
         int count = failures.TryGetValue(key, out int n) ? n + 1 : 1;
         failures[key] = count;
         notBeforeMs[key] = count >= MaxFailuresPerSession
@@ -365,7 +390,7 @@ public sealed class LodAssistSync
         int picked = 0;
         foreach ((long key, _) in owed)
         {
-            if (active.Contains(key)) continue;
+            if (active.Contains(key) || awaitingSave.Contains(key)) continue;
             if (notBeforeMs.TryGetValue(key, out long notBefore) && nowMs < notBefore) continue;
             if (!LodAssistServerSystem.WithinServeRadius(key, playerX, playerZ, serveRadiusBlocks)) continue;
 
@@ -415,7 +440,8 @@ public sealed class LodAssistSync
         : !Active
             ? "not in use with this server (it does not offer section versions)"
             : $"caught up to version {recordedVersion}{(versionBroken ? " (not recording: a span went missing)" : "")}, "
-                + $"{owed.Count} changed sections owed ({active.Count} fetching), {SettledThisSession} merged this session";
+                + $"{owed.Count} changed sections owed ({active.Count} fetching, {awaitingSave.Count} saving), "
+                + $"{SettledThisSession} merged this session";
 
     /// <summary>Forget the session; the record itself is reloaded with the next world.</summary>
     public void Reset()
@@ -432,6 +458,7 @@ public sealed class LodAssistSync
         spanOpen = false;
         spanOwed.Clear();
         active.Clear();
+        awaitingSave.Clear();
         notBeforeMs.Clear();
         failures.Clear();
         nextPumpMs = 0;

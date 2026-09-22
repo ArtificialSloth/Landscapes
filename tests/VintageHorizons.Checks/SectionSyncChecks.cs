@@ -31,6 +31,7 @@ public static class SectionSyncChecks
         TrackerRecordsAVersionOnlyWithItsDebts(c);
         TrackerSettlesOnlyANewEnoughMerge(c);
         TrackerFetchesNearestFirstInsideTheRadius(c);
+        AMergedSectionFreesItsSlotBeforeItsSave(c);
         TrackerStopsRecordingAfterAGap(c);
         TrackerOutsideItsRole(c);
         NetworkRefreshReportsHowItEnds(c);
@@ -509,6 +510,45 @@ public static class SectionSyncChecks
         c.Eq(0, lost.OwedCount, "a section the client no longer holds is settled when handed over");
     }
 
+    /// <summary>
+    /// Found by the first sandbox run: a merged section held its fetch slot until the next save,
+    /// and saves are checkpointed every 30 seconds, so a re-check moved about one section a second
+    /// where the server serves eight. A merge frees the slot; the debt waits for the save; the
+    /// section is not fetched again while it waits.
+    /// </summary>
+    static void AMergedSectionFreesItsSlotBeforeItsSave(Check c)
+    {
+        var owed = new List<(long Key, long Version)>();
+        for (int i = 1; i <= LodAssistSync.MaxFillsActive + 8; i++) owed.Add((K(0, i, 0), 5));
+        LodAssistSync sync = Established(10, owed, _ => true);
+
+        var queued = new List<long>();
+        sync.Pump(1_000, 0, 0, 0, (k, _) => { queued.Add(k); return true; });
+        c.Eq(LodAssistSync.MaxFillsActive, queued.Count, "the cap fills");
+
+        for (int i = 1; i <= 8; i++) sync.Merged(K(0, i, 0), 5);
+        c.Eq(LodAssistSync.MaxFillsActive - 8, sync.ActiveCount, "a merge frees its fetch slot at once");
+        c.Eq(owed.Count, sync.OwedCount, "but settles nothing before its save");
+
+        queued.Clear();
+        sync.Pump(1_600, 0, 0, 0, (k, _) => { queued.Add(k); return true; });
+        c.SeqEq(Enumerable.Range(LodAssistSync.MaxFillsActive + 1, 8).Select(x => K(0, x, 0)).ToArray(),
+            queued.ToArray(), "the freed slots go to sections not yet fetched, never to one waiting for its save");
+
+        sync.Absorbed(K(0, 1, 0), 5);
+        c.Eq(owed.Count - 1, sync.OwedCount, "the save settles it");
+
+        // A newer announcement for a section waiting on its save sends it back to be fetched.
+        sync.OnSpan(10, 12, new[] { K(0, 2, 0) }, new long[] { 12 }, last: true, _ => true);
+        queued.Clear();
+        sync.Merged(K(0, 9, 0), 5);
+        sync.Pump(2_200, 0, 0, 0, (k, _) => { queued.Add(k); return true; });
+        c.SeqEq(new[] { K(0, 2, 0) }, queued.ToArray(),
+            "a section announced again while it waited for its save is fetched again");
+        sync.Absorbed(K(0, 2, 0), 5);
+        c.Eq(owed.Count - 1, sync.OwedCount, "and the save of its older copy settles nothing");
+    }
+
     static void TrackerStopsRecordingAfterAGap(Check c)
     {
         long key = K(0, 6, 6);
@@ -582,7 +622,9 @@ public static class SectionSyncChecks
         world.MarkChanged(held);
         remote.NoteNetworkMerged(held, 9);
         c.Eq(0, remote.PendingFills, "the newer copy finishes the fill");
-        c.True(remote.TakeNetworkRefreshOutcomes() == null, "but a merge not yet saved is not reported (G16)");
+        c.SeqEq(new[] { new LodNetworkRefreshOutcome(held, LodNetworkRefreshEnd.Merged, 9) },
+            remote.TakeNetworkRefreshOutcomes() ?? new(),
+            "a merge not yet saved is reported as merged - its fetch is over - but not as durable (G16)");
         remote.MarkPersisted(held, world.PersistenceRevision(held));
         c.SeqEq(new[] { new LodNetworkRefreshOutcome(held, LodNetworkRefreshEnd.Durable, 9) },
             remote.TakeNetworkRefreshOutcomes() ?? new(), "the save that contains it releases the report");
