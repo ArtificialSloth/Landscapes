@@ -1,0 +1,18 @@
+# Section-sync (terrain-change plan Phase B) integration route, Session 109.
+#
+# One stationary view at the default benchmark spawn, held long enough for the dedicated server
+# to capture the area, checkpoint its saves, broadcast them as versioned spans, and for the client
+# to fetch, merge and save what it owes. Run it several times against one sandbox profile, changing
+# the server cache between runs with scripts/section-sync-inject.py, and read the "Server sync"
+# lines in the client log and the "caught up to cache version" / "has no record" lines in the
+# server console:
+#
+#   pwsh -NoProfile -File scripts/bench-windows.ps1 -Label section-sync-1 `
+#     -SandboxProfile section-sync -SeedSave .testdata/server/Saves/default.vcdbs `
+#     -ServerMod -ServerConfig bench/configs/section-sync.json -ClientCache Cold -ServerCache Cold `
+#     -Route bench/routes/section-sync.txt -Settle 30 -SettleMax 90 -Measure 20 -Laps 1 `
+#     -WarmupLaps 0 -Cooldown 60
+#   python scripts/section-sync-inject.py rewrite 10
+#   (the same run with -Label section-sync-2 -ClientCache Warm -ServerCache Warm, no -SeedSave)
+
+section-sync-spawn   512020  190  512010    0   -8

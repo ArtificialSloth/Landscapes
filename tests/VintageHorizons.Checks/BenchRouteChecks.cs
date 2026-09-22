@@ -98,6 +98,35 @@ public static class BenchRouteChecks
         c.Eq(0, assistRoot.GetProperty("PregenRadiusChunks").GetInt32(),
             "saturated-assist config excludes startup generation");
 
+        // Session 109's section-sync run: the server's own serving limits, so the measured catch-up
+        // is what a player would get, and no sweep or generation writing rows of its own.
+        BenchRoute sectionSyncRoute = BenchRoute.Load(Path.Combine(routeDir, "section-sync.txt"));
+        c.Eq(1, sectionSyncRoute.Waypoints.Count, "section-sync route has one measured view");
+        c.Eq("section-sync-spawn", sectionSyncRoute.Waypoints[0].Name,
+            "section-sync route keeps its scenario identity");
+        c.False(sectionSyncRoute.Waypoints[0].HasTrajectory,
+            "section sync does not mix catch-up with client movement");
+
+        string syncConfigPath = Path.Combine(
+            GameAssemblies.RepoRoot, "bench", "configs", "section-sync.json");
+        using JsonDocument syncConfig = JsonDocument.Parse(File.ReadAllText(syncConfigPath));
+        JsonElement syncRoot = syncConfig.RootElement;
+        var defaults = new VintageHorizons.Net.LodServerConfig();
+        c.True(syncRoot.GetProperty("EnableServing").GetBoolean(), "section-sync config serves sections");
+        c.Eq(defaults.ServeRadiusBlocks, syncRoot.GetProperty("ServeRadiusBlocks").GetInt32(),
+            "section-sync config keeps the default serving radius");
+        c.Eq(defaults.MaxSectionsPerSecondPerPlayer,
+            syncRoot.GetProperty("MaxSectionsPerSecondPerPlayer").GetInt32(),
+            "section-sync config keeps the default per-player serving rate");
+        c.Eq(defaults.MaxSectionsPerSecondTotal, syncRoot.GetProperty("MaxSectionsPerSecondTotal").GetInt32(),
+            "section-sync config keeps the default global serving rate");
+        c.False(syncRoot.GetProperty("SweepSavegame").GetBoolean(),
+            "section-sync config excludes sweep work, whose writes would be announced too");
+        c.False(syncRoot.GetProperty("EnableGenerateCommand").GetBoolean(),
+            "section-sync config excludes command generation");
+        c.Eq(0, syncRoot.GetProperty("PregenRadiusChunks").GetInt32(),
+            "section-sync config excludes startup generation");
+
         BenchRoute movingRoute = BenchRoute.Load(Path.Combine(routeDir, "moving-rotation.txt"));
         c.Eq(4, movingRoute.Waypoints.Count, "moving route loads all four legs");
         c.True(movingRoute.Waypoints.All(wp => wp.HasTrajectory),
