@@ -11,8 +11,8 @@ internal readonly record struct LodSilhouetteBoundaryEdge(
 ///
 /// Bit zero says a drawable Farseer tile describes the cell, bit one says ready real terrain
 /// replaces it, and bits two through five mark a west/east/north/south edge against the other
-/// owner. The unique edge list is the centreline for the layered fog volume; ownership remains
-/// exact while the visible fog can spill softly and irregularly beyond the chunk grid.
+/// owner. The unique edge list is the centreline for the continuous fog field; ownership remains
+/// exact while the visible medium can spill softly and irregularly beyond the chunk grid.
 /// </summary>
 internal sealed class LodSilhouetteSeamMask
 {

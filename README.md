@@ -33,9 +33,11 @@ client capture, and players without the mod are unaffected.
   field shows the broad shape of land beyond cached terrain and across unexplored gaps. It yields
   cell by cell only when ready vanilla or LOD geometry can replace it, slopes its edge down to hide
   unresolved gaps, and uses gentle slope/depth contrast to keep overlapping distant ridges
-  readable. A layered, billowing fog bank follows the exact Farseer/LOD boundary, spilling across
-  both sides and over water to conceal the remaining visual handoff. It is independent of the real
-  3D cache and can be switched off completely.
+  readable. A natural, sunlit fog follows the exact Farseer/LOD boundary: a shallow strip lying on
+  the seam hides the handoff, and a thin bank above it, which Farseer shows through, thins outward
+  and frays at its edges, spilling across both sides and over water. Its outline follows the
+  terrain, not the camera, and fog left behind as the seam moves dissolves instead of vanishing. It
+  is independent of the real 3D cache, and Farseer and its fog can each be switched off completely.
 
 ## What it cannot do
 
@@ -62,7 +64,8 @@ in advance.
 | `.vhdetail [auto\|manual\|target <px>\|<blocks>]` | Without an argument, report the six transition distances and where they come from. `auto` (the default) chooses them from your field of view and render resolution so every level hands over at the same size on screen, and `target <px>` sets that size (1.5 by default); `manual` returns to your own distances; a number sets a doubling sequence beginning there and switches automatic off. Saved; `.vhconfig` edits them individually. |
 | `.vhfar <blocks>` | Cap the LOD render distance. `0` means unlimited, which is the default. |
 | `.vhtaa [on\|off\|show\|reach\|nudge\|sharpen\|blend\|still\|clip\|reset]` | Distant anti-aliasing: stops distant terrain shimmering as you move by nudging it a fraction of a pixel each frame and blending frames together, on cached terrain only. On by default and saved; also a switch in `.vhconfig`. `reach <px>` sets where it begins as the on-screen width of one block; `nudge`, `sharpen`, `blend` (memory while turning), `still` (memory when still) and `clip` (how strictly old frames must match) tune it. All are saved and all are sliders on the `.vhconfig` Anti-Aliasing tab; `reset` restores the defaults, `show` tints what it touches for the session. With no argument it reports its settings and GPU cost to chat and the client log. |
-| `.vhsilhouette [on\|off\|log\|stats]` | Session-only Farseer override and status. The saved enable switch, 1,024–32,768-block reach, outline, hill-softness, edge-apron, colour/look and eight seam-fog dials are on `.vhconfig`'s Farseer tab. `off` drops the server demand and releases client tile, worker and GPU state; it does not rewrite the saved choice. |
+| `.vhsilhouette [on\|off\|log\|stats]` | Session-only Farseer override and status. The saved enable switch, 1,024–32,768-block reach, outline, hill-softness, edge-apron, colour/look, the Seam fog switch and twelve seam-fog dials are on `.vhconfig`'s Farseer tab. `off` drops the server demand and releases client tile, worker and GPU state; it does not rewrite the saved choice. |
+| `.vhfog [on\|off\|stats]` | Session-only seam fog switch; no argument toggles it. Off draws no fog pass and builds nothing for it, so comparing frame rates on and off in one scene shows the fog's whole cost. The Farseer tab's Seam fog switch saves the choice. |
 | `.vhmask [on\|off]` | Hand each loaded vanilla chunk its own ground instead of using one distance, and skip cached terrain that is entirely replaced. On by default since 0.3.17; the setting is saved. Turn it off to fall back to a single measured distance. |
 | `.vhpaint [on\|off]` | Diagnostic. Paints the terrain the mask is hiding magenta instead of hiding it. A gap that turns magenta is the mask's doing; a gap that stays empty is not. Magenta can also show where distant terrain stands in front of the game's own, which is harmless. |
 | `.vhskip [on\|off]` | Only matters with `.vhmask on`. On (the default) lets the mod drop a whole cached piece when the game covers all of it. Off keeps the per-pixel masking but never drops a whole piece. |
@@ -185,10 +188,18 @@ slopes only the nearby edge instead of lowering the entire distant field.
 
 The remaining handoff is concealed by a separate atmospheric volume centred on that exact
 ownership line. It has real height, extends below the sampled surface for cliffs and shores, spills
-across both terrain systems, fades away at its outer edge, and composites after water so the veil
-also covers a shoreline or water-chunk boundary. The Farseer tab exposes fog density, coverage,
-spread, height, floor depth, billow size, drift speed and layer detail; density zero disables only
-the fog pass.
+across both terrain systems, and composites after water so the veil also covers a shoreline or
+water-chunk boundary. A strip only a few blocks deep lies on the seam and hides the step from any
+angle; it rests on the ground the camera actually sees, so a slope neither buries it nor leaves it
+floating. The bank above and around it is thin enough to see Farseer terrain through, thins
+steadily away from the seam and breaks into wind-stretched strands, with a faint haze beyond. The
+sun lights it: brighter tops, cool grey undersides, never brighter than the horizon. Its outline is
+built from all Farseer terrain within reach, so turning the camera does not move it. When cached
+terrain loads in and the seam moves on, the fog it leaves behind thins and frays away over the fade
+time while fog over the new seam appears at once. It is marched at half resolution and rebuilt at
+full resolution without spreading across near objects. The Farseer tab has a Seam fog switch and
+exposes Seam strip density and height, Fog density, coverage, spread, height, floor depth, billow
+size, drift speed, Fog fade time, Fog quality and edge softness.
 
 ## Building
 

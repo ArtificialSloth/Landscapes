@@ -4129,12 +4129,16 @@ surface near the exact ownership mask.
 occupy empty air. Its shape inherits the 32-block cells and terrain triangles, so a heavy treatment
 looks like bright angular paint rather than atmospheric fog.
 
-**Safer action:** keep the exact ownership mask, but use it to build separate translucent geometry.
-Cross vertical sheets with horizontal sheets, put the greatest density on the real boundary, and
-fade every exposed outer, upper and lower vertex to zero. Use world-space noise to break up the
-remaining regular layers.
+**Safer action:** keep the exact ownership mask, but use it to drive an atmospheric medium that can
+occupy empty air. The first working form used crossed translucent geometry; G244 records why that
+representation was later retired. The current answer is one signed-distance/height field and one
+depth-aware density integration, with world-space noise shaping the bank rather than painting the
+terrain.
 
 **Found:** 2026-09-17, Session 99 (human-observed in 0.4.102; replaced in 0.4.103).
+
+**Representation updated by G244, 2026-09-20, Session 106.** The need for a separate atmospheric
+medium stands; crossed translucent geometry does not.
 
 ### G218 - A seam veil drawn before OIT cannot reliably conceal water
 
@@ -4630,3 +4634,230 @@ defect in the claim path, and account for the maintenance backlog when interpret
 taken while it is draining. Expect it to converge one audit pass later, not immediately.
 
 **Found:** 2026-09-20, Session 105.
+
+### G244 - Smoothing translucent cards does not remove the lines where they overlap
+
+**Trigger:** improving a fog bank made from several translucent ribbons or sheets by rounding its
+outside path, increasing layer count, blurring the colour or adding more noise.
+
+**Trap:** the outline gets better while the representation still exposes itself. Wherever two
+cards cross, or a ray intersects a different number of vertical and horizontal layers, source-over
+alpha accumulates by a different amount. At distance those changes become hard gradation lines,
+even when every individual surface has a smooth profile and transparent perimeter. Version 0.4.120
+proved the distinction: its traced, simplified and rounded path removed much of the sawtooth, while
+the owner's screenshots still showed the internal card topology plainly.
+
+**Safer action:** if the requirement is a continuous medium, integrate density once through a
+continuous field. Do not try to disguise a set of surfaces as volume. A compact 2D signed-distance
+and height field plus a depth-aware screen-space raymarch removes the intersections without paying
+for a mostly empty 3D texture. Preserve the original ownership boundary as input; replacing the
+render representation does not authorize changing terrain ownership.
+
+**Found:** 2026-09-20, Session 106 (human-observed in 0.4.120; replaced and human-positive for fog
+quality in 0.4.121).
+
+### G245 - Organic noise must not own the opacity at a seam the fog is required to hide
+
+**Trigger:** using the same low-density noise pockets across the whole fog bank, including the
+exact terrain handoff, and expecting density/coverage sliders to make the seam reliable.
+
+**Trap:** an attractive open pocket can become a direct view of the artifact the fog exists to
+conceal. Primary depth ends the ray at opaque terrain, so a grazing seam pixel may have only the
+LOD-side half of the bank in which to accumulate extinction. Globally increasing density or the
+noise floor thickens the whole scene before it guarantees that short path. The owner found the
+0.4.121 medium much better visually but could still read the bright stepped handoff, and no
+available dial changed it enough.
+
+**Safer action:** separate the functional core from the artistic variation without adding another
+surface. Put a broad, smooth density floor at the unwobbled signed-distance origin, fade it with the
+same open-end field, and normalize its density by side width and the integrator's per-block
+extinction so its one-sided optical depth is stable when Fog spread changes. Let noise and wobble
+shape the outer bank. Keep the master density able to disable the effect deliberately.
+
+**Found:** 2026-09-21, Session 106 (human-observed in 0.4.121; harness-fixed in 0.4.122, awaiting
+visual acceptance).
+
+**Refined by G246, 2026-09-21, Session 107.** The requirement stands - noise must not open the
+seam - but 0.4.122's answer was wrong in scale and shape. A seal many times denser than the bank
+becomes a painted wall. The seal is now sized like the bank, normalized through the vertical
+column, and fills holes only over a measured core.
+
+### G246 - A seam seal many times denser than its fog paints a flat wall
+
+**Trigger:** closing a fog's coverage gap by adding a smooth, noise-free term normalized for one
+path length (0.4.122: a sideways half-crossing of the LOD side), with the fog's colour left as the
+engine's horizon fog colour.
+
+**Trap:** the camera usually looks down through the column, which is several times longer than
+the path the term was sized for. At the owner's dials the seal was 0.376 per block, 10-30 times the
+bank, and the column over it reached optical depth 9-20. A medium that far past opaque shows none
+of its inner texture, so what remains is its colour: flat, unlit, and brighter than snow in the same
+scene. Its opacity also collapsed from solid to clear in 6-8 blocks, a crisp outline at seam
+distance. The owner called it too bright, too dense and very unnatural. The same seal still leaked
+at staircase corners past its 27-block reach.
+
+**Safer action:** design by how see-through the fog column is. Make it just opaque (optical depth
+about 3-3.5) over a band measured from the real staircase, at the same scale as the bank so the
+seal only fills holes, and fade it exponentially rather than with a flat-topped profile. Shape the
+edges by coverage erosion, not by dimming. Light the medium from the sun and cap it below the
+horizon colour. Render the result with `scripts/fog-mockup` before building.
+
+**Found:** 2026-09-21, Session 107 (0.4.122 human-observed in `2026-09-21_09-44-39.png` and
+reproduced offline; replaced in 0.4.123, whose shape the owner called fantastic).
+
+**Refined by G251, 2026-09-21, Session 108.** What made 0.4.122's seal a wall was its dense part
+filling the bank's full height and ending in a clean edge. 0.4.125's seam strip is again many times
+denser than the bank, but only a few blocks deep, with a lobed, frayed edge and billow shading; the
+owner said everything looked good. How it reads from above is not separately reported.
+
+### G247 - The vertical column is not the shortest path to the edge of a sealed band
+
+**Trigger:** proving a fog hides a ground line by integrating the vertical column above it, and
+concluding that every other view must cross more fog.
+
+**Trap:** that holds only in the middle of the band. A slanted ray reaching a point near the band's
+edge enters from outside and crosses mostly the thinner shoulder; only its last few blocks lie
+over the band. With a 6-block margin past the measured staircase and a seal fading over 0.12 of the
+spread, the mock-up's worst pixels leaked 13-17% from above, at a distance and at ground level while
+the average stayed near 1%.
+
+**Safer action:** give the band a margin past what it must hide (10 blocks) and let the seal fade
+gently (0.3 of the spread), then measure every angle - above, distant, ground level, from the far
+side, along the band and straight down - and read the worst pixel, not only the average.
+
+**Found:** 2026-09-21, Session 107 (offline mock-up of the shipping shader; fixed before 0.4.123
+shipped).
+
+### G248 - A fog outline derived from the frustum's tiles moves with the camera
+
+**Trigger:** building a seam-derived field from the tiles that passed this frame's frustum test,
+because that list already exists for drawing, and fitting its centreline with a whole-path
+simplification.
+
+**Trap:** turning changes which tiles are in the list, so the traced seam is cut in different
+places and grows open ends at the frustum's edge. The Douglas-Peucker fit depends on the whole
+path's end points, so every re-cut re-fits the curve everywhere along it, and the ribbon visibly
+deforms as the camera turns. The owner reported exactly that in 0.4.123. The same globality meant
+tiles entering at the far edge of the reach while travelling could shift the curve near the player
+by up to the simplification tolerance. It is settled decision 45's lesson, ownership may not depend
+on the view, returning for a value derived from ownership.
+
+**Safer action:** build the outline from every tile within reach whatever the camera faces, caching
+each tile's coverage and refreshing off-screen tiles a few per frame. Make every point of the
+centreline a function of the staircase near it (a fixed-window moving average), and fix the field's
+resolution from the reach rather than the momentary window. A check extends the frontier far away
+and asserts the field near the start does not move.
+
+**Found:** 2026-09-21, Session 107 (human-observed in 0.4.123; source-traced; fixed in 0.4.124, not
+yet confirmed in play).
+
+### G249 - A fixed step budget runs out before a skimming ray reaches the far fog
+
+**Trigger:** raymarching a fog bank with a fixed number of short steps, and testing it only from
+viewpoints whose rays cross the bank.
+
+**Trap:** a ray running along the seam stays inside the bank's bounds for thousands of blocks. 192
+steps of about 4 blocks cover about 800 of them, so fog beyond that is never integrated and the far
+seam shows at the horizon; the mock-up found a pixel 2,835 blocks away showing 50%. 0.4.122's 160 ×
+3.6-block budget was shorter still. Lengthening steps naively then undercounts fog that thickens
+along the step, as it does toward the ground, because each step was sampled at its start: straight
+down rose from 9% to 12% show-through.
+
+**Safer action:** let steps through thin fog grow with distance (up to 2% of it), where detail is
+smaller than a pixel anyway, while dense fog keeps short optically-thin steps, and sample each step
+at its middle. Straight down then fell to 6.5%, and the along-the-seam view to 1%.
+
+**Found:** 2026-09-21, Session 107 (offline mock-up; fixed in 0.4.124).
+
+### G250 - The engine's uniform collector does not know `sampler3D`
+
+**Trigger:** adding a 3D texture to a mod shader and binding it through the engine's
+`IShaderProgram.Uniform` or `BindTexture2D` helpers.
+
+**Trap:** `ShaderProgram.collectUniformNames` (VintagestoryLib 1.22.7) finds uniforms with a regex
+listing `float`, `int`, the `ivec`/`vec` types, `sampler2DShadow`, `sampler2D`, `samplerCube`,
+`mat3`, `mat4x3` and `mat4`. A `sampler3D` is not collected, so it has no entry in the location
+dictionary and an engine `Uniform` call on its name throws (G174's mechanism). Its sampler also
+stays on unit 0 unless set, where it collides with the first `sampler2D` of a different type.
+
+**Safer action:** resolve the location with `GL.GetUniformLocation(program.ProgramId, name)`, cache
+it per `ProgramId` (a shader reload replaces the program), set it with `GL.Uniform1` while the
+program is in use, and save and restore that unit's `TextureBinding3D` around the draw. Treat a
+missing location as a failure, not a silent skip.
+
+**Found:** 2026-09-21, Session 107 (source-traced from the decompiled engine before 0.4.123; the raw
+binding ran without a logged fog failure in the owner's 0.4.124 session).
+
+### G251 - A bank normalized by its vertical column is a wall from the side
+
+**Trigger:** sizing a wide, low fog bank so that its vertical column over the seam is just opaque,
+and then tuning its density dial while looking at it from the ground.
+
+**Trap:** a level view crosses the bank's whole width, about eight columns' worth for 0.4.124's
+shape. On the owner's 60/60 dials the offline mock-up showed 1.7% of the terrain behind the fog from
+ground level while the view from above was fine. The owner reported the same thing in play: the
+wall was too dense to see Farseer through, but had to stay dense to hide the seam, because the
+dense seal filled the bank's full height. Lowering the dial far enough to see through would have
+used the bottom tenth of a slider that moves in 5% steps, and would have opened the seam.
+
+**Safer action:** give the seam its own shallow layer that alone hides it, and quote the scenery
+fog along a level crossing (0.4.125: optical depth 1.0 across twice the core plus both shoulders).
+Its density per block then does not depend on its height, so a taller bank is deeper from above,
+not from the side. Measure both the seam and the terrain beyond the fog in `scripts/fog-mockup`.
+
+**Found:** 2026-09-21, Session 108 (owner-observed in 0.4.124; measured offline; replaced in
+0.4.125, which he said looked good).
+
+### G252 - A thin dense layer is stepped over by a march tuned for thick fog
+
+**Trigger:** raymarching a layer only a few blocks deep with steps sized from the previous
+sample's extinction, as the seam fog's march does.
+
+**Trap:** a ray dropping onto the layer from thin fog above arrives with a long step. The step
+whose middle lies above the layer counts none of it and the next one starts below the ground, so
+the layer is skipped outright. Straight down, the worst seam pixel in the mock-up showed 18%.
+
+**Safer action:** over the layer's sideways reach, cap each step's descent so it can reach at most
+just inside the layer's highest possible top, then a fraction of its depth at a time (0.4.125: a
+third). The worst pixel fell to 6%. Grazing rays are unaffected, because their descent is small.
+
+**Found:** 2026-09-21, Session 108 (offline mock-up of the shipping shader; fixed before 0.4.125
+shipped).
+
+### G253 - A shallow layer on a coarse sampled height is buried or floats on slopes
+
+**Trigger:** placing a fog layer a few blocks deep on the seam field's ground height, which is the
+Farseer height at the nearest point of the smoothed centreline.
+
+**Trap:** the staircase strays tens of blocks from the centreline, and on a slope the real ground
+there is several blocks above or below the sampled height. The layer is buried on the uphill side
+and floats on the downhill side. On a 10-block ramp across the seam the mock-up showed up to 91% of
+the seam at the worst pixel. A 24-32-block bank never showed this because its depth absorbed the
+error.
+
+**Safer action:** rest the layer on the surface the ray lands on while the sample is near the
+landing point (0.4.125: within 24 blocks, blending back by 64), clamped to 16 blocks of the sampled
+height so a cliff top or a sky ray cannot drag it away. The worst pixel on the ramp fell to 6%.
+
+**Found:** 2026-09-21, Session 108 (offline mock-up with `--ramp=10`; fixed before 0.4.125 shipped;
+not yet observed on real slopes).
+
+### G254 - Replacing a published field removes its fog in one frame
+
+**Trigger:** publishing a rebuilt seam-fog field by swapping its texture whenever the seam mask's
+signature changes.
+
+**Trap:** nothing of the old field survives the swap, so the fog over a stretch the seam has just
+left vanishes in the frame the new field uploads. The owner saw it while exploring in 0.4.124. While
+exploring, the signature changes often, so a new field can arrive before a fade has finished. A
+two-texture crossfade would then have to cut the older fade short; that failure is reasoned from
+the rebuild trigger, not observed.
+
+**Safer action:** have the worker carry the shown field, and whatever an earlier residual still
+holds, onto the new field's lattice as a residual whose weight wears down with time since the build
+began. Use weight zero wherever the new field is unchanged, so the second evaluation runs only
+where the seam moved. Show the thicker of old and new. New fog appears at once, so the moved seam is
+never exposed.
+
+**Found:** 2026-09-21, Session 108 (owner-observed in 0.4.124; fixed in 0.4.125, which he said
+looked good).

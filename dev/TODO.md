@@ -2,7 +2,66 @@
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
-## Start here: 0.4.119 needs a session with a real sweep behind it
+## Start here
+
+Read [Session 108](sessions/SESSION_108.md). Of 0.4.125's seam fog the owner said "Everything
+looked good", so the fog is not the next task by default: ask him what comes next before choosing
+work. Two things are recorded for when he wants them.
+
+### For the future: hitches while exploring new terrain (owner, 2026-09-21)
+
+On 0.4.125, while exploring new terrain, the owner saw hitches, with the minimum FPS dropping low
+periodically. He does not know whether it is the fog or Farseer, the savegame sweep changes, or
+something else, and asked for performance optimization to be looked into in the future. Nothing
+has been measured yet; do not start without his go-ahead.
+
+What is already known that bears on it, none of it a conclusion:
+
+- Session 104 recorded "consistent minor FPS dips while exploring new terrain" on 0.4.116. That
+  session's sweep was in its first adoption, and its dips were attributed to vanilla generation
+  plus a one-time sweep share.
+- The dormant-terrain snow refresh has had about 12,000 columns queued at 1/s on `test2` since
+  0.4.119, and no frame-time run has been taken with it running (see below).
+- Each seam-fog field rebuild uploads about 11 MB of half floats at a 4,096-block reach. Since
+  0.4.125 it also builds and uploads a residual, and while a residual fades the shader evaluates the
+  old field's shape again wherever the seam moved. Exploring rebuilds the field often. Rebuild
+  hitches were already an open question for 0.4.124.
+- Farseer previews, decode and meshing are worker-bound, and their uploads are capped at four tiles,
+  2 MiB and 2 ms per frame (Session 100 found Farseer idle on 73% of its ticks while exploring).
+
+A first pass would separate the candidates on one route, turning each off in turn: `.vhfog off`,
+`.vhsilhouette off`, the savegame sweep off, and then vanilla. Ask him how often the hitches come
+and how deep they go, from his frame-time graph, and whether they change with movement speed.
+Any diagnostic has to reach the client or server log, because he cannot copy game chat. The active
+route for this work is `dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md`.
+
+### Seam fog: what 0.4.125 left open
+
+- **Not separately reported.** "Everything looked good" is a whole-result verdict. If the owner
+  mentions the fog again, the specific questions are:
+  - whether the strip reads as mist or as a painted stripe from above;
+  - whether any trace of the steps shows straight down (the mock-up's worst pixel is 6%);
+  - whether edges taller than the strip show at the seam: tree lines, cliff faces, the sunk
+    Farseer apron. Seam strip height is the dial for that;
+  - whether the ribbon holds still while turning and travelling (0.4.124's fix);
+  - halos or blocky edges around near objects from the half-resolution upsample;
+  - whether 0.8 s is the right fade, and whether new fog should fade in as well (offered, not built).
+- **Cost.** The `.vhfog` on/off frame rate in one scene has not been taken since 0.4.123's 400 against
+  550 FPS. It belongs with the exploring-hitch work above.
+- **Defaults.** His tuning (spread 36, floor depth 20, edge softness 35%) is the source default after
+  0.4.125 and reaches players with the next build.
+- Render `scripts/fog-mockup` before and after any change to the medium, and read its worst pixel
+  as well as its average.
+
+### A fast check that fails intermittently
+
+During the Session 108 doc pass, `VanillaReadinessChecks.SteadyStateAllocation` ("converged lookup,
+revalidation scheduling, probing, and classification allocate nothing") failed in 3 of 7 runs of
+the fast tier with no source change between them; it had passed in every earlier run that session.
+It counts allocations on its own thread only, but its warm-up never calls `QueueMaintenanceCells`
+or `PromoteObserved` before the measured loop. The cause is not established.
+
+## Also open: 0.4.119 needs a session with a real sweep behind it
 
 Read [Session 105](sessions/SESSION_105.md) first. Two builds landed and both were played on
 `test2`, so phase A is no longer waiting on a play verdict: the startup sweep demonstrably skips
@@ -38,14 +97,6 @@ Open, in the order they block further work:
   change, not a cache that was wrong. Staging real corruption was not possible in a live world;
   its decision rules are covered offline.
 
-- ~~**0.4.110 shape and drift acceptance.**~~ **Closed 2026-09-19.** The owner accepted the fog work
-  after playing 0.4.111. The log half of the gate was verified offline from that session:
-  `lodsilhouette` and `lodsilhouettefogvolume` both compiled, zero `InvalidOperation`, zero GL
-  errors, Farseer never disabled, clean exit. Retained as a caveat for whoever tunes next: the
-  per-item observations the gate listed — drift speed at 0% and 300%, the thinner rim against Fog
-  spread, the 50% edge-softness default, and whether 100% Fog coverage is the intended look now
-  that the outline is irregular — were never separately reported. The acceptance is a whole-result
-  verdict, so a dial that turns out wrong later has not been re-judged, it was never judged.
 - **Complete the underlying ownership/motion matrix.** Fog intentionally conceals the transition,
   but must not become an excuse to regress correctness:
   - hold position and turn through the whole scene; Farseer ownership must not shift with yaw;
@@ -57,12 +108,12 @@ Open, in the order they block further work:
 - **Complete the remaining P4/P5 observations:**
   - look once at night, in rain/natural fog and in winter;
   - verify the final scale typography/spacing and that the reach handle changes actual reach;
-  - tune Outline detail, Hill softness, Apron width/depth and the nine fog controls only after the
-    0.4.110 shape is accepted. Fog density, coverage, spread, height, floor depth, billow size,
-    drift speed, layer detail and edge softness already persist and preview live;
-  - take a controlled off/on A/B and record FPS/GPU time and reach/shape-change hitches. The
-    owner's earlier 550→450 observation was informal and predates the geometry simplification,
-    exact all-level coverage and fog pass. Separately report fog layer-detail cost;
+  - tune Outline detail, Hill softness and Apron width/depth once the fog is accepted. The Seam fog
+    switch and ten fog dials (seam and outer density, coverage, spread, height, floor depth, billow
+    size, drift speed, Fog quality and edge softness) already persist and preview live;
+  - record Farseer off/on and seam fog off/on FPS in one scene, and any reach/shape-change hitch.
+    The owner's earlier 550→450 Farseer observation was informal and predates the geometry
+    simplification, exact all-level coverage and the fog pass;
   - compare islands/inlets only after the join is accepted; refine low/coastal sampling only if the
     picture still needs it.
 - **Finish Farseer credit deliberately.** Rename remaining player-facing “Silhouette” labels,

@@ -1,6 +1,6 @@
 # Plan - Horizon silhouettes and terrain ahead
 
-**Status:** Active. Reconciled 2026-09-17 through 0.4.108 (`6708b19`), Session 99.
+**Status:** Active. Reconciled 2026-09-21 through 0.4.124 (`1fb10f5`), Session 107.
 - P1, the first look, landed in 0.4.77 (`4c7720c`). The owner accepted the classic look apart from
   the joins.
 - P2 landed in 0.4.79-0.4.80, with a stall guard and an error brake in 0.4.78 and 0.4.81 (Session
@@ -8,16 +8,24 @@
 - P3 source is complete through 0.4.86: the owner accepted both accelerators, 0.4.85 added live
   sampling/refinement, and 0.4.86 added bounded manifest/request transport and dedicated opt-in.
   Its singleplayer/dedicated integration gate remains open.
-- P4 landed in 0.4.87 and was iterated by the owner through 0.4.108: the visible tab is Farseer,
+- P4 landed in 0.4.87 and was iterated by the owner through 0.4.125: the visible tab is Farseer,
   scale/reach were repaired, geometry is 16/8/4 quads, only the near edge slopes through an
   adjustable apron, and ready vanilla/LOD geometry owns exact suppression. 0.4.99's
-  frustum-dependent handoff and 0.4.100's L0-only handoff were rejected. The remaining visual seam
-  now has a layered fog volume over the exact ownership boundary. 0.4.106 was reported very good
-  and 0.4.107 excellent; 0.4.108's full corner footprint is the next human gate.
+  frustum-dependent handoff and 0.4.100's L0-only handoff were rejected. The layered 0.4.106 volume
+  was reported very good and 0.4.107 excellent, but after 0.4.120 rounded the outer path, distant
+  views exposed its internal card intersections as hard gradation lines. Version 0.4.121 replaced
+  every card with one continuous field/raymarch and the owner said the fog itself looked much
+  better. Version 0.4.122's dense normalized seal painted a flat, bright wall and was rejected.
+  Version 0.4.123 redesigned the medium as a natural bank by column optical depth, and the owner
+  called its shape fantastic. Version 0.4.124 split seam/outer density, built the outline from
+  terrain rather than the view, and halved the march resolution for cost (Session 107). Version
+  0.4.125 hid the seam with a shallow strip resting on the ground, made the bank above it
+  see-through, and let fog left by a moved seam dissolve; the owner said everything looked good
+  (Session 108).
 - Most P5 work is built: lazy client persistence is human-seen on rejoin, and Outline detail/Hill
-  softness plus bounded regeneration are present. Eight persisted fog dials are also built. Final
-  tuning, controlled cost evidence, optional island/inlet refinement and complete Farseer
-  naming/license credit remain.
+  softness plus bounded regeneration are present. A saved Seam fog switch and twelve persisted fog
+  dials are built, with the owner's tuning as defaults. Final tuning, cost confirmation, optional
+  island/inlet refinement and complete Farseer naming/license credit remain.
 - [The silhouette handoff](HANDOFF_HORIZON_SILHOUETTES.md) is the exact continuation point.
 - Silhouettes come first (D14).
 - Terrain Ahead is a separate, later feature (D15).
@@ -143,6 +151,12 @@ is hidden.
 | D23 | 2026-09-17 | Overlapping Farseer hills need readable contrast without more geometry. Use **world-directed slope light and gentle depth shading**, never camera-relative light that changes as the player turns. |
 | D24 | 2026-09-17 | Conceal the remaining Farseer/LOD join with **heavy volumetric fog centred on the exact ownership seam**. It spills across both sides, fades away over roughly a chunk, hangs above/below the surface and must look organic rather than flat or angular. Its material dimensions are player dials. |
 | D25 | 2026-09-17 | The seam fog must **cover water and sweep uniformly through corners** without removing water, exposing a hard line, or leaving a missing adjacent fog section. Water and terrain ownership remain unchanged. |
+| D26 | 2026-09-20 | **Visual fidelity outranks preserving the card implementation.** Replace intersecting fog sheets with one continuous depth-aware medium; adding more fog over Farseer is acceptable. The exact ownership boundary remains the input and ownership itself does not move. |
+| D27 | 2026-09-21 | **Organic variation may not expose the exact seam.** Keep billow openings in the outer bank, but give the handoff a broad smooth minimum optical depth inside the same medium. The owner established that the existing controls could not make 0.4.121 dense enough. |
+| D28 | 2026-09-21 | **The seam fog must look like natural fog:** very dense at the seam, lightening as it moves away, feathery and wispy at its edges. 0.4.122's dense seal was rejected as too bright, too dense and unnatural. The owner approved the column-optical-depth redesign, a one-time reset of dials tuned for the old fog, and keeping the offline mock-up in `scripts/`. |
+| D29 | 2026-09-21 | **The fog is seen from every angle** in ordinary play, not mainly from above. Its cost is judged by the owner with an on/off switch (`.vhfog` and the saved Seam fog switch), not by a GPU timing harness. |
+| D30 | 2026-09-21 | **Seam and outer density are separate dials** (the owner asked for about 60% over the seam and 35% outside it), and **the ribbon's shape is determined by the terrain and chunks, never the camera.** His in-game tuning became the defaults. |
+| D31 | 2026-09-21 | **A strip dedicated to the seam, no more than 2-3 blocks above the ground, hides it; the fog above is much thinner, so Farseer terrain can be seen vaguely through it.** Fog covering a seam that has moved on **dissipates over about half a second instead of vanishing**, with the time on a dial and left to the agent. His 0.4.125 tuning became the defaults. |
 
 Standing rules that apply throughout:
 - No hard-coded rendering distances: key rendering to on-screen size, pixel ownership, or the
@@ -594,10 +608,11 @@ does (`OpenPipeline()`), so it works in singleplayer with the sweep off.
   through an adjustable buried apron. The broad field keeps its representative height. At 60
   degrees and 1,080 rows, a 20-block error costs about 2.6 px at 8,000 blocks and about 41 px at
   500 blocks, so the edge treatment is still where looseness matters.
-- **Seam-fog boundary (D24-D25).** The same stable 32-block replacement answer emits unique cardinal
-  edges only where two drawable Farseer cells have opposite owners. Missing neighbour tiles do not
-  invent a seam. The edge set is a visual input only: fog may spill over both sides, but it never
-  expands or contracts ownership.
+- **Seam-fog boundary (D24-D25, D30).** The same stable 32-block replacement answer emits unique
+  cardinal edges only where two drawable Farseer cells have opposite owners. Missing neighbour tiles
+  do not invent a seam. The edge set is a visual input only: fog may spill over both sides, but it
+  never expands or contracts ownership. It is built from every Farseer tile within reach, each
+  caching its coverage, never from the frustum's tiles (G248).
 - **Mesher.** Arrays only, built on a worker thread and uploaded on the render thread within the
   existing completed-work budget (settled decisions 5 and 16).
   - Three resolutions per tile: 128, 32 and 8 cells per edge, chosen by on-screen cell size against
@@ -607,9 +622,11 @@ does (`OpenPipeline()`), so it works in singleplayer with the sweep off.
   - Only cells in the adjustable apron slope downward; the whole Farseer field never sinks.
   - Replacement suppression is a fragment decision from live installed coverage, not a geometry
     rebuild or a separately visible band.
-  - The seam-fog arrays are one bounded mesh, with crossing vertical/horizontal layers and one
-    horizontal cap at each perpendicular turn. Every lateral, upper, lower and corner perimeter
-    has zero density; the cap covers the full square spill footprint.
+  - The seam fog is a bounded `RGBA16F` world field, not a mesh. It stores directed distance,
+    seam-ground height, conservative skip distance and open-end fade. Its texel size is fixed by the
+    reach (eight blocks at 4,096), with a 2,048x2,048 cap. A revision-checked worker builds CPU
+    texels from an owning-thread snapshot of locally smoothed paths, measures the staircase's stray
+    from the centreline, and converts to half floats; the render thread alone publishes the texture.
 
 ### 4.8 Rendering and the handoff
 
@@ -617,7 +634,8 @@ does (`OpenPipeline()`), so it works in singleplayer with the sweep off.
   callback after cached opaque terrain. It is not a second `IRenderer` and has no second far-plane
   writer.
 - **Where seam fog draws:** one lightweight renderer wrapper calls the shared renderer's fog pass
-  at `AfterOIT` order 1.0, after Vintage Horizons' water capture at 0.99. The fog therefore covers
+  at `AfterOIT` order 1.0, after Vintage Horizons' water capture at 0.99. It marches at half
+  resolution, then a depth-aware upsample composites at full resolution. The fog therefore covers
   already-composited water without changing water shaders, depth, revealage or ownership.
 - **Per visible tile:** a frustum test on its box (real height span), one draw at the chosen
   resolution, and a camera-relative transform.
@@ -649,11 +667,26 @@ does (`OpenPipeline()`), so it works in singleplayer with the sweep off.
   over ready real terrain.
   - `lodsurfacefinish.fsh` is shared by the terrain and water programs. Every program that
     includes it must gain the new include and declare its uniforms (G161, G174).
-- **Atmospheric veil.** The exact ownership boundary drives a separate fog mesh. Vertical and
-  horizontal sheets make it occupy air instead of tinting terrain; world-space drifting billows
-  break up the layers. A color-only framebuffer samples primary depth read-only, writes RGB only,
-  preserves primary alpha/depth, and uses explicit standard blending for its sole attachment. The
-  engine's SSAO-aware blend helper is forbidden on this target (G217-G220).
+- **Atmospheric veil (D28-D31).** The exact ownership boundary drives the continuous field above.
+  - **March.** A half-resolution full-screen triangle reconstructs rays from primary depth, choosing
+    the farthest or nearest texel of each 2x2 block on a checkerboard. It integrates transmittance
+    in optically thin, distance-grown, midpoint-sampled steps (G249).
+  - **Medium.** A seam strip a few blocks deep, 3.5 optical depth through its column over the
+    measured stray plus a small margin (G247), hides the seam. It rests on the surface each ray
+    lands on, clamped to the sampled seam height, and steps may not jump it (G252-G253). The bank
+    above is scenery: it fades exponentially beyond its core, coverage erosion turns its rim into
+    wind-stretched strands, and a faint haze continues the fade. It is quoted along a level
+    crossing so it stays see-through from the ground (G251). A dense body filling the bank's height
+    is rejected (G246). Noise comes from a baked mipmapped 3D texture bound with raw GL (G250), and
+    sunlight shades both below the horizon colour.
+  - **Dissolve.** The worker carries the previous field onto the new lattice as a residual whose
+    weight wears down over Fog fade time; the thicker of old and new shows, and new fog appears at
+    once (G254; settled decision 51).
+  - **Upsample.** A depth-aware upsample weights neighbours by ray-length agreement. There are no
+    fog cards, layer intersections, corner fans or height slices (G244-G245).
+  - **Composition.** The composite framebuffer owns only primary colour, samples primary depth
+    read-only, writes RGB only, preserves primary alpha/depth, and uses explicit premultiplied
+    blending. The engine's SSAO-aware blend helper is forbidden on this target (G217-G220).
 - **Far plane:** projection distance = max(cached far extent, silhouette extent), through the
   existing stepped policy (G5). The cached shader's far edge stays the cached distance, so the
   accepted cached fade does not move.
@@ -690,8 +723,11 @@ scale:
   edge slope (384-block default width).
 - **Look dials,** in the style of the anti-aliasing tab: tint colour and strength, sky tint, light
   bias, fade bias, globe curve. Defaults began from Farseer 1.4.0's terms (D11).
-- **Seam-fog dials:** density, coverage floor, lateral spread, height, floor depth, billow size,
-  drift speed and layer detail. All persist and preview live; density zero disables the fog pass.
+- **Seam fog switch and dials:** a saved Seam fog switch (`.vhfog` toggles it for the session), then
+  Seam strip density, Seam strip height, Fog density, coverage, lateral spread, height, floor
+  depth, billow size, drift speed, Fog fade time, Fog quality and edge softness. All persist and
+  preview live. Defaults are the owner's 0.4.125 tuning; `SilhouetteFogModel` (4) resets saved dials
+  whose meaning changed. The compatible internal `FogLayerDetail` value controls march precision.
 - **Status line:** server availability, tiles held, fill ratio, active height source.
 
 **Terrain Ahead tab** (separate, D15):
@@ -934,12 +970,18 @@ reach arrives complete, and the log reports counts, sources and fill ratio.
 
 ### P4 - Drawing, the handoff and settings
 
-**Source/harness status:** complete and iterated through 0.4.108. The owner has seen the feature,
+**Source/harness status:** complete and iterated through 0.4.124. The owner has seen the feature,
 client rejoin and the 0.4.93 geometry reduction; rejected 0.4.94's bands, 0.4.99's camera-yaw
 ownership and 0.4.100's L0-only suppression; and made suppression over ready real terrain
-mandatory. 0.4.102's surface fog was rejected as flat/angular. The 0.4.106 volume was reported very
-good and the post-water 0.4.107 result excellent; 0.4.108's full corner sweep is the remaining
-focused visual gate. Controlled cost, motion/excavation and weather checks remain open (Session 99).
+mandatory. 0.4.102's surface fog was rejected as flat/angular. The layered 0.4.106 volume was
+reported very good and the post-water 0.4.107 result excellent. Version 0.4.120 improved its outer
+shape but exposed structural card lines; 0.4.121's continuous raymarch removed those and was
+human-positive for fog quality, but under-covered the exact seam. Version 0.4.122's dense seal
+painted a wall and was rejected. 0.4.123's natural bank was called fantastic. 0.4.124 made the
+outline follow terrain, split the densities and halved the march resolution. 0.4.125 moved the
+seam's cover into a shallow strip under a see-through bank and let moved fog dissolve; the owner
+said everything looked good. Cost confirmation, motion/excavation and weather checks remain open
+(Sessions 99, 100, 106, 107 and 108).
 
 **Deliver:**
 - the mesher: three resolutions, sea rule, stitching and the adjustable edge apron;
@@ -947,7 +989,8 @@ focused visual gate. Controlled cost, motion/excavation and weather checks remai
 - stable target/parent/descendant replacement selection independent of view direction;
 - the draw pass;
 - shaders and sampler layout, with lazy compilation and world-directed ridge contrast;
-- the exact seam mask, layered fog volume, post-OIT RGB-only composition and guarded failure path;
+- the exact seam mask, continuous field/raymarch, post-OIT RGB-only composition and guarded failure
+  path;
 - the fade-target switch in the cached shader;
 - the combined far projection;
 - the scale's draw-distance and Farseer handles;
@@ -962,10 +1005,15 @@ focused visual gate. Controlled cost, motion/excavation and weather checks remai
 - GPU tile buffers are released on switch-off;
 - the coverage and discard rule, including target/parent/descendant ordering, as pure functions;
 - resolution choice by on-screen size;
-- seam uniqueness, bounded volume geometry, zero-density rims, turn-only corner caps and full
-  square diagonal reach;
+- seam uniqueness, directed field sign, rounded staircase/turn paths, bounded field allocation,
+  finite coherent channels, guarded open ends and revision-safe worker publication;
+- numerical integration of the strip's vertical column to its promised optical depth at any top,
+  the measured core covering every full-strength staircase point, the strip's band inside it, a
+  far-away frontier change leaving the local field unmoved, and the residual carrying only moved
+  fog forward and dissolving from where it was;
 - post-OIT order after water capture, explicit one-attachment blend state and typed uniform uploads;
-- normalization/persistence of all eight fog controls;
+- normalization/persistence of the Seam fog switch and all twelve fog controls, and the
+  model-versioned dial reset;
 - the projection policy does not reset on ordinary movement (G5);
 - scale handles map to the right values and colours (G184).
 
@@ -985,17 +1033,24 @@ focused visual gate. Controlled cost, motion/excavation and weather checks remai
   or camera-relative lighting changes.
 - i. The fog hangs in the air, spills across both owners and covers water without card lines. Every
   ninety-degree turn is one continuous sweep, with no missing adjacent quadrant or hard square rim.
+  It is dense at the seam, lightens away from it and is wispy at its edges (D28); it hides the
+  stepped handoff from every angle at the owner's densities; its outline holds still while the
+  camera turns (D30); Farseer shows vaguely through the bank above the seam strip, and fog left by
+  a moved seam dissolves rather than vanishing (D31); and near objects in front of it show no
+  upsample halo.
 
 **Fallback if (c) cannot be met:** the other D1 option, silhouettes only beyond the draw distance.
 That is an owner decision, not a quiet change.
 
 ### P5 - Tuning and persistence
 
-**Status through 0.4.108:** client persistence is built and human-seen across leave/rejoin;
+**Status through 0.4.125:** client persistence is built and human-seen across leave/rejoin;
 effective Outline detail, Hill softness and apron controls are built; regeneration is worker-owned
-and bounded; the owner accepted the large geometry reduction visually. Eight fog controls are
-built, persisted and live-previewed, and the 0.4.106–0.4.107 fog/water result is human-positive.
-The final corner shape, defaults/cost evidence and optional island/inlet refinement remain.
+and bounded; the owner accepted the large geometry reduction visually. The Seam fog switch and
+twelve fog controls are built, persisted and live-previewed, with his 0.4.125 tuning as defaults.
+Of 0.4.125's fog he said everything looked good (Session 108). 0.4.123 cost 400 against 550 FPS in
+one scene; later builds' cost is unmeasured, and he has reported hitches with low minimum FPS while
+exploring new terrain, cause unknown. Optional island/inlet refinement remains.
 Complete player-facing Farseer naming and bundle its MIT notice before closing the phase.
 
 **Deliver:**
@@ -1071,9 +1126,17 @@ Not started before P6 is accepted.
 | A coarser resident parent is visible while L0 is absent | L0-L6 masks plus target/parent/descendant selection; unit fixtures and P4 observation |
 | A resident coarse mesh only partly covers its footprint | mask the emitted opaque top surfaces at 32-block resolution; fail open elsewhere |
 | Silhouette plane visible through cached water in the fade band | exact live replacement coverage plus buried edge apron; P4 observation |
-| Fog looks like flat/angular surface paint | separate vertical/horizontal volume with zero-density rims and world-space billows; P4 observation |
+| Fog looks like flat/angular surface paint | separate continuous medium with world-space billows; P4 observation |
 | Fog breaks or fails to cover water | preserve primary alpha/depth and composite RGB after OIT; guarded GL failure; P4 observation |
-| Straight seam strips leave a corner quadrant empty | turn-only caps with full square spill footprint and zero-density perimeter; P4 observation |
+| Fog cards reveal hard internal gradation lines | one signed-distance/height field and one transmittance integration; no internal surfaces (G244) |
+| Organic noise exposes the exact ownership seam | a noise-proof seam strip over a measured band, with a margin for angled views (G245-G247) |
+| The seam seal paints a flat, bright wall | only a strip a few blocks deep is dense; frayed, lobed edges; sunlight capped below the horizon colour (G246) |
+| The fog wall hides Farseer from the ground | bank quoted along a level crossing, not its column (G251) |
+| A shallow strip is skipped, buried or left floating | step cap over the strip; rest it on the landing surface (G252-G253) |
+| Fog vanishes in one frame when the seam moves | a worker-built residual that dissolves over Fog fade time (G254) |
+| The fog outline moves with the camera | outline from every in-reach tile with cached coverage, local smoothing, reach-fixed texels (G248) |
+| The fog pass costs too much | half-resolution march with a depth-aware upsample, octave and lighting skips; owner's `.vhfog` A/B (D29) |
+| Staircase or turn reads as a chunk grid | traced/simplified/rounded/resampled paths; asymmetric Farseer shoulder; P4 observation |
 | Silhouette pass too expensive at long reach | culling and on-screen resolution; P4 budget; P5 GPU path |
 | Many players multiply the server cost | per-player share; admin opt-in; caps |
 | Engine change to peek areas or message numbering | fast-tier checks pin what can be pinned; a mixed-version run each release |

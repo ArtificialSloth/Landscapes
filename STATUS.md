@@ -3,17 +3,42 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-09-20`
-**Mod version:** `0.4.119` - current private test build: claims are taken from a re-read of the savegame after a world save, and the sweep's background arms report themselves. Verified, copy-installed, checkpointed, and **played once on `test2`**. 0.4.118 was played twice on the same world
+**Status date:** `2026-09-21`
+**Mod version:** `0.4.125` - current private test build: the Farseer seam fog hides the seam with a shallow strip resting on the ground, under a bank thin enough to see Farseer through, and fog left behind by a moved seam dissolves. Verified, copy-installed and checkpointed; **owner-played: "Everything looked good"**. The fog defaults changed to his tuning afterwards, in source only
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.113 `61ca662`, 0.4.114 `b513808`, 0.4.115 `2d9b25f`, 0.4.116 `d0a5dca`, 0.4.117 `5043e96`, 0.4.118 `0c9ac69`, 0.4.119 `3dd8fb3`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.121 `a5f528d`, 0.4.122 `d46b776`, 0.4.123 `b46cf0a`, 0.4.124 `1fb10f5`, 0.4.125 `92eb9c3`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `137` C# files under `VintageHorizons/src`
+**Source files:** `138` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
+
+**Farseer's seam fog is in a state the owner is happy with; exploring shows hitches of unknown
+cause.** Sessions 107-108.
+
+- 0.4.123 redesigned the fog as a natural bank by column optical depth, and the owner called its
+  shape fantastic. 0.4.124 split its density, built its outline from every in-reach tile rather
+  than the view (G248), and marched it at half resolution. 0.4.123 cost 400 against 550 FPS in one
+  scene, about 0.68 ms per frame at 1440p.
+- He then found the wall too dense to see Farseer through, though it had to stay dense to hide the
+  seam, and saw its fog vanish in one frame whenever the seam moved. Offline, 0.4.124 on his 60/60
+  dials showed 1.7% of the terrain behind it from ground level: a bank normalized by its column is
+  a wall from the side (G251). And replacing the field removed the old fog outright (G254).
+- 0.4.125 made three changes:
+  - a seam strip about 3 blocks deep hides the seam on its own; it rests on the surface each ray
+    lands on, and steps cannot jump it (G252-G253);
+  - the bank is quoted along a level crossing, so Farseer shows through it;
+  - a worker-built residual of the previous field dissolves over Fog fade time, 0.8 s by default.
+- Offline: the seam shows at most 1% from five viewpoints and 6% straight down (0.4.124 at 60/60:
+  12%), and about half of the terrain behind the fog shows from ground level. On a 10-block ramp the
+  strip leaked up to 91% before it was anchored to the landing surface.
+- His 0.4.125 session compiled all three fog programs, reset the densities once and logged no fog
+  failure. He said "Everything looked good", and his tuning then became the defaults.
+- He also reported hitches while exploring new terrain, with the minimum FPS dropping low
+  periodically. The cause is unknown (the fog or Farseer, the savegame sweep changes, or something
+  else); it is noted in TODO for future performance work and has not been measured.
 
 **The startup sweep's payoff is demonstrated in play, on the owner's own world.** Session 105,
 production-observed 2026-09-20 from his `test2` logs and measured offline from the files afterwards.
@@ -172,7 +197,7 @@ audit into the same code path.
   player-activity hold with its rate floor. Sandbox-observed executing for the first time;
   convergence is **not** demonstrated.
 
-**Farseer: P1-P4 and most P5 built (0.4.77–0.4.110).** Sessions 92–100.
+**Farseer: P1-P4 and most P5 built (0.4.77–0.4.125).** Sessions 92–100 and 106–108.
 - **Availability and switches.** The saved client choice defaults on. Integrated/LAN servers offer
   silhouettes automatically unless `EnableSilhouettes = false`; dedicated servers default off and
   require `EnableSilhouettes = true`. Their requested reach is clamped by
@@ -197,22 +222,34 @@ audit into the same code path.
   stable vanilla readiness suppress Farseer only where replacement can draw; unknown coverage
   leaves the fallback present. World-directed slope shading and gentle depth shading separate
   overlapping ridges. The pass follows cached opaque terrain through the existing far-plane policy
-  and shared classic colour. The exact replacement frontier also emits one layered atmospheric
-  volume: vertical and horizontal sheets peak at the seam, spill across both owners and fade to
-  zero at their perimeter. A strip fades its own geometry one spill past any end no boundary edge
-  continues collinearly, and that end is closed as an arc, so its footprint is the segment dilated
-  by the spill and a turn rounds off rather than growing a tooth; there is no separate corner cap.
-  The layer's density and the position across it travel in separate vertex channels, so the shader
-  bends the crossing profile into a smooth shoulder and pushes the rim in and out with a two-octave
-  world-anchored wobble under Fog edge softness. Billow drift is an integrated world distance, 6
-  blocks per second at speed one. The veil draws after water/OIT, sampling primary depth read-only
-  and preserving primary alpha/depth.
+  and shared classic colour.
+- **Seam fog.** It is built from every Farseer tile within reach, whatever the camera faces.
+  - **Outline.** The exact directed replacement frontier is traced into maximal paths and smoothed
+    by a fixed-window moving average.
+  - **Field.** A bounded worker-built field stores signed lateral distance, seam-ground height,
+    conservative skip distance and open-end fade. The worker also measures how far the staircase
+    strays from the centreline.
+  - **Medium.** A seam strip a few blocks deep hides the seam: its column is 3.5 optical depth over
+    the measured stray plus a small margin, it rests on the surface each ray lands on, and march
+    steps cannot jump it. Above and around it the bank is scenery, quoted along a level crossing so
+    it stays see-through: beyond its core it fades exponentially, wider over Farseer, and erodes
+    into wind-stretched strands with a faint haze. Sunlight shades both below the horizon fog
+    colour.
+  - **Dissolve.** Each build also carries the previous field onto the new lattice as a residual
+    whose weight wears down over Fog fade time; the thicker of old and new shows, and new fog
+    appears at once.
+  - **Draw.** A half-resolution depth-aware raymarch with a checkerboard depth choice feeds a
+    depth-aware upsample. The noise comes from a baked mipmapped 3D texture, and billow drift is 6
+    blocks per second at speed one.
+  - **Composition.** The veil draws after water/OIT, sampling primary depth read-only and
+    preserving primary alpha/depth.
 - **Persistence, scheduling and settings.** A lazy client store reads nearest saved tiles for
   instant rejoin and closes when off. Decode/mesh work is capped off-thread; owner publication,
   coverage, pruning, remesh and upload are bounded. The **Farseer** tab persists enable, reach,
-  Outline detail, Hill softness, apron width/depth, classic-look dials and nine fog controls:
-  density, coverage, spread, height, floor depth, billow size, drift speed, layer detail and edge
-  softness; cached draw and reach remain scale handles.
+  Outline detail, Hill softness, apron width/depth, classic-look dials, the Seam fog switch and twelve
+  fog dials: Seam strip density and height, Fog density, coverage, spread, height, floor depth,
+  billow size, drift speed, Fog fade time, Fog quality and edge softness. `.vhfog` toggles the fog for the session. Cached draw and reach
+  remain scale handles.
   Performance turns it off;
   Balanced/Quality turn it on. Off sends one final demand and clears network, RAM, workers, GPU
   meshes and projection extent. The shader is compiled only after a drawable tile arrives.
@@ -248,9 +285,18 @@ audit into the same code path.
 | **Owner acceptance of the fog, 2026-09-19** | Played 0.4.111 and accepted the fog work. The itemised sub-observations the gate asked for — Fog drift speed at 0% and 300%, and the aerial staircase/ninety-degree views — were not separately reported, so the acceptance is a whole-result verdict rather than per-dial evidence | Human-tested |
 | Client log for that session | `lodsilhouette` and `lodsilhouettefogvolume` both compiled at 16:13:27; zero `InvalidOperation`, zero GL errors, Farseer never disabled, clean exit at 16:18:36. The client store held 1,097 tiles from earlier sessions and the client asked for a 4,096-block reach | Production-observed (read offline) |
 | 0.4.110 drift rate | The previous 0.006 noise-units/second offset is 0.6 blocks/s at a 100-block billow size, and was time multiplied by the live dial, so only a dial change moved it. Drift is now integrated and applied as 6 blocks/s at speed one | Source-traced and static-checked; not human-tested |
-| Final checks | 25,190 assertions pass; Release mod build has zero warnings/errors | Harness-/build-tested at 0.4.111 |
-| 0.4.111 artifact | 43 root-relative entries, one DLL, fog shaders present, no PDB/wrapper, matching installed copy; SHA-256 `06BE22051686FF8F865B53557920D2037AB46141CA4B8D8541F36FAD2961D1AA` | Artifact-verified |
-| 0.4.109 and 0.4.110 in game | Neither has run. The shape, drift rate, edge-softness default and thinner rim all await a visual verdict | Not human-tested |
+| 0.4.120 rounded path | The owner reported the ribbon shape better, but two distant screenshots showed hard internal gradation lines from card intersections | Human-tested; superseded by 0.4.121 |
+| 0.4.121 continuous field/raymarch | The owner reported the fog itself much better and the old internal lines absent; one screenshot showed the bright stepped ownership handoff still readable, and trying every available dial could not make it dense enough | Human-tested; core failure human-observed |
+| 0.4.122 normalized core | The owner found it too bright, too dense and unnatural (`2026-09-21_09-44-39.png`). Offline, its seal was 10-30 times the bank's density and its column reached optical depth 9-20: an unlit ribbon with a 6-8-block edge (G246) | Human-observed; reproduced offline; superseded |
+| 0.4.123 natural bank | Shape "fantastic"; at 35% density the seam showed from above (`16-50-02`), at 60% it was covered (`16-51-46`); the ribbon deformed with the camera; 400 FPS with fog against 550 without in one scene | Human-tested |
+| 0.4.124 split density, terrain-built outline, half-resolution march | All three fog programs compiled and loaded, the one-time density notice appeared, and no fog failure was logged in his session; he said "getting better" and later saved seam 60% / outer 60% | Production-observed; human verdict general |
+| Offline mock-up of 0.4.124 defaults | At most 5% worst-pixel seam show-through from above, at a distance, at ground level, from the Farseer side and along the seam; 6.5% average and 12.5% worst straight down at 60% seam density | Measured offline (`scripts/fog-mockup`), not in game |
+| 0.4.124's bank from the side | On his 60/60 dials, 1.7% of the terrain behind the fog showed from ground level in the mock-up; the owner found it too dense to see Farseer through and saw its fog vanish as the seam moved | Human-observed; measured offline |
+| 0.4.125 strip, see-through bank, dissolve | His session compiled all three fog programs and applied the one-time density reset; no fog failure; clean exit after 30 minutes. "Everything looked good" | Production-observed; human verdict general |
+| Offline mock-up of 0.4.125, his old shape dials | Seam at most 1% worst from five viewpoints, 1.8% average and 6.0% worst straight down; terrain beyond the fog 48% from ground level, 67% along the seam, 80% from the Farseer side (0.4.124: 1.7%, 9.7%, 38%). On a 10-block ramp, 1% worst except 5.9% straight down, against up to 91% with the strip on the sampled height | Measured offline (`scripts/fog-mockup`), not in game |
+| Exploring hitches on 0.4.125 | Hitches with the minimum FPS dropping low periodically while exploring new terrain; cause unknown | Human-observed; not measured |
+| Final checks | 25,443 assertions pass; Release mod build has zero warnings/errors | Harness-/build-tested at 0.4.125 and after the defaults change |
+| 0.4.125 artifact | 708,897 bytes, 45 root-relative entries, one DLL, all four fog shaders present and matching source, no PDB/wrapper, matching installed copy; SHA-256 `03BC8AE3A662549B9A7A0A7F207DCCBD6FFF0A17B040B4F5D75C889392E8B1C4` | Artifact-verified |
 | Farseer's exploring cost | 2 lattice probes and 2 previews in eight minutes, standing aside on about 73% of its ticks, about 0.3 tiles/s, its 4,096-block disc already exhausted with 1,086 stored tiles. The savegame sweep was loading 7-14 columns/s in the same window; 0.4.111 now gates new sweep loads on player terrain activity | Original production log plus controlled Session 102 follow-up |
 | Rapid handoff/excavation, weather look, controlled GPU/off A/B, cold/full-disc read-back, dedicated players and mixed versions | Not completed | — |
 
@@ -618,8 +664,9 @@ to the server log.
 
 ## Performance and artifact evidence
 
-**Checks and builds.** The final fast tier passed **25,190 assertions with zero failures** at
-0.4.111. The Release mod and benchmark builds completed with zero warnings and zero errors.
+**Checks and builds.** The final fast tier passed **25,443 assertions with zero failures** at
+0.4.125 and again after the defaults change. The Release mod build completed with zero warnings and zero errors; no benchmark build was
+needed for the fog work.
 
 Measured costs, and what is not measured:
 - **Sibling-cache scanner.** Its cost is in the current-result table. Merging into held sections
@@ -659,22 +706,31 @@ Measured costs, and what is not measured:
     geometry, add a render pass or read back the GPU. Live cost is unmeasured.
   - Slope contrast reconstructs the geometric normal with shader derivatives and adds one gentle
     depth term. It adds no terrain geometry; live shader/GPU cost is unmeasured.
-  - Seam fog is one post-OIT draw. At default layer detail, each unique boundary edge contributes
-    seven vertical plus five horizontal crossing sheets; only perpendicular turns add five
-    horizontal caps. Boundary/mask changes rebuild the arrays and upload once, not per frame.
-  - The fog pass is fill/blend work across its visible volume. No controlled GPU timing or
-    low/default/high layer-detail comparison exists yet; its cost must not be inferred from the old
-    pre-simplification 550→450 FPS observation.
+  - Seam fog is two post-OIT full-screen triangles: a half-resolution march of at most 192 steps
+    per pixel, then a full-resolution depth-aware upsample. Outline changes snapshot the paths on
+    the owner thread; one worker builds the distance field, converts it to half floats and builds
+    the residual; only the newest revision uploads, the residual as a second texture of the same
+    size. While a residual fades, the march evaluates the old field's shape again wherever it still
+    has weight. The field covers the whole reach, eight blocks per texel at a
+    4,096-block reach (about 1,200 texels square, about 11 MB per upload), with a 2,048x2,048 cap.
+    Off-screen tile coverage refreshes 8 tiles per frame.
+  - Measured: 0.4.123 cost 400 against 550 FPS in one scene at 1440p (about 0.68 ms per frame), by
+    the owner's `.vhfog` switch. 0.4.124-0.4.125 are unmeasured. On 0.4.125 the owner reported
+    hitches with low minimum FPS while exploring new terrain; whether the fog's rebuilds and
+    residual, Farseer, the savegame sweep or something else causes them is unknown. The owner
+    judges fog cost with `.vhfog`, not a timing harness.
   - Render upload is bounded to four tiles, 2 MiB and 2 ms per frame; live GPU time is unmeasured.
   - An accelerator height took 0.01–0.02 ms in freshly generated land (Session 94). On land nobody
     had generated it took under 0.01 ms, and under 1 ms for a new region's first sample (Session 95).
     Sampling beside real generation is not measured.
 
-**The 0.4.111 artifact.** The verified `dist/vintagehorizons_0.4.111.zip` is 668,783 bytes and has
-SHA-256 `06BE22051686FF8F865B53557920D2037AB46141CA4B8D8541F36FAD2961D1AA`. Its 43 root-relative file
-entries are readable, its DLL matches Release, `modinfo.json` reports 0.4.111, both fog shaders are
-present, it contains no PDB or wrapper directory, and it was copy-installed with a matching hash.
-The 0.4.109–0.4.110 zips and every older test build remain in the Mods folder as rollback artifacts.
+**The 0.4.125 artifact.** The verified `dist/vintagehorizons_0.4.125.zip` is 708,897 bytes and has
+SHA-256 `03BC8AE3A662549B9A7A0A7F207DCCBD6FFF0A17B040B4F5D75C889392E8B1C4`. Its 45 root-relative file
+entries are readable, its DLL matches Release and carries the new dial strings, `modinfo.json`
+reports 0.4.125, all four fog shaders are present and match source, it contains no PDB or wrapper
+directory, and it was copy-installed as an identical file. 0.4.124's artifact is 701,843 bytes,
+SHA-256 `8A15E534A49CDA2DCAD07C1A628B4EBA97C2A8823B206E2A165348A505862C7C`. Every older test build
+remains in the Mods folder as a rollback artifact.
 
 **Checkpoints.** Every incremented private test build receives an exact Git checkpoint after
 verification and installation. This does not authorize a push, tag, publication or public release.
@@ -698,9 +754,15 @@ verification and installation. This does not authorize a push, tag, publication 
 - Session 102 launched the integrated client repeatedly after the owner's explicit authorization,
   always through the isolated benchmark harness and a restored frozen profile. It measured probe,
   load, engine-gate and player-aware conditions, then closed all test processes.
+- Session 106 launched no game. The owner ran 0.4.120 and 0.4.121 and supplied the three screenshots
+  and visual verdicts.
+- Session 107 launched no game. The owner ran 0.4.122, 0.4.123 and 0.4.124 and supplied the
+  screenshots, the FPS comparison and the verdicts; his 0.4.124 client log was read offline.
+- Session 108 launched no game. The owner ran 0.4.125 and supplied the verdict and the exploring-hitch
+  report; his client log and saved config were read offline.
 - Session 91's controlled servers ran only after the owner's approval.
 
-**Documentation.** Validation passed **10,753 checks** with no failures at the Session 102 doc pass.
+**Documentation.** Validation passed **10,803 checks** with no failures at the Session 108 doc pass.
 It covers:
 - current version and changelog coverage;
 - source count;
@@ -743,60 +805,73 @@ It covers:
   proven. The proof comes from stable vanilla readiness and exact all-level installed-mesh
   coverage, never cached data alone, the current frustum or camera yaw (settled decisions 42 and
   45–46).
-- **Farseer seam fog.** The veil is separate translucent geometry derived from the exact ownership
-  boundary; it never changes ownership. It crosses the seam in both directions, fades to zero on
-  every exposed perimeter and closes swept ends as arcs, making each footprint the segment dilated
-  by the spill. It draws
+- **Farseer seam fog.** The veil is a continuous field-driven medium derived from the exact directed
+  ownership boundary; it never changes ownership. The outline comes from every in-reach tile and
+  local smoothing, never from the view. One signed-distance/height field drives a half-resolution
+  depth-aware raymarch and a depth-aware upsample. A shallow strip resting on the landing surface
+  hides the seam; the bank above is quoted along a level crossing so it stays see-through; fog left
+  by a moved seam dissolves through a worker-built residual while new fog appears at once. It draws
   after OIT as an RGB-only overlay with read-only primary depth, so a fog correction cannot rewrite
-  water or terrain ownership (settled decisions 47–48).
+  water or terrain ownership (settled decisions 47–51).
 - **Thread count.** Multi-thread generation is not a player option. The engine setting was active in
   P0, but failed both the material-speedup and terrain-identity gates (G198).
 
 ## Next work
 
-Begin with [Session 105](dev/sessions/SESSION_105.md) and [Session 104](dev/sessions/SESSION_104.md), the top of [TODO](dev/TODO.md),
+Begin with [Session 108](dev/sessions/SESSION_108.md), [Session 105](dev/sessions/SESSION_105.md) and the top of [TODO](dev/TODO.md),
 [the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md), and
 [the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
 
-1. **Play a world with a real sweep behind it, on 0.4.119.** The claim path now waits for a world
+1. **Ask the owner what comes next.** The seam fog is in a state he is happy with. Two things are
+   recorded in TODO for when he wants them:
+   - **Hitches while exploring new terrain**, with low minimum FPS, cause unknown: separate the fog,
+     Farseer, the savegame sweep and vanilla on one route, and ask him for the hitches' frequency and
+     depth from his frame-time graph.
+   - **Seam fog questions** not separately reported: the strip from above, straight-down coverage,
+     edges taller than the strip, camera steadiness, upsample edges, the fade time and a fade-in.
+
+   Use `scripts/fog-mockup` before and after any change to the medium.
+2. **Play a world with a real sweep behind it.** The claim path now waits for a world
    save and re-reads the file, and that ran end to end on `test2` - but only 273 columns passed
    through it. A fresh world, or one with a lot of newly generated terrain, puts thousands through
    it in one session. Afterwards the status line should show claims "read back after a world save"
    far outnumbering "from the startup reading", and the next start should load only a few hundred
    columns.
-2. **Give claim re-reads priority over audit re-reads.** Measured 2026-09-20: claims for a 20:54
+3. **Give claim re-reads priority over audit re-reads.** Measured 2026-09-20: claims for a 20:54
    save were not written until 20:56:39, because they queue behind the audit's steady 16/s stream.
    A session ending in that window falls back to the index-time claim unnecessarily.
-3. **Measure the snow refresh's backlog cost.** It has about 12,000 columns queued at 1/s on
+4. **Measure the snow refresh's backlog cost.** It has about 12,000 columns queued at 1/s on
    `test2`, roughly three hours of background priority loads, and no FPS or frame-time run has yet
    been taken with that trickle running - the owner stood still deliberately for both builds. This
    is the most likely source of any new in-play cost, and the arm has only been reachable since
    0.4.116.
-4. **Record A4's fast path as dropped**, or rebuild it around "record what the next save will touch,
+5. **Record A4's fast path as dropped**, or rebuild it around "record what the next save will touch,
    treat those as unverified". Its other half is built. Owner's call.
-5. **Prove the audit catches a real fault.** It is now proven to run and to dispute claims - 81 in
+6. **Prove the audit catches a real fault.** It is now proven to run and to dispute claims - 81 in
    one pass - but every dispute so far is ordinary change, not a cache that was wrong. Staging real
    corruption was not possible in a live world; its decision rules are covered offline.
-6. **Close P3's deferred integration debt** when another player is available: a complete
+7. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
-7. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
-   observations beneath the veil; tune Outline detail, Hill softness, apron and the nine fog dials
-   only after the shape is accepted; measure controlled Farseer off/on and fog-detail cost,
-   including the swept arc's extra cross-section per end.
-8. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
+8. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
+   observations beneath the veil; tune Outline detail, Hill softness and apron once the fog is
+   accepted; record Farseer off/on and seam fog off/on FPS in one scene.
+9. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
    player-facing Farseer rename plus bundled MIT notice.
-9. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
-10. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
+10. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
+11. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
    offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
-11. **Older TODO debt:** keep the debt including:
+12. **Older TODO debt:** keep the debt including:
    - P3's after-comparison;
    - winter convergence, which G237 showed was never reachable and which the refresh arm has now
      begun working through - re-judge once its backlog has drained;
    - pause loading;
    - Session 84 diagnostic cleanup.
 
-[Session 105](dev/sessions/SESSION_105.md) is the authoritative documentation continuation point;
+[Session 108](dev/sessions/SESSION_108.md) is the authoritative Farseer-fog continuation point;
+[Session 107](dev/sessions/SESSION_107.md) retains the natural bank and the terrain-built outline, and
+[Session 106](dev/sessions/SESSION_106.md) retains the continuous-medium replacement of the cards;
+[Session 105](dev/sessions/SESSION_105.md) retains the terrain-change measurement continuation;
 [Session 104](dev/sessions/SESSION_104.md) retains the first phase-A play verdict and the rejected brake;
 [Session 103](dev/sessions/SESSION_103.md) retains phase A, the frontier A/B and the snow-refresh bug;
 [Session 102](dev/sessions/SESSION_102.md) retains the first sweep A/B and the 0.4.111 gate;
@@ -807,12 +882,18 @@ Begin with [Session 105](dev/sessions/SESSION_105.md) and [Session 104](dev/sess
   look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G243 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+- G166-G254 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
   buried joins, bounded regeneration, stable all-level ownership, post-water volumetric fog, the
   distinction between pacing priority-load submissions and yielding their downstream engine work,
   the engine generation counter's saved-load blind spot, route-halo generation, and now what a
   whole-row hash really reports, why a claim recorded before the work describes a state nobody
-  held, and why an arm that starts when a job finishes needs its own voice.
+  held, why an arm that starts when a job finishes needs its own voice, why smoothed translucent
+  cards still expose their intersections, why organic fog noise cannot own seam opacity, why a seal
+  many times denser than its fog paints a wall, why the vertical column is not the shortest path at
+  a band's edge, why a frustum-built outline moves with the camera, why a fixed step budget misses
+  far fog, that the engine's uniform collector ignores `sampler3D`, why a column-normalized bank is
+  a wall from the side, why a thin layer is stepped over or buried on slopes, and why replacing a
+  field makes its fog vanish.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work

@@ -8,6 +8,23 @@ first.
 
 ## [Unreleased]
 
+**Farseer's seam fog is now a natural fog bank that follows the terrain.** The rounded 0.4.120
+ribbon improved the distant sawtooth outline but showed hard lines where its translucent cards
+crossed, so 0.4.121 replaced every card with one continuous medium, and the owner said the fog
+itself looked much better, though the exact seam still showed through. 0.4.122 sealed it with a
+noise-free core many times denser than the bank, which the owner found too bright, too dense and
+unnatural. 0.4.123 redesigns the medium around how see-through the fog column is: just opaque over
+a measured band either side of the seam, thinning outward, fraying into strands at its edges, and
+lit by the sun. The owner said its shape looks fantastic. 0.4.124 splits the density into seam and
+outer dials, stops the outline moving with the camera, and marches at half resolution to cut the
+cost he measured at 400 against 550 FPS. 0.4.125 hides the seam with a strip of fog only a few
+blocks deep, so the bank above it can be thin enough to see Farseer through, and lets the fog a
+moved seam leaves behind dissolve instead of vanishing. The owner said everything looked good.
+
+**The seam fog's defaults are now the owner's own tuning** (after 0.4.125, in no build yet):
+spread 36 blocks, floor depth 20 blocks and edge softness 35%; the densities (100%), strip height
+(3 blocks) and fade time (0.8 s) already matched. A saved config keeps its own values.
+
 **The startup sweep's payoff is now visible in play, and the arms behind it have reported real
 numbers for the first time.** On the owner's `test2`, a first start under 0.4.118 read 17,219
 columns in 1.2 s and loaded 10,439 over about 25 minutes; the restart skipped 10,040 of them, loaded
@@ -41,8 +58,10 @@ changed thousands of chunk rows that agreed between the one-thread controls. The
 therefore keeps only its Balanced behavior and does not expose thread controls or Fast/Maximum
 presets.
 
-**Known open:** human-check 0.4.110's rounded, wobbled fog outline and its drift rate, and preserve a
-clean client log; human-check 0.4.111's player-aware sweep behavior and run the sustained
+**Known open:** hitches while exploring new terrain, with the minimum FPS dropping low
+periodically, reported by the owner on 0.4.125 with no known cause (the fog or Farseer, the
+savegame sweep changes, or something else) and noted for future performance work; the seam fog's
+`.vhfog` on/off cost; human-check 0.4.111's player-aware sweep behavior and run the sustained
 virgin-frontier three-way comparison; independently review and then implement the terrain-change
 plan; complete
 the rapid-loading/excavation/weather Farseer matrix; measure controlled Farseer/fog GPU cost and
@@ -57,6 +76,128 @@ read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.125] - 2026-09-21
+
+**The seam is hidden by a shallow strip of fog, the bank above it can be seen through, and fog
+left behind by a moving seam dissolves.**
+
+- A strip of fog about 3 blocks deep now lies along the seam and hides the stepped edge on its own.
+  Before, the dense part of the fog filled the bank's full height, so the whole wall had to stay
+  thick. The strip is as wide as the staircase strays from the seam's rounded line, plus a small
+  margin, and frays out at its edges in lobes so it reads as low mist rather than a stripe.
+- The strip rests on whatever surface the camera sees near the seam, not on a rough average of the
+  seam's height. On a slope that average can be several blocks off, which would bury a 3-block strip
+  on one side and float it on the other.
+- The rest of the bank keeps its shape but is much thinner: its density is set by how see-through
+  it is from the side, so Farseer terrain shows through it, veiled. In the offline mock-up about half
+  of the hills behind the fog show from ground level, against 2% in 0.4.124 on the owner's dials.
+- When cached terrain loads in and the seam moves on, the fog that covered the old seam no longer
+  vanishes in one frame. It thins, lowers and breaks into wisps over the **Fog fade time**, 0.8 s by
+  default, while fog over the new seam appears at once. A second update arriving mid-fade carries
+  the fade on rather than restarting or cutting it.
+- The Farseer tab gains **Seam strip height** (1-16 blocks) and **Fog fade time** (0-3 s). Fog seam
+  density is now **Seam strip density** and Fog outer density is now **Fog density**. Because both
+  densities changed meaning, a config saved for 0.4.123 or 0.4.124 has them set once to 100% and
+  says so in the log; its other fog dials are kept.
+
+## [0.4.124] - 2026-09-21
+
+**Two fog densities, an outline that follows the terrain instead of the camera, and half the
+resolution.**
+
+- The fog's density is two dials. **Fog seam density** covers the band over the seam and the fog
+  above it; **Fog outer density** covers the rest of the bank and its haze. The first blends into
+  the second across the bank's shoulder, along its wandering rim, so there is no band where they
+  meet. A config saved by 0.4.123 has only its densities set once, to 60% and 35%, and says so in
+  the log; every other fog dial is kept. The new defaults are the owner's own tuning: coverage 100%,
+  spread 40, height 24, floor 16, billow 12, edge softness 50% and quality 52%.
+- The outline no longer moves as the camera turns. It had been traced only from Farseer tiles on
+  screen, so turning cut the seam in different places and re-fitted its curve. It is now built from
+  every Farseer tile within reach, with off-screen tiles re-checked a few per frame, and each point
+  of the curve is an average of the staircase near it. Tiles entering at the far edge of the reach
+  can no longer bend the fog near the player. The field's resolution follows the reach, not the
+  momentary set of tiles.
+- The fog is marched at half resolution and rebuilt at full resolution by a depth-aware upsample,
+  so it does not bleed across the edge of a tree or ridge in front of it. Noise detail smaller than
+  a pixel is skipped, very faint fog reuses the last lighting, and the field is uploaded as half
+  floats prepared off the render thread.
+- A ray skimming along the seam used to run out of steps before reaching distant fog, which could
+  leave the far seam unfogged at the horizon. Thin fog far away is now crossed in longer steps, each
+  sampled at its middle, which also slightly improved coverage from above.
+
+## [0.4.123] - 2026-09-21
+
+**The seam fog is redesigned as a natural bank: dense over the seam, thinning outward, wispy at
+its edges and lit by the sun.**
+
+- 0.4.122's seal was sized for a sideways view and had no noise, so seen from above it was many times
+  more than opaque: a flat, crisp-edged ribbon in the raw horizon fog colour. The fog is now designed
+  by how see-through each column is. Over a band measured from how far the real staircase strays
+  from the rounded seam, the column is held just opaque; beyond it the bank fades steadily, further
+  over Farseer, with a faint haze past its last strands.
+- Toward the edges the noise erodes the bank into separate strands, stretched along the wind and
+  frayed by finer thread-like noise, instead of dimming the whole pattern evenly. The bank is densest
+  at the ground and thins upward under a lumpy top.
+- Sunlight shades it: tops bright, undersides and hollows a cool grey, and never brighter than the
+  horizon fog. It glows a little toward the sun.
+- The noise comes from a small baked 3D texture whose mipmaps average detail too small to show, so
+  distant fog does not sparkle.
+- A **Seam fog** switch on the Farseer tab, and `.vhfog` for the session, turn the fog off
+  completely: no pass is drawn, nothing is built for it, and Farseer is not held back waiting for
+  it.
+- Fog dials saved for an earlier fog are reset once to the new defaults, with a note in the log,
+  because the same numbers no longer describe the same fog.
+
+## [0.4.122] - 2026-09-21
+
+**The continuous fog now guarantees enough extinction at the seam it exists to hide.**
+
+- The first 0.4.121 screenshot showed a smooth, organic bank without the old card lines, but a
+  bright stepped ownership strip remained visible through it. Raising density, coverage, spread
+  and the other controls could not close the gap without sacrificing the rest of the look.
+- A broad smooth core now lives inside the same raymarched medium. It uses the unwobbled signed
+  distance, so noise cannot punch a crack through the exact handoff, but retains the field's smooth
+  outer and open-end fades and introduces no surface or second draw.
+- The core is normalized by its LOD-side width and the renderer's per-block extinction. Coverage
+  selects target optical depth 3.0–4.5; the 25% default gives 3.375, more than 96% absorption before
+  billows and Farseer spill contribute. Fog density still scales everything and zero still disables
+  the pass.
+- The coverage help now distinguishes the seam-sealing core from the organic outer bank.
+
+## [0.4.121] - 2026-09-20
+
+**Intersecting fog cards are replaced by one depth-aware continuous volume.**
+
+- The exact directed 32-block ownership frontier is traced into paths, simplified, rounded and
+  densely resampled. A separable squared Euclidean distance transform produces a bounded RGBA16F
+  field carrying effective signed distance, seam-ground height, unsigned skip distance and open-end
+  fade.
+- One full-screen triangle reconstructs a ray from primary depth and integrates transmittance
+  through that field. Adaptive empty-space stepping, spatial dithering, world-anchored billows,
+  rim wobble and the asymmetric Farseer shoulder retain the atmospheric look without any internal
+  sheet, slice, fan or card intersection that can become a hard gradation line.
+- Field rasterization runs from an immutable main-thread snapshot on one background job. Revision
+  checks reject stale results, only the render thread uploads GL state, the first field gates
+  Farseer visibility, and a valid old field remains while its replacement builds.
+- `Fog layer detail` is now `Fog quality`; its persisted internal field remains compatible, while
+  the visible dial controls raymarch precision rather than geometry count. Seam height changes now
+  participate in the rebuild signature.
+- The post-OIT RGB-only/read-only-depth composition and fail-visible Farseer shutdown remain
+  unchanged. The owner reports that the fog itself looks much better.
+
+## [0.4.120] - 2026-09-20
+
+**The ownership staircase became continuous rounded fog paths before the representation changed.**
+
+- Directed boundary edges are traced into maximal open paths and loops, simplified within the fog
+  reach, resampled, corner-cut and resampled again. Turns therefore form a fluid centreline instead
+  of following every square chunk tooth.
+- Only true open path ends receive a swept rounded fade. The wider Farseer-side shoulder and
+  guarded wobble remain.
+- The owner reported the outer shape better, but distant screenshots showed that alpha stacking
+  inside the retained cards still produced hard gradation lines. That observation directly led to
+  0.4.121's representation change.
 
 ## [0.4.119] - 2026-09-20
 

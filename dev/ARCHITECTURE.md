@@ -211,13 +211,16 @@ stage is unavailable or fails, cached water and thin cover are suppressed and th
 failure is logged. No older water renderer is selected automatically.
 
 Farseer terrain remains opaque fallback scenery, but its ownership seam has a separate
-atmospheric volume. The stable 32-block replacement proof emits the exact boundary; one bounded
-mesh crosses that line with layered vertical and horizontal sheets plus caps at perpendicular
-turns. Density is greatest at the line and reaches zero at every lateral, upper, lower and corner
-perimeter. The veil draws at `AfterOIT` order 1.0, after the water capture at 0.99, into a
-single-color framebuffer attached to primary RGB. It samples primary depth read-only and never
-writes primary alpha or depth. Its explicit single-attachment blend state must not be replaced by
-the engine's SSAO-aware general helper (G217-G222).
+atmospheric volume. The stable 32-block replacement proof emits the exact directed boundary; its
+paths are simplified, rounded and resampled into one bounded RGBA field carrying signed lateral
+distance, seam-ground height, conservative skip distance and open-end fade. A full-screen
+depth-aware raymarch integrates this continuous medium once, so there are no internal sheets,
+corner caps or alpha-stacking intersections. Organic billows and rim wobble shape the outside;
+a broad width-normalized core guarantees extinction at the exact handoff. The veil draws at
+`AfterOIT` order 1.0, after the water capture at 0.99, into a single-color framebuffer attached to
+primary RGB. It samples primary depth read-only and never writes primary alpha or depth. Its
+explicit single-attachment blend state must not be replaced by the engine's SSAO-aware general
+helper (G217-G222, G244-G245).
 
 The settled near handoff is exclusive per-vanilla-render-chunk ownership. Cached terrain
 covers uncertain/unready cells, vanilla owns confirmed render-ready cells, fully replaced
@@ -596,19 +599,60 @@ live until the exact replacement persistence revision is acknowledged.
     adds gentle world-distance depth separation. Contrast may not depend on camera yaw, and it may
     not add terrain detail merely to distinguish overlapping hills (G216).
 47. **The Farseer/LOD seam veil is derived from ownership but never changes it.** The exact stable
-    32-block replacement answer emits a unique boundary, and a separate translucent mesh crosses
-    it with vertical and horizontal layers. The fog is densest at the real handoff, spills across
-    both owners, and fades to zero at every exposed edge. Perpendicular turns receive one layered
-    cap covering the full square spill footprint; straight vertices receive none. Surface paint,
-    invented boundaries at missing tiles, hard outer walls and ownership dilation are rejected
+    32-block replacement answer emits a unique directed boundary. Maximal paths become a centreline
+    by a fixed-window moving average of the staircase, corner-cut once and densely resampled; only
+    true open ends fade longitudinally. The fog spills visually across both owners, with a wider
+    shoulder over Farseer, but never suppresses more terrain, invents a boundary beside a missing
+    tile or dilates ownership. Surface paint, hard outer walls and ownership dilation are rejected
     designs (G217, G221-G222).
 48. **Seam fog is a post-water RGB overlay with read-only depth.** It draws at `AfterOIT` order
-    1.0, after the water capture at 0.99, so water cannot repaint the seam over it. Its custom
-    framebuffer owns only `ColorAttachment0`; the pass samples primary depth, writes RGB only,
-    preserves primary alpha/depth, and configures standard blending explicitly. A shader/draw/GL
-    failure disables Farseer for the session rather than continuing with a plausible no-fog
-    fallback. Fog work may not change water shaders, water depth/revealage, water ownership or the
-    shared terrain readiness mask (G218-G220).
+    1.0, after the water capture at 0.99, so water cannot repaint the seam over it. It marches at
+    half resolution into its own two-target framebuffer (premultiplied fog, and each ray's length)
+    with blending off, then a depth-aware upsample composites into a framebuffer that owns only the
+    primary `ColorAttachment0`, with premultiplied blending configured explicitly. Both passes
+    sample primary depth read-only; the composite writes RGB only and preserves primary alpha/depth.
+    A shader/draw/GL failure disables Farseer for the session rather than continuing with a
+    plausible no-fog fallback. Fog work may not change water shaders, water depth/revealage, water
+    ownership or the shared terrain readiness mask (G218-G220, G250).
+49. **Seam fog is one continuous field and one integrated medium, not layered geometry.** An
+    owning-thread snapshot copies the traced paths and all live seam-height inputs. One bounded
+    worker rasterizes them, runs a separable squared Euclidean distance transform, measures how far
+    the real staircase strays from the centreline, and converts the field to half floats; results
+    carry a revision, stale work cannot publish, and only the render thread uploads the `RGBA16F`
+    field and the baked, mipmapped 3D noise texture. The field is eight blocks per texel unless the
+    reach needs more, bounded at 2,048x2,048. Farseer waits for the first valid field, while an
+    established field may remain during replacement. Card/sheet intersections, corner fans and
+    horizontal slices are rejected because source-over accumulation exposes them as hard gradation
+    lines (G244). The medium has two parts with separate densities (0.4.125). A **seam strip** a few
+    blocks deep hides the seam on its own: its vertical column is 3.5 optical depth over a band of
+    the measured stray plus a small margin, noise varies but never opens it there, and past the band
+    it frays out in lobes (G245, G247). It rests on the surface each ray lands on near its landing
+    point, clamped to the sampled seam height, and march steps may not jump it (G252-G253). The
+    **bank** is scenery: over a core of the measured stray plus a margin it does not thin, beyond it
+    it fades exponentially, coverage erosion turns its rim into strands, and a faint haze continues
+    the fade. It is quoted along a level crossing, not its vertical column, so it stays see-through
+    from the ground (G251). A dense body filling the bank's full height is rejected as a painted wall
+    (G246). Sunlight with one probe toward the sun shades both below the horizon fog colour. Steps are
+    optically thin in dense fog, grow with distance in thin fog, and are sampled at their middle
+    (G249). `Fog quality` controls march precision; the old persisted `FogLayerDetail` name remains
+    only for settings compatibility.
+50. **The seam fog's outline is a function of the terrain, not of the view.** It is built from every
+    Farseer tile within reach, whichever way the camera faces; each tile caches its replacement
+    coverage, refreshed as it draws or a few off-screen tiles per frame. Every point of the
+    centreline depends only on the staircase near it, and the field's texel size is fixed by the
+    reach. The frustum, camera yaw and the momentary extent of the tile window may not move it; the
+    only legitimate movers are real ownership changes and the billows' drift (G248; the fog-side
+    counterpart of decision 45).
+51. **Fog left behind by a moved seam dissolves; fog over a new seam appears at once.** A field is
+    never simply replaced. When a build begins, the render thread snapshots the shown field and any
+    residual still fading, and the same worker carries them onto the new field's lattice as a
+    residual. Its weight is the old fog's open-end fade plus a head start for the build's own time,
+    or what an earlier residual had left, and it is zero wherever the new field is unchanged. The
+    shader subtracts the fade durations elapsed since the build began, applies the weight to the old
+    bank's envelope and, squared, to its strip, and shows the thicker of old and new. A second
+    update arriving mid-fade carries the fade on instead of cutting it (G254). Fields on different
+    lattices, which only a reach change produces, do not blend. The new seam is never left
+    uncovered while old fog fades.
 
 ## Concurrency invariants
 
