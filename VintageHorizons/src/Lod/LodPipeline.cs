@@ -302,6 +302,25 @@ public class LodPipeline
     public int LoadCalls { get; private set; }
     public LodStorageThread? StorageThread => storageThread;
 
+    /// <summary>
+    /// Stamp every section row this pipeline writes with a version (terrain-change plan Phase B).
+    /// Set by the server half before <see cref="Open"/>; a client cache never versions.
+    /// </summary>
+    public bool VersionSections { get; set; }
+
+    /// <summary>The open cache's generation, or empty when it does not version its sections.</summary>
+    public string SectionGeneration => store?.SectionGeneration ?? "";
+
+    /// <summary>The open cache's newest committed section version, or 0.</summary>
+    public long SectionVersion => store?.SectionVersion ?? 0;
+
+    /// <summary>
+    /// This client cache's record of its server's cache (see Net.LodAssistSync). Read on the
+    /// owning thread at join, beside the key scan; empty when no cache is open.
+    /// </summary>
+    public Net.LodAssistSyncState LoadAssistSync() => store?.LoadAssistSync()
+        ?? new Net.LodAssistSyncState("", Net.LodAssistSync.NoRecord, new());
+
     /// <summary>Owning-thread pipeline phases since the last telemetry report.</summary>
     public LodPhaseCost LoadInstallCost, ForeignInstallCost, CaptureScheduleCost, CaptureApplyCost,
         MipApplyCost, MipScheduleCost, SaveSnapshotCost;
@@ -536,7 +555,7 @@ public class LodPipeline
         string dir = api.GetOrCreateDataPath(subdir);
         string dbPath = Path.Combine(dir, worldKey + suffix + ".db");
 
-        var newStore = new LodStore(logger);
+        var newStore = new LodStore(logger, VersionSections);
         if (!newStore.Open(dbPath))
         {
             newStore.Dispose();
@@ -702,6 +721,15 @@ public class LodPipeline
     /// <inheritdoc cref="LodRemoteKeySet.MarkRetryable"/>
     public void MarkRemoteRetryable(long key) => Remote.MarkRetryable(key);
 
+    /// <inheritdoc cref="LodRemoteKeySet.QueueNetworkRefresh"/>
+    public bool QueueNetworkRefresh(long key, long version) => Remote.QueueNetworkRefresh(key, version);
+
+    /// <inheritdoc cref="LodRemoteKeySet.HoldsSection"/>
+    public bool HoldsSection(long key) => Remote.HoldsSection(key);
+
+    /// <inheritdoc cref="LodRemoteKeySet.TakeNetworkRefreshOutcomes"/>
+    public List<LodNetworkRefreshOutcome>? TakeNetworkRefreshOutcomes() => Remote.TakeNetworkRefreshOutcomes();
+
     /// <summary>
     /// Pending fills examined per tick, a dictionary lookup each. The cap only stops a first
     /// session with tens of thousands of held keys from examining all of them in one tick.
@@ -810,7 +838,7 @@ public class LodPipeline
                     // an option, so a foreign section becomes local cache data after adoption.
                     World.MarkChanged(result.Key);
                     Remote.MarkInstalled(result.Key);
-                    Remote.NoteMerged(result.Key, result.SourceRowid);
+                    NoteForeignMerged(result);
                     ForeignSectionsInstalled++;
                     installed = true;
                 }
@@ -858,7 +886,17 @@ public class LodPipeline
         ColumnsReplaced += merged.ColumnsReplaced;
         ColumnsKeptObserved += merged.ColumnsKeptObserved;
         Remote.MarkInstalled(result.Key);
-        Remote.NoteMerged(result.Key, result.SourceRowid);
+        NoteForeignMerged(result);
+    }
+
+    /// <summary>
+    /// A sibling blob's SourceRowid is that cache's rowid; a network blob's is the server's section
+    /// version. The two answer the same question for different sources and are never compared.
+    /// </summary>
+    void NoteForeignMerged(LodForeignDecodeResult result)
+    {
+        if (result.Source == LodForeignSource.ServerAssist) Remote.NoteNetworkMerged(result.Key, result.SourceRowid);
+        else Remote.NoteMerged(result.Key, result.SourceRowid);
     }
 
     /// <summary>Hand merge records whose merged copy is now durable to the storage worker.</summary>

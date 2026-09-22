@@ -41,15 +41,20 @@ public static class WireFormatChecks
 
     static void FieldNumbersAreStable(Check c)
     {
-        c.SeqEq(new[] { "1:Protocol:Int32", "2:ModVersion:String" },
-            Layout(typeof(AssistHello)), "AssistHello field numbers");
+        // Section sync (terrain-change plan Phase B) appended 3-5 here, 9 on the welcome, 5-7 on
+        // the manifest and 4 on the section. An older peer reads none of them.
+        c.SeqEq(new[]
+        {
+            "1:Protocol:Int32", "2:ModVersion:String", "3:SectionSync:Int32",
+            "4:SyncGeneration:String", "5:SyncVersion:Int64",
+        }, Layout(typeof(AssistHello)), "AssistHello field numbers");
 
         c.SeqEq(new[]
         {
             "1:Protocol:Int32", "2:ModVersion:String", "3:Enabled:Boolean",
             "4:Status:String", "5:ManifestKeyCount:Int32",
             "6:ServerSettings:AssistServerSettings", "7:Features:Int32",
-            "8:CanControlWorldGeneration:Boolean",
+            "8:CanControlWorldGeneration:Boolean", "9:CacheGeneration:String",
         }, Layout(typeof(AssistWelcome)), "AssistWelcome field numbers");
 
         c.SeqEq(new[]
@@ -75,6 +80,7 @@ public static class WireFormatChecks
         c.SeqEq(new[]
         {
             "1:Sequence:Int32", "2:Last:Boolean", "3:Keys:Int64[]", "4:Refresh:Boolean",
+            "5:VersionFrom:Int64", "6:VersionTo:Int64", "7:Versions:Int64[]",
         },
             Layout(typeof(AssistKeyManifest)), "AssistKeyManifest field numbers");
 
@@ -108,7 +114,7 @@ public static class WireFormatChecks
         // Retryable was ADDED at 3, not slotted into an existing number. That is the one
         // shape of change this contract allows without a protocol bump: an older peer
         // ignores a field it does not know, and 1 and 2 still mean what they meant.
-        c.SeqEq(new[] { "1:Key:Int64", "2:Blob:Byte[]", "3:Retryable:Boolean" },
+        c.SeqEq(new[] { "1:Key:Int64", "2:Blob:Byte[]", "3:Retryable:Boolean", "4:Version:Int64" },
             Layout(typeof(AssistSection)), "AssistSection field numbers");
 
         c.SeqEq(new[]
@@ -138,6 +144,7 @@ public static class WireFormatChecks
             "feature bit one is reserved for frontier generation");
         c.Eq(4, LodAssist.FeatureSilhouetteTiles,
             "feature bit two is reserved for silhouette tiles");
+        c.Eq(1, LodAssist.SectionSyncVersion, "section sync is generation 1; older clients send 0");
     }
 
     /// <summary>
@@ -282,6 +289,44 @@ public static class WireFormatChecks
         c.Eq(true, manifest.Last, "the manifest last flag survives");
         c.True(manifest.Refresh, "the append-only refresh marker survives");
 
+        var span = Roundtrip(new AssistKeyManifest
+        {
+            Sequence = 0, Last = true, Keys = new[] { 7L, 9L }, Refresh = true,
+            VersionFrom = LodAssistSync.NoRecord, VersionTo = 12, Versions = new[] { 0L, 11L },
+        });
+        c.Eq((LodAssistSync.NoRecord, 12L), (span.VersionFrom, span.VersionTo),
+            "a span's bounds survive, including the re-check-everything start");
+        c.SeqEq(new[] { 0L, 11L }, span.Versions, "a span's per-key versions survive");
+
+        // The compatibility the append-only rule promises, checked against the older shapes.
+        var oldClientReads = Reshape<AssistKeyManifest, PreSyncKeyManifest>(span);
+        c.SeqEq(new[] { 7L, 9L }, oldClientReads.Keys,
+            "a client from before section sync reads a span's keys");
+        c.True(oldClientReads.Refresh && oldClientReads.Last,
+            "and reads it as the refresh it has always handled");
+
+        var newServerReads = Reshape<PreSyncHello, AssistHello>(
+            new PreSyncHello { Protocol = 1, ModVersion = "0.4.125" });
+        c.Eq((0, ""), (newServerReads.SectionSync, newServerReads.SyncGeneration),
+            "a greeting from before section sync reads as a client that does not sync");
+
+        var hello2 = Roundtrip(new AssistHello
+        {
+            Protocol = 1, ModVersion = "0.4.126", SectionSync = LodAssist.SectionSyncVersion,
+            SyncGeneration = "abc", SyncVersion = LodAssistSync.NoRecord,
+        });
+        c.Eq((LodAssist.SectionSyncVersion, "abc", LodAssistSync.NoRecord),
+            (hello2.SectionSync, hello2.SyncGeneration, hello2.SyncVersion),
+            "a syncing greeting survives, including the no-record version");
+
+        var oldServerWelcome = Reshape<PreSyncWelcome, AssistWelcome>(
+            new PreSyncWelcome { Protocol = 1, ModVersion = "0.4.125", Enabled = true });
+        c.Eq("", oldServerWelcome.CacheGeneration ?? "",
+            "a welcome from before section sync names no generation, so no span is expected");
+
+        var versioned = Roundtrip(new AssistSection { Key = 5, Blob = new byte[] { 1 }, Version = 44 });
+        c.Eq(44L, versioned.Version, "a section's version survives");
+
         var request = Roundtrip(new AssistSectionRequest { Keys = keys });
         c.SeqEq(keys, request.Keys, "request keys survive");
 
@@ -341,4 +386,42 @@ public static class WireFormatChecks
         buffer.Position = 0;
         return Serializer.Deserialize<T>(buffer);
     }
+
+    /// <summary>Write one shape and read it as another, as two builds on the wire do.</summary>
+    static TTo Reshape<TFrom, TTo>(TFrom value)
+    {
+        using var buffer = new MemoryStream();
+        Serializer.Serialize(buffer, value);
+        buffer.Position = 0;
+        return Serializer.Deserialize<TTo>(buffer);
+    }
+
+    // The shapes 0.4.125 shipped, frozen here so the older side of each pairing can be read.
+    // Protobuf assigns their fields when reading; the compiler cannot see that.
+#pragma warning disable CS0649
+
+    [ProtoContract]
+    sealed class PreSyncHello
+    {
+        [ProtoMember(1)] public int Protocol;
+        [ProtoMember(2)] public string ModVersion = "";
+    }
+
+    [ProtoContract]
+    sealed class PreSyncWelcome
+    {
+        [ProtoMember(1)] public int Protocol;
+        [ProtoMember(2)] public string ModVersion = "";
+        [ProtoMember(3)] public bool Enabled;
+    }
+
+    [ProtoContract]
+    sealed class PreSyncKeyManifest
+    {
+        [ProtoMember(1)] public int Sequence;
+        [ProtoMember(2)] public bool Last;
+        [ProtoMember(3)] public long[] Keys = Array.Empty<long>();
+        [ProtoMember(4)] public bool Refresh;
+    }
+#pragma warning restore CS0649
 }

@@ -33,9 +33,47 @@ public class LodStore : SQLiteDBConnection
     public override string DBTypeCode => "vintagehorizons lod cache";
 
     SqliteCommand? upsertCmd;
+    SqliteCommand? sectionVersionCmd;
 
-    public LodStore(ILogger logger) : base(logger)
+    /// <summary>
+    /// Whether every row this store writes carries a section version (the terrain-change plan's
+    /// Phase B). Server caches only: a client holds its own captures, which no one asks about by
+    /// version, and adding the column and its index there would cost a one-time index build and
+    /// a second index write per save for nothing.
+    /// </summary>
+    readonly bool versionSections;
+
+    /// <summary>
+    /// The newest version any committed row carries, or the baseline 1 on a cache whose rows all
+    /// predate versions (they read as version 0). Guarded by the transaction lock, and written to
+    /// Meta in the same transaction as the rows it numbers, so a reader that sees the counter
+    /// also sees every row at or below it.
+    /// </summary>
+    long sectionVersion;
+
+    /// <summary>
+    /// <see cref="sectionVersion"/> as of the last commit, published without the lock so the game
+    /// thread can read it without waiting behind a checkpoint's transaction.
+    /// </summary>
+    long committedSectionVersion;
+
+    /// <summary>
+    /// This cache's identity, minted when it is first versioned and again whenever its rows can
+    /// no longer be trusted to carry versions in order: a format purge, or a write by a build that
+    /// did not stamp them. A client whose record names another generation re-checks from zero.
+    /// Empty on a store that does not version its sections.
+    /// </summary>
+    public string SectionGeneration { get; private set; } = "";
+
+    /// <summary>
+    /// The newest committed section version; every row at or below it is durable. Zero on a store
+    /// that does not version. Any thread, lock-free.
+    /// </summary>
+    public long SectionVersion => Volatile.Read(ref committedSectionVersion);
+
+    public LodStore(ILogger logger, bool versionSections = false) : base(logger)
     {
+        this.versionSections = versionSections;
     }
 
     public bool Open(string filePath)
@@ -84,6 +122,13 @@ public class LodStore : SQLiteDBConnection
                     ModifiedMs INTEGER NOT NULL,
                     PRIMARY KEY (PX, PZ)
                 );
+                CREATE TABLE IF NOT EXISTS AssistOwed (
+                    Detail INTEGER NOT NULL,
+                    SX INTEGER NOT NULL,
+                    SZ INTEGER NOT NULL,
+                    Version INTEGER NOT NULL,
+                    PRIMARY KEY (Detail, SX, SZ)
+                );
                 DROP TABLE IF EXISTS Region;
                 DROP TABLE IF EXISTS Region2;";
             cmd.ExecuteNonQuery();
@@ -91,7 +136,115 @@ public class LodStore : SQLiteDBConnection
 
         PurgeOutdatedData(sqliteConn);
         PurgeOutdatedFingerprints(sqliteConn);
+        if (versionSections) EnsureSectionVersions(sqliteConn);
     }
+
+    /// <summary>
+    /// Give the Section table its version column, the index that answers "what changed since",
+    /// and this cache's generation (the terrain-change plan's section 4.2).
+    ///
+    /// The column is added in place rather than by a schema bump, for the reason the fingerprint
+    /// table was: a bump wipes the cache. Rows written before it read as version 0, below every
+    /// version this store assigns, so a client that has never caught up asks for them and one that
+    /// has does not.
+    ///
+    /// A build that predates versions writes rows at version 0 too, and nothing it does could
+    /// otherwise be told apart from a row that was always there: a client already past 0 would
+    /// never hear of the change. The trigger marks any such write, which costs that older build one
+    /// tiny Meta write per row and this one nothing, and the next open here re-mints the generation
+    /// so every client re-checks. SQLite runs the trigger for any writer, which is the point.
+    /// </summary>
+    void EnsureSectionVersions(SqliteConnection conn)
+    {
+        bool hasColumn;
+        using (var check = conn.CreateCommand())
+        {
+            check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Section') WHERE name='Version'";
+            hasColumn = (long)(check.ExecuteScalar() ?? 0L) > 0;
+        }
+
+        if (!hasColumn)
+        {
+            long rows;
+            using (var count = conn.CreateCommand())
+            {
+                count.CommandText = "SELECT COUNT(*) FROM Section";
+                rows = (long)(count.ExecuteScalar() ?? 0L);
+            }
+            // Building the index reads every row once, so a large cache opens a little slower
+            // this one time. Said out loud so a slow first start has an explanation in the log.
+            if (rows > 0)
+            {
+                logger.Notification(
+                    "[VintageHorizons] Adding section versions to this server cache ({0} sections, "
+                    + "one time only). Clients can then be told exactly what changed while they were away.",
+                    rows);
+            }
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText =
+                (hasColumn ? "" : "ALTER TABLE Section ADD COLUMN Version INTEGER NOT NULL DEFAULT 0; ")
+                // Level first: every question asked of versions is about one level, and a planner
+                // offered SectionKeys' equality on Detail takes it over a bare range on Version -
+                // then reads each row's version from the row itself, which sits after the blob.
+                + "CREATE INDEX IF NOT EXISTS SectionVersions ON Section (Detail, Version, SX, SZ); "
+                + "CREATE TRIGGER IF NOT EXISTS SectionLegacyWrite AFTER INSERT ON Section "
+                + "WHEN NEW.Version = 0 BEGIN "
+                + "INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('LegacyWrite', '1'); END;";
+            cmd.ExecuteNonQuery();
+        }
+
+        string? generation = ReadMeta(conn, "SectionGeneration");
+        bool legacyWrite = ReadMeta(conn, "LegacyWrite") == "1";
+        long stored = ParseMetaLong(ReadMeta(conn, "SectionVersion")) ?? 0;
+        long highest;
+        using (var max = conn.CreateCommand())
+        {
+            // Through the index, never the table: a row's version is stored after its blob, so
+            // reading it from the table reads the blob's overflow pages too.
+            max.CommandText = "SELECT COALESCE(MAX(Version), 0) FROM Section INDEXED BY SectionVersions";
+            highest = (long)(max.ExecuteScalar() ?? 0L);
+        }
+        sectionVersion = Math.Max(1, Math.Max(stored, highest));
+
+        if (legacyWrite && !string.IsNullOrEmpty(generation))
+        {
+            logger.Notification(
+                "[VintageHorizons] An older build wrote to this server cache without section versions, "
+                + "so no client can trust its record of what changed. Every client re-checks the "
+                + "sections it holds against this cache the next time it joins.");
+        }
+        if (string.IsNullOrEmpty(generation) || legacyWrite)
+            generation = Guid.NewGuid().ToString("N");
+
+        using (var write = conn.CreateCommand())
+        {
+            write.CommandText =
+                "INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('SectionGeneration', @generation); "
+                + "INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('SectionVersion', @version); "
+                + "DELETE FROM Meta WHERE Key='LegacyWrite';";
+            write.Parameters.AddWithValue("@generation", generation);
+            write.Parameters.AddWithValue("@version",
+                sectionVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            write.ExecuteNonQuery();
+        }
+        SectionGeneration = generation;
+        Volatile.Write(ref committedSectionVersion, sectionVersion);
+    }
+
+    static string? ReadMeta(SqliteConnection conn, string key)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Value FROM Meta WHERE Key=@key";
+        cmd.Parameters.AddWithValue("@key", key);
+        return cmd.ExecuteScalar() as string;
+    }
+
+    static long? ParseMetaLong(string? value) =>
+        long.TryParse(value, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out long parsed) ? parsed : null;
 
     /// <summary>
     /// Drops every stored column fingerprint when the rule that produced them changed.
@@ -182,8 +335,16 @@ public class LodStore : SQLiteDBConnection
         // capture of a column, and the sweep skips a column whose claim matches the savegame;
         // leaving them behind after deleting the sections they describe would make the sweep
         // skip terrain it no longer has, permanently, with nothing to notice it.
+        //
+        // So do both halves of the server-sync record. A client's owed sections and its caught-up
+        // version describe copies this purge just deleted. A server's generation names a lineage
+        // of rows that no longer exists, and a client still holding that name would take the
+        // rebuilt cache's versions as a continuation of the old one's.
         using var cmd = sqliteConn.CreateCommand();
-        cmd.CommandText = "DELETE FROM Section; DELETE FROM SiblingMerge; DELETE FROM ColumnFingerprint; INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('FormatVersion', '" + SchemaVersion + "');";
+        cmd.CommandText = "DELETE FROM Section; DELETE FROM SiblingMerge; DELETE FROM ColumnFingerprint; "
+            + "DELETE FROM AssistOwed; "
+            + "DELETE FROM Meta WHERE Key IN ('AssistGeneration', 'AssistVersion', 'SectionGeneration'); "
+            + "INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('FormatVersion', '" + SchemaVersion + "');";
         cmd.ExecuteNonQuery();
     }
 
@@ -338,16 +499,28 @@ public class LodStore : SQLiteDBConnection
         base.OnOpened();
 
         upsertCmd = sqliteConn.CreateCommand();
-        upsertCmd.CommandText =
-            "INSERT OR REPLACE INTO Section (Detail, SX, SZ, Data, ApplyToParent, ModifiedMs) " +
-            "VALUES (@detail, @sx, @sz, @data, @atp, @ms)";
+        upsertCmd.CommandText = versionSections
+            ? "INSERT OR REPLACE INTO Section (Detail, SX, SZ, Data, ApplyToParent, ModifiedMs, Version) "
+                + "VALUES (@detail, @sx, @sz, @data, @atp, @ms, @version)"
+            : "INSERT OR REPLACE INTO Section (Detail, SX, SZ, Data, ApplyToParent, ModifiedMs) "
+                + "VALUES (@detail, @sx, @sz, @data, @atp, @ms)";
         upsertCmd.Parameters.Add("@detail", SqliteType.Integer);
         upsertCmd.Parameters.Add("@sx", SqliteType.Integer);
         upsertCmd.Parameters.Add("@sz", SqliteType.Integer);
         upsertCmd.Parameters.Add("@data", SqliteType.Blob);
         upsertCmd.Parameters.Add("@atp", SqliteType.Integer);
         upsertCmd.Parameters.Add("@ms", SqliteType.Integer);
+        if (versionSections) upsertCmd.Parameters.Add("@version", SqliteType.Integer);
         upsertCmd.Prepare();
+
+        if (versionSections)
+        {
+            sectionVersionCmd = sqliteConn.CreateCommand();
+            sectionVersionCmd.CommandText =
+                "INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('SectionVersion', @version)";
+            sectionVersionCmd.Parameters.Add("@version", SqliteType.Text);
+            sectionVersionCmd.Prepare();
+        }
     }
 
     /// <summary>
@@ -361,8 +534,44 @@ public class LodStore : SQLiteDBConnection
 
         lock (transactionLock)
         {
-            ExecuteUpsert(level, sx, sz, data, applyToParent);
+            if (!versionSections)
+            {
+                ExecuteUpsert(level, sx, sz, data, applyToParent, 0);
+                return;
+            }
+
+            // The row and the counter that numbers it commit together, as in SaveBatch.
+            using SqliteTransaction transaction = sqliteConn.BeginTransaction();
+            upsertCmd.Transaction = transaction;
+            sectionVersionCmd!.Transaction = transaction;
+            try
+            {
+                long version = NextSectionVersion();
+                ExecuteUpsert(level, sx, sz, data, applyToParent, version);
+                RecordSectionVersion(version);
+                transaction.Commit();
+                Volatile.Write(ref committedSectionVersion, version);
+            }
+            finally
+            {
+                upsertCmd.Transaction = null;
+                sectionVersionCmd.Transaction = null;
+            }
         }
+    }
+
+    /// <summary>
+    /// The version for the next transaction. Held under the transaction lock. A rolled-back
+    /// transaction leaves a gap in the numbering, which costs nothing: versions only have to
+    /// grow, not be consecutive.
+    /// </summary>
+    long NextSectionVersion() => ++sectionVersion;
+
+    void RecordSectionVersion(long version)
+    {
+        sectionVersionCmd!.Parameters["@version"].Value =
+            version.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        sectionVersionCmd.ExecuteNonQuery();
     }
 
     /// <summary>
@@ -382,24 +591,31 @@ public class LodStore : SQLiteDBConnection
         {
             using SqliteTransaction transaction = sqliteConn.BeginTransaction();
             upsertCmd.Transaction = transaction;
+            if (sectionVersionCmd != null) sectionVersionCmd.Transaction = transaction;
             try
             {
+                // One version per checkpoint: every row in it became durable at the same moment,
+                // and "what changed since" only needs versions to grow, not to be distinct.
+                long version = versionSections ? NextSectionVersion() : 0;
                 for (int i = 0; i < snapshots.Count; i++)
                 {
                     LodSaveSnapshot snapshot = snapshots[i];
                     ExecuteUpsert(snapshot.Level, snapshot.SX, snapshot.SZ, blobs[i],
-                        snapshot.ApplyToParent);
+                        snapshot.ApplyToParent, version);
                 }
+                if (versionSections) RecordSectionVersion(version);
                 transaction.Commit();
+                if (versionSections) Volatile.Write(ref committedSectionVersion, version);
             }
             finally
             {
                 upsertCmd.Transaction = null;
+                if (sectionVersionCmd != null) sectionVersionCmd.Transaction = null;
             }
         }
     }
 
-    void ExecuteUpsert(int level, int sx, int sz, byte[] data, bool applyToParent)
+    void ExecuteUpsert(int level, int sx, int sz, byte[] data, bool applyToParent, long version)
     {
         upsertCmd!.Parameters["@detail"].Value = level;
         upsertCmd.Parameters["@sx"].Value = sx;
@@ -407,6 +623,7 @@ public class LodStore : SQLiteDBConnection
         upsertCmd.Parameters["@data"].Value = data;
         upsertCmd.Parameters["@atp"].Value = applyToParent ? 1 : 0;
         upsertCmd.Parameters["@ms"].Value = Environment.TickCount64;
+        if (versionSections) upsertCmd.Parameters["@version"].Value = version;
         upsertCmd.ExecuteNonQuery();
     }
 
@@ -636,6 +853,132 @@ public class LodStore : SQLiteDBConnection
     }
 
     /// <summary>
+    /// How far this client has caught up with its server's section cache: the generation and
+    /// version it last confirmed, and the held sections the server has announced as changed that
+    /// this client has not yet merged. Read once at open. A cache with no record reads as an
+    /// empty generation and version -1, which the server answers with a full re-check.
+    /// </summary>
+    public Net.LodAssistSyncState LoadAssistSync()
+    {
+        var owed = new List<(long Key, long Version)>();
+        try
+        {
+            lock (transactionLock)
+            {
+                string generation = ReadMeta(sqliteConn, "AssistGeneration") ?? "";
+                long version = ParseMetaLong(ReadMeta(sqliteConn, "AssistVersion")) ?? Net.LodAssistSync.NoRecord;
+                using var cmd = sqliteConn.CreateCommand();
+                cmd.CommandText = "SELECT Detail, SX, SZ, Version FROM AssistOwed";
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    owed.Add((LodWorld.SectionKey(reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2)),
+                        reader.GetInt64(3)));
+                }
+                return new Net.LodAssistSyncState(generation, version, owed);
+            }
+        }
+        catch (Exception e)
+        {
+            // No record is the safe reading: the server answers it with a full re-check.
+            logger.Warning("[VintageHorizons] could not read this cache's server-sync record, so it "
+                + "will re-check every section it holds against the server: {0}", e.Message);
+            return new Net.LodAssistSyncState("", Net.LodAssistSync.NoRecord, new());
+        }
+    }
+
+    /// <summary>
+    /// Apply one server-sync change in one transaction, on the storage thread. A span's owed
+    /// sections and the version it reaches are always written together, so a crash can never
+    /// record the version without the sections still owed below it. A failure is logged and
+    /// dropped: the record stays at its previous state, which only means the server announces
+    /// the same changes again next time. Returns whether it committed, so the storage worker can
+    /// stop later writes from recording a version this failure left owed sections below.
+    /// </summary>
+    public bool SaveAssistSync(Net.LodAssistSyncWrite write)
+    {
+        try
+        {
+            lock (transactionLock)
+            {
+                using SqliteTransaction transaction = sqliteConn.BeginTransaction();
+                using var cmd = sqliteConn.CreateCommand();
+                cmd.Transaction = transaction;
+
+                if (write.ResetOwed)
+                {
+                    cmd.CommandText = "DELETE FROM AssistOwed";
+                    cmd.ExecuteNonQuery();
+                }
+
+                if (write.Settled.Count > 0)
+                {
+                    cmd.CommandText = "DELETE FROM AssistOwed WHERE Detail=@detail AND SX=@sx AND SZ=@sz";
+                    cmd.Parameters.Clear();
+                    SqliteParameter detail = cmd.Parameters.Add("@detail", SqliteType.Integer);
+                    SqliteParameter sx = cmd.Parameters.Add("@sx", SqliteType.Integer);
+                    SqliteParameter sz = cmd.Parameters.Add("@sz", SqliteType.Integer);
+                    foreach (long key in write.Settled)
+                    {
+                        detail.Value = LodWorld.KeyLevel(key);
+                        sx.Value = LodWorld.KeySx(key);
+                        sz.Value = LodWorld.KeySz(key);
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+
+                if (write.Owed.Count > 0)
+                {
+                    cmd.CommandText = "INSERT OR REPLACE INTO AssistOwed (Detail, SX, SZ, Version) "
+                        + "VALUES (@detail, @sx, @sz, @version)";
+                    cmd.Parameters.Clear();
+                    SqliteParameter detail = cmd.Parameters.Add("@detail", SqliteType.Integer);
+                    SqliteParameter sx = cmd.Parameters.Add("@sx", SqliteType.Integer);
+                    SqliteParameter sz = cmd.Parameters.Add("@sz", SqliteType.Integer);
+                    SqliteParameter version = cmd.Parameters.Add("@version", SqliteType.Integer);
+                    foreach ((long key, long owedVersion) in write.Owed)
+                    {
+                        detail.Value = LodWorld.KeyLevel(key);
+                        sx.Value = LodWorld.KeySx(key);
+                        sz.Value = LodWorld.KeySz(key);
+                        version.Value = owedVersion;
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+
+                if (write.Generation != null || write.Version != null)
+                {
+                    cmd.CommandText = "INSERT OR REPLACE INTO Meta (Key, Value) VALUES (@key, @value)";
+                    cmd.Parameters.Clear();
+                    SqliteParameter metaKey = cmd.Parameters.Add("@key", SqliteType.Text);
+                    SqliteParameter metaValue = cmd.Parameters.Add("@value", SqliteType.Text);
+                    if (write.Generation != null)
+                    {
+                        metaKey.Value = "AssistGeneration";
+                        metaValue.Value = write.Generation;
+                        cmd.ExecuteNonQuery();
+                    }
+                    if (write.Version is long reached)
+                    {
+                        metaKey.Value = "AssistVersion";
+                        metaValue.Value = reached.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+
+                transaction.Commit();
+                return true;
+            }
+        }
+        catch (Exception e)
+        {
+            logger.Warning("[VintageHorizons] could not update this cache's server-sync record; the "
+                + "server will announce the same changes again next time: {0}", e.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Enumerate stored section KEYS only - no blob parsing. Join-time cost stays
     /// proportional to explored area count, not data size; section data itself is
     /// demand-loaded when the renderer or pipeline first needs it.
@@ -852,6 +1195,8 @@ public class LodStore : SQLiteDBConnection
     {
         upsertCmd?.Dispose();
         upsertCmd = null;
+        sectionVersionCmd?.Dispose();
+        sectionVersionCmd = null;
         loadOneCmd?.Dispose();
         loadOneCmd = null;
         base.Close();

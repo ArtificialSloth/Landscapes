@@ -113,6 +113,10 @@ public class LodAssistServerSystem : ModSystem
                     + $"{pendingByPlayer.Count} players waiting, "
                     + $"{manifestDeltasSent} new-key and {refreshManifestsSent} refresh offers "
                     + "sent to connected players.",
+                    $"[VintageHorizons] Section sync: cache {DescribeCacheVersion(capture)}; "
+                    + $"{syncLedger.Syncing} players syncing by version; {joinSpansSent} join spans "
+                    + $"({fromZeroSpansSent} full re-checks) and {liveSpansSent} live spans sent, "
+                    + $"{spanKeysSent} changed sections announced.",
                     capture?.CacheWorkStatusLine
                         ?? LodServerCaptureSystem.FormatCacheWorkStatus(0, 0, 0, 0, 0, 0, 0, 0),
                 };
@@ -144,7 +148,7 @@ public class LodAssistServerSystem : ModSystem
         // from a HashSet the capture pipeline mutates every tick - reading it here is a
         // torn read, and the count would disagree with the manifest that follows it
         // (observed: announced 5634, sent 5638, four sections captured in between).
-        sapi.Event.EnqueueMainThreadTask(() => Answer(fromPlayer), "vintagehorizons-hello");
+        sapi.Event.EnqueueMainThreadTask(() => Answer(fromPlayer, msg), "vintagehorizons-hello");
     }
 
     /// <summary>
@@ -152,13 +156,20 @@ public class LodAssistServerSystem : ModSystem
     /// rather than an estimate. Enabled stays false until sections can actually move:
     /// reporting true would leave a client waiting for terrain that is not coming.
     /// </summary>
-    void Answer(IServerPlayer player)
+    void Answer(IServerPlayer player, AssistHello hello)
     {
         LodServerCaptureSystem? capture = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>();
         LodServerConfig config = capture?.Config ?? new LodServerConfig();
         bool capturing = capture?.Capturing == true;
         bool serving = capturing && config.EnableServing;
         long[] keys = serving ? capture!.SnapshotKeys() : Array.Empty<long>();
+
+        // Versions only when this cache carries them and the client keeps a record of them; every
+        // other pairing is served exactly as before section sync existed.
+        LodAssistBlobReader? reader = serving ? EnsureBlobReader(capture) : null;
+        string generation = reader != null && hello.SectionSync >= LodAssist.SectionSyncVersion
+            ? capture!.CacheGeneration
+            : "";
 
         (bool enabled, string status) = AssistGreeting.Describe(
             capturing, serving, keys.Length, config.ServeRadiusBlocks);
@@ -175,6 +186,7 @@ public class LodAssistServerSystem : ModSystem
                     ? LodAssist.FeatureWorldGeneration : 0)
                 | (silhouettesOffered ? LodAssist.FeatureSilhouetteTiles : 0),
             CanControlWorldGeneration = player.HasPrivilege(Privilege.controlserver),
+            CacheGeneration = generation,
         }, player);
 
         if (keys.Length > 0) SendManifest(player, keys);
@@ -182,6 +194,23 @@ public class LodAssistServerSystem : ModSystem
         // Recorded even when the cache was empty just now: that is the case that most
         // needs the follow-up offers.
         ledger.Greet(player.PlayerUID, keys);
+
+        // After the full manifest, so the client has every key the server holds before it
+        // hears which of them changed. The span arrives a tick or two later from the reader.
+        if (generation.Length > 0)
+        {
+            // Before the join is queried, so the first broadcast starts no later than this
+            // player's join span ends (LodSectionSyncLedger.EnsureBaseline).
+            syncLedger.EnsureBaseline(capture!.CacheVersion);
+            long session = ++nextSyncSession;
+            long from = syncLedger.Join(player.PlayerUID, session,
+                hello.SyncGeneration ?? "", hello.SyncVersion, generation);
+            reader!.EnqueueSpan(new LodSectionSpanQuery(player.PlayerUID, session, from));
+        }
+        else
+        {
+            syncLedger.Forget(player.PlayerUID);
+        }
     }
 
     void OnWorldGenRequest(IServerPlayer fromPlayer, AssistWorldGenRequest request)
@@ -349,41 +378,167 @@ public class LodAssistServerSystem : ModSystem
     }
 
     /// <summary>
-    /// Tell current clients that durable L0 contents changed. This is separate from the
-    /// monotone key ledger: the key is old, its blob is new. One append-only manifest flag
-    /// lets old clients safely ignore the distinction while new clients request a replacement.
+    /// Ask which level-0 sections changed since the last broadcast. The answer arrives through
+    /// the reader and is sent by <see cref="PublishSpanResults"/>: a versioned span to each
+    /// syncing player, and the same keys as a plain refresh to every other greeted player, which
+    /// is what an older client has always read. The key is old, its blob is new.
+    ///
+    /// This replaced a set of keys the capture pipeline collected in memory as rows became
+    /// durable. The cache's own versions now say what changed, so there is one account of it
+    /// rather than two that could disagree - the owner's rule for the refresh manifest.
     /// </summary>
     void OfferUpdatedKeys()
     {
         LodServerCaptureSystem? capture = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>();
-        if (capture?.Capturing != true) return;
+        if (capture?.Capturing != true || broadcastPending) return;
+        LodAssistBlobReader? reader = EnsureBlobReader(capture);
+        if (reader == null || capture.CacheGeneration.Length == 0) return;
 
-        // Drain even with no listeners or with serving disabled. A later greeting receives
-        // the current rows through the ordinary full manifest and needs no history replay.
-        long[] updated = capture.TakePersistedLevelZeroChanges();
-        if (updated.Length == 0 || ledger.GreetedCount == 0
-            || capture.Config.EnableServing != true) return;
+        // With nobody listening only the baseline moves: a later greeting receives the current
+        // rows through the ordinary full manifest and needs no history replay. Nobody listening
+        // also means nobody syncing, so no player's spans can be broken by the skipped rows.
+        bool listening = ledger.GreetedCount > 0 && capture.Config.EnableServing;
+        long from = syncLedger.EnsureBaseline(capture.CacheVersion);
+        reader.EnqueueSpan(new LodSectionSpanQuery(null, 0, from, BaselineOnly: !listening));
+        broadcastPending = true;
+    }
 
+    /// <summary>
+    /// Send the span results the reader has finished, in the order they were asked for
+    /// (<see cref="LodSectionSyncLedger"/> depends on it). Owning thread.
+    /// </summary>
+    void PublishSpanResults(LodServerCaptureSystem? capture, LodAssistBlobReader? reader)
+    {
+        if (reader == null) return;
+        while (reader.TryTakeSpanResult(out LodSectionSpanResult result))
+        {
+            if (result.Query.PlayerUid == null) PublishBroadcast(result, capture);
+            else PublishJoin(result, reader);
+        }
+    }
+
+    void PublishJoin(LodSectionSpanResult result, LodAssistBlobReader reader)
+    {
+        LodSectionSpanQuery query = result.Query;
+        string uid = query.PlayerUid!;
+        if (result.Failed)
+        {
+            if (query.Attempt < MaxJoinSpanAttempts)
+            {
+                reader.EnqueueSpan(query with { Attempt = query.Attempt + 1 });
+                return;
+            }
+            syncLedger.Abandon(uid, query.Session);
+            Mod.Logger.Warning("VintageHorizons: could not read which cached sections changed for a "
+                + "player, so this session they receive live refreshes only; their record is kept.");
+            return;
+        }
+
+        if (sapi.World.PlayerByUid(uid) is not IServerPlayer player
+            || !syncLedger.Joined(uid, query.Session, result.To))
+        {
+            return;
+        }
+
+        SendSpan(player, result.From, result.To, result.Keys, result.Versions, 0);
+        joinSpansSent++;
+        if (result.From < 0)
+        {
+            fromZeroSpansSent++;
+            Mod.Logger.Notification(
+                "VintageHorizons: {0} has no record of this server's LOD cache (a first join since "
+                + "section versions, or the cache was rebuilt since). Sent all {1} level-0 sections, "
+                + "cache version {2}: the client re-checks every one it holds, in the background.",
+                player.PlayerName, result.Keys.Length, result.To);
+        }
+        else
+        {
+            Mod.Logger.Notification(
+                "VintageHorizons: {0} was caught up to cache version {1}; {2} level-0 sections "
+                + "changed since, up to version {3}.",
+                player.PlayerName, result.From, result.Keys.Length, result.To);
+        }
+    }
+
+    void PublishBroadcast(LodSectionSpanResult result, LodServerCaptureSystem? capture)
+    {
+        broadcastPending = false;
+        if (result.Failed) return;
+
+        foreach ((string uid, long from, int firstRow) in syncLedger.Broadcast(result.To, result.Versions))
+        {
+            if (sapi.World.PlayerByUid(uid) is not IServerPlayer player) continue;
+            SendSpan(player, from, result.To, result.Keys, result.Versions, firstRow);
+            liveSpansSent++;
+        }
+
+        if (result.Keys.Length == 0 || capture?.Config.EnableServing != true) return;
         int told = 0;
         foreach (IPlayer online in sapi.World.AllOnlinePlayers)
         {
-            if (online is not IServerPlayer player || !ledger.HasGreeted(player.PlayerUID)) continue;
-            SendManifest(player, updated, refresh: true);
+            if (online is not IServerPlayer player || !ledger.HasGreeted(player.PlayerUID)
+                || syncLedger.IsSyncing(player.PlayerUID)) continue;
+            SendManifest(player, result.Keys, refresh: true);
             told++;
         }
 
         refreshManifestsSent += told;
         if (told > 0)
             Mod.Logger.Debug("VintageHorizons: offered {0} refreshed L0 sections to {1} player(s)",
-                updated.Length, told);
+                result.Keys.Length, told);
     }
 
+    /// <summary>
+    /// One versioned span, chunked like any manifest, from row <paramref name="firstRow"/>. Always
+    /// at least one message: an empty span still moves the client's record forward.
+    /// </summary>
+    void SendSpan(IServerPlayer player, long from, long to, long[] keys, long[] versions, int firstRow)
+    {
+        int sent = firstRow, sequence = 0;
+        do
+        {
+            int take = Math.Min(LodAssist.ManifestKeysPerMessage, keys.Length - sent);
+            var keyChunk = new long[take];
+            var versionChunk = new long[take];
+            Array.Copy(keys, sent, keyChunk, 0, take);
+            Array.Copy(versions, sent, versionChunk, 0, take);
+            sent += take;
+
+            channel.SendPacket(new AssistKeyManifest
+            {
+                Sequence = sequence++,
+                Last = sent >= keys.Length,
+                Keys = keyChunk,
+                Refresh = true,
+                VersionFrom = from,
+                VersionTo = to,
+                Versions = versionChunk,
+            }, player);
+        }
+        while (sent < keys.Length);
+        spanKeysSent += keys.Length - firstRow;
+    }
+
+    static string DescribeCacheVersion(LodServerCaptureSystem? capture) =>
+        capture == null || capture.CacheGeneration.Length == 0
+            ? "not versioned (not open)"
+            : $"version {capture.CacheVersion}, generation {capture.CacheGeneration[..Math.Min(8, capture.CacheGeneration.Length)]}";
+
+    /// <summary>A join span query that fails is asked again this many times before the player is
+    /// served without versions for the session.</summary>
+    const int MaxJoinSpanAttempts = 3;
+
+    readonly LodSectionSyncLedger syncLedger = new();
+    long nextSyncSession;
+    bool broadcastPending;
+    long joinSpansSent, fromZeroSpansSent, liveSpansSent, spanKeysSent;
     long manifestDeltasSent;
     long refreshManifestsSent;
 
     void OnPlayerDisconnect(IServerPlayer player)
     {
         ledger.Forget(player.PlayerUID);
+        syncLedger.Forget(player.PlayerUID);
         silhouettes?.Forget(player.PlayerUID);
         pendingByPlayer.Remove(player.PlayerUID);
         serveAllowanceByPlayer.Remove(player.PlayerUID);
@@ -552,6 +707,10 @@ public class LodAssistServerSystem : ModSystem
             ServeSetupCost.AddElapsedTicks(currentServeSetupTicks);
         }
 
+        // Rare - one per greeting and one per 30 s - so outside the tick budget, and first, so
+        // a greeting's span is never held behind a busy serve queue.
+        PublishSpanResults(capture, reader);
+
         if (allocationTelemetryEnabled) phaseStarted = Stopwatch.GetTimestamp();
         PublishBlobResults(capture, tickBudget);
         if (allocationTelemetryEnabled)
@@ -685,6 +844,7 @@ public class LodAssistServerSystem : ModSystem
         string? path = capture?.CachePath;
         if (string.IsNullOrEmpty(path))
         {
+            if (blobReader != null) ForgetSpans();
             blobReader?.Dispose();
             blobReader = null;
             blobReaderPath = null;
@@ -693,10 +853,20 @@ public class LodAssistServerSystem : ModSystem
         if (blobReader != null && string.Equals(blobReaderPath, path, StringComparison.Ordinal))
             return blobReader;
 
+        // Queries waiting on the old reader die with it, and a new cache is a new lineage: no
+        // player's span or the broadcast baseline carries over. Those players are served without
+        // versions for the rest of the session; their records are untouched.
+        if (blobReader != null) ForgetSpans();
         blobReader?.Dispose();
         blobReaderPath = path;
         blobReader = new LodAssistBlobReader(path, Mod.Logger, allocationTelemetryEnabled);
         return blobReader;
+    }
+
+    void ForgetSpans()
+    {
+        syncLedger.Clear();
+        broadcastPending = false;
     }
 
     void PublishBlobResults(LodServerCaptureSystem? capture, LodWorkBudget tickBudget)
@@ -746,6 +916,7 @@ public class LodAssistServerSystem : ModSystem
                 Blob = blob,
                 Retryable = result.ReadFailed
                     || (blob.Length == 0 && capture?.ExpectsToHave(result.Key) == true),
+                Version = result.Version,
             });
             sectionsServed++;
             bytesServed += blob.Length;

@@ -165,6 +165,38 @@ public class LodStorageThread : IDisposable
         store.SaveSiblingMerges(batch);
     }
 
+    // The client's server-sync record (Net.LodAssistSync). Each write is its own transaction and
+    // they apply strictly in order: a settle queued before a span that owes the same section again
+    // must land first.
+    readonly ConcurrentQueue<Net.LodAssistSyncWrite> assistSyncSaves = new();
+    bool assistSyncFailed;
+
+    /// <summary>Queue server-sync record changes, oldest first.</summary>
+    public void SaveAssistSync(IEnumerable<Net.LodAssistSyncWrite> writes)
+    {
+        foreach (Net.LodAssistSyncWrite write in writes) assistSyncSaves.Enqueue(write);
+        signal.Set();
+    }
+
+    public int PendingAssistSyncWrites => assistSyncSaves.Count;
+
+    void WriteAssistSync()
+    {
+        while (assistSyncSaves.TryDequeue(out Net.LodAssistSyncWrite? write))
+        {
+            // After a failed write the record may be missing owed sections that a later version
+            // would claim are behind it. Stop recording versions for the rest of the session; the
+            // next join then starts from the last version that was written with its debts, which
+            // at worst announces some changes twice.
+            if (assistSyncFailed)
+            {
+                write.Version = null;
+                write.Generation = null;
+            }
+            if (!store.SaveAssistSync(write)) assistSyncFailed = true;
+        }
+    }
+
     public bool TryPeekForeignResult(out LodForeignDecodeResult result) =>
         foreignResults.TryPeek(out result);
 
@@ -328,6 +360,12 @@ public class LodStorageThread : IDisposable
                 WriteSiblingMerges();
             }
 
+            if (!assistSyncSaves.IsEmpty)
+            {
+                didWork = true;
+                WriteAssistSync();
+            }
+
             if (ShouldCommit() && TryTakePendingSaveBatch(out List<LodSaveSnapshot> batch))
             {
                 didWork = true;
@@ -346,6 +384,9 @@ public class LodStorageThread : IDisposable
         }
         WriteSiblingMerges();
         if (TryTakePendingSaveBatch(out List<LodSaveSnapshot> finalBatch)) WriteBatch(finalBatch);
+        // After the final section batch: a settle is only ever queued once its section is
+        // durable, and a span write depends on nothing here.
+        WriteAssistSync();
     }
 
     bool ShouldCommit()

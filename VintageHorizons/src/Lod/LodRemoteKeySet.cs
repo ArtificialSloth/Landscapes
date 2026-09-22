@@ -18,6 +18,21 @@ public enum LodLocalOfferOutcome
 /// <param name="FillsQueued">Keys it does hold, now waiting to be merged.</param>
 public readonly record struct LodSiblingDelta(int Offered, int FillsQueued);
 
+/// <summary>How a server-sync fill ended (see <see cref="LodRemoteKeySet.QueueNetworkRefresh"/>).</summary>
+public enum LodNetworkRefreshEnd
+{
+    /// <summary>The server's copy, at <see cref="LodNetworkRefreshOutcome.Version"/>, is merged and durable.</summary>
+    Durable,
+
+    /// <summary>The server refused it or its copy was unusable; the client's own copy is untouched.</summary>
+    Failed,
+
+    /// <summary>The client's own copy could not be read back, so there is nothing left to correct.</summary>
+    NotHeld,
+}
+
+public readonly record struct LodNetworkRefreshOutcome(long Key, LodNetworkRefreshEnd End, long Version);
+
 /// <summary>
 /// Bookkeeping for sections a remote source offers: which keys only it has, which of those
 /// the view currently wants, and which have been asked for already.
@@ -91,6 +106,15 @@ public class LodRemoteKeySet
     /// <summary>Merges whose record may be written once the merged copy is durable.</summary>
     readonly Dictionary<long, (long Rowid, long Revision)> recordsAwaitingDurable = new();
     readonly List<(long Key, long Rowid)> recordsReady = new();
+
+    /// <summary>
+    /// Server-sync fills whose ending the tracker must hear about. The network has no rowid, so
+    /// these carry the server's section version instead, in the fill's SourceRowid, and never
+    /// write a sibling merge record.
+    /// </summary>
+    readonly HashSet<long> networkTracked = new();
+    readonly Dictionary<long, (long Version, long Revision)> networkAwaitingDurable = new();
+    readonly List<LodNetworkRefreshOutcome> networkOutcomes = new();
 
     public int PendingFills => fills.Count;
     public int FillsWantedNow => fillWanted.Count;
@@ -194,6 +218,35 @@ public class LodRemoteKeySet
     }
 
     /// <summary>
+    /// Merge the server's copy of a held section it announced as changed at
+    /// <paramref name="version"/>, newest winning, and report how it ends (see
+    /// <see cref="TakeNetworkRefreshOutcomes"/>). Returns false, having offered the key instead,
+    /// when this client does not hold it: there is no stale copy to correct.
+    ///
+    /// Eager, as a level-0 refresh always was: the client rebuilds its parents from level 0, so
+    /// a distant change only shows once the level-0 merge has happened, whether or not the view
+    /// ever loads that section itself.
+    /// </summary>
+    public bool QueueNetworkRefresh(long key, long version)
+    {
+        if (!Holds(key))
+        {
+            Offer(key);
+            return false;
+        }
+
+        networkTracked.Add(key);
+        // A fill already waiting for a newer announcement keeps it.
+        if (fills.TryGetValue(key, out FillRequest pending)) version = Math.Max(version, pending.SourceRowid);
+        QueueFill(key, version,
+            LodWorld.KeyLevel(key) == 0 ? LodMergeMode.NewerWins : LodMergeMode.FillMissing, eager: true);
+        return true;
+    }
+
+    /// <summary>Whether this client holds a copy of the key, on disk or in RAM.</summary>
+    public bool HoldsSection(long key) => Holds(key);
+
+    /// <summary>
     /// Register keys a remote source offers. Only those with no local data become
     /// remote-only; anything already on disk stays a local read, because local wins.
     /// </summary>
@@ -288,7 +341,8 @@ public class LodRemoteKeySet
                     // Every column is already ours, so a fill can add nothing. Account the row
                     // as merged without reading it.
                     FillsAlreadyComplete++;
-                    NoteMerged(key, fill.SourceRowid);
+                    if (networkTracked.Contains(key)) NoteNetworkMerged(key, fill.SourceRowid);
+                    else NoteMerged(key, fill.SourceRowid);
                     continue;
                 }
                 fillWanted.Add(key);
@@ -302,6 +356,8 @@ public class LodRemoteKeySet
                 DropFill(key);
                 localKeys.Remove(key);
                 Offer(key);
+                if (networkTracked.Remove(key))
+                    networkOutcomes.Add(new LodNetworkRefreshOutcome(key, LodNetworkRefreshEnd.NotHeld, 0));
                 continue;
             }
 
@@ -404,18 +460,7 @@ public class LodRemoteKeySet
     /// </summary>
     public void NoteMerged(long key, long sourceRowid)
     {
-        fillWanted.Remove(key);
-        fillInFlight.Remove(key);
-        if (fills.TryGetValue(key, out FillRequest pending) && pending.SourceRowid > sourceRowid)
-        {
-            // A later row arrived while this one was being read; it still needs merging.
-            EnqueueFillCheck(key);
-        }
-        else
-        {
-            fills.Remove(key);
-            if (eagerActive.Remove(key)) world.EvictionPins.Remove(key);
-        }
+        FinishFill(key, sourceRowid);
 
         if (sourceRowid == 0) return;
         if (!siblingAccounted.ContainsKey(key)) siblingAccounted[key] = sourceRowid;
@@ -427,6 +472,56 @@ public class LodRemoteKeySet
             return;
         }
         recordsAwaitingDurable[key] = (sourceRowid, world.PersistenceRevision(key));
+    }
+
+    /// <summary>
+    /// The server's copy at <paramref name="version"/> is now part of the resident copy, merged or
+    /// adopted whole. The network twin of <see cref="NoteMerged"/>: the same fill bookkeeping, but
+    /// a server version is not a sibling rowid, so no merge record is written. A tracked server-sync
+    /// fill is reported once the merged copy is durable, the same rule merge records follow (G16).
+    /// </summary>
+    public void NoteNetworkMerged(long key, long version)
+    {
+        bool finished = FinishFill(key, version);
+        if (!networkTracked.Contains(key)) return;
+        if (finished) networkTracked.Remove(key);
+
+        if (!world.SaveDirty.Contains(key))
+        {
+            networkAwaitingDurable.Remove(key);
+            networkOutcomes.Add(new LodNetworkRefreshOutcome(key, LodNetworkRefreshEnd.Durable, version));
+            return;
+        }
+        networkAwaitingDurable[key] = (version, world.PersistenceRevision(key));
+    }
+
+    /// <summary>
+    /// End the fill a merge answered, unless a newer row or version arrived while this one was
+    /// being read (G7). Returns whether the fill is finished.
+    /// </summary>
+    bool FinishFill(long key, long sourceRevision)
+    {
+        fillWanted.Remove(key);
+        fillInFlight.Remove(key);
+        if (fills.TryGetValue(key, out FillRequest pending) && pending.SourceRowid > sourceRevision)
+        {
+            // A later row arrived while this one was being read; it still needs merging.
+            EnqueueFillCheck(key);
+            return false;
+        }
+
+        fills.Remove(key);
+        if (eagerActive.Remove(key)) world.EvictionPins.Remove(key);
+        return true;
+    }
+
+    /// <summary>How tracked server-sync fills ended since the last call, oldest first.</summary>
+    public List<LodNetworkRefreshOutcome>? TakeNetworkRefreshOutcomes()
+    {
+        if (networkOutcomes.Count == 0) return null;
+        var taken = new List<LodNetworkRefreshOutcome>(networkOutcomes);
+        networkOutcomes.Clear();
+        return taken;
     }
 
     /// <summary>
@@ -468,6 +563,12 @@ public class LodRemoteKeySet
             recordsAwaitingDurable.Remove(key);
             recordsReady.Add((key, awaiting.Rowid));
         }
+        if (networkAwaitingDurable.TryGetValue(key, out (long Version, long Revision) network)
+            && persistenceRevision >= network.Revision)
+        {
+            networkAwaitingDurable.Remove(key);
+            networkOutcomes.Add(new LodNetworkRefreshOutcome(key, LodNetworkRefreshEnd.Durable, network.Version));
+        }
     }
 
     /// <summary>
@@ -496,6 +597,8 @@ public class LodRemoteKeySet
     {
         bool wasFill = DropFill(key);
         if (wasFill) FillsAbandoned++;
+        if (networkTracked.Remove(key))
+            networkOutcomes.Add(new LodNetworkRefreshOutcome(key, LodNetworkRefreshEnd.Failed, 0));
         bool wasOffered = RemoteOnly.Remove(key);
         remoteWanted.Remove(key);
         if (wasFill && !wasOffered) return;
@@ -535,6 +638,9 @@ public class LodRemoteKeySet
         siblingAccounted.Clear();
         recordsAwaitingDurable.Clear();
         recordsReady.Clear();
+        networkTracked.Clear();
+        networkAwaitingDurable.Clear();
+        networkOutcomes.Clear();
         FillsAlreadyComplete = 0;
         FillsDeferred = 0;
         FillsAbandoned = 0;

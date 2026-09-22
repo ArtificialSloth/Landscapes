@@ -11,6 +11,16 @@ namespace VintageHorizons.Net;
 public delegate bool LodForeignSectionInstaller(long key, byte[] blob);
 
 /// <summary>
+/// The same, with the server's version of the row the blob was read from (0 from a server that
+/// does not version its cache), which a server-sync merge needs to settle what it owed.
+/// </summary>
+public delegate bool LodVersionedSectionInstaller(long key, byte[] blob, long version);
+
+/// <summary>One chunk of a versioned refresh span, published on the owning thread.</summary>
+public readonly record struct LodAssistSpanChunk(
+    long From, long To, long[] Keys, long[] Versions, bool Last);
+
+/// <summary>
 /// Client half of the optional server assist (DESIGN.md §10). Stage 1 is handshake only:
 /// it establishes whether an assisting server is on the other end and reports that
 /// through .vhinfo. No terrain moves yet.
@@ -43,6 +53,12 @@ public sealed class LodAssistClient
     /// not have VintageHorizons or predates the diagnostic snapshot field.
     /// </summary>
     public AssistServerSettings? ServerSettings { get; private set; }
+
+    /// <summary>
+    /// The server cache's generation from the welcome: set only when the server versions its
+    /// sections and this client asked to sync, so a versioned join span follows. Empty otherwise.
+    /// </summary>
+    public string ServerCacheGeneration { get; private set; } = "";
 
     /// <summary>True only when this server explicitly advertised the append-only feature.</summary>
     public bool WorldGenerationAvailable => serverProtocol > 0
@@ -109,7 +125,11 @@ public sealed class LodAssistClient
     /// step of it -- which on a vanilla server would mean the optional feature breaking
     /// the mod for exactly the players it is supposed to leave alone.
     /// </summary>
-    public void Greet()
+    /// <param name="sync">
+    /// What this client caught up to with the server's section cache, or null when it does not
+    /// sync by version (integrated play reads the server's cache directly).
+    /// </param>
+    public void Greet(LodAssistSyncRequest? sync = null)
     {
         if (channel == null) return;
 
@@ -129,7 +149,14 @@ public sealed class LodAssistClient
         try
         {
             Status = "handshaking";
-            channel.SendPacket(new AssistHello { Protocol = LodAssist.Protocol, ModVersion = modVersion });
+            channel.SendPacket(new AssistHello
+            {
+                Protocol = LodAssist.Protocol,
+                ModVersion = modVersion,
+                SectionSync = sync != null ? LodAssist.SectionSyncVersion : 0,
+                SyncGeneration = sync?.Generation ?? "",
+                SyncVersion = sync?.Version ?? LodAssistSync.NoRecord,
+            });
         }
         catch (Exception e)
         {
@@ -143,6 +170,7 @@ public sealed class LodAssistClient
         // Deserialized, so every reference field is whatever the wire produced.
         ServerSettings = msg.ServerSettings;
         serverFeatures = msg.Features;
+        ServerCacheGeneration = msg.CacheGeneration ?? "";
         CanControlWorldGeneration = msg.CanControlWorldGeneration;
         string reason = msg.Status ?? "";
         string version = msg.ModVersion ?? "unknown";
@@ -348,7 +376,10 @@ public sealed class LodAssistClient
     /// </summary>
     public readonly HashSet<long> RemoteKeys = new();
 
-    readonly ConcurrentQueue<(long[] Keys, bool Last, bool Refresh)> manifestChunks = new();
+    readonly record struct QueuedManifest(
+        long[] Keys, bool Last, bool Refresh, long VersionFrom, long VersionTo, long[] Versions);
+
+    readonly ConcurrentQueue<QueuedManifest> manifestChunks = new();
 
     /// <summary>True once the final manifest chunk has been applied.</summary>
     public bool ManifestComplete { get; private set; }
@@ -357,7 +388,27 @@ public sealed class LodAssistClient
     public int ManifestExpected { get; private set; }
 
     internal void OnKeyManifest(AssistKeyManifest msg) =>
-        manifestChunks.Enqueue((msg.Keys ?? Array.Empty<long>(), msg.Last, msg.Refresh));
+        manifestChunks.Enqueue(new QueuedManifest(msg.Keys ?? Array.Empty<long>(), msg.Last, msg.Refresh,
+            msg.VersionFrom, msg.VersionTo, msg.Versions ?? Array.Empty<long>()));
+
+    /// <summary>
+    /// Whether the server listed this key in any manifest this session, including keys it later
+    /// declined. Owning thread only.
+    /// </summary>
+    public bool ServerListed(long key) => RemoteKeys.Contains(key) || refused.Contains(key);
+
+    /// <summary>
+    /// Make a key requestable again for a server-sync merge: an earlier refusal or exhausted
+    /// retries belonged to an older copy, and the server announced it as changed. The same
+    /// revival a refresh manifest gives the keys it lists. Owning thread only.
+    /// </summary>
+    public void ReviveForRefresh(long key)
+    {
+        refused.Remove(key);
+        retriesByKey.Remove(key);
+        retryNotBeforeByKey.Remove(key);
+        RemoteKeys.Add(key);
+    }
 
     // ---- Section transfer ----
 
@@ -365,7 +416,7 @@ public sealed class LodAssistClient
     /// Arrivals awaiting the tick. An empty blob is a refusal; Retryable separates
     /// "not written yet" from "never", which are the same packet otherwise.
     /// </summary>
-    readonly ConcurrentQueue<(long Key, byte[] Blob, bool Retryable, long ReadyAtMs)> Arrived = new();
+    readonly ConcurrentQueue<(long Key, byte[] Blob, bool Retryable, long Version, long ReadyAtMs)> Arrived = new();
     long arrivedBytes;
 
     internal long ArrivalMaxBytesPerTick = LodDrainBudget.DefaultMaxBytes;
@@ -476,7 +527,7 @@ public sealed class LodAssistClient
     {
         byte[] blob = msg.Blob ?? Array.Empty<byte>();
         Interlocked.Add(ref arrivedBytes, blob.LongLength);
-        Arrived.Enqueue((msg.Key, blob, msg.Retryable, NowMs()));
+        Arrived.Enqueue((msg.Key, blob, msg.Retryable, msg.Version, NowMs()));
     }
 
     /// <summary>
@@ -488,8 +539,10 @@ public sealed class LodAssistClient
         LodForeignSectionInstaller install,
         Action<long[]>? offerKeys = null,
         Action<long, bool>? transferFailed = null,
-        Action<long[]>? refreshKeys = null) =>
-        PumpCore(install, deferredInstall: false, offerKeys, transferFailed, refreshKeys);
+        Action<long[]>? refreshKeys = null,
+        Action<LodAssistSpanChunk>? refreshSpan = null) =>
+        PumpCore((key, blob, _) => install(key, blob), deferredInstall: false,
+            offerKeys, transferFailed, refreshKeys, refreshSpan);
 
     /// <summary>
     /// Pump arrivals into an asynchronous decoder. A successful callback retains the
@@ -499,20 +552,35 @@ public sealed class LodAssistClient
         LodForeignSectionInstaller enqueue,
         Action<long[]>? offerKeys = null,
         Action<long, bool>? transferFailed = null,
-        Action<long[]>? refreshKeys = null) =>
-        PumpCore(enqueue, deferredInstall: true, offerKeys, transferFailed, refreshKeys);
+        Action<long[]>? refreshKeys = null,
+        Action<LodAssistSpanChunk>? refreshSpan = null) =>
+        PumpCore((key, blob, _) => enqueue(key, blob), deferredInstall: true,
+            offerKeys, transferFailed, refreshKeys, refreshSpan);
+
+    /// <summary>
+    /// <see cref="PumpAsync(LodForeignSectionInstaller, Action{long[]}?, Action{long, bool}?, Action{long[]}?, Action{LodAssistSpanChunk}?)"/>
+    /// for a caller that needs each arrival's server version.
+    /// </summary>
+    public void PumpAsync(
+        LodVersionedSectionInstaller enqueue,
+        Action<long[]>? offerKeys = null,
+        Action<long, bool>? transferFailed = null,
+        Action<long[]>? refreshKeys = null,
+        Action<LodAssistSpanChunk>? refreshSpan = null) =>
+        PumpCore(enqueue, deferredInstall: true, offerKeys, transferFailed, refreshKeys, refreshSpan);
 
     void PumpCore(
-        LodForeignSectionInstaller install,
+        LodVersionedSectionInstaller install,
         bool deferredInstall,
         Action<long[]>? offerKeys,
         Action<long, bool>? transferFailed,
-        Action<long[]>? refreshKeys)
+        Action<long[]>? refreshKeys,
+        Action<LodAssistSpanChunk>? refreshSpan)
     {
         // One protocol-bounded chunk per game tick. A retained manifest can contain many
         // chunks, and applying all of them in one callback would recreate the join hitch
         // that chunking is meant to prevent.
-        if (manifestChunks.TryDequeue(out (long[] Keys, bool Last, bool Refresh) chunk))
+        if (manifestChunks.TryDequeue(out QueuedManifest chunk))
         {
             List<long>? newlyOffered = null;
             foreach (long key in chunk.Keys)
@@ -520,10 +588,7 @@ public sealed class LodAssistClient
                 if (chunk.Refresh)
                 {
                     // A durable new version revives a key that an older request refused.
-                    refused.Remove(key);
-                    retriesByKey.Remove(key);
-                    retryNotBeforeByKey.Remove(key);
-                    RemoteKeys.Add(key);
+                    ReviveForRefresh(key);
                     (newlyOffered ??= new List<long>()).Add(key);
                 }
                 else if (!refused.Contains(key) && RemoteKeys.Add(key))
@@ -532,10 +597,19 @@ public sealed class LodAssistClient
                 }
             }
 
-            // The callback runs on this same owning-thread Pump. It receives only the
-            // delta from this chunk, so LodWorld registration happens once rather than by
-            // re-enumerating the complete retained RemoteKeys set every game tick.
-            if (newlyOffered != null)
+            // The callbacks run on this same owning-thread Pump. Each receives only this
+            // chunk, so LodWorld registration happens once rather than by re-enumerating the
+            // complete retained RemoteKeys set every game tick.
+            //
+            // A versioned span goes to its own callback whole, empty or not: an empty span
+            // still moves the client's record forward, and its Last chunk is what ends it.
+            // Without that callback it is read as the plain refresh it also is.
+            if (chunk.Refresh && chunk.VersionTo > 0 && refreshSpan != null)
+            {
+                refreshSpan(new LodAssistSpanChunk(
+                    chunk.VersionFrom, chunk.VersionTo, chunk.Keys, chunk.Versions, chunk.Last));
+            }
+            else if (newlyOffered != null)
             {
                 if (chunk.Refresh) refreshKeys?.Invoke(newlyOffered.ToArray());
                 else offerKeys?.Invoke(newlyOffered.ToArray());
@@ -578,7 +652,7 @@ public sealed class LodAssistClient
             // Call install even for an empty blob, then publish an explicit failure below.
             // Short-circuiting the reply path used to leave declined keys stuck in
             // LodWorld.LoadsInFlight for the session, pinning their parent coarse.
-            if (install(got.Key, got.Blob))
+            if (install(got.Key, got.Blob, got.Version))
             {
                 if (!deferredInstall) CompleteInstall(got.Key, installed: true);
                 continue;
@@ -654,6 +728,7 @@ public sealed class LodAssistClient
         serverFeatures = 0;
         Status = "not connected yet";
         ServerSettings = null;
+        ServerCacheGeneration = "";
         CanControlWorldGeneration = false;
         WorldGenStatus = null;
         LastWorldGenControlError = "";

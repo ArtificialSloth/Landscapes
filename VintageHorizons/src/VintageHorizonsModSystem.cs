@@ -295,6 +295,14 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// </summary>
     LodAssistClient? assist;
 
+    /// <summary>
+    /// How far this client has caught up with a dedicated server's section cache, and which held
+    /// sections that server changed since (terrain-change plan Phase B). Loaded with each world,
+    /// idle in integrated play, where the sibling cache already says what changed.
+    /// </summary>
+    readonly LodAssistSync serverSync = new();
+    System.Func<long, long, bool>? queueServerSyncFill;
+
     public override void StartClientSide(ICoreClientAPI api)
     {
         capi = api;
@@ -672,10 +680,15 @@ public partial class VintageHorizonsModSystem : ModSystem
         PumpSilhouettes();
         if (assist == null || !assist.Available) return;
 
+        // Set on the network thread before any span it precedes on the channel is queued.
+        serverSync.OnWelcome(assist.ServerCacheGeneration);
+
         int before = pipeline.RemoteOnly.Count;
         assist.PumpAsync(
-            (key, blob) => pipeline.QueueForeignBlob(
-                key, blob, LodForeignSource.ServerAssist) == LodForeignQueueOutcome.Queued,
+            // The version travels with the blob into the decoder: a server-sync merge settles
+            // what was owed only if the copy it merged is at least that new.
+            (key, blob, version) => pipeline.QueueForeignBlob(
+                key, blob, LodForeignSource.ServerAssist, version) == LodForeignQueueOutcome.Queued,
             // Manifest keys become quadtree-visible here rather than in the packet
             // handler: HasDataSet belongs to this thread. Pump publishes each chunk's
             // newly accepted keys once, so the complete retained manifest is never
@@ -697,7 +710,10 @@ public partial class VintageHorizonsModSystem : ModSystem
                 // from both sources would merge one row twice. Dedicated multiplayer has no
                 // sibling reader and continues to use the network manifest.
                 if (localOffers == null) pipeline.AddRemoteUpdates(refreshed);
-            });
+            },
+            ApplyServerSyncSpan);
+
+        PumpServerSync();
 
         // Nearest first. The render path asks for exactly the sections it wants, but far
         // more than the in-flight cap allows at once, and an unordered set hands the
@@ -729,6 +745,117 @@ public partial class VintageHorizonsModSystem : ModSystem
     }
 
     bool loggedRemoteKeys;
+
+    /// <summary>
+    /// One chunk of a versioned span from a server that syncs by version. Held sections become
+    /// owed and are fetched by <see cref="PumpServerSync"/>, nearest first; the rest are offered
+    /// as any refresh offers them.
+    /// </summary>
+    void ApplyServerSyncSpan(LodAssistSpanChunk span)
+    {
+        // Integrated play: the sibling cache is the freshness authority (see the refresh
+        // callback above). It can appear after the greeting, and from then on it wins.
+        if (localOffers != null) return;
+        if (!serverSync.Active)
+        {
+            // Only a server that saw us ask for versions sends a span; keep its keys all the same.
+            pipeline.AddRemoteUpdates(span.Keys);
+            return;
+        }
+
+        List<long>? offered = null;
+        foreach (long key in span.Keys)
+        {
+            if (!pipeline.HoldsSection(key)) (offered ??= new List<long>()).Add(key);
+        }
+        if (offered != null) pipeline.AddRemoteKeys(offered);
+
+        if (serverSync.OnSpan(span.From, span.To, span.Keys, span.Versions, span.Last,
+            pipeline.HoldsSection) is not { } done) return;
+
+        if (!done.Recorded)
+        {
+            Mod.Logger.Warning("Server sync: an announcement from the server did not follow on from "
+                + "the one before it (versions {0}..{1}), so this session's progress is not recorded. "
+                + "Its changes are still fetched; the next join re-checks from version {2}.",
+                done.From, done.To, serverSync.RecordedVersion);
+        }
+        if (!done.Joined)
+        {
+            Mod.Logger.Debug("Server sync: {0} of {1} changed sections held here, versions {2}..{3}",
+                done.Owed, done.Announced, done.From, done.To);
+            return;
+        }
+
+        // The full key manifest precedes the join span on the channel, so it has been applied.
+        int gone = serverSync.ForgetUnlisted(assist!.ServerListed);
+        if (done.FromZero)
+        {
+            Mod.Logger.Notification(
+                "Server sync: no usable record of this server's LOD cache (a first join since section "
+                + "versions, or the server's cache was rebuilt). Re-checking all {0} held sections of the "
+                + "{1} the server listed, nearest first, in the background; progress survives a quit.",
+                done.Owed, done.Announced);
+        }
+        else if (serverSync.OwedCount == 0)
+        {
+            Mod.Logger.Notification("Server sync: already up to date with the server's LOD cache (version {0}).",
+                done.To);
+        }
+        else
+        {
+            Mod.Logger.Notification(
+                "Server sync: {0} held sections changed on the server since this client last caught up "
+                + "(versions {1}..{2}); {3} owed in all, fetched nearest first in the background.",
+                done.Owed, done.From, done.To, serverSync.OwedCount);
+        }
+        if (gone > 0)
+        {
+            Mod.Logger.Notification("Server sync: {0} owed sections are no longer on the server and were dropped.",
+                gone);
+        }
+    }
+
+    /// <summary>
+    /// Settle what finished, hand the nearest owed sections to the pipeline, and pass record
+    /// changes to the storage worker. Game tick; the tracker paces itself.
+    /// </summary>
+    void PumpServerSync()
+    {
+        long now = Environment.TickCount64;
+        if (pipeline.TakeNetworkRefreshOutcomes() is { } outcomes)
+        {
+            foreach (LodNetworkRefreshOutcome outcome in outcomes)
+            {
+                switch (outcome.End)
+                {
+                    case LodNetworkRefreshEnd.Durable: serverSync.Absorbed(outcome.Key, outcome.Version); break;
+                    case LodNetworkRefreshEnd.Failed: serverSync.Failed(outcome.Key, now); break;
+                    case LodNetworkRefreshEnd.NotHeld: serverSync.NotHeld(outcome.Key); break;
+                }
+            }
+        }
+
+        if (capi.World.Player?.Entity?.Pos is { } at && assist != null)
+        {
+            queueServerSyncFill ??= (key, version) =>
+            {
+                // A refusal earlier this session belonged to an older copy.
+                assist?.ReviveForRefresh(key);
+                return pipeline.QueueNetworkRefresh(key, version);
+            };
+            serverSync.Pump(now, at.X, at.Z, assist.ServerSettings?.ServeRadiusBlocks ?? 0,
+                queueServerSyncFill);
+        }
+
+        if (serverSync.TakeWrites() is { } writes) pipeline.StorageThread?.SaveAssistSync(writes);
+        if (serverSync.TakeCaughtUp())
+        {
+            Mod.Logger.Notification("Server sync: caught up with the server's LOD cache (version {0}); "
+                + "{1} changed sections merged this session.", serverSync.RecordedVersion,
+                serverSync.SettledThisSession);
+        }
+    }
 
     /// <summary>
     /// The server side's cache for this same singleplayer world, when it has swept one.
@@ -907,8 +1034,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         }
         if (now < nextFillProgressLogMs) return;
 
-        Mod.Logger.Notification("Distant sections held but incomplete: {0}; {1}",
-            pipeline.DescribeFills(), DescribeSiblingScanner());
+        Mod.Logger.Notification("Distant sections held but incomplete: {0}; {1}; server sync: {2}",
+            pipeline.DescribeFills(), DescribeSiblingScanner(), serverSync.Describe());
         nextFillProgressLogMs = now + FillProgressLogIntervalMs;
         fillMergesAtLastLog = pipeline.ForeignMerges;
     }
@@ -1812,11 +1939,17 @@ public partial class VintageHorizonsModSystem : ModSystem
             localOffers = LodLocalOfferSource.TryOpen(dbPath, Mod.Logger);
         }
 
+        // The record of the server's cache this client caught up with, read beside the key scan.
+        // Integrated play does not take part: the sibling cache opened above already says which
+        // rows changed, and a second account of the same fact is how the two come to disagree.
+        serverSync.Load(pipeline.LoadAssistSync());
+        LodAssistSyncRequest? sync = serverSync.Begin(participate: localOffers == null);
+
         // Last, and after the pipeline is live. An exception in a LevelFinalize handler
         // skips everything the handler has left to do, so an optional extra must not sit
         // upstream of the mod's actual job -- it did, and it broke exactly the
         // vanilla-server case it exists to stay out of the way of.
-        assist?.Greet();
+        assist?.Greet(sync);
 
         Mod.Logger.Notification(
             "Level finalized. LOD capture active (render distance: unlimited, {0} sections from cache{1}).",
@@ -2022,6 +2155,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             Mod.Logger.Notification("  held sections: {0}; {1}",
                 pipeline.DescribeFills(), DescribeSiblingScanner());
         }
+        if (serverSync.Active) Mod.Logger.Notification("  server sync: {0}", serverSync.Describe());
 
         // Repairing means the cache on disk was written without colours, which drew as
         // black ground. Worth saying out loud, and worth being able to watch go to zero.
@@ -2443,6 +2577,9 @@ public partial class VintageHorizonsModSystem : ModSystem
         localOfferRetryableMisses = 0;
         localOfferSectionsAccepted = 0;
         localOfferSectionsInstalled = 0;
+        // The server-sync record's last changes go to the same worker before Close drains it.
+        if (serverSync.TakeWrites() is { } syncWrites) pipeline.StorageThread?.SaveAssistSync(syncWrites);
+        serverSync.Reset();
         // Order matters and is stated here because only this method knows it: the flush hands
         // patches to the storage worker, and Close disposes that worker. Afterwards the
         // reference is dropped, because the next world's Open builds a new one and a stale
@@ -2670,7 +2807,8 @@ public partial class VintageHorizonsModSystem : ModSystem
                     : "") +
                 (localOffers != null || pipeline.PendingFills > 0 || pipeline.ForeignMerges > 0
                     ? $", held sections: {pipeline.DescribeFills()}; {DescribeSiblingScanner()}"
-                    : ""))));
+                    : "") +
+                (serverSync.Active ? $", server sync: {serverSync.Describe()}" : ""))));
 
         // Registered in both states on purpose: the player who most needs this one is the
         // player we are currently idle for.

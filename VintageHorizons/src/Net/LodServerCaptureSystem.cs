@@ -39,7 +39,6 @@ public class LodServerCaptureSystem : ModSystem
     bool statsRegistered;
     bool allocationTelemetryEnabled;
     LodPhaseCost pipelineTickCost;
-    readonly HashSet<long> persistedLevelZeroChanges = new();
     long nextActiveWorkStatusLogMs;
 
     /// <summary>What the sweep's background arms had done when the last status line printed.</summary>
@@ -130,6 +129,15 @@ public class LodServerCaptureSystem : ModSystem
 
     /// <summary>The active server-cache path, used to open the assist's read-only reader.</summary>
     public string? CachePath => pipeline?.DbPath;
+
+    /// <summary>
+    /// The open cache's generation (see LodStore.SectionGeneration); empty when none is open. A
+    /// client syncing by version records it beside the version it caught up to.
+    /// </summary>
+    public string CacheGeneration => pipeline?.SectionGeneration ?? "";
+
+    /// <summary>The open cache's newest committed section version. Any thread.</summary>
+    public long CacheVersion => pipeline?.SectionVersion ?? 0;
 
     /// <summary>
     /// True when a key we advertised has no stored row YET, as opposed to having none at
@@ -324,11 +332,7 @@ public class LodServerCaptureSystem : ModSystem
         // from the block code alone. Tint slots are likewise client-only and stay 0.
         pipeline = new LodPipeline(sapi, Mod.Logger, (_, _, _, _) => (0, 0));
         pipeline.TrackPhaseAllocations = allocationTelemetryEnabled;
-        pipeline.SectionPersisted = key =>
-        {
-            if (LodWorld.KeyLevel(key) == 0) persistedLevelZeroChanges.Add(key);
-            worldGen?.ObservePersisted(key);
-        };
+        pipeline.SectionPersisted = key => worldGen?.ObservePersisted(key);
         pipeline.ColumnCaptured = (cx, cz) => worldGen?.ObserveCaptured(cx, cz);
         pipeline.SnowStateCaptured = (cx, cz, observed, covered) =>
             sweep?.ObserveSnowState(cx, cz, observed, covered);
@@ -339,6 +343,9 @@ public class LodServerCaptureSystem : ModSystem
             LodAssistServerSystem? assist = sapi.ModLoader.GetModSystem<LodAssistServerSystem>();
             if (assist != null) pipeline.PreviewHeightsCaptured = assist.OfferSilhouetteHeights;
         }
+        // Every row this cache writes carries a version, so a client can be told exactly what
+        // changed since it last caught up (terrain-change plan Phase B).
+        pipeline.VersionSections = true;
         pipeline.Open("ModData/vintagehorizons", "-server");
         nextActiveWorkStatusLogMs = Environment.TickCount64 + ActiveWorkStatusLogIntervalMs;
 
@@ -1313,19 +1320,6 @@ public class LodServerCaptureSystem : ModSystem
             + "the next server refresh offer. /vhrefresh status shows progress; /vhrefresh stop cancels.");
     }
 
-    /// <summary>
-    /// Durable L0 changes since the assist last checked. Parents are rebuilt by receiving
-    /// clients from L0, so sending them too would multiply each snow campaign transfer.
-    /// Main-thread producer and consumer; the returned snapshot owns its array.
-    /// </summary>
-    public long[] TakePersistedLevelZeroChanges()
-    {
-        if (persistedLevelZeroChanges.Count == 0) return Array.Empty<long>();
-        long[] changes = persistedLevelZeroChanges.ToArray();
-        persistedLevelZeroChanges.Clear();
-        return changes;
-    }
-
     void TickPipeline()
     {
         long now = Environment.TickCount64;
@@ -1570,7 +1564,6 @@ public class LodServerCaptureSystem : ModSystem
         pipeline?.Close();
         pipeline?.Dispose();
         pipeline = null;
-        persistedLevelZeroChanges.Clear();
         pendingWorldGens.Clear();
     }
 }

@@ -80,6 +80,14 @@ public static class LodAssist
     public const int SilhouetteTransportVersion = 1;
 
     /// <summary>
+    /// Append-only section-sync generation a client advertises in <see cref="AssistHello.SectionSync"/>.
+    /// Zero, which every older client sends, keeps the unversioned refresh behaviour; one means the
+    /// client records the server cache's section versions and is owed every change past its record
+    /// (terrain-change plan Phase B).
+    /// </summary>
+    public const int SectionSyncVersion = 1;
+
+    /// <summary>
     /// Append-only capabilities advertised by <see cref="AssistWelcome.Features"/>. An older
     /// server sends zero; an older client ignores the field. Capability and terrain serving are
     /// separate so an admin may disable map sharing while still allowing explicit generation.
@@ -106,6 +114,18 @@ public class AssistHello
 {
     [ProtoMember(1)] public int Protocol;
     [ProtoMember(2)] public string ModVersion = "";
+
+    /// <summary><see cref="LodAssist.SectionSyncVersion"/>, or 0 from a client that does not sync.</summary>
+    [ProtoMember(3)] public int SectionSync;
+
+    /// <summary>
+    /// The server cache generation this client caught up with, or empty for none. A server whose
+    /// generation differs answers with a span from <see cref="LodAssistSync.NoRecord"/>.
+    /// </summary>
+    [ProtoMember(4)] public string SyncGeneration = "";
+
+    /// <summary>The version this client caught up to in that generation.</summary>
+    [ProtoMember(5)] public long SyncVersion;
 }
 
 /// <summary>
@@ -143,6 +163,12 @@ public class AssistWelcome
 
     /// <summary>Permission snapshot for this player; status remains readable without it.</summary>
     [ProtoMember(8)] public bool CanControlWorldGeneration;
+
+    /// <summary>
+    /// The server cache's generation when it versions its sections and this client asked to sync;
+    /// empty otherwise, including from every older server. Empty means no versioned span follows.
+    /// </summary>
+    [ProtoMember(9)] public string CacheGeneration = "";
 }
 
 /// <summary>
@@ -320,8 +346,23 @@ public class AssistKeyManifest
     /// contents. Older clients ignore this append-only field and retain their previous
     /// one-shot behavior; newer clients fetch the replacements through the same bounded
     /// request path as ordinary sections.
+    ///
+    /// Since section sync, a refresh with <see cref="VersionTo"/> above zero is a versioned span:
+    /// the keys are every level-0 section whose version lies in (<see cref="VersionFrom"/>,
+    /// <see cref="VersionTo"/>], the span may be empty, and its Last chunk marks where it ends.
+    /// The flag stays set on spans so a client that predates versions still reads them as the
+    /// refresh they are.
     /// </summary>
     [ProtoMember(4)] public bool Refresh;
+
+    /// <summary>A versioned span's start, exclusive; <see cref="LodAssistSync.NoRecord"/> re-checks everything.</summary>
+    [ProtoMember(5)] public long VersionFrom;
+
+    /// <summary>A versioned span's end, inclusive; zero on an unversioned message.</summary>
+    [ProtoMember(6)] public long VersionTo;
+
+    /// <summary>Each key's version, parallel to <see cref="Keys"/>, on a versioned span.</summary>
+    [ProtoMember(7)] public long[] Versions = Array.Empty<long>();
 }
 
 /// <summary>
@@ -377,6 +418,12 @@ public class AssistSection
     /// not a new one.
     /// </summary>
     [ProtoMember(3)] public bool Retryable;
+
+    /// <summary>
+    /// The version of the row this blob was read from, from a server that versions its cache;
+    /// zero otherwise. A client owed a newer version than this keeps asking.
+    /// </summary>
+    [ProtoMember(4)] public long Version;
 }
 
 // Horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER 4.6). The four types are appended
