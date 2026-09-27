@@ -255,6 +255,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     ICoreClientAPI capi = null!;
     LodPipeline pipeline = null!;
     LodTerrainRenderer renderer = null!;
+    LodHitchRecorder? hitches;
     VanillaHorizonEffects? horizonEffects;
     VintageHorizonsSettingsIntegration? settingsIntegration;
 
@@ -493,6 +494,12 @@ public partial class VintageHorizonsModSystem : ModSystem
         capi.Event.LeaveWorld += OnLeaveWorld;
 
         tickListenerId = capi.Event.RegisterGameTickListener(OnGameTick, 50);
+
+        // On by default while the 1% low is being chased: the owner cannot keep count of
+        // hitches by eye, and a report he had to remember to start would miss the ones
+        // that matter. '.vhhitch off' removes it and restores the profiler.
+        hitches = new LodHitchRecorder(capi, Mod.Logger);
+        capi.Event.RegisterRenderer(hitches, EnumRenderStage.Before, "vintagehorizons-hitches");
 
         RegisterCommands();
 
@@ -2560,6 +2567,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
     void OnLeaveWorld()
     {
+        hitches?.Flush("leaving the world");
         settingsIntegration?.CancelActivePage();
         configDialog?.TryClose();
         assist?.Reset();
@@ -2748,6 +2756,26 @@ public partial class VintageHorizonsModSystem : ModSystem
 
     void RegisterCommands()
     {
+        // Every answer also goes to the client log (G72): the owner cannot copy game chat.
+        capi.ChatCommands.Create("vhhitch")
+            .WithDescription("Hitch recorder: once a minute it writes the frame-time lows and what was "
+                + "unusually slow in the slowest frames to the client log. on | off; with nothing, "
+                + "writes the current minute now.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("onoff"))
+            .HandleWith(args =>
+            {
+                if (hitches == null)
+                    return TextCommandResult.Success("[VintageHorizons] no hitch recorder: another LOD mod is drawing.");
+                string word = args.Parsers[0].IsMissing ? "" : (string)args[0];
+                string reply = word.Equals("on", StringComparison.OrdinalIgnoreCase)
+                    ? hitches.SetEnabled(true)
+                    : word.Equals("off", StringComparison.OrdinalIgnoreCase)
+                        ? hitches.SetEnabled(false)
+                        : hitches.ReportNow();
+                Mod.Logger.Notification("[VintageHorizons] .vhhitch {0}: {1}", word, reply);
+                return TextCommandResult.Success("[VintageHorizons] " + reply);
+            });
+
         capi.ChatCommands.Create("vhdiag")
             .WithDescription("Show or hide the Vintage Horizons diagnostics window for this session. Default off.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
@@ -4947,6 +4975,13 @@ public partial class VintageHorizonsModSystem : ModSystem
         // Stops the storage writer before the connection it writes through.
         Quietly(() => horizonEffects?.Dispose());
         Quietly(() => pipeline?.Dispose());
+        Quietly(() =>
+        {
+            if (hitches == null) return;
+            capi.Event.UnregisterRenderer(hitches, EnumRenderStage.Before);
+            hitches.Dispose();
+            hitches = null;
+        });
         Quietly(() => renderer?.Dispose());
         Quietly(DisposeDiagnostics);
     }

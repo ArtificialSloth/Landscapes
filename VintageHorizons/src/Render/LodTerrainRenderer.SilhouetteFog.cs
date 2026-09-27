@@ -116,7 +116,7 @@ public partial class LodTerrainRenderer
     void RegisterSilhouetteFogStage()
     {
         silhouetteFogStageRenderer = new BeforeStageRenderer(
-            DrawSilhouetteFogVolume, SilhouetteFogAfterOitOrder);
+            DrawSilhouetteFogVolume, SilhouetteFogAfterOitOrder, "silhouettefog");
         capi.Event.RegisterRenderer(silhouetteFogStageRenderer, EnumRenderStage.AfterOIT,
             "vintagehorizons-silhouettefog");
     }

@@ -8,7 +8,12 @@ namespace VintageHorizons;
 /// <param name="Key">Column key, as <see cref="LodColumnMap.Key"/> packs it.</param>
 /// <param name="Fingerprint">The sealed fingerprint the savegame currently produces.</param>
 /// <param name="Rows">Vertical chunks present, zero when the column holds nothing.</param>
-public readonly record struct LodAuditedColumn(long Key, ulong Fingerprint, int Rows);
+/// <param name="ForClaim">
+/// True when this answers a claim re-read after a world save rather than the audit. The two
+/// share one connection but never one meaning: a claim answer settles a claim, an audit answer
+/// may trigger a recapture.
+/// </param>
+public readonly record struct LodAuditedColumn(long Key, ulong Fingerprint, int Rows, bool ForClaim = false);
 
 /// <summary>What one completed savegame index pass learned. Published to the owning thread once.</summary>
 public sealed class LodSavegameIndexResult
@@ -47,6 +52,7 @@ public sealed class LodSavegameIndex : IDisposable
     readonly object gate = new();
 
     readonly Queue<long> auditRequests = new();
+    readonly Queue<long> claimRequests = new();
     readonly Queue<LodAuditedColumn> auditResults = new();
     readonly AutoResetEvent work = new(false);
 
@@ -55,6 +61,7 @@ public sealed class LodSavegameIndex : IDisposable
     int chunksY;
     bool finished;
     bool failed;
+    bool stoppedServing;
     volatile bool stopping;
 
     /// <summary>
@@ -68,6 +75,13 @@ public sealed class LodSavegameIndex : IDisposable
 
     /// <summary>True when the caller must fall back to the engine probe pass.</summary>
     public bool Failed { get { lock (gate) return failed; } }
+
+    /// <summary>
+    /// True while the finished index is still answering re-reads. False before it finishes,
+    /// after it failed, and once its thread has stopped for any reason: a request made then
+    /// would wait for an answer that is never coming.
+    /// </summary>
+    public bool CanReread { get { lock (gate) return finished && !failed && !stoppedServing; } }
 
     /// <summary>
     /// Block-entity class codes whose contents a capture reads, resolved from the game's own
@@ -135,7 +149,23 @@ public sealed class LodSavegameIndex : IDisposable
         work.Set();
     }
 
-    /// <summary>Takes everything the audit has re-read since the last call. Owning thread.</summary>
+    /// <summary>
+    /// Ask the read path to re-read columns whose claim is waiting for a world save. Served
+    /// ahead of every audit request and never dropped: the caller sends one small batch at a
+    /// time and waits for it, so this queue cannot grow. Sharing the audit's queue let a full
+    /// audit backlog drop these silently (Session 110).
+    /// </summary>
+    public void RequestClaimReread(IReadOnlyList<long> columns)
+    {
+        lock (gate)
+        {
+            if (!finished || failed || stoppedServing) return;
+            foreach (long key in columns) claimRequests.Enqueue(key);
+        }
+        work.Set();
+    }
+
+    /// <summary>Takes everything the read path has re-read since the last call. Owning thread.</summary>
     public int TakeAudited(List<LodAuditedColumn> into)
     {
         lock (gate)
@@ -216,6 +246,7 @@ public sealed class LodSavegameIndex : IDisposable
         }
         finally
         {
+            lock (gate) stoppedServing = true;
             reader.Dispose();
         }
     }
@@ -233,9 +264,15 @@ public sealed class LodSavegameIndex : IDisposable
         while (!stopping)
         {
             long key;
+            bool forClaim = false;
             lock (gate)
             {
-                if (auditRequests.Count == 0)
+                if (claimRequests.Count > 0)
+                {
+                    key = claimRequests.Dequeue();
+                    forClaim = true;
+                }
+                else if (auditRequests.Count == 0)
                 {
                     key = long.MinValue;
                 }
@@ -260,10 +297,11 @@ public sealed class LodSavegameIndex : IDisposable
                 return;
             }
 
+            LodHitchActivity.CountSavegameReread();
             lock (gate)
             {
                 auditResults.Enqueue(new LodAuditedColumn(
-                    key, LodSavegameScan.Seal(print), print.Rows));
+                    key, LodSavegameScan.Seal(print), print.Rows, forClaim));
             }
         }
     }

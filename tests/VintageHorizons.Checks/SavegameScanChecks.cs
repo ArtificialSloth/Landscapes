@@ -26,6 +26,7 @@ public static class SavegameScanChecks
         {
             FingerprintsFollowTheSavegame(c, Path.Combine(dir, "world.vcdbs"));
             FingerprintCoversTheLandscapeOnly(c, Path.Combine(dir, "landscape.vcdbs"));
+            ClaimRereadsPassAFullAuditBacklog(c, Path.Combine(dir, "claims.vcdbs"));
         }
         finally
         {
@@ -138,6 +139,70 @@ public static class SavegameScanChecks
             "a column that lost a layer fingerprints differently");
 
         SingleColumnMatchesTheFullScan(c, scan, trimmed);
+    }
+
+    /// <summary>
+    /// A claim re-read after a world save must be answered even when the audit has filled its
+    /// own queue, and must come back marked as a claim answer. In the owner's 2026-09-21 log
+    /// the answers were never collected and claim refresh turned itself off for the session;
+    /// sharing the audit's capped queue could also drop them outright (Session 110).
+    /// </summary>
+    static void ClaimRereadsPassAFullAuditBacklog(Check c, string path)
+    {
+        CreateWorld(path, new[]
+        {
+            (Index(300, 0, 400), (byte)1), (Index(300, 1, 400), (byte)2),
+            (Index(301, 0, 400), (byte)3), (Index(301, 1, 400), (byte)4),
+        }, new[] { Index(300, 0, 400), Index(301, 0, 400) });
+
+        var logger = new CaptureLogger();
+        var index = new LodSavegameIndex(logger, path);
+        index.SetWorldHeight(2);
+        c.False(index.CanReread, "nothing can be re-read before the index has finished");
+        index.Start();
+
+        LodSavegameIndexResult? result = null;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (clock.ElapsedMilliseconds < 10_000 && !index.Failed && !index.TryTake(out result))
+        {
+            Thread.Sleep(5);
+        }
+        c.True(result != null, "the claim fixture indexes");
+        if (result == null) { index.Dispose(); return; }
+        c.True(index.CanReread, "a finished index answers re-reads");
+
+        long audited = LodColumnMap.Key(300, 400);
+        long claimed = LodColumnMap.Key(301, 400);
+        index.RequestAudit(Enumerable.Repeat(audited, 400).ToArray());
+        index.RequestClaimReread(new[] { claimed });
+
+        var answers = new List<LodAuditedColumn>();
+        LodAuditedColumn? claimAnswer = null;
+        clock.Restart();
+        while (clock.ElapsedMilliseconds < 10_000 && claimAnswer == null)
+        {
+            answers.Clear();
+            index.TakeAudited(answers);
+            foreach (LodAuditedColumn answer in answers)
+            {
+                if (answer.ForClaim) claimAnswer = answer;
+                else c.Eq(audited, answer.Key, "an audit answer is never marked as a claim answer");
+            }
+            if (claimAnswer == null) Thread.Sleep(5);
+        }
+
+        c.True(claimAnswer != null, "a claim re-read is answered while the audit queue is full");
+        if (claimAnswer is { } claim)
+        {
+            c.Eq(claimed, claim.Key, "the claim answer is for the column asked about");
+            c.Eq(result.Fingerprints[claimed], claim.Fingerprint,
+                "the claim answer matches the whole-world fingerprint of unchanged terrain");
+        }
+
+        index.Dispose();
+        clock.Restart();
+        while (clock.ElapsedMilliseconds < 5_000 && index.CanReread) Thread.Sleep(5);
+        c.False(index.CanReread, "a stopped index stops accepting re-reads, so none waits for ever");
     }
 
     /// <summary>

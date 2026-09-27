@@ -59,7 +59,7 @@ public static class LateRangeCheckChecks
             "the footprint rebuild honours that");
         c.True(main.Contains("if (!readinessMask.Dirty && readinessMaskActive && !footprintRebuilt) return;"),
             "and a deferred footprint is uploaded by the next preparation even when nothing else changed");
-        c.True(stages.Contains("new BeforeStageRenderer(RunLateRangeCheck, LateRangeBeforeOrder)"),
+        c.True(stages.Contains("new BeforeStageRenderer(RunLateRangeCheck, LateRangeBeforeOrder, \"laterange\")"),
             "the late check is registered at its own order");
         c.True(stages.Contains("capi.Event.UnregisterRenderer(lateRangeRenderer, EnumRenderStage.Before);"),
             "and unregistered with the other Before-stage renderers");

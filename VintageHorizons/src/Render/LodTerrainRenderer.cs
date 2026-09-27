@@ -5549,6 +5549,7 @@ public partial class LodTerrainRenderer : IRenderer
         // can still draw normally, without extending liquid depth for that frame.
         if (!beforeStageRan) PrepareBeforeFrame(deltaTime);
         long drawStart = Stopwatch.GetTimestamp();
+        Vintagestory.API.Common.FrameProfilerUtil? range = LodHitchMarks.Enter(HitchBeforeLod, HitchLod);
         try
         {
             RenderFrame(deltaTime, stage);
@@ -5556,11 +5557,15 @@ public partial class LodTerrainRenderer : IRenderer
         }
         finally
         {
+            range?.Leave();
             beforeStageTicks += Stopwatch.GetTimestamp() - drawStart;
             waterFrame.FinishOpaque(frameCounter, currentWorldEpoch());
             beforeStageRan = false;
         }
     }
+
+    const string HitchBeforeLod = "before vh:lod";
+    const string HitchLod = "vh:lod";
 
     /// <summary>Per-frame measurement of the client's own frame interval against ours.</summary>
     public LodFrameTimeline FrameTimeline => frameTimeline;

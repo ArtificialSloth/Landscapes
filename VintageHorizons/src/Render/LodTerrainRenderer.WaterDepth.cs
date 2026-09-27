@@ -45,23 +45,40 @@ public partial class LodTerrainRenderer
     bool waterJunctionFailed;
     bool waterJunctionSnapshotReady;
 
-    sealed class BeforeStageRenderer(Action<float> render, double order) : IRenderer
+    sealed class BeforeStageRenderer(Action<float> render, double order, string name) : IRenderer
     {
+        // Named once here so the hitch recorder's profiler marks allocate nothing per frame.
+        readonly string vanillaBefore = "before vh:" + name;
+        readonly string ours = "vh:" + name;
+
         public double RenderOrder => order;
         public int RenderRange => 9999;
-        public void OnRenderFrame(float dt, EnumRenderStage stage) => render(dt);
+
+        public void OnRenderFrame(float dt, EnumRenderStage stage)
+        {
+            Vintagestory.API.Common.FrameProfilerUtil? range = LodHitchMarks.Enter(vanillaBefore, ours);
+            try
+            {
+                render(dt);
+            }
+            finally
+            {
+                range?.Leave();
+            }
+        }
+
         public void Dispose() { }
     }
 
     void RegisterWaterDepthStages()
     {
-        prepareStageRenderer = new BeforeStageRenderer(PrepareBeforeFrame, PrepareBeforeOrder);
-        waterDepthStageRenderer = new BeforeStageRenderer(CaptureWaterDepthStage, WaterDepthBeforeOrder);
-        waterCaptureEndRenderer = new BeforeStageRenderer(FinishWaterFrame, 0.99);
-        waterOitRenderer = new BeforeStageRenderer(DrawWaterOit, WaterOitOrder);
+        prepareStageRenderer = new BeforeStageRenderer(PrepareBeforeFrame, PrepareBeforeOrder, "prepare");
+        waterDepthStageRenderer = new BeforeStageRenderer(CaptureWaterDepthStage, WaterDepthBeforeOrder, "waterdepth");
+        waterCaptureEndRenderer = new BeforeStageRenderer(FinishWaterFrame, 0.99, "watercapture");
+        waterOitRenderer = new BeforeStageRenderer(DrawWaterOit, WaterOitOrder, "water");
         capi.Event.RegisterRenderer(prepareStageRenderer, EnumRenderStage.Before, "vintagehorizons-prepare");
         capi.Event.RegisterRenderer(waterDepthStageRenderer, EnumRenderStage.Before, "vintagehorizons-waterdepth");
-        lateRangeRenderer = new BeforeStageRenderer(RunLateRangeCheck, LateRangeBeforeOrder);
+        lateRangeRenderer = new BeforeStageRenderer(RunLateRangeCheck, LateRangeBeforeOrder, "laterange");
         capi.Event.RegisterRenderer(lateRangeRenderer, EnumRenderStage.Before, "vintagehorizons-laterange");
         capi.Event.RegisterRenderer(waterCaptureEndRenderer, EnumRenderStage.AfterOIT, "vintagehorizons-watercapture");
         capi.Event.RegisterRenderer(waterOitRenderer, EnumRenderStage.OIT, "vintagehorizons-water");

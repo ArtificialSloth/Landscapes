@@ -263,8 +263,9 @@ public class LodSavegameSweep
     /// <summary>
     /// How long a batch of re-reads may be outstanding before it is assumed lost.
     ///
-    /// The read path can stop answering mid-session - it disables itself on any failure, and
-    /// a request beyond its backlog is dropped rather than queued. Waiting for an answer that
+    /// The read path can stop answering mid-session - it disables itself on any failure. A
+    /// thread that has stopped is caught at once through CanReread; this timeout is the
+    /// backstop for one that is alive but not answering. Waiting for an answer that
     /// is never coming would stop every claim for the rest of the session without a word,
     /// which is precisely the kind of silent stop this mod has been bitten by before (G237).
     /// After a few lost batches the sweep says so once and goes back to claiming from the
@@ -382,11 +383,6 @@ public class LodSavegameSweep
     {
         if (savegameIndex == null || auditPerSecond <= 0 || !UsedSavegameIndex) return;
 
-        // Collect whatever the read path finished since the last tick first, so a result is
-        // never stranded behind a gate that is holding the requests.
-        auditScratch.Clear();
-        if (savegameIndex.TakeAudited(auditScratch) > 0) ApplyAuditResults();
-
         int allowance = LoadsAllowed(
             auditAllowance.Available(now, auditPerSecond),
             captureBacklog(), sapi.WorldManager.CurrentGeneratingChunkCount);
@@ -429,6 +425,20 @@ public class LodSavegameSweep
     }
 
     /// <summary>
+    /// Collects whatever the read path answered since the last tick, every tick and in every
+    /// phase. This used to happen inside the audit step, which runs only once the load pass
+    /// is done and only while the audit is enabled; claim re-reads requested after a world
+    /// save during the load pass were answered but never collected, timed out three times
+    /// and turned claim refresh off for the session (Session 110, the owner's 2026-09-21 log).
+    /// </summary>
+    void CollectReadPathResults()
+    {
+        if (savegameIndex == null || !UsedSavegameIndex) return;
+        auditScratch.Clear();
+        if (savegameIndex.TakeAudited(auditScratch) > 0) ApplyAuditResults();
+    }
+
+    /// <summary>
     /// Acts on what the audit read back. A column whose savegame content no longer matches
     /// the capture this cache proved is queued for recapture through the ordinary load path,
     /// and its stale fingerprint is dropped so nothing skips it in the meantime.
@@ -438,10 +448,12 @@ public class LodSavegameSweep
         foreach (LodAuditedColumn audited in auditScratch)
         {
             // The same read path serves both jobs. A column waiting for its first claim is
-            // being settled, not audited: there is no claim yet to disagree with.
-            if (rereading.Remove(audited.Key))
+            // being settled, not audited: there is no claim yet to disagree with. An answer to
+            // a batch that already timed out is dropped rather than audited: it was read for a
+            // claim that has since been taken another way.
+            if (audited.ForClaim)
             {
-                RefreshSettlingClaim(audited);
+                if (rereading.Remove(audited.Key)) RefreshSettlingClaim(audited);
                 continue;
             }
 
@@ -462,6 +474,7 @@ public class LodSavegameSweep
             ledger.Forget(audited.Key);
             forgetFingerprint?.Invoke(cx, cz);
             sapi.WorldManager.LoadChunkColumnPriority(cx, cz);
+            LodHitchActivity.CountAuditRecapture();
             ledger.Submitted(audited.Key);
             AuditMismatches++;
         }
@@ -482,7 +495,7 @@ public class LodSavegameSweep
         if (columnDurable == null || rememberFingerprint == null || ledger.Pending == 0) return;
 
         const int MaxCommitsPerTick = 32;
-        bool canRefresh = savegameIndex != null && UsedSavegameIndex && !savegameIndex.Failed;
+        bool canRefresh = savegameIndex != null && UsedSavegameIndex && savegameIndex.CanReread;
 
         ledger.TakeDurable(
             key => columnDurable(LodColumnMap.KeyCx(key), LodColumnMap.KeyCz(key)),
@@ -516,16 +529,15 @@ public class LodSavegameSweep
     /// Asks the read path to re-read settling columns, once the save that follows their
     /// capture has had time to land.
     ///
-    /// One batch at a time: the read path drops audit requests beyond its backlog, and a
-    /// dropped request would leave a column settling for ever. Keeping the batch small and
-    /// waiting for it to come back also keeps this behind the audit's own rate rather than
-    /// competing with it.
+    /// One batch at a time. These go ahead of every audit request in a queue of their own,
+    /// so waiting for one small batch before sending the next is what keeps that queue from
+    /// growing; they used to share the audit's capped queue and wait behind its 16/s stream.
     /// </summary>
     void StepClaimRefresh(long now)
     {
         if (settling.Count == 0) return;
 
-        if (savegameIndex == null || savegameIndex.Failed || !UsedSavegameIndex
+        if (savegameIndex == null || !savegameIndex.CanReread || !UsedSavegameIndex
             || claimRefreshUnavailable)
         {
             // The read path went away mid-session. Claim what is already durable rather than
@@ -560,7 +572,7 @@ public class LodSavegameSweep
         }
         foreach (long key in rereadScratch) rereading.Add(key);
         rereadingSinceMs = now;
-        savegameIndex.RequestAudit(rereadScratch);
+        savegameIndex.RequestClaimReread(rereadScratch);
     }
 
     /// <summary>
@@ -638,6 +650,7 @@ public class LodSavegameSweep
         long now = sapi.World.ElapsedMilliseconds;
         ObservePlayerTerrainActivity(now);
         ObserveOtherGenerationQueue();
+        CollectReadPathResults();
         CommitDurableFingerprints();
         StepClaimRefresh(now);
         LodPhaseStart phaseStart = LodPhaseCost.Start(TrackPhaseAllocations);
@@ -801,6 +814,7 @@ public class LodSavegameSweep
             // resident. A radius worth sweeping is far more terrain than fits in memory.
             issuedSweepLoad = true;
             sapi.WorldManager.LoadChunkColumnPriority(cx, cz);
+            LodHitchActivity.CountSweepLoad();
             if (rememberFingerprint != null) ledger.Submitted(key);
             Loaded++;
             loaded++;
@@ -1006,6 +1020,7 @@ public class LodSavegameSweep
             else
             {
                 sapi.WorldManager.LoadChunkColumnPriority(cx, cz);
+                LodHitchActivity.CountSnowRefreshLoad();
                 SnowProbes++;
             }
             return;
@@ -1136,6 +1151,7 @@ public class LodSavegameSweep
                 {
                     OnLoaded = () => QueueRefreshCapture(cx, cz),
                 });
+                LodHitchActivity.CountSnowRefreshLoad();
             }
             Refreshed++;
         }
