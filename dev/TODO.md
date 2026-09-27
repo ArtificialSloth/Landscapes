@@ -115,10 +115,6 @@ Open, in the order they block further work:
   12,000 columns queued at 1/s on `test2`, roughly three hours of background priority loads. No FPS
   or frame-time run has yet been taken with that trickle running, and the owner deliberately stood
   still for both 0.4.118 and 0.4.119. This is the most likely source of any new in-play cost.
-- **Confirm or overturn the A4 recommendation.** See Session 103 §7 and Session 105. The
-  clean-shutdown marker still cannot be built (G236), but this session's measurement is the
-  argument for keeping A4's save-hook half - which 0.4.119 has now built in its own shape. What
-  remains is the owner's decision to record the plan's §4.1.5 fast path as dropped.
 - **Prove the audit catches a real fault.** Unchanged and still open. It is now proven to run and
   to dispute claims - 81 in one pass on the owner's world - but every dispute so far is ordinary
   change, not a cache that was wrong. Staging real corruption was not possible in a live world;
@@ -238,8 +234,8 @@ Open, in the order they block further work:
   measured**, because until 0.4.116 there was nothing to measure.
 - **Implement terrain change detection.** ~~Phase A~~ **A1–A3 and A5 are built (0.4.113–0.4.116)**;
   see Session 103 and `STATUS.md`. ~~Phase B~~ **Built (0.4.126–0.4.127), Session 109**; its open
-  items are under "Section sync" at the top. **A4 was not built
-  and is recommended against as specified** (Session 103 §7): there is no hook after the engine's
+  items are under "Section sync" at the top. **A4's fast path was
+  dropped by the owner on 2026-09-26** (Session 103 §7): there is no hook after the engine's
   final save, so its marker cannot record the file's post-save state, and the payoff fell from
   5m35s of contention to 73.3 s of off-thread reading once A3 removed the probe pass.
   The three corrections from the §12 review are implemented: a fingerprint is committed only once a

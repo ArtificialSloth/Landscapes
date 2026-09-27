@@ -184,11 +184,10 @@ Phase B is section sync, at the top of this section.
   recapture under the sweep's own safety and scheduling rules. It disputes only claims this cache
   makes. `AuditColumnsPerSecond` defaults to 16 and 0 disables it with no residual cost. Its
   production numbers are in the current result above.
-- **Not built: A4's clean-shutdown fast path**, and it should not be built as specified. There is no
-  hook after the engine's final save (G236), so its marker cannot record the file's post-save state.
-  A4's other half - re-fingerprinting after the engine writes - is what 0.4.119 built, in the shape
-  the plan's own 2026-09-19 correction describes. Recording the fast path as dropped is still the
-  owner's decision.
+- **Dropped: A4's clean-shutdown fast path** (owner, 2026-09-26). There is no hook after the
+  engine's final save (G236), so its marker cannot record the file's post-save state, and A3 cut the
+  scan it would skip to 73.3 s of off-thread reading. A4's other half - re-fingerprinting after the
+  engine writes - is what 0.4.119 built, in the shape the plan's own 2026-09-19 correction describes.
 
 **The owner played 0.4.116 on `test2` and called it good.** Session 104. First play verdict on
 phase A, superseded for sweep numbers by the 0.4.118/0.4.119 sessions above.
@@ -908,23 +907,21 @@ Begin with [Session 109](dev/sessions/SESSION_109.md), [Session 108](dev/session
    been taken with that trickle running - the owner stood still deliberately for both builds. This
    is the most likely source of any new in-play cost, and the arm has only been reachable since
    0.4.116.
-5. **Record A4's fast path as dropped**, or rebuild it around "record what the next save will touch,
-   treat those as unverified". Its other half is built. Owner's call.
-6. **Prove the audit catches a real fault.** It is now proven to run and to dispute claims - 81 in
+5. **Prove the audit catches a real fault.** It is now proven to run and to dispute claims - 81 in
    one pass - but every dispute so far is ordinary change, not a cache that was wrong. Staging real
    corruption was not possible in a live world; its decision rules are covered offline.
-7. **Close P3's deferred integration debt** when another player is available: a complete
+6. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
-8. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
+7. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
    observations beneath the veil; tune Outline detail, Hill softness and apron once the fog is
    accepted; record Farseer off/on and seam fog off/on FPS in one scene.
-9. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
+8. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
    player-facing Farseer rename plus bundled MIT notice.
-10. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
-11. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
+9. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
+10. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
    offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
-12. **Older TODO debt:** keep the debt including:
+11. **Older TODO debt:** keep the debt including:
    - P3's after-comparison;
    - winter convergence, which G237 showed was never reachable and which the refresh arm has now
      begun working through - re-judge once its backlog has drained;

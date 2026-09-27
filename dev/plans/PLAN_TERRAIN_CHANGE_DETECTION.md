@@ -1,7 +1,7 @@
 # Plan - Terrain change detection: savegame fingerprints and section versions
 
-**Status:** **A1, A2, A3 and A5 are built (0.4.113–0.4.116, Session 103). A4 was not built and is
-recommended against as specified. Phase B (B1–B3) is built (0.4.126–0.4.127, Session 109) and
+**Status:** **A1, A2, A3 and A5 are built (0.4.113–0.4.116, Session 103). A4's fast path was dropped by the
+owner on 2026-09-26 (Session 103 §7); its save-hook half exists as 0.4.119's post-save claim re-read. Phase B (B1–B3) is built (0.4.126–0.4.127, Session 109) and
 integration-tested in a dedicated sandbox; it has no play verdict yet.** Written 2026-09-18 against
 `2fbf2d1` (`0.4.110`); its required scheduling A/B was completed on 2026-09-19 in 0.4.111, and the
 sustained virgin-frontier follow-up on 2026-09-19 produced 0.4.112's rate floor.
@@ -410,7 +410,7 @@ Each phase is independently useful and independently shippable.
 | A1 | Private read-only savegame connection, journal-mode detection, batch pacing, busy handling, self-disable on failure | - |
 | A2 | Column fingerprints and the existence map from that connection; new cache table | A1 |
 | A3 | Sweep consumes both: skip unchanged, keep snow registration, keep the safety rule | A2 |
-| A4 | Save-hook fingerprint maintenance; clean-shutdown marker; skip-the-scan fast path | A2 |
+| A4 | Save-hook fingerprint maintenance; clean-shutdown marker; skip-the-scan fast path. **Fast path dropped 2026-09-26**; save-hook half built in 0.4.119 | A2 |
 | A5 | Background audit at a configurable rate | A4 |
 | B1 | Section version column and generation stamp; server mints and advances them | - |
 | B2 | Append-only transport fields; client records highest-seen per world and generation | B1 |
