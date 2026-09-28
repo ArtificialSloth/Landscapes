@@ -454,6 +454,7 @@ internal sealed class LodSilhouetteClient : IDisposable
         Interlocked.Increment(ref decodesInFlight);
         Task.Run(() =>
         {
+            long allocationStart = LodHitchActivity.StartJob();
             LodSilhouetteTile? tile = null;
             try
             {
@@ -464,6 +465,7 @@ internal sealed class LodSilhouetteClient : IDisposable
             {
                 decoded.Enqueue(new DecodeResult(message, key, version, epoch, tile));
                 Interlocked.Decrement(ref decodesInFlight);
+                LodHitchActivity.EndJob("silhouette tile decode", allocationStart);
             }
         });
     }
@@ -747,6 +749,7 @@ internal sealed class LodSilhouetteClient : IDisposable
             Interlocked.Increment(ref jobsInFlight);
             Task.Run(() =>
             {
+                long allocationStart = LodHitchActivity.StartJob();
                 LodSilhouetteMeshSet? meshes = null;
                 try
                 {
@@ -763,6 +766,7 @@ internal sealed class LodSilhouetteClient : IDisposable
                 {
                     finished.Enqueue(new MeshResult(key, tileX, tileZ, version, epoch, meshes));
                     Interlocked.Decrement(ref jobsInFlight);
+                    LodHitchActivity.EndJob("silhouette tile meshing", allocationStart);
                 }
             });
         }

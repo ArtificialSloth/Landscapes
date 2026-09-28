@@ -56,14 +56,14 @@ public partial class LodTerrainRenderer
 
         public void OnRenderFrame(float dt, EnumRenderStage stage)
         {
-            Vintagestory.API.Common.FrameProfilerUtil? range = LodHitchMarks.Enter(vanillaBefore, ours);
+            LodHitchMarks.Scope range = LodHitchMarks.Enter(vanillaBefore, ours);
             try
             {
                 render(dt);
             }
             finally
             {
-                range?.Leave();
+                range.Leave();
             }
         }
 

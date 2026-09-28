@@ -349,7 +349,8 @@ public class LodServerCaptureSystem : ModSystem
         pipeline.Open("ModData/vintagehorizons", "-server");
         nextActiveWorkStatusLogMs = Environment.TickCount64 + ActiveWorkStatusLogIntervalMs;
 
-        tickListenerId = sapi.Event.RegisterGameTickListener(_ => TickPipeline(), 50);
+        tickListenerId = sapi.Event.RegisterGameTickListener(
+            LodHitchActivity.Measured("server capture tick", _ => TickPipeline()), 50);
         if (allocationTelemetryEnabled && !statsRegistered)
         {
             statsRegistered = true;

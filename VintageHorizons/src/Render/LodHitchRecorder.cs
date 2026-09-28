@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using Vintagestory.API.Client;
@@ -29,12 +30,61 @@ public static class LodHitchActivity
         into[2] = Interlocked.Read(ref auditRecaptures);
         into[3] = Interlocked.Read(ref savegameRereads);
     }
+
+    sealed class JobTally
+    {
+        public long Bytes;
+        public long Runs;
+    }
+
+    static readonly ConcurrentDictionary<string, JobTally> jobs = new();
+
+    /// <summary>
+    /// Exactly what one of this mod's jobs allocated on its own thread. The allocation
+    /// sampler attributes garbage to threads; this splits a shared thread - the client or
+    /// server main thread, or the shared worker pool - into this mod's jobs and the rest.
+    /// </summary>
+    public static void AddJob(string job, long bytes)
+    {
+        JobTally tally = jobs.GetOrAdd(job, static _ => new JobTally());
+        Interlocked.Add(ref tally.Bytes, bytes);
+        Interlocked.Increment(ref tally.Runs);
+    }
+
+    /// <summary>The allocation mark to pass to <see cref="EndJob"/>.</summary>
+    public static long StartJob() => GC.GetAllocatedBytesForCurrentThread();
+
+    public static void EndJob(string job, long start) =>
+        AddJob(job, GC.GetAllocatedBytesForCurrentThread() - start);
+
+    /// <summary>A tick listener that measures what it allocates under <paramref name="job"/>.</summary>
+    public static Action<float> Measured(string job, Action<float> body) => dt =>
+    {
+        long start = StartJob();
+        try
+        {
+            body(dt);
+        }
+        finally
+        {
+            EndJob(job, start);
+        }
+    };
+
+    internal static void ReadJobs(Dictionary<string, (long Bytes, long Runs)> into)
+    {
+        into.Clear();
+        foreach (KeyValuePair<string, JobTally> job in jobs)
+        {
+            into[job.Key] = (Interlocked.Read(ref job.Value.Bytes), Interlocked.Read(ref job.Value.Runs));
+        }
+    }
 }
 
 /// <summary>
 /// Brackets this mod's render callbacks in the game's own frame profiler, so a hitch report
-/// can tell our drawing apart from vanilla's. Inert unless the hitch recorder has switched
-/// the profiler on.
+/// can tell our drawing apart from vanilla's, and measures what each callback allocates.
+/// Inert unless the hitch recorder has switched the profiler on.
 ///
 /// The vanilla time since the previous profiler step is closed under a "before vh:" name
 /// first; without that it would be folded into whatever step the game marks next.
@@ -46,17 +96,38 @@ public static class LodHitchMarks
     internal static void Attach(FrameProfilerUtil? attached) => profiler = attached;
 
     /// <summary>
-    /// Opens a range and returns the profiler to close it on, or null when not recording.
-    /// Returning the instance rather than a flag means a range is always closed on the
-    /// profiler that opened it, even if recording is switched off in between.
+    /// An open range. It holds the profiler that opened it, so it always closes on that one
+    /// even if recording is switched off in between; a default scope closes nothing.
     /// </summary>
-    public static FrameProfilerUtil? Enter(string vanillaBefore, string ours)
+    public readonly struct Scope
+    {
+        readonly FrameProfilerUtil? profiler;
+        readonly string? job;
+        readonly long startBytes;
+
+        internal Scope(FrameProfilerUtil profiler, string job)
+        {
+            this.profiler = profiler;
+            this.job = job;
+            startBytes = GC.GetAllocatedBytesForCurrentThread();
+        }
+
+        public void Leave()
+        {
+            if (profiler == null || job == null) return;
+            profiler.Leave();
+            LodHitchActivity.AddJob(job, GC.GetAllocatedBytesForCurrentThread() - startBytes);
+        }
+    }
+
+    /// <summary>Opens a range, or returns an empty scope when not recording.</summary>
+    public static Scope Enter(string vanillaBefore, string ours)
     {
         FrameProfilerUtil? recording = profiler;
-        if (recording == null) return null;
+        if (recording == null) return default;
         recording.Mark(vanillaBefore);
         recording.Enter(ours);
-        return recording;
+        return new Scope(recording, ours);
     }
 }
 
@@ -161,6 +232,13 @@ public sealed class LodHitchRecorder : IRenderer
     readonly int[] gcAtStart = new int[3];
     TimeSpan gcPauseAtStart;
 
+    const double Mb = 1024.0 * 1024.0;
+    LodAllocationSampler? sampler;
+    bool samplerUnavailable;
+    long allocatedAtStart;
+    readonly Dictionary<string, (long Bytes, long Runs)> jobsAtStart = new();
+    readonly Dictionary<string, (long Bytes, long Runs)> jobsNow = new();
+
     public LodHitchRecorder(ICoreClientAPI? capi, ILogger logger)
     {
         this.capi = capi;
@@ -213,7 +291,7 @@ public sealed class LodHitchRecorder : IRenderer
     public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
     {
         if (!enabled || capi == null) return;
-        FrameProfilerUtil? range = null;
+        LodHitchMarks.Scope range = default;
         try
         {
             FrameProfilerUtil? engineProfiler = capi.World.FrameProfiler;
@@ -242,7 +320,7 @@ public sealed class LodHitchRecorder : IRenderer
         }
         finally
         {
-            range?.Leave();
+            range.Leave();
         }
     }
 
@@ -265,6 +343,22 @@ public sealed class LodHitchRecorder : IRenderer
 
         profiler = engineProfiler;
         LodHitchMarks.Attach(engineProfiler);
+        LodAllocationSampler.RegisterCurrentThread("client main thread");
+        if (sampler == null && !samplerUnavailable)
+        {
+            try
+            {
+                sampler = new LodAllocationSampler();
+            }
+            catch (Exception e)
+            {
+                // The frame breakdown still works without it; only "who allocated" is lost.
+                samplerUnavailable = true;
+                logger.Warning(
+                    "[VintageHorizons] The hitch recorder cannot sample allocations here ({0}); "
+                    + "its reports will show pauses but not who caused them.", e.Message);
+            }
+        }
         pendingRoot = null;
         warmup = 0;
         lastGcPause = GC.GetTotalPauseDuration();
@@ -285,14 +379,25 @@ public sealed class LodHitchRecorder : IRenderer
                 + "'doneRender2Default' post-processing; 'end' the buffer swap, where the CPU waits "
                 + "for the graphics card; 'sleep' the FPS limiter; 'between frames' time outside the "
                 + "profiled frame; 'gc pause' .NET garbage collection, which stops every thread and in "
-                + "singleplayer is driven by the server half too. '.vhhitch off' stops it; '.vhhitch' "
-                + "writes the current minute now.");
+                + "singleplayer is driven by the server half too. Each report also says who allocated: "
+                + "per thread (threads named vintagehorizons-* are this mod's), per kind of object, "
+                + "why each collection ran, and exactly what this mod's own jobs allocated. "
+                + "'.vhhitch off' stops it; '.vhhitch' writes the current minute now.");
         }
     }
 
     void Disarm()
     {
         LodHitchMarks.Attach(null);
+        try
+        {
+            sampler?.Dispose();
+        }
+        catch
+        {
+            // Stopping the runtime's event session is best effort; nothing depends on it.
+        }
+        sampler = null;
         if (armed && profiler != null)
         {
             profiler.PrintSlowTicks = savedPrintSlowTicks;
@@ -535,6 +640,36 @@ public sealed class LodHitchRecorder : IRenderer
         LodHitchActivity.Read(activityAtStart);
         for (int g = 0; g < 3; g++) gcAtStart[g] = GC.CollectionCount(g);
         gcPauseAtStart = GC.GetTotalPauseDuration();
+        sampler?.TakeWindow();
+        allocatedAtStart = GC.GetTotalAllocatedBytes(false);
+        LodHitchActivity.ReadJobs(jobsAtStart);
+    }
+
+    /// <summary>
+    /// This mod's own jobs, exactly: what each allocated on its own thread in this window.
+    /// Drawing callbacks are summed; the recorder names itself, since it is overhead.
+    /// </summary>
+    string DescribeJobs(double seconds)
+    {
+        LodHitchActivity.ReadJobs(jobsNow);
+        double drawing = 0;
+        var parts = new List<(string Name, double Rate, long Runs)>();
+        foreach ((string job, (long Bytes, long Runs) now) in jobsNow)
+        {
+            jobsAtStart.TryGetValue(job, out (long Bytes, long Runs) before);
+            long bytes = now.Bytes - before.Bytes;
+            if (bytes <= 0) continue;
+            double rate = bytes / Mb / seconds;
+            if (job == OwnName) parts.Add(("hitch recorder", rate, now.Runs - before.Runs));
+            else if (job.StartsWith("vh:", StringComparison.Ordinal)) drawing += rate;
+            else parts.Add((job, rate, now.Runs - before.Runs));
+        }
+        if (drawing > 0) parts.Add(("drawing callbacks", drawing, 0));
+        return parts.Count == 0
+            ? "nothing measured"
+            : string.Join(", ", parts
+                .OrderByDescending(p => p.Rate)
+                .Select(p => $"{p.Name} {p.Rate:0.00}"));
     }
 
     /// <summary>
@@ -706,6 +841,23 @@ public sealed class LodHitchRecorder : IRenderer
                   + $"audit recaptures {activityNow[2] - activityAtStart[2]}, "
                   + $"savegame re-reads {activityNow[3] - activityAtStart[3]}"
                 : "server work is not visible from a remote server's client");
+
+        // Who made the garbage behind those collections.
+        long allocated = GC.GetTotalAllocatedBytes(false) - allocatedAtStart;
+        if (sampler != null)
+        {
+            foreach (string line in LodAllocationSampler.Describe(sampler.TakeWindow(), seconds, allocated))
+            {
+                logger.Notification("[VintageHorizons]{0}", line);
+            }
+        }
+        else
+        {
+            logger.Notification("[VintageHorizons]   allocated {0:0} MB/s in total", allocated / Mb / seconds);
+        }
+        logger.Notification(
+            "[VintageHorizons]   this mod's own jobs, exact MB/s (server jobs only in singleplayer): {0}",
+            DescribeJobs(seconds));
 
         // Only frames that are real hitches get a line of their own, worst first.
         var ordered = worst.Take(worstCount)

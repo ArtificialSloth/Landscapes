@@ -493,7 +493,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         capi.Event.LevelFinalize += OnLevelFinalize;
         capi.Event.LeaveWorld += OnLeaveWorld;
 
-        tickListenerId = capi.Event.RegisterGameTickListener(OnGameTick, 50);
+        tickListenerId = capi.Event.RegisterGameTickListener(
+            LodHitchActivity.Measured("client tick", OnGameTick), 50);
 
         // On by default while the 1% low is being chased: the owner cannot keep count of
         // hitches by eye, and a report he had to remember to start would miss the ones

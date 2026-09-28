@@ -176,6 +176,7 @@ public partial class LodTerrainRenderer
         float headStart = fadeSeconds > 0f ? silhouetteFogBuildSeconds / fadeSeconds : 0f;
         silhouetteFogBuildTask = Task.Run(() =>
         {
+            long allocationStart = LodHitchActivity.StartJob();
             try
             {
                 // Bake the noise here, once, so the render thread only ever uploads it.
@@ -192,6 +193,10 @@ public partial class LodTerrainRenderer
             catch (Exception e)
             {
                 return new SilhouetteFogBuildOutcome(revision, null, null, started, e.Message, false);
+            }
+            finally
+            {
+                LodHitchActivity.EndJob("seam fog field build", allocationStart);
             }
         });
     }

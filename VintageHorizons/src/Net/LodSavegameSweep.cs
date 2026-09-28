@@ -274,6 +274,7 @@ public class LodSavegameSweep
     const long ClaimRereadTimeoutMs = 60_000;
     const int MaxLostClaimRereadBatches = 3;
     long rereadingSinceMs;
+    bool serverThreadNamed;
     int lostClaimRereadBatches;
     bool claimRefreshUnavailable;
 
@@ -640,12 +641,20 @@ public class LodSavegameSweep
                 ? $"snow changes will start finite regional refreshes at up to {refreshPerSecond}/s"
                 : "automatic snow refresh is disabled");
 
-        listenerId = sapi.Event.RegisterGameTickListener(_ => Step(), LodTickAllowance.TickMilliseconds);
+        listenerId = sapi.Event.RegisterGameTickListener(
+            LodHitchActivity.Measured("savegame sweep tick", _ => Step()), LodTickAllowance.TickMilliseconds);
         listenerRegistered = true;
     }
 
     void Step()
     {
+        if (!serverThreadNamed)
+        {
+            // The game leaves its server thread unnamed; the hitch recorder's allocation
+            // sampler needs a name for it in singleplayer, where it shares the process.
+            serverThreadNamed = true;
+            LodAllocationSampler.RegisterCurrentThread("server main thread");
+        }
         if (!active || verifying) return;
         long now = sapi.World.ElapsedMilliseconds;
         ObservePlayerTerrainActivity(now);

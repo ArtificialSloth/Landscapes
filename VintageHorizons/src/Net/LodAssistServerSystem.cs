@@ -86,7 +86,8 @@ public class LodAssistServerSystem : ModSystem
 
         // Accumulate the configured per-second rates across normal ticks. Each allowance
         // is capped at one tick's share, so a slow tick cannot cause a catch-up burst.
-        api.Event.RegisterGameTickListener(_ => MeasureServePending(), LodTickAllowance.TickMilliseconds);
+        api.Event.RegisterGameTickListener(
+            LodHitchActivity.Measured("assist serving tick", _ => MeasureServePending()), LodTickAllowance.TickMilliseconds);
 
         // Match the persistence checkpoint. New rows cannot become servable more often,
         // and this walks the complete key set on the server thread; scanning every five

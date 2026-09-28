@@ -331,7 +331,8 @@ internal sealed class LodSilhouetteBuilder
     void EnsureListening()
     {
         if (listening) return;
-        listenerId = sapi.Event.RegisterGameTickListener(_ => Tick(), LodTickAllowance.TickMilliseconds);
+        listenerId = sapi.Event.RegisterGameTickListener(
+            LodHitchActivity.Measured("silhouette server tick", _ => Tick()), LodTickAllowance.TickMilliseconds);
         listening = true;
         nextStatusLogMs = sapi.World.ElapsedMilliseconds + StatusLogIntervalMs;
         // The error brake reads the server log only while someone asks for silhouettes.
@@ -546,6 +547,7 @@ internal sealed class LodSilhouetteBuilder
         (int X, int Z)[] positions = LodSilhouetteAcceleratorSampling.Positions(tileX, tileZ);
         Task.Run(() =>
         {
+            long allocationStart = LodHitchActivity.StartJob();
             acceleratorCallGate.Wait();
             try
             {
@@ -564,6 +566,7 @@ internal sealed class LodSilhouetteBuilder
             finally
             {
                 acceleratorCallGate.Release();
+                LodHitchActivity.EndJob("silhouette accelerator sampling", allocationStart);
             }
         });
     }
