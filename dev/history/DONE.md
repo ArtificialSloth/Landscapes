@@ -2,6 +2,26 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-26..28 - Claim re-reads, A4 dropped, the hitch recorder and less garbage (0.4.128-0.4.131)
+
+- **A4 dropped** (owner, 2026-09-26): its clean-shutdown marker cannot be built (G236) and A3 cut
+  the scan it would skip to 73.3 s of off-thread reading.
+- **Claim re-reads fixed (0.4.128):** answers were collected only inside the audit step, so an
+  autosave during the load pass turned claim refresh off for the session (G257). Collected every
+  tick now, ahead of the audit in their own queue, which also closes "give claim re-reads priority
+  over audit re-reads". Sandbox: 0.4.127 gave up at 295 s; 0.4.128 read back 5,459 of 5,459.
+- **Sandbox acceptance evidence** for terrain-change tests 2/3/16 and 5 (edited WAL save detected
+  column for column; forced kill mid-write recovered exactly as predicted).
+- **Hitch recorder (0.4.128-0.4.130):** frame-time lows and attribution from the engine's own
+  profiler, crash fixed in 0.4.129 (G258) with a safety net (G259), allocation by thread and type in
+  0.4.130 (G260). It showed the stutter is .NET collections and who allocates.
+- **Less garbage (0.4.131):** seam-fog builds reuse their storage (94-112 MB/s to 0.3-2.2 MB/s), mesh
+  output is pooled, the cave cull borrows its rebuild, the capture batch is rented. 1% lows while
+  moving 63-103 FPS against 51-62; the owner said the fog looked fine.
+- **Section sync's singleplayer first run** logged its one-time migration (6,247 sections) with
+  nothing looking different.
+- Details: [Session 110](../sessions/SESSION_110.md).
+
 ## 2026-09-22 - Section versions: a returning player gets what changed while away (0.4.126-0.4.127)
 
 - A review of the savegame-sweep plans found Phase B of the terrain-change plan unstarted: a section

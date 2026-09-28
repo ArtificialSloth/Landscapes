@@ -4,17 +4,45 @@
 
 ## Start here
 
-Read [Session 109](sessions/SESSION_109.md), then [Session 108](sessions/SESSION_108.md).
-Section sync - the terrain-change plan's Phase B - is built (0.4.126-0.4.127) and passed a four-join
-dedicated sandbox test. Of 0.4.125's seam fog the owner said "Everything looked good". Neither is the
-next task by default: ask him what comes next before choosing work. Three things are recorded for
-when he wants them.
+Read [Session 110](sessions/SESSION_110.md), then [Session 109](sessions/SESSION_109.md).
+Session 110 fixed the claim re-reads (0.4.128), recorded A4 as dropped, and chased the owner's
+stutter with the `.vhhitch` recorder. The slowest frames are .NET garbage collections; 0.4.131 cut
+this mod's share of the garbage (seam-fog rebuilds from about 100 MB/s to 1-2 MB/s) and the owner
+said the fog looked fine. Ask him what comes next; the stutter work below is the natural
+continuation.
 
-### Section sync: what 0.4.127 left open
+### Stutter while exploring: what 0.4.131 left open (Session 110)
 
-- **The owner has not played 0.4.127.** In singleplayer the client side is idle. The server cache
-  should log "Adding section versions to this server cache" once, on its first open, and nothing
-  should look different.
+The recorder writes a report a minute to the client log: frame-time lows, what was unusually slow in
+the slowest 1% of frames, allocation by thread and object type, collections by cause, and this mod's
+own jobs measured exactly. Read its lines before asking the owner anything about stutter.
+
+- **The game's chunk thread is now most of the garbage.** While generating new terrain it allocated
+  365-677 MB/s, 60-84% of everything, almost all one closure type (`<>c__DisplayClass17_0`); over old
+  terrain it fell to 3-145 MB/s. The leading suspect is
+  `ServerSystemSupplyChunks.loadOrGenerateChunkColumn_OnChunkThread`, whose captured parameter makes
+  a closure on every call while `tryLoadOrGenerateChunkColumnsInQueue` rescans its request queue; a
+  worldgen mod's closure on the same thread is not excluded (G260). Confirm offline first
+  (decompile the IL, or resolve the event's `TypeID` in a test process). Any fix touches vanilla
+  code and is the owner's call.
+- **A launch setting for fewer collections**, for the owner to try: a larger gen0 budget through an
+  environment variable for the game process (for example `DOTNET_GCgen0size`). The recorder measures
+  the before and after. Not a mod change.
+- **The recorder's own minute report costs 14-58 ms on the render thread** at +0 s of each window
+  ("vh:hitchrecorder" in the worst frames). Format it off-thread.
+- **A ~415 ms freeze inside the game's end-of-frame step (`finfr`)** appeared once in each of the
+  0.4.129 and 0.4.131 sessions. Not garbage collection; cause unknown.
+- **This mod's remaining garbage** (0.4.131, exact): server capture tick 6-33 MB/s, client tick 4-17,
+  drawing callbacks 8-13. The capture ticks are mostly the whole-section `Runs`/`ColumnStart` rebuild
+  on every changed capture, which mesh and mip snapshots share by reference, so reusing them needs
+  reference tracking. The drawing callbacks have not been examined.
+- **The snow refresh shows no cost worth chasing:** in the 0.4.128 session it loaded 62 columns a
+  minute while he stood still, beside 5-10 gen1 collections a minute and a 1% low near 210 FPS.
+
+### Section sync: what is left
+
+- **Singleplayer first run: done.** His 0.4.128 session logged "Adding section versions to this server
+  cache (6247 sections, one time only)" at 2026-09-28 06:43:41, and nothing looked different.
 - **No second player has been involved.** The sandbox's "changed while away" was written into the
   server cache between joins, the way a server save would make it. A dedicated server with a second
   player changing terrain while the first is offline is the remaining real test. After it, the first
@@ -30,37 +58,6 @@ when he wants them.
 - Re-run the sandbox test with [`bench/routes/section-sync.txt`](../bench/routes/section-sync.txt)
   and [`scripts/section-sync-inject.py`](../scripts/section-sync-inject.py). Session 109's profile
   is `.testdata/profiles/phaseb`.
-
-### For the future: hitches while exploring new terrain (owner, 2026-09-21)
-
-On 0.4.125, while exploring new terrain, the owner saw hitches, with the minimum FPS dropping low
-periodically. He does not know whether it is the fog or Farseer, the savegame sweep changes, or
-something else, and asked for performance optimization to be looked into in the future. Nothing
-has been measured yet; do not start without his go-ahead.
-
-What is already known that bears on it, none of it a conclusion:
-
-- Session 104 recorded "consistent minor FPS dips while exploring new terrain" on 0.4.116. That
-  session's sweep was in its first adoption, and its dips were attributed to vanilla generation
-  plus a one-time sweep share.
-- The dormant-terrain snow refresh has had about 12,000 columns queued at 1/s on `test2` since
-  0.4.119, and no frame-time run has been taken with it running (see below).
-- Each seam-fog field rebuild uploads about 11 MB of half floats at a 4,096-block reach. Since
-  0.4.125 it also builds and uploads a residual, and while a residual fades the shader evaluates the
-  old field's shape again wherever the seam moved. Exploring rebuilds the field often. Rebuild
-  hitches were already an open question for 0.4.124.
-- Farseer previews, decode and meshing are worker-bound, and their uploads are capped at four tiles,
-  2 MiB and 2 ms per frame (Session 100 found Farseer idle on 73% of its ticks while exploring).
-- On a dedicated server the client re-fetches every held section the server re-saves near it.
-  Session 109's sandbox saw about 66 merges in two minutes with the player standing still, as ticking
-  blocks changed the ground. This is behaviour from before section sync, but it is steady background
-  network, decode and disk work, and not yet measured for frame cost.
-
-A first pass would separate the candidates on one route, turning each off in turn: `.vhfog off`,
-`.vhsilhouette off`, the savegame sweep off, and then vanilla. Ask him how often the hitches come
-and how deep they go, from his frame-time graph, and whether they change with movement speed.
-Any diagnostic has to reach the client or server log, because he cannot copy game chat. The active
-route for this work is `dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md`.
 
 ### Seam fog: what 0.4.125 left open
 
@@ -102,19 +99,14 @@ settle at once and the re-read queue matters.
 
 Open, in the order they block further work:
 
-- **Play a world with a real sweep behind it, on 0.4.119.** A fresh world, or one with a lot of
-  newly generated terrain, so several thousand columns pass through the settle path in one session.
-  Afterwards the status line should report claims "read back after a world save" far outnumbering
-  ones "from the startup reading", and the next start should load only a few hundred columns.
-  This is the test that 0.4.119's claim change actually scales.
-- **Give claim re-reads priority over audit re-reads.** Measured on 2026-09-20: claims for the
-  20:54 save were not written until 20:56:39, because settle re-reads queue behind the audit's
-  steady 16/s stream. Not a correctness fault - a session ending inside that window simply falls
-  back to the index-time claim - but it makes the tail of every session fall back unnecessarily.
-- **Measure the snow refresh's backlog cost.** The arm that was dead for six weeks now has about
-  12,000 columns queued at 1/s on `test2`, roughly three hours of background priority loads. No FPS
-  or frame-time run has yet been taken with that trickle running, and the owner deliberately stood
-  still for both 0.4.118 and 0.4.119. This is the most likely source of any new in-play cost.
+- **Play a world with a real sweep behind it.** The claim path under load is now sandbox-proven:
+  0.4.128 read back 5,459 of 5,459 claims after saves during a long first-adoption sweep on a copy of
+  the frozen `bodanboys` seed (`scripts/claim-reread-sandbox.ps1`, Session 110), where 0.4.127 gave
+  up at 295 s. The owner's own worlds have not had a sweep long enough to overlap an autosave since.
+- **Acceptance tests 2/3/16 and 5 have sandbox evidence** (Session 110): a hand-edited WAL save
+  was detected column for column, and a forced kill mid-write left both databases intact with the
+  restart exactly as predicted. The plan asks for the owner's own runs; 1, 6, 7, 9, 10 and 14 have
+  harness or sandbox evidence at most.
 - **Prove the audit catches a real fault.** Unchanged and still open. It is now proven to run and
   to dispute claims - 81 in one pass on the owner's world - but every dispute so far is ordinary
   change, not a cache that was wrong. Staging real corruption was not possible in a live world;
@@ -207,7 +199,9 @@ Open, in the order they block further work:
   floor. Results in `STATUS.md`. Three conditions on `bench/routes/sweep-virgin-frontier.txt` with
   the frozen seed restored per run; the pre-gate arm was built from checkpoint `2fbf2d1`, whose
   only source difference from 0.4.111 is the sweep. What remains from it:
-  - **0.4.112 has no play verdict**, and its floor size was chosen from one A/B rather than tuned.
+  - **0.4.112's floor has an informal play verdict:** the owner's 0.4.125 session (2026-09-21) held
+    2,592 ticks for movement with 22 columns loaded at the floor and "seemed good". Its size was
+    still chosen from one A/B rather than tuned.
   - **Multi-player fairness is still unmeasured.** One player's hold still stops the sweep for
     every other player; the floor bounds how badly, but nothing has been measured with two.
   - **The snow-refresh arm is still ungated.** `StepRefresh` issues `LoadChunkColumnPriority` with
@@ -230,8 +224,8 @@ Open, in the order they block further work:
 - ~~**Give `StepRefresh` the same gates as `StepLoad`.**~~ **Done in 0.4.116**, and it became urgent
   rather than optional: the arm had never run at all (G237), so reviving it would have put an
   unmeasured ungated priority-load path into the world. It now takes the capture-backlog brake, the
-  engine-generation gate and the player-activity hold with its rate floor. **Its cost has never been
-  measured**, because until 0.4.116 there was nothing to measure.
+  engine-generation gate and the player-activity hold with its rate floor. Its cost has not been
+  isolated, but the hitch recorder shows nothing worth chasing (Session 110; see the top of this file).
 - **Implement terrain change detection.** ~~Phase A~~ **A1–A3 and A5 are built (0.4.113–0.4.116)**;
   see Session 103 and `STATUS.md`. ~~Phase B~~ **Built (0.4.126–0.4.127), Session 109**; its open
   items are under "Section sync" at the top. **A4's fast path was

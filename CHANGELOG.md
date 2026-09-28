@@ -91,6 +91,48 @@ The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, st
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
 
+## [0.4.131] - 2026-09-28
+
+**Less stutter while exploring: the seam fog and the distant-terrain meshers reuse their memory.**
+
+- The stutter while exploring is mostly .NET pausing every thread to collect garbage. The seam fog
+  created about 50 MB of new arrays on every rebuild, about twice a second while moving, and every
+  distant-terrain mesh was copied into new arrays that were thrown away once uploaded.
+- Fog rebuilds now reuse their arrays; the old field's arrays are reused once the new one is on
+  screen. Meshes borrow their arrays from a shared pool and hand them back after upload. Cave
+  filling and terrain capture reuse their working memory too.
+- In the owner's session the fog's garbage fell from about 100 MB/s to about 1-2 MB/s, and the 1%
+  low while moving rose from 51-62 to 63-103 FPS. The fog looks the same. Most remaining garbage
+  comes from the game's own terrain generation.
+
+## [0.4.130] - 2026-09-28
+
+**The hitch recorder says who made the garbage.** Each minute's report adds how much memory was
+allocated, by thread and by kind of object, which collections ran and why, and exactly what each of
+this mod's own jobs allocated. Sampling costs nothing measurable.
+
+## [0.4.129] - 2026-09-28
+
+**The hitch recorder no longer crashes the game.** 0.4.128 crashed on opening the world-edit menu:
+the menu added enough new frame steps that the recorder wrote past the end of an array. Fixed, and
+any future failure in the recorder now switches it off with one log line instead of stopping the
+game.
+
+## [0.4.128] - 2026-09-26
+
+**The claims the savegame sweep records are now read back from the save file, as intended.**
+
+- After each autosave the mod re-reads the columns it captured, so its record matches what is on
+  disk. The answers were only collected by the background audit, which starts after the sweep
+  finishes, so on a world whose sweep ran longer than about three minutes this step gave up for the
+  rest of the session. Nothing was lost - those columns were checked again at the next start - but
+  the step never worked. It now works in every phase, ahead of the audit.
+
+**Hitch recorder (`.vhhitch`, on by default).** Once a minute it writes the frame-time lows to the
+client log, and for the slowest 1% of frames what was unusually slow in them - a step of the game's
+own frame, this mod's drawing, or a garbage-collection pause - plus the background work the
+singleplayer server did. `.vhhitch off` stops it; `.vhhitch` writes the current minute now.
+
 ## [0.4.127] - 2026-09-22
 
 **Catching up with a server runs at the server's speed.**

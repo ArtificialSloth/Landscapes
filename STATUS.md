@@ -3,17 +3,39 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-09-22`
-**Mod version:** `0.4.127` - current private test build: section sync (the terrain-change plan's Phase B) - a player returning to a dedicated server gets the distant terrain that changed while away - with 0.4.127's fix that frees a fetch slot at merge instead of at save. Verified, copy-installed, checkpointed and **integration-tested in a dedicated sandbox; not owner-played**. It is the first build carrying the owner's fog defaults. The last owner-played build is 0.4.125: "Everything looked good"
+**Status date:** `2026-09-28`
+**Mod version:** `0.4.131` - current private test build: the seam fog's and the distant-terrain meshers' storage is reused instead of allocated, cutting this mod's garbage while exploring (seam-fog rebuilds from about 100 MB/s to 1-2 MB/s); `.vhhitch` records frame-time lows and who allocates; claim re-reads work during the sweep (0.4.128). Verified, copy-installed, checkpointed and **owner-played** (2026-09-28): the fog looked fine
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.121 `a5f528d`, 0.4.122 `d46b776`, 0.4.123 `b46cf0a`, 0.4.124 `1fb10f5`, 0.4.125 `92eb9c3`, 0.4.126 `e668f81`, 0.4.127 `89509e9`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.121 `a5f528d`, 0.4.122 `d46b776`, 0.4.123 `b46cf0a`, 0.4.124 `1fb10f5`, 0.4.125 `92eb9c3`, 0.4.126 `e668f81`, 0.4.127 `89509e9`, 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `140` C# files under `VintageHorizons/src`
+**Source files:** `143` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
+
+**The stutter while exploring is .NET garbage collection, and this mod's share is cut (0.4.128-0.4.131).**
+Session 110.
+
+- **Recorder:** `.vhhitch` (on by default) writes a report a minute to the client log: 1% and 0.1%
+  lows, what was unusually slow in the slowest 1% of frames from the engine's own frame profiler,
+  allocation by thread and object type from the runtime's allocation ticks, collections by cause, and
+  this mod's own jobs measured exactly. A failure switches it off with one log line (G259).
+- **Finding:** the slowest frames are gen1 collections of 10-20 ms, 160-330 a minute while exploring
+  new terrain. In 0.4.130, 840-930 MB/s was allocated while exploring: the game's chunk thread
+  365-470 MB/s in one closure type, vanilla tesselation 75-235, this mod about 25-30% led by
+  seam-fog rebuilds at 94-112 MB/s.
+- **0.4.131:** reused fog, mesh, cave-cull and capture storage. Seam-fog builds 0.3-2.2 MB/s; this
+  mod's exact jobs 25-60 MB/s; 1% lows while moving 63-103 FPS against 51-62. The game's chunk thread
+  is now 60-84% of all garbage while generating new terrain, and falls away over old terrain.
+- **Claims (0.4.128):** read-path answers are collected every tick, so an autosave during the load
+  pass no longer turns claim refresh off (G257). Sandbox-verified against 0.4.127; owner play read
+  back all 73 claims after a save.
+- **Terrain-change acceptance in the sandbox:** tests 2/3/16 (an edited WAL save detected column for
+  column) and 5 (a forced kill mid-write recovered exactly as predicted). A4 is dropped.
+- **Evidence:** sandbox-integration-tested and owner-played; the fog look human-tested. 25,913
+  assertions.
 
 **Section sync is built and passed a dedicated sandbox test (0.4.126-0.4.127).** Session 109; the
 plan's Phase B, previously unstarted.
@@ -135,9 +157,8 @@ production-observed 2026-09-20 from his `test2` logs and measured offline from t
   still settling claims them the same way, because losing a save interval's proven captures would be
   worse than a stale claim; and re-read batches unanswered three times say so once and turn the
   refresh off for the session.
-- **Not established:** the settle path under load. That session captured 273 columns and all 273
-  were claimed after a save with no fallbacks, but a session with a large sweep behind it is the
-  real test. Whether a disputed claim's recapture is *wasted* is measured for 48 of 162 columns and
+- **Under load (Session 110):** a save during a long load pass turned claim refresh off until
+  0.4.128 (G257); since then a sandbox sweep read back 5,459 of 5,459 claims after saves. Whether a disputed claim's recapture is *wasted* is measured for 48 of 162 columns and
   argued from `ChunkDirty` semantics for the rest; it is not proven.
 
 **The background audit and the dormant-terrain snow refresh report themselves for the first time
@@ -876,58 +897,39 @@ It covers:
 
 ## Next work
 
-Begin with [Session 109](dev/sessions/SESSION_109.md), [Session 108](dev/sessions/SESSION_108.md), [Session 105](dev/sessions/SESSION_105.md) and the top of [TODO](dev/TODO.md),
-[the Farseer handoff](dev/plans/HANDOFF_HORIZON_SILHOUETTES.md), and
-[the horizon-silhouette/frontier plan](dev/plans/PLAN_HORIZON_SILHOUETTES_AND_FRONTIER.md).
+Begin with [Session 110](dev/sessions/SESSION_110.md) and the top of [TODO](dev/TODO.md).
 
-1. **Ask the owner what comes next.** Section sync passed its sandbox test and the seam fog is in a
-   state he is happy with. Three things are recorded in TODO for when he wants them:
-   - **Section sync's remaining evidence:** his own play of 0.4.127 (one log line, nothing visible in
-     singleplayer), a dedicated server with a second player changing terrain while the first is
-     offline, and a measured large-world re-check.
-   - **Hitches while exploring new terrain**, with low minimum FPS, cause unknown: separate the fog,
-     Farseer, the savegame sweep and vanilla on one route, and ask him for the hitches' frequency and
-     depth from his frame-time graph. On a dedicated server, the client's re-fetch of every nearby
-     section the server re-saves is a further candidate (Session 109).
-   - **Seam fog questions** not separately reported: the strip from above, straight-down coverage,
-     edges taller than the strip, camera steadiness, upsample edges, the fade time and a fade-in.
-
-   Use `scripts/fog-mockup` before and after any change to the medium.
-2. **Play a world with a real sweep behind it.** The claim path now waits for a world
-   save and re-reads the file, and that ran end to end on `test2` - but only 273 columns passed
-   through it. A fresh world, or one with a lot of newly generated terrain, puts thousands through
-   it in one session. Afterwards the status line should show claims "read back after a world save"
-   far outnumbering "from the startup reading", and the next start should load only a few hundred
-   columns.
-3. **Give claim re-reads priority over audit re-reads.** Measured 2026-09-20: claims for a 20:54
-   save were not written until 20:56:39, because they queue behind the audit's steady 16/s stream.
-   A session ending in that window falls back to the index-time claim unnecessarily.
-4. **Measure the snow refresh's backlog cost.** It has about 12,000 columns queued at 1/s on
-   `test2`, roughly three hours of background priority loads, and no FPS or frame-time run has yet
-   been taken with that trickle running - the owner stood still deliberately for both builds. This
-   is the most likely source of any new in-play cost, and the arm has only been reachable since
-   0.4.116.
-5. **Prove the audit catches a real fault.** It is now proven to run and to dispute claims - 81 in
-   one pass - but every dispute so far is ordinary change, not a cache that was wrong. Staging real
-   corruption was not possible in a live world; its decision rules are covered offline.
-6. **Close P3's deferred integration debt** when another player is available: a complete
+1. **Ask the owner what comes next.** The natural continuation is the stutter:
+   - **The game's chunk thread** makes 60-84% of the garbage while generating new terrain, one
+     closure type (G260). Confirm whose closure it is offline; any fix touches vanilla code and is
+     his call.
+   - **A larger gen0 budget as a launch setting** for him to try, measured by the recorder.
+   - **The recorder's minute report** costs 14-58 ms on the render thread; format it off-thread.
+   - **A ~415 ms freeze in the game's end-of-frame step** seen once in each of two sessions.
+   - **This mod's remaining garbage:** the whole-section rebuild on every changed capture, and the
+     drawing callbacks.
+2. **Section sync's remaining evidence:** a dedicated server with a second player changing terrain
+   while the first is offline, and a measured large-world re-check. The singleplayer first run is
+   done.
+3. **Terrain-change acceptance by the owner:** tests 2/3/16 and 5 have sandbox evidence only; 1, 6,
+   7, 9, 10 and 14 harness or sandbox evidence at most.
+4. **Prove the audit catches a real fault.** Every dispute so far is ordinary change.
+5. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
-7. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
+6. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
    observations beneath the veil; tune Outline detail, Hill softness and apron once the fog is
    accepted; record Farseer off/on and seam fog off/on FPS in one scene.
-8. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
+7. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
    player-facing Farseer rename plus bundled MIT notice.
-9. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
-10. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
+8. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
+9. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
    offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
-11. **Older TODO debt:** keep the debt including:
-   - P3's after-comparison;
-   - winter convergence, which G237 showed was never reachable and which the refresh arm has now
-     begun working through - re-judge once its backlog has drained;
-   - pause loading;
-   - Session 84 diagnostic cleanup.
+10. **Older TODO debt:** P3's after-comparison; winter convergence, re-judged once the snow
+    refresh's backlog has drained; pause loading; Session 84 diagnostic cleanup.
 
+[Session 110](dev/sessions/SESSION_110.md) is the authoritative stutter and claim-path continuation
+point;
 [Session 109](dev/sessions/SESSION_109.md) is the authoritative section-sync continuation point;
 [Session 108](dev/sessions/SESSION_108.md) is the authoritative Farseer-fog continuation point;
 [Session 107](dev/sessions/SESSION_107.md) retains the natural bank and the terrain-built outline, and
@@ -943,7 +945,7 @@ Begin with [Session 109](dev/sessions/SESSION_109.md), [Session 108](dev/session
   look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G256 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+- G166-G260 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
   buried joins, bounded regeneration, stable all-level ownership, post-water volumetric fog, the
   distinction between pacing priority-load submissions and yielding their downstream engine work,
   the engine generation counter's saved-load blind spot, route-halo generation, and now what a
@@ -955,8 +957,10 @@ Begin with [Session 109](dev/sessions/SESSION_109.md), [Session 108](dev/session
   far fog, that the engine's uniform collector ignores `sampler3D`, why a column-normalized bank is
   a wall from the side, why a thin layer is stepped over or buried on slopes, why replacing a
   field makes its fog vanish, why SQLite reads a column added after a blob from the row unless an
-  index leads with the equality, and why a fetch slot released only at durability throttles
-  catch-up to the save checkpoint.
+  index leads with the equality, why a fetch slot released only at durability throttles
+  catch-up to the save checkpoint, why a shared reader's answers must be collected in every phase,
+  why `array[Lookup()] += value` writes past a grown array, why a diagnostic in the render loop needs
+  its own safety net, and why an allocation tick names a closure without its class.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work

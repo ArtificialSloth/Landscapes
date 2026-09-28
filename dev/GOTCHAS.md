@@ -4906,3 +4906,65 @@ re-check of 59 in 31 seconds.
 
 **Found:** 2026-09-22, Session 109 (sandbox integration run of 0.4.126; fixed in 0.4.127 and
 re-measured in the same sandbox).
+
+### G257 - An answer collected only inside one consumer's step is lost while that step is idle
+
+**Trigger:** sharing a background reader between two consumers, as the savegame read path serves
+both the audit and the claim re-reads taken after a world save.
+
+**Trap:** the read path's answers were collected only inside the audit step, and the audit runs only
+once the sweep's load pass is done and only while it is enabled. Re-reads requested after an autosave
+during the load pass were answered and never collected; three one-minute timeouts later claim refresh
+turned itself off for the session. The owner's 2026-09-21 log shows it to the second (save 18:42:51,
+give-up 18:45:58), and the sandbox reproduced it on 0.4.127 at 295 s. Sharing the audit's capped
+queue could also drop them outright.
+
+**Safer action:** collect a shared reader's answers every tick in every phase, route them by the
+request they answer, and give the time-critical requests their own queue. Treat a timeout as the
+backstop it is, and detect a stopped reader directly.
+
+**Found:** 2026-09-26, Session 110 (fixed in 0.4.128; sandbox and owner play verified).
+
+### G258 - `array[Lookup(key)] += value` writes into the old array when the lookup grows it
+
+**Trigger:** accumulating into an array indexed by a lookup that assigns new slots and grows the
+array, as the hitch recorder tallies frame-profiler step names.
+
+**Trap:** C# evaluates the array reference before the index expression. When `Lookup` meets the
+first name past the capacity and replaces the field with a larger array, the write lands in the old
+one, past its end. The owner's game crashed twice in 0.4.128 on opening the world-edit menu, whose
+own steps took the frame past 128 names.
+
+**Safer action:** look the slot up into a local first, then index. Test with more distinct keys than
+the initial capacity, arriving a few at a time.
+
+**Found:** 2026-09-28, Session 110 (fixed in 0.4.129; `HitchRecorderChecks.SurvivesManyStepNames`).
+
+### G259 - A diagnostic inside the render loop can take the game down
+
+**Trigger:** adding measurement code to a render callback, a tick listener or any engine event.
+
+**Trap:** an exception escaping a render callback is a critical error for the whole client. The
+0.4.128 hitch recorder did exactly that, for a measurement the player never asked for.
+
+**Safer action:** wrap diagnostic callbacks so any exception logs once, restores whatever engine
+state they changed and switches the diagnostic off for the session. Report formatting reached from
+other paths (leaving the world, a chat command) needs the same guard.
+
+**Found:** 2026-09-28, Session 110.
+
+### G260 - The runtime's allocation-tick type name leaves out a nested type's declaring type
+
+**Trigger:** attributing garbage by type from `GCAllocationTick` events, as the hitch recorder's
+allocation sampler does.
+
+**Trap:** a nested type arrives as its own simple name, so a closure is reported as
+`<>c__DisplayClass17_0` with no hint of which class or assembly created it. Three engine classes have
+a closure of that exact name, and mods can too. The owner's 0.4.130 log attributed 365-470 MB/s on
+the game's chunk thread to that name, and the owner of the closure could only be inferred.
+
+**Safer action:** read such a type by thread and by what else runs on that thread, and confirm by
+decompiling. Resolving the event's `TypeID` to a `Type` would name it, but only from a live method
+table; weigh that risk before doing it inside the game.
+
+**Found:** 2026-09-28, Session 110.
