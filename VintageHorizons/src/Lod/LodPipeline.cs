@@ -1152,11 +1152,15 @@ public class LodPipeline
         CaptureApplyBytes += drain.Bytes;
     }
 
+    /// <summary>Block id to palette id for the capture being applied; owning thread only.</summary>
+    readonly Dictionary<int, int> capturePaletteIds = new();
+
     void ApplyOneCaptureResult(CaptureResult result)
     {
         LodSection section = World.GetOrCreateSection(result.SectionKey);
 
-        var pidByBlockId = new Dictionary<int, int>();
+        Dictionary<int, int> pidByBlockId = capturePaletteIds;
+        pidByBlockId.Clear();
         ulong[]?[] batch = result.RunsByColumn;
         bool snowStateChanged = false;
         bool snowAppearanceChanged = false;
@@ -1280,6 +1284,11 @@ public class LodPipeline
         // result, including an idempotent one: unchanged content is still a completed
         // capture obligation and its force-loaded lease must be released.
         ColumnCaptured?.Invoke(result.Cx, result.Cz);
+
+        // ReplaceColumns copied every column it kept, and each result is applied exactly once
+        // (the deferral queue removes what it applies), so the batch goes back to the pool.
+        LodMeshArrays.ReturnColumnBatch(batch);
+        result.RunsByColumn = Array.Empty<ulong[]?>();
     }
 
     /// <summary>

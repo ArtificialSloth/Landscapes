@@ -2933,7 +2933,11 @@ public partial class LodTerrainRenderer : IRenderer
             && worker.MeshResults.TryDequeue(out MeshResult? result))
         {
             long currentEpoch = currentWorldEpoch();
-            if (result.WorldEpoch != currentEpoch) continue;
+            if (result.WorldEpoch != currentEpoch)
+            {
+                result.ReturnPooledArrays();
+                continue;
+            }
 
             meshJobInFlight.Remove(result.Key);
 
@@ -2947,6 +2951,7 @@ public partial class LodTerrainRenderer : IRenderer
                 if (!world.RenderDirty.Contains(result.Key))
                     world.RenderDirty.Add(result.Key);
                 StaleMeshResultsRejected++;
+                result.ReturnPooledArrays();
                 continue;
             }
 
@@ -2957,6 +2962,7 @@ public partial class LodTerrainRenderer : IRenderer
             if (result.TextureModeRevision != textureModeRevision)
             {
                 world.RenderDirty.Add(result.Key);
+                result.ReturnPooledArrays();
                 continue;
             }
 
@@ -2983,28 +2989,38 @@ public partial class LodTerrainRenderer : IRenderer
                 DisposeMeshRef(newOpaque);
                 DisposeMeshRef(newWater);
                 world.RenderDirty.Add(result.Key);
+                result.ReturnPooledArrays();
                 throw;
             }
 
-            renderPaths.Publish(
-                currentWorldEpoch(),
-                result.Key,
-                newOpaque,
-                newWater,
-                result.VertexCount,
-                result.IndexCount,
-                result.WaterVertexCount,
-                result.WaterIndexCount,
-                result.AssumedCoveredSides,
-                // Borrowed for the call only. The shadow arenas copy what they need before
-                // this returns; nothing may retain the mesher's arrays.
-                new LodRenderGeometry(
-                    result.Xyz, result.Rgba, result.Indices,
-                    result.PackedOpaqueQuads, result.PackedOpaqueQuadCount,
-                    result.ClusteredPackedOpaqueQuads, result.PackedOpaqueClusters),
-                result.Heights,
-                result.HasTextureSlots,
-                result.OpaqueGroundCoverage);
+            try
+            {
+                renderPaths.Publish(
+                    currentWorldEpoch(),
+                    result.Key,
+                    newOpaque,
+                    newWater,
+                    result.VertexCount,
+                    result.IndexCount,
+                    result.WaterVertexCount,
+                    result.WaterIndexCount,
+                    result.AssumedCoveredSides,
+                    // Borrowed for the call only. The shadow arenas copy what they need before
+                    // this returns; nothing may retain the mesher's arrays.
+                    new LodRenderGeometry(
+                        result.Xyz, result.Rgba, result.Indices,
+                        result.PackedOpaqueQuads, result.PackedOpaqueQuadCount,
+                        result.ClusteredPackedOpaqueQuads, result.PackedOpaqueClusters),
+                    result.Heights,
+                    result.HasTextureSlots,
+                    result.OpaqueGroundCoverage);
+            }
+            finally
+            {
+                // Both uploads and the arena mirror have copied what they need by now, which
+                // is what lets the mesh threads rent these (0.4.131).
+                result.ReturnPooledArrays();
+            }
         }
 
         MeshUploadItems += uploadBudget.Items;

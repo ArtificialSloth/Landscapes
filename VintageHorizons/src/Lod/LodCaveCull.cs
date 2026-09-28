@@ -95,6 +95,11 @@ public static class LodCaveCull
         public readonly List<int> Frontier = new();
         public readonly List<ulong> Runs = new();
 
+        // The rebuilt section's arrays when the mesher borrows the result (0.4.131): the
+        // column offsets were a fresh 16 KB on every mesh job, filled or not.
+        public int[] Starts = Array.Empty<int>();
+        public ulong[] RebuiltRuns = Array.Empty<ulong>();
+
         public void Ensure(int cells, int buckets, int columns, int worldHeight,
             int horizontalSpan, bool prepareSurfaceSight)
         {
@@ -317,26 +322,28 @@ public static class LodCaveCull
     /// <param name="reach">Daylight reach in world blocks; zero or less disables the pass.</param>
     public static SectionSnapshot FillUnseen(
         SectionSnapshot self, SectionSnapshot?[] neighbors, int level, int reach)
-        => Prepare(self, neighbors, level, reach, preserveSurfaceSight: true).Self;
+        => Prepare(self, neighbors, level, reach, preserveSurfaceSight: true,
+            borrowRebuild: false).Self;
 
     /// <summary>Measurement-only switch used by the offline cache harness for a paired baseline.</summary>
     internal static SectionSnapshot FillUnseen(
         SectionSnapshot self, SectionSnapshot?[] neighbors, int level, int reach,
         bool preserveSurfaceSight)
-        => Prepare(self, neighbors, level, reach, preserveSurfaceSight).Self;
+        => Prepare(self, neighbors, level, reach, preserveSurfaceSight, borrowRebuild: false).Self;
 
     /// <summary>
     /// Prepare the filled section and the matching edge classification for one immediate
-    /// mesh build. The classification borrows the thread-local workspace and must not be
-    /// retained after another cave-cull call on this thread.
+    /// mesh build. Both borrow the thread-local workspace - since 0.4.131 the filled section's
+    /// runs and column offsets too - and must not be retained after another cave-cull call on
+    /// this thread.
     /// </summary>
     internal static Prepared Prepare(
         SectionSnapshot self, SectionSnapshot?[] neighbors, int level, int reach)
-        => Prepare(self, neighbors, level, reach, preserveSurfaceSight: true);
+        => Prepare(self, neighbors, level, reach, preserveSurfaceSight: true, borrowRebuild: true);
 
     static Prepared Prepare(
         SectionSnapshot self, SectionSnapshot?[] neighbors, int level, int reach,
-        bool preserveSurfaceSight)
+        bool preserveSurfaceSight, bool borrowRebuild)
     {
         if (reach <= 0) return new Prepared(self);
 
@@ -371,7 +378,7 @@ public static class LodCaveCull
         SpreadDaylight(work, span, worldHeight, effectiveReach, step);
         if (preserveSurfaceSight) KeepSurfaceSightlines(work, span, margin, worldHeight);
 
-        SectionSnapshot filled = Rebuild(work, self, span, margin, worldHeight);
+        SectionSnapshot filled = Rebuild(work, self, span, margin, worldHeight, borrowRebuild);
         Account(work, self, span, margin, worldHeight);
         return new Prepared(filled, work.Cells, span, margin, worldHeight);
     }
@@ -1197,15 +1204,23 @@ public static class LodCaveCull
     /// rebuild; a section with nothing to fill anywhere returns the original snapshot and
     /// allocates nothing at all.
     /// </summary>
+    /// <param name="borrow">
+    /// Build the filled section in the workspace's own arrays rather than new ones. Its runs
+    /// array is then longer than its content, which readers never see: they go through the
+    /// column offsets. Only for a result that dies with the calling mesh job.
+    /// </param>
     static SectionSnapshot Rebuild(Workspace work, SectionSnapshot self,
-        int span, int margin, int worldHeight)
+        int span, int margin, int worldHeight, bool borrow)
     {
         byte[] cells = work.Cells;
         int grid = LodSection.GridSize;
         List<ulong> runs = work.Runs;
         runs.Clear();
 
-        var starts = new int[grid * grid + 1];
+        // Every entry is written below: each column's offset first, then the end.
+        int[] starts = borrow
+            ? (work.Starts.Length == grid * grid + 1 ? work.Starts : work.Starts = new int[grid * grid + 1])
+            : new int[grid * grid + 1];
         bool changed = false;
 
         for (int cz = 0; cz < grid; cz++)
@@ -1272,9 +1287,22 @@ public static class LodCaveCull
 
         if (!changed) return self;
 
+        ulong[] rebuiltRuns;
+        if (borrow)
+        {
+            if (work.RebuiltRuns.Length < runs.Count)
+                work.RebuiltRuns = new ulong[LodMeshArrays.PooledLength(runs.Count)];
+            runs.CopyTo(work.RebuiltRuns);
+            rebuiltRuns = work.RebuiltRuns;
+        }
+        else
+        {
+            rebuiltRuns = runs.ToArray();
+        }
+
         return new SectionSnapshot
         {
-            Runs = runs.ToArray(),
+            Runs = rebuiltRuns,
             ColumnStart = starts,
             Captured = self.Captured,
             SnowStateObservedBits = self.SnowStateObservedBits,

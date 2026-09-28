@@ -41,6 +41,7 @@ public static class Program
         ("pure", "phase timing", PhaseCostChecks.Run),
         ("pure", "hitch recorder", HitchRecorderChecks.Run),
         ("runtime", "allocation sampler", AllocationSamplerChecks.Run),
+        ("pure", "reused storage", PoolingChecks.Run),
         ("fixture", "savegame read path", SavegameReaderChecks.Run),
         ("fixture", "savegame change detection", SavegameScanChecks.Run),
         ("pure", "vanilla horizon effects", HorizonEffectsChecks.Run),

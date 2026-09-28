@@ -68,6 +68,14 @@ public partial class LodTerrainRenderer
     // its weights wear down from silhouetteFogResidualStarted at one per fade duration.
     LodSilhouetteFogLayer? silhouetteFogShownLayer;
     LodSilhouetteFogLayer? silhouetteFogResidualLayer;
+
+    // Storage reused between builds (0.4.131). The scratch is taken whole by one build at a
+    // time; a cancelled build still finishing keeps it, and the next allocates as before. The
+    // half-float arrays come back only when a newer field has been published, the one moment
+    // nothing can read them: the build that read them as its shown and fading layers is done,
+    // and the next has not started.
+    LodSilhouetteFogVolume.Scratch? silhouetteFogScratch = new();
+    readonly LodSilhouetteFogVolume.HalfPool silhouetteFogHalves = new();
     int silhouetteFogResidualTexture;
     long silhouetteFogResidualStarted;
     float silhouetteFogResidualMaxWeight;
@@ -174,16 +182,23 @@ public partial class LodTerrainRenderer
         LodSilhouetteFogLayer? fading = fadeSeconds > 0f
             && fadingElapsed < silhouetteFogResidualMaxWeight ? silhouetteFogResidualLayer : null;
         float headStart = fadeSeconds > 0f ? silhouetteFogBuildSeconds / fadeSeconds : 0f;
+        LodSilhouetteFogVolume.HalfPool halves = silhouetteFogHalves;
         silhouetteFogBuildTask = Task.Run(() =>
         {
             long allocationStart = LodHitchActivity.StartJob();
+            LodSilhouetteFogVolume.Scratch? scratch = Interlocked.Exchange(ref silhouetteFogScratch, null);
             try
             {
                 // Bake the noise here, once, so the render thread only ever uploads it.
                 _ = LodSilhouetteFogNoise.Texels;
-                LodSilhouetteFogFieldArrays field = LodSilhouetteFogVolume.Build(prepared, token);
+                LodSilhouetteFogFieldArrays field = LodSilhouetteFogVolume.Build(
+                    prepared, token, scratch, halves);
                 LodSilhouetteFogResidual? residual = LodSilhouetteFogVolume.BuildResidual(
-                    field, shown, fading, fadingElapsed, headStart, prepared.SpillBlocks, token);
+                    field, shown, fading, fadingElapsed, headStart, prepared.SpillBlocks, token,
+                    halves);
+                // The float texels live in the scratch, which the next build overwrites.
+                // Nothing reads them after this; make a later reader fail loudly, not quietly.
+                if (scratch != null) field.Texels = Array.Empty<float>();
                 return new SilhouetteFogBuildOutcome(revision, field, residual, started, "", false);
             }
             catch (OperationCanceledException)
@@ -196,9 +211,17 @@ public partial class LodTerrainRenderer
             }
             finally
             {
+                if (scratch != null) Interlocked.Exchange(ref silhouetteFogScratch, scratch);
                 LodHitchActivity.EndJob("seam fog field build", allocationStart);
             }
         });
+    }
+
+    /// <summary>A build's arrays that were never shown go straight back.</summary>
+    void ReturnUnshownSilhouetteFogArrays(SilhouetteFogBuildOutcome outcome)
+    {
+        silhouetteFogHalves.Return(outcome.Field?.HalfTexels);
+        silhouetteFogHalves.Return(outcome.Residual?.Layer.HalfTexels);
     }
 
     /// <summary>Main/render thread. Publishes only the newest completed immutable field.</summary>
@@ -241,6 +264,10 @@ public partial class LodTerrainRenderer
                 return false;
             }
         }
+        else
+        {
+            ReturnUnshownSilhouetteFogArrays(outcome);
+        }
         try { StartPendingSilhouetteFogBuild(); }
         catch (Exception e)
         {
@@ -253,6 +280,9 @@ public partial class LodTerrainRenderer
     void PublishSilhouetteFogField(LodSilhouetteFogFieldArrays arrays,
         LodSilhouetteFogResidual? residual, long started)
     {
+        // What this publication takes off the screen. Read before anything is replaced.
+        ushort[]? previousShown = silhouetteFogShownLayer?.HalfTexels;
+        ushort[]? previousResidual = silhouetteFogResidualLayer?.HalfTexels;
         int next = UploadSilhouetteFogField(arrays.HalfTexels, arrays.Width, arrays.Height);
         int nextResidual = 0;
         try
@@ -297,6 +327,11 @@ public partial class LodTerrainRenderer
         silhouetteFogBoundaryEdges = arrays.BoundaryEdges;
         silhouetteSeamMask.MarkUploaded();
         if (old != 0) GL.DeleteTexture(old);
+
+        // The textures hold copies; the replaced arrays were last read by the build that just
+        // finished, and the next build starts only after this returns.
+        silhouetteFogHalves.Return(previousShown);
+        silhouetteFogHalves.Return(previousResidual);
     }
 
     void CancelSilhouetteFogBuild()
@@ -859,6 +894,9 @@ public partial class LodTerrainRenderer
     {
         CancelSilhouetteFogBuild();
         DisposeSilhouetteFogField();
+        // No fog, no retained storage: the switch off removes the memory too.
+        silhouetteFogHalves.Clear();
+        Volatile.Write(ref silhouetteFogScratch, new LodSilhouetteFogVolume.Scratch());
     }
 
     void ReleaseSilhouetteFogVolume()

@@ -180,6 +180,10 @@ public static class LodMesher
     /// <summary>One exposed wall segment on a column edge. YTop and YBottom are half blocks.</summary>
     readonly record struct VFace(byte Dir, short Fixed, short Along, short YTop, short YBottom, short Pid, bool Water, short Submerged);
 
+    /// <summary>A pass's finished output: rented when the result is pooled, exact otherwise.</summary>
+    static T[] Output<T>(List<T> list, bool pooled) =>
+        pooled ? LodMeshArrays.Rent(list) : list.ToArray();
+
     [ThreadStatic] static List<HFace>? hFaces;
     [ThreadStatic] static List<VFace>? vFaces;
 
@@ -232,7 +236,11 @@ public static class LodMesher
     static readonly bool AuditEnabled =
         Environment.GetEnvironmentVariable("VINTAGEHORIZONS_CAVE_AUDIT") == "1";
 
-    public static MeshResult BuildMesh(MeshJob job)
+    /// <param name="pooledOutput">
+    /// Rent the output arrays (<see cref="MeshResult.ArraysPooled"/>) instead of allocating
+    /// exact ones. The game's mesh threads do; everything else keeps exact arrays it may hold.
+    /// </param>
+    public static MeshResult BuildMesh(MeshJob job, bool pooledOutput = false)
     {
         // Before any buffer is touched, so the probe can borrow the same pooled buffers and
         // be completely finished with them before the real build starts clearing them.
@@ -473,21 +481,22 @@ public static class LodMesher
             Key = job.Key,
             ContentRevision = job.ContentRevision,
             RenderRevision = job.RenderRevision,
-            Xyz = opaque.Xyz.ToArray(),
-            Rgba = opaque.Rgba.ToArray(),
-            Indices = opaque.Indices.ToArray(),
+            Xyz = Output(opaque.Xyz, pooledOutput),
+            Rgba = Output(opaque.Rgba, pooledOutput),
+            Indices = Output(opaque.Indices, pooledOutput),
+            ArraysPooled = pooledOutput,
             VertexCount = opaque.Xyz.Count / 3,
             IndexCount = opaque.Indices.Count,
             OpaqueGroundCoverage = LodMeshGroundCoverage.Build(level, opaqueTopColumns),
-            PackedOpaqueQuads = opaque.Packed.ToArray(),
+            PackedOpaqueQuads = Output(opaque.Packed, pooledOutput),
             PackedOpaqueQuadCount = opaque.Packed.Count / LodPackedQuadFormat.WordsPerQuad,
             HasTextureSlots = opaque.HasTextureSlots,
             TextureModeRevision = job.TextureModeRevision,
             ClusteredPackedOpaqueQuads = clusteredPackedQuads,
             PackedOpaqueClusters = packedClusters,
-            WaterXyz = water.Xyz.Count > 0 ? water.Xyz.ToArray() : null,
-            WaterRgba = water.Xyz.Count > 0 ? water.Rgba.ToArray() : null,
-            WaterIndices = water.Xyz.Count > 0 ? water.Indices.ToArray() : null,
+            WaterXyz = water.Xyz.Count > 0 ? Output(water.Xyz, pooledOutput) : null,
+            WaterRgba = water.Xyz.Count > 0 ? Output(water.Rgba, pooledOutput) : null,
+            WaterIndices = water.Xyz.Count > 0 ? Output(water.Indices, pooledOutput) : null,
             WaterVertexCount = water.Xyz.Count / 3,
             WaterIndexCount = water.Indices.Count,
             Heights = new LodSectionHeights(opaque.Span, water.Span),

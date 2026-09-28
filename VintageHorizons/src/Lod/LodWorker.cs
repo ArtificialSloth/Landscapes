@@ -314,6 +314,40 @@ public class MeshResult
     /// </summary>
     public byte AssumedCoveredSides;
 
+    /// <summary>
+    /// Whether <see cref="Xyz"/>, <see cref="Rgba"/>, <see cref="Indices"/>,
+    /// <see cref="PackedOpaqueQuads"/> and the water arrays were rented from the shared array
+    /// pool (0.4.131): the game's mesh threads build this way, so a mesh's output stops being
+    /// garbage the moment it is uploaded. They are then longer than their counts, which every
+    /// reader already goes by, and the renderer hands them back through
+    /// <see cref="ReturnPooledArrays"/> once the upload has copied them.
+    /// </summary>
+    internal bool ArraysPooled;
+
+    /// <summary>
+    /// Returns rented arrays to the pool and leaves this result holding empty ones, so nothing
+    /// can read an array another mesh is already reusing. Owning thread, once per result.
+    /// </summary>
+    internal void ReturnPooledArrays()
+    {
+        if (!ArraysPooled) return;
+        ArraysPooled = false;
+        LodMeshArrays.Return(Xyz);
+        LodMeshArrays.Return(Rgba);
+        LodMeshArrays.Return(Indices);
+        LodMeshArrays.Return(PackedOpaqueQuads);
+        LodMeshArrays.Return(WaterXyz);
+        LodMeshArrays.Return(WaterRgba);
+        LodMeshArrays.Return(WaterIndices);
+        Xyz = Array.Empty<float>();
+        Rgba = Array.Empty<byte>();
+        Indices = Array.Empty<int>();
+        PackedOpaqueQuads = Array.Empty<uint>();
+        WaterXyz = null;
+        WaterRgba = null;
+        WaterIndices = null;
+    }
+
     /// <summary>Bytes passed to the GPU, excluding unused pooled-array capacity.</summary>
     public long EstimatedUploadBytes => SectionSnapshot.SaturatingAdd(
         UploadBytes(VertexCount, IndexCount),
@@ -540,7 +574,7 @@ public class LodWorker : IDisposable
 
             try
             {
-                MeshResults.Enqueue(LodMesher.BuildMesh(job));
+                MeshResults.Enqueue(LodMesher.BuildMesh(job, pooledOutput: true));
             }
             catch (Exception e)
             {
@@ -602,7 +636,8 @@ public class LodWorker : IDisposable
         int colOffsetX = (baseX % LodSection.SectionBlocks) / step;
         int colOffsetZ = (baseZ % LodSection.SectionBlocks) / step;
 
-        var batch = new ulong[]?[LodSection.GridSize * LodSection.GridSize];
+        // Rented (0.4.131): the owning thread hands it back once the capture is applied.
+        ulong[]?[] batch = LodMeshArrays.RentColumnBatch();
         var runs = new List<ulong>(24);
         bool anyColumn = false;
         long estimatedBytes = 0;
@@ -685,7 +720,11 @@ public class LodWorker : IDisposable
             }
         }
 
-        if (!anyColumn) return null;
+        if (!anyColumn)
+        {
+            LodMeshArrays.ReturnColumnBatch(batch);
+            return null;
+        }
 
         return new CaptureResult
         {

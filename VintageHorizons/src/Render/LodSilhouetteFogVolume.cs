@@ -257,8 +257,110 @@ internal static class LodSilhouetteFogVolume
         float X, float Z, float Y, float Scale, float Width, float NormalX, float NormalZ);
     internal readonly record struct FogPath(
         List<FogColumn> Columns, int CenterlineSpans, int DiagonalCenterlineSpans, bool Closed);
-    readonly record struct FogSample(
+    internal readonly record struct FogSample(
         float X, float Z, float Y, float Scale, float Width, float NormalX, float NormalZ);
+
+    /// <summary>
+    /// The temporary storage of one field build, kept by the renderer so a rebuild while
+    /// exploring stops allocating ~50 MB of large arrays (0.4.131; the owner's 0.4.130 log
+    /// measured 94-112 MB/s from seam-fog builds alone). One build at a time may hold it: the
+    /// renderer hands it out exclusively, and a build that finds it taken allocates as before.
+    /// Arrays only ever grow and are used up to the current field's size, so nothing a
+    /// previous build left behind is read: every element used is written first.
+    /// </summary>
+    internal sealed class Scratch
+    {
+        internal readonly List<FogSample> Samples = new();
+        int[] seedByCell = Array.Empty<int>();
+        int[] verticalDistance = Array.Empty<int>();
+        int[] verticalSeed = Array.Empty<int>();
+        float[] texels = Array.Empty<float>();
+        int[] candidates = Array.Empty<int>();
+        float[] intersections = Array.Empty<float>();
+
+        internal int[] SeedByCell(int count) => Grow(ref seedByCell, count);
+        internal int[] VerticalDistance(int count) => Grow(ref verticalDistance, count);
+        internal int[] VerticalSeed(int count) => Grow(ref verticalSeed, count);
+        internal float[] Texels(int count) => Grow(ref texels, count);
+        internal int[] Candidates(int count) => Grow(ref candidates, count);
+        internal float[] Intersections(int count) => Grow(ref intersections, count);
+
+        static T[] Grow<T>(ref T[] array, int count)
+        {
+            if (array.Length < count) array = new T[PooledLength(count)];
+            return array;
+        }
+    }
+
+    /// <summary>
+    /// Half-float arrays the renderer returns once a newer field has replaced them on screen:
+    /// the published field's texels and its residual's. Thread-safe, because a build rents on
+    /// a worker while the render thread returns. A pooled array can be longer than its field;
+    /// every reader goes by the field's width and height, never by the array's length.
+    /// </summary>
+    internal sealed class HalfPool
+    {
+        const int MaxSpare = 4;
+        readonly object gate = new();
+        readonly List<ushort[]> spare = new();
+
+        /// <summary>Rents reused from the pool, and rents that had to allocate.</summary>
+        internal long Reused, Allocated;
+
+        internal ushort[] Rent(int length)
+        {
+            lock (gate)
+            {
+                int best = -1;
+                for (int i = 0; i < spare.Count; i++)
+                {
+                    if (spare[i].Length < length) continue;
+                    if (best < 0 || spare[i].Length < spare[best].Length) best = i;
+                }
+                if (best >= 0)
+                {
+                    ushort[] found = spare[best];
+                    spare.RemoveAt(best);
+                    Reused++;
+                    return found;
+                }
+                Allocated++;
+            }
+            return new ushort[PooledLength(length)];
+        }
+
+        internal void Return(ushort[]? array)
+        {
+            if (array == null || array.Length == 0) return;
+            lock (gate)
+            {
+                foreach (ushort[] held in spare)
+                {
+                    if (ReferenceEquals(held, array)) return;
+                }
+                spare.Add(array);
+                if (spare.Count <= MaxSpare) return;
+                int smallest = 0;
+                for (int i = 1; i < spare.Count; i++)
+                {
+                    if (spare[i].Length < spare[smallest].Length) smallest = i;
+                }
+                spare.RemoveAt(smallest);
+            }
+        }
+
+        /// <summary>Lets the memory go, for when the fog is switched off or stopped.</summary>
+        internal void Clear()
+        {
+            lock (gate) spare.Clear();
+        }
+    }
+
+    /// <summary>
+    /// A pooled array's size, with headroom so a field that grows a little as the seam moves
+    /// still fits the array the last one used.
+    /// </summary>
+    internal static int PooledLength(int count) => LodMeshArrays.PooledLength(count);
 
     internal sealed class Prepared
     {
@@ -363,8 +465,15 @@ internal static class LodSilhouetteFogVolume
         };
     }
 
+    /// <param name="scratch">
+    /// Temporary storage to reuse, held exclusively by this build; null allocates. The returned
+    /// field's <see cref="LodSilhouetteFogFieldArrays.Texels"/> then live in it, so they are
+    /// valid only until the scratch is handed to the next build.
+    /// </param>
+    /// <param name="halves">Where the field's half-float texels are rented; null allocates.</param>
     internal static LodSilhouetteFogFieldArrays Build(
-        Prepared prepared, CancellationToken cancellationToken = default)
+        Prepared prepared, CancellationToken cancellationToken = default,
+        Scratch? scratch = null, HalfPool? halves = null)
     {
         ArgumentNullException.ThrowIfNull(prepared);
         cancellationToken.ThrowIfCancellationRequested();
@@ -393,11 +502,12 @@ internal static class LodSilhouetteFogVolume
                 throw new InvalidOperationException("the seam-fog field exceeds its safe texture bounds");
         }
 
-        List<FogSample> samples = RasterSamples(paths, texelBlocks);
+        List<FogSample> samples = RasterSamples(paths, texelBlocks, scratch?.Samples);
         cancellationToken.ThrowIfCancellationRequested();
         int cellCount = checked(width * height);
-        var seedByCell = new int[cellCount];
-        Array.Fill(seedByCell, -1);
+        int texelCount = checked(cellCount * 4);
+        int[] seedByCell = scratch?.SeedByCell(cellCount) ?? new int[cellCount];
+        Array.Fill(seedByCell, -1, 0, cellCount);
         for (int seed = 0; seed < samples.Count; seed++)
         {
             if ((seed & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
@@ -413,10 +523,10 @@ internal static class LodSilhouetteFogVolume
 
         // First pass of the exact squared Euclidean distance transform. Along a column all seeds
         // have zero cost, so two linear scans produce its nearest occupied row and squared cost.
-        var verticalDistance = new int[cellCount];
-        var verticalSeed = new int[cellCount];
-        Array.Fill(verticalDistance, InfiniteCellDistance);
-        Array.Fill(verticalSeed, -1);
+        int[] verticalDistance = scratch?.VerticalDistance(cellCount) ?? new int[cellCount];
+        int[] verticalSeed = scratch?.VerticalSeed(cellCount) ?? new int[cellCount];
+        Array.Fill(verticalDistance, InfiniteCellDistance, 0, cellCount);
+        Array.Fill(verticalSeed, -1, 0, cellCount);
         for (int x = 0; x < width; x++)
         {
             if ((x & 31) == 0) cancellationToken.ThrowIfCancellationRequested();
@@ -447,9 +557,11 @@ internal static class LodSilhouetteFogVolume
         // The horizontal lower envelope completes Felzenszwalb's linear-time 2D transform. It
         // carries the path sample identity through the transform, so all four channels describe
         // the same nearest point and remain coherent when the GPU filters them.
-        var texels = new float[checked(cellCount * 4)];
-        var candidates = new int[width];
-        var intersections = new float[width + 1];
+        // Every texel is written below, and every candidate and intersection is written before
+        // it is read, so reused storage needs no clearing.
+        float[] texels = scratch?.Texels(texelCount) ?? new float[texelCount];
+        int[] candidates = scratch?.Candidates(width) ?? new int[width];
+        float[] intersections = scratch?.Intersections(width + 1) ?? new float[width + 1];
         for (int row = 0; row < height; row++)
         {
             if ((row & 15) == 0) cancellationToken.ThrowIfCancellationRequested();
@@ -503,8 +615,8 @@ internal static class LodSilhouetteFogVolume
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var halfTexels = new ushort[texels.Length];
-        for (int i = 0; i < texels.Length; i++)
+        ushort[] halfTexels = halves?.Rent(texelCount) ?? new ushort[texelCount];
+        for (int i = 0; i < texelCount; i++)
             halfTexels[i] = BitConverter.HalfToUInt16Bits((Half)texels[i]);
         var field = new LodSilhouetteFogFieldArrays
         {
@@ -555,9 +667,11 @@ internal static class LodSilhouetteFogVolume
         }
     }
 
-    static List<FogSample> RasterSamples(List<FogPath> paths, float texelBlocks)
+    static List<FogSample> RasterSamples(List<FogPath> paths, float texelBlocks,
+        List<FogSample>? reuse = null)
     {
-        var result = new List<FogSample>();
+        List<FogSample> result = reuse ?? new List<FogSample>();
+        result.Clear();
         float maxStep = MathF.Max(1f, texelBlocks * 0.45f);
         foreach (FogPath path in paths)
         {
@@ -936,9 +1050,11 @@ internal static class LodSilhouetteFogVolume
     /// Fade durations the build is expected to take. The shown fog stays whole until the new
     /// field replaces it, so its weight starts that much above one.
     /// </param>
+    /// <param name="halves">Where the residual's texels are rented; null allocates.</param>
     internal static LodSilhouetteFogResidual? BuildResidual(LodSilhouetteFogFieldArrays next,
         LodSilhouetteFogLayer? shown, LodSilhouetteFogLayer? fading, float fadingElapsed,
-        float headStart, float spillBlocks, CancellationToken cancellationToken = default)
+        float headStart, float spillBlocks, CancellationToken cancellationToken = default,
+        HalfPool? halves = null)
     {
         ArgumentNullException.ThrowIfNull(next);
         if (shown == null && fading == null) return null;
@@ -954,7 +1070,9 @@ internal static class LodSilhouetteFogVolume
         float core = next.CoreBlocks;
 
         int width = next.Width, height = next.Height;
-        var half = new ushort[checked(width * height * 4)];
+        // Every texel of the field's extent is written below, so a reused array needs no clearing.
+        int texelCount = checked(width * height * 4);
+        ushort[] half = halves?.Rent(texelCount) ?? new ushort[texelCount];
         float maxWeight = 0f;
         float minGround = float.PositiveInfinity, maxGround = float.NegativeInfinity;
         int live = 0;
@@ -1018,7 +1136,11 @@ internal static class LodSilhouetteFogVolume
                 maxGround = MathF.Max(maxGround, chosen[1]);
             }
         }
-        if (live == 0) return null;
+        if (live == 0)
+        {
+            halves?.Return(half);
+            return null;
+        }
         return new LodSilhouetteFogResidual
         {
             Layer = new LodSilhouetteFogLayer(half, width, height, next.OriginBlockX,
@@ -1035,7 +1157,8 @@ internal static class LodSilhouetteFogVolume
 
     static bool SameLattice(LodSilhouetteFogFieldArrays next, LodSilhouetteFogLayer layer) =>
         layer.TexelBlocks == next.TexelBlocks
-        && layer.HalfTexels.Length == layer.Width * layer.Height * 4
+        // At least: a pooled array (0.4.131) can be longer than its layer.
+        && layer.HalfTexels.Length >= layer.Width * layer.Height * 4
         && (layer.OriginBlockX - next.OriginBlockX) % (int)next.TexelBlocks == 0
         && (layer.OriginBlockZ - next.OriginBlockZ) % (int)next.TexelBlocks == 0;
 
