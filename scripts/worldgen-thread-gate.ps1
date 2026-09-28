@@ -25,6 +25,13 @@ Examples:
 An existing settled save can replace Seed:
   pwsh scripts/worldgen-thread-gate.ps1 -Action Prepare -Profile p0-main `
       -SeedSave "$env:APPDATA\VintagestoryData\Saves\my world.vcdbs"
+
+-ChunkThreadRest compares the game's chunk thread resting and spinning on the same seed
+(Session 111).  On installs Vintage Horizons' rest and leaves it on.  Off installs it and
+switches it off with /vhchunkrest before generating, so the run is the game's own
+behaviour with the rest still counting passes and allocation.  Absent pins
+RestIdleChunkThread false, so the patch is not installed at all.  Default leaves the mod's
+own default in force.
 #>
 
 [CmdletBinding()]
@@ -43,6 +50,8 @@ param(
     [ValidateSet(1, 2, 3, 4, 5, 6)]
     [int[]]$ThreadCounts = @(1, 6),
     [string[]]$RequiredModIds = @('terraprety', 'watersheds'),
+    [ValidateSet('Default', 'On', 'Off', 'Absent')]
+    [string]$ChunkThreadRest = 'Default',
     [switch]$AllowPartlyGeneratedSeed,
     [string]$GamePath,
     [string]$ModSource,
@@ -152,7 +161,7 @@ function Write-PinnedConfig {
     param([Parameter(Mandatory)][string]$TargetDataPath, [Parameter(Mandatory)][int]$Threads)
     Assert-UnderGateBase $TargetDataPath
     New-Item -ItemType Directory -Path (Join-Path $TargetDataPath 'ModConfig') -Force | Out-Null
-    @{
+    $pinned = @{
         EnableCapture = $true
         EnableServing = $false
         SweepSavegame = $false
@@ -160,7 +169,9 @@ function Write-PinnedConfig {
         EnableGenerateCommand = $false
         EnableWorldGeneration = $false
         PregenRadiusChunks = 0
-    } | ConvertTo-Json | Set-Content -LiteralPath (
+    }
+    if ($ChunkThreadRest -ne 'Default') { $pinned.RestIdleChunkThread = ($ChunkThreadRest -ne 'Absent') }
+    $pinned | ConvertTo-Json | Set-Content -LiteralPath (
         Join-Path $TargetDataPath 'ModConfig\vintagehorizons-server.json') -Encoding utf8
     @{
         MaxWorldgenThreads = $Threads
@@ -485,6 +496,10 @@ function Invoke-IsolatedServer {
             }
 
             if ($ready -and -not $commandSent) {
+                if ($Generate -and $ChunkThreadRest -eq 'Off') {
+                    $process.StandardInput.WriteLine('/vhchunkrest off')
+                    Write-Host '  sent /vhchunkrest off'
+                }
                 if ($Generate) {
                     $phase = 'generation'
                     $generationStartSeconds = $clock.Elapsed.TotalSeconds
@@ -556,6 +571,18 @@ function Invoke-IsolatedServer {
             $serverText.IndexOf('sweep off', [StringComparison]::Ordinal) -lt 0) {
             throw 'The server log does not prove that the pinned no-background-generation Vintage Horizons config loaded.'
         }
+        $restProof = switch ($ChunkThreadRest) {
+            'On' { 'Chunk thread rest installed and on' }
+            'Off' { 'Chunk thread rest switched off by the console' }
+            'Absent' { 'chunk thread rest off' }
+            default { $null }
+        }
+        if ($null -ne $restProof -and $serverText.IndexOf($restProof, [StringComparison]::Ordinal) -lt 0) {
+            throw "The server log does not prove the chunk thread rest state ($ChunkThreadRest): no '$restProof'."
+        }
+        $chunkThreadLine = @(Get-Content -LiteralPath $consolePath |
+            Where-Object { $_.Contains('Chunk thread over this session', [StringComparison]::Ordinal) } |
+            Select-Object -Last 1)[0]
         if ($Generate -and (-not $submitted -or $null -eq $firstZeroSeconds)) {
             throw 'Generation did not reach a confirmed empty queue.'
         }
@@ -575,6 +602,8 @@ function Invoke-IsolatedServer {
                 $requested / $generationSeconds
             } else { 0 }
             peakQueueDepth = $peakQueue
+            chunkThreadRest = $ChunkThreadRest
+            chunkThreadSession = $chunkThreadLine
             metrics = $metrics
             completedUtc = [DateTime]::UtcNow.ToString('o')
         }
