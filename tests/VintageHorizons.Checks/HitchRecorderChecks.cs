@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using Vintagestory.API.Common;
 
 namespace VintageHorizons.Checks;
@@ -21,6 +22,85 @@ public static class HitchRecorderChecks
         BlamesGarbageCollection(c);
         SteadyRunReportsNoHitches(c);
         SurvivesManyStepNames(c);
+        WritesTheMinuteOffTheCallingThread(c);
+    }
+
+    /// <summary>
+    /// The minute's report is written off the render thread. 0.4.129-0.4.131 lost a 14-58 ms
+    /// frame at the start of every minute writing it in place, the game's logger flushing its
+    /// file on every line. Ending the window must return at once however slow the log is; the
+    /// report must still arrive and say what a report written in place says; and reports must
+    /// arrive in the order their windows closed, an in-place one included.
+    /// </summary>
+    static void WritesTheMinuteOffTheCallingThread(Check c)
+    {
+        var inPlaceLog = new CaptureLogger();
+        var inPlace = new LodHitchRecorder(null, inPlaceLog);
+        long inPlaceStart = 1;
+        FeedPeriodicHitches(inPlace, ref inPlaceStart);
+        inPlace.WriteReport("check");
+
+        var slowLog = new CaptureLogger { Delay = TimeSpan.FromMilliseconds(50) };
+        var background = new LodHitchRecorder(null, slowLog);
+        long start = 1;
+        FeedPeriodicHitches(background, ref start);
+        var clock = Stopwatch.StartNew();
+        background.WriteReportInBackground("check");
+        double returnedMs = clock.Elapsed.TotalMilliseconds;
+        c.True(returnedMs < 25,
+            $"ending the window does not wait for a slow log ({returnedMs:0.0} ms; each line takes 50)");
+        c.True(background.WaitForReports(TimeSpan.FromSeconds(10)), "the report is written in the background");
+        c.SeqEq(Comparable(inPlaceLog), Comparable(slowLog),
+            "and says what the same frames reported in place say");
+
+        FeedPeriodicHitches(background, ref start);
+        background.WriteReportInBackground("first");
+        FeedPeriodicHitches(background, ref start);
+        background.WriteReportInBackground("second");
+        FeedPeriodicHitches(background, ref start);
+        background.WriteReport("third");
+        List<string> lines;
+        lock (slowLog.Lines) lines = slowLog.Lines.ToList();
+        int first = lines.FindIndex(l => l.Contains("(first)", StringComparison.Ordinal));
+        int second = lines.FindIndex(l => l.Contains("(second)", StringComparison.Ordinal));
+        int third = lines.FindIndex(l => l.Contains("(third)", StringComparison.Ordinal));
+        c.True(first >= 0 && first < second && second < third,
+            $"reports arrive in the order their windows closed (lines {first}, {second}, {third})");
+    }
+
+    /// <summary>The periodic-hitch run, fed as one window.</summary>
+    static void FeedPeriodicHitches(LodHitchRecorder recorder, ref long start)
+    {
+        recorder.BeginWindowForChecks();
+        for (int frame = 0; frame < 3000; frame++)
+        {
+            bool slow = frame % 20 == 19;
+            var marks = new List<(string, double)> { ("gametick", 2), ("vh:lod", 1), ("end", 5) };
+            if (slow) marks.Add(("gmleslowhandler", 30));
+            ProfileEntryRange root = Frame(start, marks);
+            recorder.Feed(root, 0, 0);
+            start += root.ElapsedTicks;
+        }
+    }
+
+    /// <summary>
+    /// The lines that depend only on the frames: the summary, the blame and the worst frames,
+    /// with the wall-clock readings taken out. Collection counts and job allocation are live
+    /// process readings and differ between any two reports.
+    /// </summary>
+    static List<string> Comparable(CaptureLogger log)
+    {
+        lock (log.Lines)
+        {
+            return log.Lines
+                .Where(l => l.Contains(" hitches ", StringComparison.Ordinal)
+                    || l.Contains("slowest 1%", StringComparison.Ordinal)
+                    || l.Contains("worst:", StringComparison.Ordinal))
+                .Select(l => Regex.Replace(l, @"\d\d:\d\d:\d\d-\d\d:\d\d:\d\d", "<span>"))
+                .Select(l => Regex.Replace(l, @"frames in \d+s", "frames in <s>"))
+                .Select(l => Regex.Replace(l, @"frame at \+\d+s", "frame at +<s>"))
+                .ToList();
+        }
     }
 
     /// <summary>

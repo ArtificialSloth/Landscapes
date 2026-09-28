@@ -191,6 +191,17 @@ public class LodServerConfig
     public int PregenColumnsPerSecond = 8;
 
     /// <summary>
+    /// Let the game's chunk thread sleep after a pass over its queue that found nothing to do,
+    /// as its other threads do, where the game would otherwise go straight round again (see
+    /// <see cref="ChunkThreadRest"/>). With the default single world-generation thread on a
+    /// machine with 8 or more logical processors, the game re-scans parked neighbour columns
+    /// about 100,000 times a second while players explore new terrain, and the garbage that
+    /// makes forces collections that pause everything. Generation is unchanged. False leaves
+    /// the game's chunk thread exactly as it ships: the patch is not installed at all.
+    /// </summary>
+    public bool RestIdleChunkThread = true;
+
+    /// <summary>
     /// Horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER 4.9). Null, the default, is
     /// automatic: on for singleplayer and LAN-hosted worlds and off on dedicated servers. True
     /// explicitly opts a dedicated server in. False switches them off everywhere, and the server
@@ -313,5 +324,6 @@ public class LodServerConfig
             ? "on (dedicated reach up to " + SilhouetteReachBlocks + " blocks)"
             : "automatic (singleplayer and LAN only)")}, "
         + $"silhouette accelerators {(SilhouetteUseAccelerators ? "on" : "off")}, "
-        + $"previews {SilhouettePreviewsPerSecond}/s";
+        + $"previews {SilhouettePreviewsPerSecond}/s, "
+        + $"chunk thread rest {(RestIdleChunkThread ? "on" : "off")}";
 }

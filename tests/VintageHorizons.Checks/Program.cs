@@ -40,6 +40,7 @@ public static class Program
         ("pure", "water edge", WaterEdgeChecks.Run),
         ("pure", "phase timing", PhaseCostChecks.Run),
         ("pure", "hitch recorder", HitchRecorderChecks.Run),
+        ("pure", "chunk thread rest", ChunkThreadRestChecks.Run),
         ("runtime", "allocation sampler", AllocationSamplerChecks.Run),
         ("pure", "reused storage", PoolingChecks.Run),
         ("fixture", "savegame read path", SavegameReaderChecks.Run),

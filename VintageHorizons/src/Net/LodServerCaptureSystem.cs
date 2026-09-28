@@ -40,6 +40,8 @@ public class LodServerCaptureSystem : ModSystem
     bool allocationTelemetryEnabled;
     LodPhaseCost pipelineTickCost;
     long nextActiveWorkStatusLogMs;
+    ChunkThreadRest.Counts chunkRestAtLastStats;
+    long chunkRestStatsAt;
 
     /// <summary>What the sweep's background arms had done when the last status line printed.</summary>
     long lastBackgroundSweepSignature;
@@ -182,11 +184,17 @@ public class LodServerCaptureSystem : ModSystem
         // than only in the source, and so a sanitised value is visible as the one in force.
         if (configReadable) api.StoreModConfig(Config, ConfigFile);
 
+        // Independent of capture: it changes nothing the cache sees, only whether the game's
+        // chunk thread sleeps when a pass over its queue found nothing to do.
+        if (Config.RestIdleChunkThread) ChunkThreadRest.Install(Mod.Logger, restOn: true);
+        else ChunkThreadRest.NoteDisabledByConfig(ConfigFile);
+
         // Registered whatever the config says: a command that refuses with the reason
         // beats "no such command", which reads as a broken mod.
         RegisterGenerateCommand();
         RegisterRefreshCommand();
         RegisterWorldGenCommand();
+        RegisterChunkRestCommand();
 
         if (!Config.EnableCapture)
         {
@@ -1212,6 +1220,44 @@ public class LodServerCaptureSystem : ModSystem
         sweep?.NoteWorldSave();
     }
 
+    // ---- /vhchunkrest: the game's chunk thread rests when it has nothing to do ----
+
+    void RegisterChunkRestCommand()
+    {
+        sapi.ChatCommands.Create("vhchunkrest")
+            .WithDescription(
+                "Whether the game's chunk thread sleeps, as its other threads do, after a pass over "
+                + "its queue that found nothing to do. on or off for this session; no argument shows "
+                + "its state.")
+            .RequiresPrivilege(Privilege.controlserver)
+            .WithArgs(sapi.ChatCommands.Parsers.OptionalWord("on|off"))
+            .HandleWith(OnChunkRestCommand);
+    }
+
+    TextCommandResult OnChunkRestCommand(TextCommandCallingArgs args)
+    {
+        string input = Convert.ToString(args.Parsers[0].GetValue())?.Trim() ?? "";
+        if (input.Length == 0)
+        {
+            if (!ChunkThreadRest.Installed)
+            {
+                return TextCommandResult.Success("[VintageHorizons] The chunk thread rest is not installed: "
+                    + (ChunkThreadRest.NotInstalledReason ?? "this server has not started it") + ".");
+            }
+            return TextCommandResult.Success(
+                $"[VintageHorizons] Chunk thread rest is {(ChunkThreadRest.Resting ? "on" : "off")}. "
+                + "Each minute's hitch report shows it on its server-work line.");
+        }
+        bool? on = input.Equals("on", StringComparison.OrdinalIgnoreCase) ? true
+            : input.Equals("off", StringComparison.OrdinalIgnoreCase) ? false : null;
+        if (on == null)
+        {
+            return TextCommandResult.Error("[VintageHorizons] Usage: /vhchunkrest [on|off]");
+        }
+        string reply = ChunkThreadRest.SetResting(on.Value, args.Caller.Player?.PlayerName ?? "the console");
+        return ChunkThreadRest.Installed ? TextCommandResult.Success(reply) : TextCommandResult.Error(reply);
+    }
+
     // ---- /vhrefresh: recapture existing terrain without generating missing columns ----
 
     const int RefreshDefaultRadiusChunks = 32;
@@ -1456,6 +1502,16 @@ public class LodServerCaptureSystem : ModSystem
         LogGenerationStats("command generation", generate);
         LogGenerationStats("command refresh", refresh);
 
+        ChunkThreadRest.Counts chunkRestNow = ChunkThreadRest.Read();
+        long statsNow = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (chunkRestStatsAt != 0)
+        {
+            Mod.Logger.Notification("  {0}", ChunkThreadRest.Describe(chunkRestAtLastStats, chunkRestNow,
+                System.Diagnostics.Stopwatch.GetElapsedTime(chunkRestStatsAt, statsNow).TotalSeconds));
+        }
+        chunkRestAtLastStats = chunkRestNow;
+        chunkRestStatsAt = statsNow;
+
         Mod.Logger.Notification(
             "  server allocation interval MiB/max KiB: pipeline tick {0:0.00}/{1:0.0}",
             pipelineTickCost.AllocatedBytes / (1024.0 * 1024.0),
@@ -1566,5 +1622,6 @@ public class LodServerCaptureSystem : ModSystem
         pipeline?.Dispose();
         pipeline = null;
         pendingWorldGens.Clear();
+        ChunkThreadRest.Uninstall();
     }
 }

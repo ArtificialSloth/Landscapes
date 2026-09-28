@@ -16,13 +16,26 @@ public sealed class CaptureLogger : ILogger
 {
     public readonly List<string> Lines = new();
 
-    public bool Contains(string fragment) =>
-        Lines.Any(l => l.Contains(fragment, StringComparison.Ordinal));
+    /// <summary>
+    /// How long each line takes to write, standing in for the game's logger, which flushes
+    /// its file on every line. Zero for every check that does not measure that.
+    /// </summary>
+    public TimeSpan Delay { get; init; }
 
-    void Record(string message) => Lines.Add(message);
+    public bool Contains(string fragment)
+    {
+        lock (Lines) return Lines.Any(l => l.Contains(fragment, StringComparison.Ordinal));
+    }
+
+    void Record(string message)
+    {
+        if (Delay > TimeSpan.Zero) Thread.Sleep(Delay);
+        // A report can be written from a background task.
+        lock (Lines) Lines.Add(message);
+    }
 
     void Record(string format, params object[] args) =>
-        Lines.Add(args.Length == 0 ? format : string.Format(format, args));
+        Record(args.Length == 0 ? format : string.Format(format, args));
 
     public bool TraceLog { get; set; }
 

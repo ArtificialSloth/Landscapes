@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using VintageHorizons.Net;
 
 namespace VintageHorizons;
 
@@ -151,6 +152,11 @@ public static class LodHitchMarks
 /// Each step is judged against its own moving average, including frames where it did not
 /// run, so a step that costs 5 ms once a second shows as a 5 ms excess on that frame rather
 /// than averaging itself into invisibility.
+///
+/// The minute's report is written by a background task. Written on the render thread, its
+/// lines cost a 14-58 ms frame at the start of every minute in the owner's 0.4.129-0.4.131
+/// sessions - the game's logger flushes its file on every line. The render thread now only
+/// takes the closing readings and swaps in a fresh window.
 /// </summary>
 public sealed class LodHitchRecorder : IRenderer
 {
@@ -166,8 +172,10 @@ public sealed class LodHitchRecorder : IRenderer
 
     const string OwnBefore = "before vh:hitchrecorder";
     const string OwnName = "vh:hitchrecorder";
+    const string ReportJob = "hitch report writing";
 
     static readonly double TicksToMs = 1000.0 / Stopwatch.Frequency;
+    const double Mb = 1024.0 * 1024.0;
 
     // Null only in the offline checks, which feed frames directly.
     readonly ICoreClientAPI? capi;
@@ -201,6 +209,12 @@ public sealed class LodHitchRecorder : IRenderer
     double averagePeriodMs;
     int warmup;
 
+    double lastX, lastZ;
+    bool hasLastPos;
+
+    LodAllocationSampler? sampler;
+    bool samplerUnavailable;
+
     struct FrameRecord
     {
         public float PeriodMs;
@@ -212,32 +226,50 @@ public sealed class LodHitchRecorder : IRenderer
         public float Excess0, Excess1, Excess2;
     }
 
-    readonly FrameRecord[] records = new FrameRecord[MaxRecords];
-    int recordCount;
-    readonly int[] histogram = new int[HistogramBuckets];
-    int overflowFrames;
-    double overflowSumMs;
-    int frames;
-    double periodSumMs;
-    readonly FrameRecord[] worst = new FrameRecord[WorstKept];
-    int worstCount;
+    /// <summary>
+    /// One report's frames and the readings that bracket them. The render thread fills the open
+    /// window; a closed one belongs to its report until the report hands it back for reuse.
+    /// </summary>
+    sealed class Window
+    {
+        public readonly FrameRecord[] Records = new FrameRecord[MaxRecords];
+        public int RecordCount;
+        public readonly int[] Histogram = new int[HistogramBuckets];
+        public int OverflowFrames;
+        public double OverflowSumMs;
+        public int Frames;
+        public double PeriodSumMs;
+        public readonly FrameRecord[] Worst = new FrameRecord[WorstKept];
+        public int WorstCount;
+        public double MovedBlocks;
 
-    long windowStart;
-    DateTime windowStartClock;
-    double movedBlocks;
-    double lastX, lastZ;
-    bool hasLastPos;
-    readonly long[] activityAtStart = new long[4];
-    readonly long[] activityNow = new long[4];
-    readonly int[] gcAtStart = new int[3];
-    TimeSpan gcPauseAtStart;
+        public long Start;
+        public DateTime StartClock;
+        public readonly long[] ActivityAtStart = new long[4];
+        public readonly int[] GcAtStart = new int[3];
+        public TimeSpan GcPauseAtStart;
+        public long AllocatedAtStart;
+        public readonly Dictionary<string, (long Bytes, long Runs)> JobsAtStart = new();
+        public ChunkThreadRest.Counts ChunkAtStart;
 
-    const double Mb = 1024.0 * 1024.0;
-    LodAllocationSampler? sampler;
-    bool samplerUnavailable;
-    long allocatedAtStart;
-    readonly Dictionary<string, (long Bytes, long Runs)> jobsAtStart = new();
-    readonly Dictionary<string, (long Bytes, long Runs)> jobsNow = new();
+        // Taken on the render thread as the window closes.
+        public string? Reason;
+        public double Seconds;
+        public DateTime EndClock;
+        public readonly long[] ActivityNow = new long[4];
+        public readonly int[] GcNow = new int[3];
+        public TimeSpan GcPauseNow;
+        public long AllocatedNow;
+        public readonly Dictionary<string, (long Bytes, long Runs)> JobsNow = new();
+        public LodAllocationSampler.Window? Sampled;
+        public string? ChunkThread;
+        public string[] Names = Array.Empty<string>();
+        public bool SinglePlayer;
+    }
+
+    Window window = new();
+    Window? spare;
+    Task reports = Task.CompletedTask;
 
     public LodHitchRecorder(ICoreClientAPI? capi, ILogger logger)
     {
@@ -257,7 +289,7 @@ public sealed class LodHitchRecorder : IRenderer
         if (on == enabled) return on ? "Hitch recorder is already on." : "Hitch recorder is already off.";
         if (!on)
         {
-            Report("recorder switched off");
+            EndWindow("recorder switched off", inBackground: false);
             Disarm();
             enabled = false;
             logger.Notification("[VintageHorizons] Hitch recorder off.");
@@ -272,17 +304,15 @@ public sealed class LodHitchRecorder : IRenderer
     public string ReportNow()
     {
         if (!enabled) return "Hitch recorder is off. '.vhhitch on' starts it.";
-        if (frames == 0) return "No frames recorded yet in this minute.";
-        Report("on request");
-        StartWindow();
+        if (window.Frames == 0) return "No frames recorded yet in this minute.";
+        EndWindow("on request", inBackground: true);
         return "Hitch report written to the client log.";
     }
 
     /// <summary>The world is being left: write what this world's last minute held.</summary>
     public void Flush(string reason)
     {
-        if (frames > 0) Report(reason);
-        StartWindow();
+        EndWindow(reason, inBackground: false);
         pendingRoot = null;
         warmup = 0;
         hasLastPos = false;
@@ -423,10 +453,9 @@ public sealed class LodHitchRecorder : IRenderer
         TrackMovement();
         Feed(engineProfiler.PrevRootEntry, gcMs, gen);
 
-        if (Stopwatch.GetElapsedTime(windowStart).TotalSeconds >= ReportSeconds)
+        if (Stopwatch.GetElapsedTime(window.Start).TotalSeconds >= ReportSeconds)
         {
-            Report(null);
-            StartWindow();
+            EndWindow(null, inBackground: true);
         }
     }
 
@@ -456,7 +485,11 @@ public sealed class LodHitchRecorder : IRenderer
 
     /// <summary>For the checks: start a window without a profiler, and write it out.</summary>
     internal void BeginWindowForChecks() => StartWindow();
-    internal void WriteReport(string reason) => Report(reason);
+    internal void WriteReport(string reason) => EndWindow(reason, inBackground: false);
+
+    /// <summary>For the checks: end the window the way the minute does, and wait for its report.</summary>
+    internal void WriteReportInBackground(string reason) => EndWindow(reason, inBackground: true);
+    internal bool WaitForReports(TimeSpan timeout) => reports.Wait(timeout);
 
     void TrackMovement()
     {
@@ -468,7 +501,7 @@ public sealed class LodHitchRecorder : IRenderer
             double dz = pos.Z - lastZ;
             double step = Math.Sqrt(dx * dx + dz * dz);
             // A teleport is not travel.
-            if (step < 64) movedBlocks += step;
+            if (step < 64) window.MovedBlocks += step;
         }
         lastX = pos.X;
         lastZ = pos.Z;
@@ -521,14 +554,15 @@ public sealed class LodHitchRecorder : IRenderer
             return;
         }
 
-        frames++;
-        periodSumMs += periodMs;
+        Window w = window;
+        w.Frames++;
+        w.PeriodSumMs += periodMs;
         int bucket = (int)(periodMs / BucketMs);
-        if (bucket < HistogramBuckets) histogram[bucket]++;
+        if (bucket < HistogramBuckets) w.Histogram[bucket]++;
         else
         {
-            overflowFrames++;
-            overflowSumMs += periodMs;
+            w.OverflowFrames++;
+            w.OverflowSumMs += periodMs;
         }
 
         var record = new FrameRecord
@@ -537,12 +571,12 @@ public sealed class LodHitchRecorder : IRenderer
             BaselineMs = (float)baseline,
             GcMs = (float)gcMs,
             GcGen = (byte)gcGen,
-            SecondsIn = (float)Stopwatch.GetElapsedTime(windowStart).TotalSeconds,
+            SecondsIn = (float)Stopwatch.GetElapsedTime(w.Start).TotalSeconds,
             Id0 = id0, Id1 = id1, Id2 = id2,
             Excess0 = (float)ex0, Excess1 = (float)ex1, Excess2 = (float)ex2,
         };
-        if (recordCount < MaxRecords) records[recordCount++] = record;
-        KeepIfWorst(record);
+        if (w.RecordCount < MaxRecords) w.Records[w.RecordCount++] = record;
+        KeepIfWorst(w, record);
     }
 
     /// <summary>
@@ -610,56 +644,142 @@ public sealed class LodHitchRecorder : IRenderer
         return id;
     }
 
-    void KeepIfWorst(FrameRecord record)
+    static void KeepIfWorst(Window w, FrameRecord record)
     {
-        if (worstCount < WorstKept)
+        if (w.WorstCount < WorstKept)
         {
-            worst[worstCount++] = record;
+            w.Worst[w.WorstCount++] = record;
             return;
         }
         int least = 0;
         for (int i = 1; i < WorstKept; i++)
         {
-            if (worst[i].PeriodMs < worst[least].PeriodMs) least = i;
+            if (w.Worst[i].PeriodMs < w.Worst[least].PeriodMs) least = i;
         }
-        if (record.PeriodMs > worst[least].PeriodMs) worst[least] = record;
+        if (record.PeriodMs > w.Worst[least].PeriodMs) w.Worst[least] = record;
     }
 
     void StartWindow()
     {
-        windowStart = Stopwatch.GetTimestamp();
-        windowStartClock = DateTime.Now;
-        Array.Clear(histogram);
-        overflowFrames = 0;
-        overflowSumMs = 0;
-        frames = 0;
-        periodSumMs = 0;
-        recordCount = 0;
-        worstCount = 0;
-        movedBlocks = 0;
-        LodHitchActivity.Read(activityAtStart);
-        for (int g = 0; g < 3; g++) gcAtStart[g] = GC.CollectionCount(g);
-        gcPauseAtStart = GC.GetTotalPauseDuration();
+        Window w = window;
+        w.Start = Stopwatch.GetTimestamp();
+        w.StartClock = DateTime.Now;
+        Array.Clear(w.Histogram);
+        w.OverflowFrames = 0;
+        w.OverflowSumMs = 0;
+        w.Frames = 0;
+        w.PeriodSumMs = 0;
+        w.RecordCount = 0;
+        w.WorstCount = 0;
+        w.MovedBlocks = 0;
+        w.Reason = null;
+        w.Sampled = null;
+        w.ChunkThread = null;
+        w.Names = Array.Empty<string>();
+        LodHitchActivity.Read(w.ActivityAtStart);
+        for (int g = 0; g < 3; g++) w.GcAtStart[g] = GC.CollectionCount(g);
+        w.GcPauseAtStart = GC.GetTotalPauseDuration();
         sampler?.TakeWindow();
-        allocatedAtStart = GC.GetTotalAllocatedBytes(false);
-        LodHitchActivity.ReadJobs(jobsAtStart);
+        w.AllocatedAtStart = GC.GetTotalAllocatedBytes(false);
+        LodHitchActivity.ReadJobs(w.JobsAtStart);
+        w.ChunkAtStart = ChunkThreadRest.Read();
+    }
+
+    /// <summary>
+    /// Ends the open window. Its closing readings are taken here, on the calling thread, and a
+    /// fresh window takes its place at once; the report is then written on a background task
+    /// when <paramref name="inBackground"/> is set, or here otherwise. Leaving the world and
+    /// closing the game write in place: they must not lose the report, and a hitch there is
+    /// invisible.
+    /// </summary>
+    void EndWindow(string? reason, bool inBackground)
+    {
+        Window closed = window;
+        closed.Reason = reason;
+        closed.Seconds = Stopwatch.GetElapsedTime(closed.Start).TotalSeconds;
+        closed.EndClock = DateTime.Now;
+        LodHitchActivity.Read(closed.ActivityNow);
+        for (int g = 0; g < 3; g++) closed.GcNow[g] = GC.CollectionCount(g);
+        closed.GcPauseNow = GC.GetTotalPauseDuration();
+        closed.AllocatedNow = GC.GetTotalAllocatedBytes(false);
+        closed.Sampled = sampler?.TakeWindow();
+        LodHitchActivity.ReadJobs(closed.JobsNow);
+        closed.SinglePlayer = capi?.IsSinglePlayer == true;
+        // The rest's state is read now, while it is still the state this window ran under.
+        if (closed.SinglePlayer)
+        {
+            closed.ChunkThread = ChunkThreadRest.Describe(closed.ChunkAtStart, ChunkThreadRest.Read(), closed.Seconds);
+        }
+        closed.Names = names.ToArray();
+
+        window = Interlocked.Exchange(ref spare, null) ?? new Window();
+        StartWindow();
+
+        if (closed.Frames == 0)
+        {
+            Recycle(closed);
+            return;
+        }
+        if (inBackground)
+        {
+            reports = reports.ContinueWith(_ => Write(closed), CancellationToken.None,
+                TaskContinuationOptions.None, TaskScheduler.Default);
+            return;
+        }
+        try
+        {
+            // Not ahead of a report that is still being written.
+            reports.Wait(TimeSpan.FromSeconds(2));
+        }
+        catch
+        {
+            // Write never throws; nothing to wait for then.
+        }
+        Write(closed);
+    }
+
+    void Recycle(Window used) => Interlocked.CompareExchange(ref spare, used, null);
+
+    /// <summary>
+    /// Formats and writes a closed window's report, then hands the window back for reuse.
+    /// Reached from the render thread, the leave-world handler, the chat command and a
+    /// background task; none of them may fail because a report could not be written.
+    /// </summary>
+    void Write(Window closed)
+    {
+        long start = LodHitchActivity.StartJob();
+        try
+        {
+            foreach (string line in ReportLines(closed))
+            {
+                logger.Notification("[VintageHorizons]{0}", line);
+            }
+        }
+        catch (Exception e)
+        {
+            logger.Warning("[VintageHorizons] The hitch report could not be written: {0}", e);
+        }
+        finally
+        {
+            LodHitchActivity.EndJob(ReportJob, start);
+            Recycle(closed);
+        }
     }
 
     /// <summary>
     /// This mod's own jobs, exactly: what each allocated on its own thread in this window.
     /// Drawing callbacks are summed; the recorder names itself, since it is overhead.
     /// </summary>
-    string DescribeJobs(double seconds)
+    static string DescribeJobs(Window w)
     {
-        LodHitchActivity.ReadJobs(jobsNow);
         double drawing = 0;
         var parts = new List<(string Name, double Rate, long Runs)>();
-        foreach ((string job, (long Bytes, long Runs) now) in jobsNow)
+        foreach ((string job, (long Bytes, long Runs) now) in w.JobsNow)
         {
-            jobsAtStart.TryGetValue(job, out (long Bytes, long Runs) before);
+            w.JobsAtStart.TryGetValue(job, out (long Bytes, long Runs) before);
             long bytes = now.Bytes - before.Bytes;
             if (bytes <= 0) continue;
-            double rate = bytes / Mb / seconds;
+            double rate = bytes / Mb / w.Seconds;
             if (job == OwnName) parts.Add(("hitch recorder", rate, now.Runs - before.Runs));
             else if (job.StartsWith("vh:", StringComparison.Ordinal)) drawing += rate;
             else parts.Add((job, rate, now.Runs - before.Runs));
@@ -676,23 +796,23 @@ public sealed class LodHitchRecorder : IRenderer
     /// The frame length below which <paramref name="count"/> frames are slower, walking the
     /// histogram down from the top. Also returns their mean, which is what "1% low" means.
     /// </summary>
-    double SlowestMean(int count, out double thresholdMs)
+    static double SlowestMean(Window w, int count, out double thresholdMs)
     {
         thresholdMs = 0;
         if (count <= 0) return 0;
         double sum = 0;
         int taken = 0;
-        if (overflowFrames > 0)
+        if (w.OverflowFrames > 0)
         {
-            int take = Math.Min(count, overflowFrames);
-            sum += overflowSumMs / overflowFrames * take;
+            int take = Math.Min(count, w.OverflowFrames);
+            sum += w.OverflowSumMs / w.OverflowFrames * take;
             taken += take;
             thresholdMs = HistogramBuckets * BucketMs;
         }
         for (int b = HistogramBuckets - 1; b >= 0 && taken < count; b--)
         {
-            if (histogram[b] == 0) continue;
-            int take = Math.Min(count - taken, histogram[b]);
+            if (w.Histogram[b] == 0) continue;
+            int take = Math.Min(count - taken, w.Histogram[b]);
             sum += (b + 0.5) * BucketMs * take;
             taken += take;
             thresholdMs = b * BucketMs;
@@ -700,13 +820,13 @@ public sealed class LodHitchRecorder : IRenderer
         return taken == 0 ? 0 : sum / taken;
     }
 
-    double MedianMs()
+    static double MedianMs(Window w)
     {
-        int half = (frames + 1) / 2;
+        int half = (w.Frames + 1) / 2;
         int seen = 0;
         for (int b = 0; b < HistogramBuckets; b++)
         {
-            seen += histogram[b];
+            seen += w.Histogram[b];
             if (seen >= half) return (b + 0.5) * BucketMs;
         }
         return HistogramBuckets * BucketMs;
@@ -724,7 +844,7 @@ public sealed class LodHitchRecorder : IRenderer
         return record.Id0;
     }
 
-    string Describe(in FrameRecord record)
+    static string Describe(in FrameRecord record, string[] names)
     {
         var text = new StringBuilder();
         text.Append($"{record.PeriodMs:0.0} ms frame at +{record.SecondsIn:0}s (recent average {record.BaselineMs:0.0} ms)");
@@ -751,127 +871,111 @@ public sealed class LodHitchRecorder : IRenderer
     }
 
     /// <summary>
-    /// Writes the window's report. Also reached from the leave-world handler and the chat
-    /// command, neither of which should ever fail because a report could not be formatted.
+    /// The report's lines, each written after "[VintageHorizons]". Reads only the closed
+    /// window, so it may run on any thread.
     /// </summary>
-    void Report(string? reason)
+    List<string> ReportLines(Window w)
     {
-        try
-        {
-            WriteReportLines(reason);
-        }
-        catch (Exception e)
-        {
-            logger.Warning("[VintageHorizons] The hitch report could not be written: {0}", e);
-        }
-    }
+        var lines = new List<string>();
+        if (w.Frames == 0) return lines;
 
-    void WriteReportLines(string? reason)
-    {
-        if (frames == 0) return;
-
-        double seconds = Stopwatch.GetElapsedTime(windowStart).TotalSeconds;
-        double averageMs = periodSumMs / frames;
-        double medianMs = MedianMs();
-        int onePercent = Math.Max(1, frames / 100);
-        int tenthPercent = Math.Max(1, frames / 1000);
-        double lowMean = SlowestMean(onePercent, out double lowThresholdMs);
-        double tenthMean = SlowestMean(tenthPercent, out _);
+        double seconds = w.Seconds;
+        double averageMs = w.PeriodSumMs / w.Frames;
+        double medianMs = MedianMs(w);
+        int onePercent = Math.Max(1, w.Frames / 100);
+        int tenthPercent = Math.Max(1, w.Frames / 1000);
+        double lowMean = SlowestMean(w, onePercent, out double lowThresholdMs);
+        double tenthMean = SlowestMean(w, tenthPercent, out _);
 
         double worstMs = 0;
-        for (int i = 0; i < worstCount; i++) worstMs = Math.Max(worstMs, worst[i].PeriodMs);
+        for (int i = 0; i < w.WorstCount; i++) worstMs = Math.Max(worstMs, w.Worst[i].PeriodMs);
 
         int overDouble = 0, over50 = 0;
         var candidates = new List<int>();
-        for (int i = 0; i < recordCount; i++)
+        for (int i = 0; i < w.RecordCount; i++)
         {
-            ref FrameRecord record = ref records[i];
+            ref FrameRecord record = ref w.Records[i];
             if (record.PeriodMs >= medianMs * 2) overDouble++;
             if (record.PeriodMs >= 50) over50++;
             if (record.PeriodMs >= lowThresholdMs) candidates.Add(i);
         }
 
         // Exactly the slowest 1%: frames tied at the threshold would otherwise stretch it.
-        candidates.Sort((a, b) => records[b].PeriodMs.CompareTo(records[a].PeriodMs));
+        candidates.Sort((a, b) => w.Records[b].PeriodMs.CompareTo(w.Records[a].PeriodMs));
         if (candidates.Count > onePercent) candidates.RemoveRange(onePercent, candidates.Count - onePercent);
         var causes = new Dictionary<int, (int Count, double Excess)>();
         int slowest = candidates.Count;
         foreach (int i in candidates)
         {
-            ref FrameRecord record = ref records[i];
+            ref FrameRecord record = ref w.Records[i];
             int cause = Cause(record);
             double excess = cause == idGc ? record.GcMs : record.Excess0;
             causes.TryGetValue(cause, out var tally);
             causes[cause] = (tally.Count + 1, tally.Excess + excess);
         }
 
-        string span = $"{windowStartClock:HH:mm:ss}-{DateTime.Now:HH:mm:ss}";
-        logger.Notification(
-            "[VintageHorizons] hitches {0}{1}: {2} frames in {3:0}s, average {4:0} FPS, median frame "
+        string span = $"{w.StartClock:HH:mm:ss}-{w.EndClock:HH:mm:ss}";
+        lines.Add(string.Format(
+            " hitches {0}{1}: {2} frames in {3:0}s, average {4:0} FPS, median frame "
             + "{5:0.0} ms; 1% low {6:0} FPS (slowest 1% averaged {7:0.0} ms), 0.1% low {8:0} FPS; "
             + "worst {9:0.0} ms; {10} frames over twice the median, {11} over 50 ms; moved {12:0} blocks",
-            span, reason == null ? "" : " (" + reason + ")", frames, seconds,
+            span, w.Reason == null ? "" : " (" + w.Reason + ")", w.Frames, seconds,
             1000.0 / averageMs, medianMs, lowMean > 0 ? 1000.0 / lowMean : 0, lowMean,
-            tenthMean > 0 ? 1000.0 / tenthMean : 0, worstMs, overDouble, over50, movedBlocks);
+            tenthMean > 0 ? 1000.0 / tenthMean : 0, worstMs, overDouble, over50, w.MovedBlocks));
 
         if (slowest > 0)
         {
+            string[] names = w.Names;
             var parts = causes
                 .OrderByDescending(c => c.Value.Count)
                 .Take(6)
                 .Select(c => $"{(c.Key < 0 ? "nothing stood out" : names[c.Key])} {c.Value.Count} "
                     + $"(avg +{c.Value.Excess / c.Value.Count:0.0} ms)");
-            logger.Notification(
-                "[VintageHorizons]   slowest 1% ({0} frames, {1:0.0} ms and longer), blamed on: {2}",
-                slowest, records[candidates[^1]].PeriodMs, string.Join(", ", parts));
+            lines.Add(string.Format(
+                "   slowest 1% ({0} frames, {1:0.0} ms and longer), blamed on: {2}",
+                slowest, w.Records[candidates[^1]].PeriodMs, string.Join(", ", parts)));
         }
 
-        LodHitchActivity.Read(activityNow);
-        int gen0 = GC.CollectionCount(0) - gcAtStart[0];
-        int gen1 = GC.CollectionCount(1) - gcAtStart[1];
-        int gen2 = GC.CollectionCount(2) - gcAtStart[2];
-        double pauseMs = (GC.GetTotalPauseDuration() - gcPauseAtStart).TotalMilliseconds;
-        logger.Notification(
-            "[VintageHorizons]   garbage collections gen0/1/2 {0}/{1}/{2}, {3:0} ms paused in total; "
-            + "{4}",
+        int gen0 = w.GcNow[0] - w.GcAtStart[0];
+        int gen1 = w.GcNow[1] - w.GcAtStart[1];
+        int gen2 = w.GcNow[2] - w.GcAtStart[2];
+        double pauseMs = (w.GcPauseNow - w.GcPauseAtStart).TotalMilliseconds;
+        lines.Add(string.Format(
+            "   garbage collections gen0/1/2 {0}/{1}/{2}, {3:0} ms paused in total; {4}",
             gen0, gen1, gen2, pauseMs,
-            capi?.IsSinglePlayer == true
-                ? $"server work in this process: sweep loads {activityNow[0] - activityAtStart[0]}, "
-                  + $"snow refresh loads {activityNow[1] - activityAtStart[1]}, "
-                  + $"audit recaptures {activityNow[2] - activityAtStart[2]}, "
-                  + $"savegame re-reads {activityNow[3] - activityAtStart[3]}"
-                : "server work is not visible from a remote server's client");
+            w.SinglePlayer
+                ? $"server work in this process: sweep loads {w.ActivityNow[0] - w.ActivityAtStart[0]}, "
+                  + $"snow refresh loads {w.ActivityNow[1] - w.ActivityAtStart[1]}, "
+                  + $"audit recaptures {w.ActivityNow[2] - w.ActivityAtStart[2]}, "
+                  + $"savegame re-reads {w.ActivityNow[3] - w.ActivityAtStart[3]}; {w.ChunkThread}"
+                : "server work is not visible from a remote server's client"));
 
         // Who made the garbage behind those collections.
-        long allocated = GC.GetTotalAllocatedBytes(false) - allocatedAtStart;
-        if (sampler != null)
+        long allocated = w.AllocatedNow - w.AllocatedAtStart;
+        if (w.Sampled != null)
         {
-            foreach (string line in LodAllocationSampler.Describe(sampler.TakeWindow(), seconds, allocated))
-            {
-                logger.Notification("[VintageHorizons]{0}", line);
-            }
+            lines.AddRange(LodAllocationSampler.Describe(w.Sampled, seconds, allocated));
         }
         else
         {
-            logger.Notification("[VintageHorizons]   allocated {0:0} MB/s in total", allocated / Mb / seconds);
+            lines.Add(string.Format("   allocated {0:0} MB/s in total", allocated / Mb / seconds));
         }
-        logger.Notification(
-            "[VintageHorizons]   this mod's own jobs, exact MB/s (server jobs only in singleplayer): {0}",
-            DescribeJobs(seconds));
+        lines.Add("   this mod's own jobs, exact MB/s (server jobs only in singleplayer): " + DescribeJobs(w));
 
         // Only frames that are real hitches get a line of their own, worst first.
-        var ordered = worst.Take(worstCount)
+        var ordered = w.Worst.Take(w.WorstCount)
             .Where(r => r.PeriodMs >= medianMs * 2)
             .OrderByDescending(r => r.PeriodMs);
         foreach (FrameRecord record in ordered)
         {
-            logger.Notification("[VintageHorizons]   worst: {0}", Describe(record));
+            lines.Add("   worst: " + Describe(record, w.Names));
         }
+        return lines;
     }
 
     public void Dispose()
     {
-        if (enabled && armed && frames > 0) Report("game closing");
+        if (enabled && armed) EndWindow("game closing", inBackground: false);
         Disarm();
     }
 }
