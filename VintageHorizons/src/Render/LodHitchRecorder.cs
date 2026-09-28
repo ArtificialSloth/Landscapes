@@ -213,21 +213,32 @@ public sealed class LodHitchRecorder : IRenderer
     public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
     {
         if (!enabled || capi == null) return;
-        FrameProfilerUtil? engineProfiler = capi.World.FrameProfiler;
-        if (engineProfiler == null) return;
-
-        // Something else - vanilla's own '.debug logticks' toggle - can switch the profiler
-        // off under us. Re-arm rather than record a breakdown that stopped updating.
-        if (!armed || !(engineProfiler.PrintSlowTicks || engineProfiler.Enabled))
-        {
-            Arm(engineProfiler);
-            return;
-        }
-
-        FrameProfilerUtil? range = LodHitchMarks.Enter(OwnBefore, OwnName);
+        FrameProfilerUtil? range = null;
         try
         {
+            FrameProfilerUtil? engineProfiler = capi.World.FrameProfiler;
+            if (engineProfiler == null) return;
+
+            // Something else - vanilla's own '.debug logticks' toggle - can switch the profiler
+            // off under us. Re-arm rather than record a breakdown that stopped updating.
+            if (!armed || !(engineProfiler.PrintSlowTicks || engineProfiler.Enabled))
+            {
+                Arm(engineProfiler);
+                return;
+            }
+
+            range = LodHitchMarks.Enter(OwnBefore, OwnName);
             Observe(engineProfiler);
+        }
+        catch (Exception e)
+        {
+            // A diagnostic must never take the game down, which 0.4.128's did. Say so once,
+            // hand the profiler back as it was found, and stay off for the session.
+            enabled = false;
+            logger.Error(
+                "[VintageHorizons] The hitch recorder failed and has switched itself off for this "
+                + "session; the game itself is unaffected. '.vhhitch on' tries again. {0}", e);
+            Disarm();
         }
         finally
         {
@@ -442,7 +453,7 @@ public sealed class LodHitchRecorder : IRenderer
             foreach (KeyValuePair<string, ProfileEntry> mark in range.Marks)
             {
                 double ms = mark.Value.ElapsedTicks * TicksToMs;
-                current[Id(mark.Key)] += ms;
+                Add(mark.Key, ms);
                 sum += ms;
             }
         }
@@ -454,16 +465,28 @@ public sealed class LodHitchRecorder : IRenderer
                 if (depth < MaxDepth && (child.Marks != null || child.ChildRanges != null))
                 {
                     double inner = Walk(child, depth + 1);
-                    if (childMs > inner) current[Id(child.Code)] += childMs - inner;
+                    if (childMs > inner) Add(child.Code, childMs - inner);
                 }
                 else
                 {
-                    current[Id(child.Code)] += childMs;
+                    Add(child.Code, childMs);
                 }
                 sum += childMs;
             }
         }
         return sum;
+    }
+
+    /// <summary>
+    /// Adds a step's time to this frame's tally. The slot is looked up into a local first:
+    /// <c>current[Id(code)] += ms</c> reads the array before <see cref="Id"/> can grow it,
+    /// so the 129th step name wrote past the end of the old array. That crashed the owner's
+    /// game in 0.4.128 the moment the world-edit menu added its steps to the frame.
+    /// </summary>
+    void Add(string? code, double ms)
+    {
+        int id = Id(code);
+        current[id] += ms;
     }
 
     int Id(string? code)
@@ -592,7 +615,23 @@ public sealed class LodHitchRecorder : IRenderer
         return text.ToString();
     }
 
+    /// <summary>
+    /// Writes the window's report. Also reached from the leave-world handler and the chat
+    /// command, neither of which should ever fail because a report could not be formatted.
+    /// </summary>
     void Report(string? reason)
+    {
+        try
+        {
+            WriteReportLines(reason);
+        }
+        catch (Exception e)
+        {
+            logger.Warning("[VintageHorizons] The hitch report could not be written: {0}", e);
+        }
+    }
+
+    void WriteReportLines(string? reason)
     {
         if (frames == 0) return;
 

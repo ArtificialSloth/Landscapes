@@ -20,6 +20,48 @@ public static class HitchRecorderChecks
         BlamesThePeriodicStep(c);
         BlamesGarbageCollection(c);
         SteadyRunReportsNoHitches(c);
+        SurvivesManyStepNames(c);
+    }
+
+    /// <summary>
+    /// The owner's 0.4.128 crash (2026-09-28): opening the world-edit menu added new steps to
+    /// the game's frame profile, the 129th distinct name made the recorder grow its arrays,
+    /// and the write that triggered the growth went into the old, smaller array. Hundreds of
+    /// names, arriving a few at a time as menus open, must be absorbed without a throw.
+    /// </summary>
+    static void SurvivesManyStepNames(Check c)
+    {
+        var log = new CaptureLogger();
+        var recorder = new LodHitchRecorder(null, log);
+        recorder.BeginWindowForChecks();
+
+        long start = 1;
+        Exception? thrown = null;
+        try
+        {
+            for (int frame = 0; frame < 1200; frame++)
+            {
+                var marks = new List<(string, double)> { ("gametick", 2), ("end", 5) };
+                // Three new names every frame for the first 200 frames: 600 in all, past every
+                // growth step, and several in the same frame as a growth.
+                if (frame < 200)
+                {
+                    for (int n = 0; n < 3; n++) marks.Add(($"gmlemenu.step{frame * 3 + n}", 0.01));
+                }
+                ProfileEntryRange root = Frame(start, marks);
+                recorder.Feed(root, 0, 0);
+                start += root.ElapsedTicks;
+            }
+            recorder.WriteReport("check");
+        }
+        catch (Exception e)
+        {
+            thrown = e;
+        }
+
+        c.True(thrown == null, "hundreds of new step names are absorbed without an exception"
+            + (thrown == null ? "" : $" (threw {thrown.GetType().Name}: {thrown.Message})"));
+        c.True(log.Contains("frames in"), "and the recorder still reports after absorbing them");
     }
 
     static void BlamesThePeriodicStep(Check c)
