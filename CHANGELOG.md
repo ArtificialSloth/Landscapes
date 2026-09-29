@@ -8,6 +8,18 @@ first.
 
 ## [Unreleased]
 
+**A fix for rough distant terrain briefly showing over the game's own ground while exploring,
+waiting for its first test in play (0.4.135).** Two long-standing behaviours combined. When a finer
+piece of distant terrain was not ready yet, the coarser piece drawn in its place covered its whole
+area, 1-2 km at the coarse levels, so one new piece of ground at the edge of what the game had loaded
+put blocky columns over the ground around the player. And a chunk the game had just generated was
+handed over to it only after a slow background recheck, by calculation up to about 0.6-2 seconds,
+while both drew it; where the mod's version was coarse and taller than the real ground, it showed as
+a floating slab. The coarse piece now covers only the quarter that is waiting, and freshly generated
+chunks are rechecked every frame until the game has built them. A rarer route remains: a coarse wall
+standing exactly on a chunk edge above lower ground, about 1 in 100 chunk edges at the coarse levels
+in the owner's world. Closing it would change which ground the game owns, and is held.
+
 **The stutter while exploring is solved, by an opt-in setting.** The small freezes are .NET
 garbage collections: with the game's default collector one core does each collection, 450-750 a
 minute while exploring new terrain, and each freezes the game for 10-20 ms. Two causes were found and
@@ -87,9 +99,10 @@ changed thousands of chunk rows that agreed between the one-thread controls. The
 therefore keeps only its Balanced behavior and does not expose thread controls or Fast/Maximum
 presets.
 
-**Known open:** the all-cores collector's first-minute freezes after joining, its memory cost
-beyond one short pair of sessions, and its behaviour on smaller machines, Linux and macOS; the next
-slowest frames (the game's entity ticking and this mod's `vh:prepare`, 2-4 ms each); the seam fog's
+**Known open:** the owner's exploring test of 0.4.135's stand-in fix, then removing its temporary
+log lines, and the held chunk-edge walls; the all-cores collector's first-minute freezes after
+joining, its memory cost beyond one short pair of sessions, and its behaviour on smaller machines,
+Linux and macOS; the next slowest frames (the game's entity ticking and this mod's `vh:prepare`, 2-4 ms each); the seam fog's
 `.vhfog` on/off cost; human-check 0.4.111's player-aware sweep behavior and run the sustained
 virgin-frontier three-way comparison; play section sync (0.4.127) on a dedicated server with a
 second player; complete
@@ -105,6 +118,29 @@ read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.135] - 2026-09-29
+
+**Coarse stand-ins cover only the part that is waiting.** When a finer piece of distant terrain is
+not ready, a coarser piece is drawn in its place so there is never a hole. Until now that piece
+covered its whole area, up to 1-2 km across, even where the finer terrain beside the missing piece
+was ready; it now covers only the missing quarter, and the rest draws its own finer terrain.
+
+**Freshly generated chunks are handed to the game within a frame or two of the game building them.**
+The game announces a new chunk before it has built it, so the mod's first check found nothing and
+the chunk waited for a slow background recheck while both drew it. Announced chunks are now
+rechecked every frame until the game's mesh is up. Which ground the game owns is decided exactly as
+before; only the timing changed.
+
+**New ground no longer waits on disk reads** for coarse pieces that do not exist yet, so its finer
+terrain arrives sooner.
+
+`.vhstandin on|off` switches the first two back and forth for a comparison in the same session; it is
+not saved, and every session starts on. A temporary diagnostic writes a `stand-in check` line to the
+client log each minute: how many coarse pieces covered ground the game draws, and how long fresh
+chunks waited before the hand-over. A coarse piece that sat over the game's ground for half a second
+or more also gets a `stand-in:` line of its own. The diagnostic is removed once the fix is confirmed.
+Not yet seen in play.
 
 ## [0.4.134] - 2026-09-28
 

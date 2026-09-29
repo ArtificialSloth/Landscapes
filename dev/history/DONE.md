@@ -2,6 +2,21 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-29 - Coarse stand-ins over the game's ground diagnosed, and a fix built (0.4.135)
+
+- **Diagnosed** from the owner's 0.4.129 screenshot, with no log left: a stand-in drew its whole
+  footprint when any visible child lacked a mesh (G269), new ground's placeholder ancestors paid a
+  store miss and an empty read per level (G271), and a chunk the engine announces before tessellation
+  was confirmed only by the interior sweep while both renderers drew it (G270). Not a regression.
+- **Measured read-only on his cache:** L1-L5 tops never rise into an empty chunk (0 of 28,573 chunk
+  columns), L6 does in 1.0%, and chunk-edge walls stand in a neighbour's air cell on 0.3-1.0% of
+  faces (G272).
+- **0.4.135:** stand-ins cover only the waiting quarters while the clustered path draws; announced
+  chunks are rechecked every frame until their mesh is up or known not to be coming; placeholders
+  skip the store; `.vhstandin`; a temporary minute recorder. Harness-tested (26,156 assertions; the
+  collector check's 14 failures are environmental), not yet played. The owner held the
+  air-above-owned-ground change. What is open is at the top of `dev/TODO.md`.
+
 ## 2026-09-28..29 - The exploring stutter solved (0.4.132-0.4.134)
 
 - **The chunk thread's closure confirmed offline:** `loadOrGenerateChunkColumn_OnChunkThread`

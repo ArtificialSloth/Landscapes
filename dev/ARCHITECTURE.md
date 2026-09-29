@@ -415,7 +415,7 @@ live until the exact replacement persistence revision is acknowledged.
 3. **Block codes are persisted; block ids are resolved live.** Numeric registry ids are not stable storage identity.
 4. **The block registry remains on the owning thread.** Some registry reads lazily mutate internal engine state.
 5. **OpenGL work remains on the render thread.** Workers produce arrays, not GPU objects.
-6. **A parent covers until children are ready.** Detail transitions may be temporarily coarse but must not open holes.
+6. **A parent covers until children are ready.** Detail transitions may be temporarily coarse but must not open holes. Since 0.4.135 it covers only the quarters whose children are waiting and descends into the rest whenever the clustered path, which can draw a quarter exactly, is drawing; any other opaque path and `.vhstandin off` keep the whole-footprint cover (G269).
 7. **Local observed data wins over remote offered data.** A remote source cannot overwrite newer client truth.
 8. **Sweeping must not generate terrain.** Frontier columns without a complete known neighborhood are skipped.
 9. **Transient generation must not persist world terrain.** The LOD cache is the only intended output.

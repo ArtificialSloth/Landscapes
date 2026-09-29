@@ -5091,3 +5091,83 @@ uninstalled, so it reported no idle passes or allocation for vanilla at all.
 that the instrumentation itself costs nothing.
 
 **Found:** 2026-09-28, Session 111.
+
+### G269 - A parent standing in for one missing child covered its whole footprint
+
+**Trigger:** changing how a coarse section is drawn in place of finer terrain that is not ready
+(settled decision 6), or reading a report of coarse terrain briefly drawn over the game's own ground.
+
+**Trap:** until 0.4.135 `CollectDrawNodes` drew the parent's whole footprint whenever any visible
+child lacked a mesh. A level-4 section is 1,024 blocks across and a level-5 one 2,048, so one missing
+child at the edge of loaded ground put 16- or 32-block columns over all the ground around the player,
+including where the other children were ready and the game was drawing. Brand-new ground makes this
+routine, because every ancestor of a new key is a placeholder until mip propagation reaches it
+(G271). Where those columns stood above the real ground over cells not yet confirmed (G270), they
+showed as floating slabs.
+
+**Safer action:** stand in only for the quarters whose children are waiting and descend into the
+rest. A quarter is one child's footprint; packed clusters tile a section 4x4 and quads are split at
+cluster edges, so a quarter is exactly 2x2 clusters, and per-section passes take a quarter mask whose
+zero means the whole section. Split only on a path that can honour a quarter: where the whole
+section still draws, splitting puts coarse ground over the fine ground the ready quarters draw.
+
+**Found:** 2026-09-29, Session 112 (source-traced from the owner's screenshot; changed in 0.4.135,
+harness-tested, not yet seen in play).
+
+### G270 - The engine announces a chunk before it tessellates it
+
+**Trigger:** confirming vanilla ownership from `ChunkDirty` or any event raised when a chunk is
+installed, or judging how long a fresh chunk is drawn by both renderers.
+
+**Trap:** `ClientWorldMap` raises the event after installing the chunk and before tessellation, so
+the first ownership probe finds no geometry in the pool (G40's geometry gate) and the cell stays
+pending. Nothing came back to it before the interior sweep, 32 cells a frame over a 21x14x21 window:
+up to about 0.6 s at 340 FPS and 2 s at 100 FPS by arithmetic, while the game and the cache both drew
+the chunk. The TODO carried this as an accepted "brief fight"; it became jarring under a coarse
+stand-in (G269).
+
+**Safer action:** keep announced cells on a watch list and probe them at the front of each frame
+until the mesh is up (0.4.135: up to 64 a frame, for up to 10 s). End the watch when the probe hands
+the cell over, when the range rule refuses it, or when the engine says no mesh is coming:
+`ClientChunk.enquedForRedraw` and `queuedForUpload` both false with `quantityDrawn` above zero means
+it was tessellated to nothing. `queuedForUpload` stays true from tessellation until
+`ChunkTesselatorManager.OnBeforeFrame` (Before, 0.99) moves the mesh into the pool. Change when a
+probe runs, never what it decides.
+
+**Found:** 2026-09-29, Session 112 (source-traced against the decompiled 1.22.7 engine; the delay is
+arithmetic, and the temporary 0.4.135 recorder measures it).
+
+### G271 - A quadtree placeholder has no stored row
+
+**Trigger:** loading, making resident or asking a store for a key found in `LodWorld.HasDataSet`.
+
+**Trap:** `RegisterInTree` adds every ancestor of a registered key to `HasDataSet` so the walk can
+descend to it; only `AvailableDataSet` holds keys some store actually has. Treating a placeholder as
+stored cost a synchronous store miss on the game tick in `GetOrCreateSection` and a background read
+that came back empty in `EnsureResident`, once per level, in front of the first mesh for new ground.
+
+**Safer action:** test `AvailableDataSet` before touching a store. A key that is neither resident nor
+available has nothing to load.
+
+**Found:** 2026-09-29, Session 112 (source-traced; changed in 0.4.135, harness-tested).
+
+### G272 - A coarse top over the game's ground is an unconfirmed cell, except at L6 and on chunk-edge walls
+
+**Trigger:** diagnosing cached terrain seen over vanilla terrain, or proposing to hide cached
+geometry that stands above the real ground.
+
+**Trap:** blaming coarse terrain for overshooting the real ground. Measured read-only on the owner's
+cache over 28,573 fully captured chunk columns: L1-L5 tops never rise into a 32-block chunk that is
+empty in the real world, because a mip takes its tallest child (decoded L1 was higher than all four
+children in 0 of 1,086,464 columns) and a column of 32 blocks or less lies inside one chunk column.
+L6's 64-block columns span four chunk columns and do rise into one in 1.0% (at most 33 blocks).
+Chunk-edge walls are the other exception: the part of a wall above the neighbouring chunk column's
+highest non-empty chunk stands in that neighbour's air cell, which never hides anything (G40, G136).
+That happens on 0.3% (L0) to 1.0% (L5) of chunk faces, worst 50 blocks at L5.
+
+**Safer action:** read a coarse top over vanilla ground at L1-L5 as a cell not yet confirmed and look
+at timing first (G270). Treat chunk-edge walls and L6 tops as the air rule's route. Hiding them means
+letting air above owned ground own its cell, a terrain-ownership change that needs the owner's
+authorization and a terrain-first hole test (settled decision 28).
+
+**Found:** 2026-09-29, Session 112 (measured on the owner's cache `950c5c5b` with scratch decoders).

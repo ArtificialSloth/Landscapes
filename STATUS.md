@@ -4,16 +4,41 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-09-29`
-**Mod version:** `0.4.134` - current private test build: an opt-in **All-Cores Garbage Collection** switch on the settings editor's new Performance tab adds the Server GC to the game's own start-up file (decision 54); the game's chunk thread rests when it has nothing to do (0.4.132, decision 53); the hitch recorder names the collector, reports memory and the longest freeze, and writes its minute report in the background. Verified, copy-installed, checkpointed and **owner-played** (2026-09-29): the setting runs the Server GC from a normal start, and the owner called the Server GC "much smoother"
+**Mod version:** `0.4.135` - current private test build: coarse stand-ins cover only the quarter that is waiting instead of their whole area, chunks the game has just announced are rechecked every frame until their mesh is up, new ground skips disk reads for placeholder ancestors, `.vhstandin on|off` switches the first two for an in-session comparison, and a temporary recorder logs a `stand-in check` line each minute. Verified, copy-installed and checkpointed; **not yet played**. Previous build 0.4.134 (the opt-in all-cores garbage collector, decision 54) is owner-played: the owner called the Server GC "much smoother"
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.121 `a5f528d`, 0.4.122 `d46b776`, 0.4.123 `b46cf0a`, 0.4.124 `1fb10f5`, 0.4.125 `92eb9c3`, 0.4.126 `e668f81`, 0.4.127 `89509e9`, 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.121 `a5f528d`, 0.4.122 `d46b776`, 0.4.123 `b46cf0a`, 0.4.124 `1fb10f5`, 0.4.125 `92eb9c3`, 0.4.126 `e668f81`, 0.4.127 `89509e9`, 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `145` C# files under `VintageHorizons/src`
+**Source files:** `147` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
+
+**Coarse terrain briefly drawn over the game's own ground: a fix is built and waits for the owner's
+exploring test (0.4.135).** Session 112.
+
+- **Report:** a screenshot from 0.4.129 while exploring showed rough coarse LOD terrain over the
+  game's terrain for a moment; rare, but jarring. That session's log had rotated out.
+- **Cause (source-traced):** a section standing in for a child without a mesh drew its whole
+  footprint, 1,024 blocks across at L4 and 2,048 at L5, so one new piece of ground at the loaded edge
+  put coarse columns around the player (G269). New ground's placeholder ancestors also paid a store
+  miss and an empty background read per level before the first mesh (G271). And a chunk the engine
+  announces is not yet tessellated, so its first ownership probe failed and it waited for the
+  interior sweep, about 0.6-2 s by arithmetic, while both renderers drew it (G270). Not a regression.
+- **Measured read-only on his cache:** L1-L5 tops never rise into a chunk that is empty in the real
+  world (0 of 28,573 chunk columns); L6 does in 1.0%; chunk-edge walls rise into a neighbour's air
+  cell on 0.3-1.0% of chunk faces, which the air rule never hides (G272).
+- **0.4.135:** stand-ins cover only the waiting quarters while the clustered path draws (packed
+  clusters for opaque ground, a per-section uniform for water, thin cover, depth and OIT); announced
+  chunks are rechecked at the front of every frame, up to 64 a frame for up to 10 s, until the probe
+  hands them over or the engine's upload state says no mesh is coming; placeholders skip the store.
+  The ownership rules are unchanged. `.vhstandin on|off` switches the first two, session only.
+- **Held (owner):** letting air above ground the game draws hide cached terrain, which would close
+  the chunk-edge walls; it is a terrain-ownership change.
+- **Evidence:** harness-tested; 26,156 assertions, whose 14 failures are the environmental
+  all-cores collector check. Not run in game. The recorder is temporary and goes once his log
+  confirms the fix.
 
 **The stutter while exploring is solved for the owner by the all-cores garbage collector
 (0.4.128-0.4.134).** Sessions 110-111.
@@ -706,6 +731,14 @@ to the server log.
   shutdown.
 - Each client start logs "All-cores garbage collection: ..." with the setting, whether this session
   runs it, and the state of the game's start-up file.
+- `.vhstandin on|off` (0.4.135, on by default, not saved) switches quarter-limited stand-ins and the
+  fast hand-over of fresh chunks together and logs the change; with no argument it reports the
+  state. **Temporary, until the fix is confirmed:** each minute with anything to report, a
+  `stand-in check` line gives the stand-ins that covered ground the game draws (by level, longest,
+  nearest, why the finer piece was missing) and the fresh-chunk hand-over wait (half, 95%, slowest,
+  and any over 30 s); a stand-in over the game's ground lasting 0.5 s or more gets a `stand-in:` line
+  with its position, at most 20 a minute. Both are written in the background and measure the old
+  delay with the switch off too. `.vhcoarse` names the quarters each stand-in covers.
 - `scripts/vs-collector-test.cmd` starts the game normally, with a 128 MB gen0 budget, or with the
   Server GC, changing nothing in the install. `scripts/worldgen-thread-gate.ps1 -ChunkThreadRest
   On|Off|Absent` compares the rest headless.
@@ -747,10 +780,14 @@ to the server log.
 
 ## Performance and artifact evidence
 
-**Checks and builds.** The final fast tier passed **25,967 assertions with zero failures** at
-0.4.134, including `ChunkThreadRestChecks` (the real engine method patched and removed by exact id)
-and `GameCollectorChecks` (the start-up file edited, restored and backed up on a copy of the
-installed game's file). The Release mod build completed with zero warnings and zero errors.
+**Checks and builds.** At 0.4.135 the fast tier ran **26,156 assertions with 14 failures, all
+environmental**: `GameCollectorChecks` drives the editor against a copy of the installed game's
+start-up file and asserts that it asks for the default collector, and the owner's file has the
+all-cores collector switched on (TODO). Every new and affected suite passed, including
+`StandInChecks`, the watch list in `VanillaReadinessChecks` (zero steady-state allocation included),
+quarter selection in `PackedClusterChecks` and the placeholder shortcut in `ResidencyChecks`. At
+0.4.134, before his switch, the tier passed 25,967 assertions with zero failures. The Release mod
+build completed with zero warnings and zero errors.
 
 **Chunk thread rest, headless (Session 111).** One run each, vanilla plus this mod, 961 columns:
 patch absent 101.2 s, 1.25 server cores; installed but off 80.9 s, 1.30 cores, 75,734-168,385 idle
@@ -887,7 +924,11 @@ It covers:
   distance remains vanilla-owned, and pause loading reuses bounded owner-thread work (settled
   decision 37).
 - **Ownership.** The handoff fix changes when ownership's range half is decided, not what ownership
-  means. Water development still may not redefine shared terrain ownership.
+  means, and 0.4.135's watch list changes only when an announced chunk is probed. Water development
+  still may not redefine shared terrain ownership, and letting air above owned ground own its cell
+  is held (owner, 2026-09-29).
+- **Stand-ins.** A parent covers until its children are ready, so a transition can be coarse but never
+  a hole; since 0.4.135 it covers only the quarters that are waiting (settled decision 6).
 - **Held sections merge.** A held section is merged, never replaced. First sightings and parents
   fill only; a level-0 row the server rewrote after the client saw it wins column by column (owner,
   2026-09-12; G188).
@@ -920,9 +961,15 @@ It covers:
 
 ## Next work
 
-Begin with [Session 111](dev/sessions/SESSION_111.md) and the top of [TODO](dev/TODO.md).
+Begin with [Session 112](dev/sessions/SESSION_112.md) and the top of [TODO](dev/TODO.md).
 
-1. **Ask the owner what comes next.** The stutter is solved for him; what it left:
+1. **The owner's exploring test of 0.4.135.** New mountain or cliff terrain in flight, a few minutes
+   with `.vhstandin off`, then his client log: judge by the `stand-in check` and `stand-in:` lines.
+   Once they confirm the fix, remove the temporary recorder in a new build. The held
+   air-above-owned-ground change comes back only if walls still show over confirmed ground.
+   Separately, he was asked whether the all-cores collector check should stop reading his installed
+   game file.
+2. **Ask the owner what comes next.** The stutter is solved for him; what it left:
    - **The bug report** to the game's developers is drafted; the owner sends it.
    - **The Server GC's first-minute collections** (56-139 ms while the world loads, G267).
    - **Before recommending it to players:** a longer paired memory look, a smaller machine, Linux and
@@ -930,26 +977,28 @@ Begin with [Session 111](dev/sessions/SESSION_111.md) and the top of [TODO](dev/
    - **The next slowest frames:** entity ticking and this mod's `vh:prepare`, 2-4 ms spikes.
    - **This mod's remaining garbage:** 55-70 MB/s of large `UInt64[]` from the capture rebuild.
    - **The installed-off headless run was 20% faster**; repeat each mode before claiming speed.
-2. **Section sync's remaining evidence:** a dedicated server with a second player changing terrain
+3. **Section sync's remaining evidence:** a dedicated server with a second player changing terrain
    while the first is offline, and a measured large-world re-check. The singleplayer first run is
    done.
-3. **Terrain-change acceptance by the owner:** tests 2/3/16 and 5 have sandbox evidence only; 1, 6,
+4. **Terrain-change acceptance by the owner:** tests 2/3/16 and 5 have sandbox evidence only; 1, 6,
    7, 9, 10 and 14 harness or sandbox evidence at most.
-4. **Prove the audit catches a real fault.** Every dispute so far is ordinary change.
-5. **Close P3's deferred integration debt** when another player is available: a complete
+5. **Prove the audit catches a real fault.** Every dispute so far is ordinary change.
+6. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
    disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
-6. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
+7. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
    observations beneath the veil; tune Outline detail, Hill softness and apron once the fog is
    accepted; record Farseer off/on and seam fog off/on FPS in one scene.
-7. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
+8. **Finish P5 credit:** refine islands/inlets only if needed, then complete the deliberate
    player-facing Farseer rename plus bundled MIT notice.
-8. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
-9. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
-   offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
-10. **Older TODO debt:** P3's after-comparison; winter convergence, re-judged once the snow
+9. **P6 is Terrain Ahead,** a separate feature; P7 canopy follows its acceptance.
+10. **Worldgen's remaining checks** are not gates: final durable completion, a real restart and
+    offered resume, dedicated permissions and read-only status, and a long-run memory and disk pass.
+11. **Older TODO debt:** P3's after-comparison; winter convergence, re-judged once the snow
     refresh's backlog has drained; pause loading; Session 84 diagnostic cleanup.
 
+[Session 112](dev/sessions/SESSION_112.md) is the authoritative stand-in and fresh-chunk continuation
+point;
 [Session 111](dev/sessions/SESSION_111.md) is the authoritative stutter and collector continuation
 point;
 [Session 110](dev/sessions/SESSION_110.md) retains the hitch recorder and the claim-path fix;
@@ -968,7 +1017,7 @@ point;
   look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G268 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+- G166-G272 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
   buried joins, bounded regeneration, stable all-level ownership, post-water volumetric fog, the
   distinction between pacing priority-load submissions and yielding their downstream engine work,
   the engine generation counter's saved-load blind spot, route-halo generation, and now what a
@@ -988,7 +1037,10 @@ point;
   is the wrong thing to patch, why removing throwaway garbage does not change the felt stutter, why
   the approximate allocation count under-reads under the Server GC, why a bigger gen0 budget
   lengthens pauses, why "Optimize RAM" is not a collector setting, why the Server GC's first minute
-  is not its steady state, and why an A/B's off side must keep its instrumentation.
+  is not its steady state, why an A/B's off side must keep its instrumentation, and now why a parent
+  standing in for one missing child covered its whole footprint, why the engine announces a chunk
+  before tessellating it, why a quadtree placeholder has no stored row, and what a coarse top over
+  the game's ground means.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work

@@ -4,11 +4,44 @@
 
 ## Start here
 
-Read [Session 111](sessions/SESSION_111.md), then [Session 110](sessions/SESSION_110.md).
-The owner's stutter while exploring is solved for him by the all-cores garbage collector, now an
-opt-in switch on the settings editor's Performance tab (0.4.134, settled decision 54), and the
-game's chunk thread rests when it has nothing to do (0.4.132, settled decision 53). Ask him what
-comes next.
+Read [Session 112](sessions/SESSION_112.md), then [Session 111](sessions/SESSION_111.md).
+0.4.135 is installed and waits for the owner's exploring test: coarse stand-ins cover only the
+quarter that is waiting, and chunks the game has just announced are handed to it within a frame or
+two (G269-G272). Read the `stand-in check` and `stand-in:` lines in his client log first. The
+stutter while exploring is solved for him by the all-cores garbage collector, an opt-in switch on
+the settings editor's Performance tab (0.4.134, settled decision 54), and the game's chunk thread
+rests when it has nothing to do (0.4.132, settled decision 53).
+
+### Coarse stand-ins: what 0.4.135 left open (Session 112)
+
+- **The owner's exploring test.** Ten to fifteen minutes over new mountain or cliff terrain, flying as
+  in his 2026-09-28 screenshot, a few of them with `.vhstandin off`, then the client log. Each minute
+  with anything to report, the `stand-in check` line gives the stand-ins that covered ground the game
+  draws (by level, the longest, the nearest, and why the finer piece was missing) and the fresh-chunk
+  hand-over wait (half, 95%, slowest). Every such stand-in lasting 0.5 s or more gets a `stand-in:`
+  line with its position. Compare on and off by those lines, not by eye.
+- **Remove the recorder once his log confirms the fix** (owner, 2026-09-29: temporary). Delete
+  `VintageHorizons/src/Render/LodTerrainRenderer.StandInRecorder.cs` and its three call sites
+  (`NoteStandIn`, `EndStandInFrame`, `RecordFreshChunkConfirmed`) in a new versioned build; no check
+  refers to them. Decide with him then whether `.vhstandin` stays as a named A/B path.
+- **Held: air above owned ground.** Chunk-edge walls rise into a neighbour's air cell on 0.3-1.0% of
+  chunk faces, and L6 tops into an empty chunk in 1.0% of chunk columns (G272); the air rule never
+  hides either. Closing them means letting air directly above ground the game draws own its cell, a
+  terrain-ownership change that needs his explicit authorization and a terrain-first hole test
+  (settled decision 28, G40). Propose it only if his log or sightings show walls over confirmed
+  ground.
+- **If stand-ins over the game's ground remain with the fix on,** the recorder's reasons say which
+  wait is left: new ground not yet reached by mip propagation, a load, a mesh job or a mesh slot.
+- **Unmeasured:** the watch list's per-frame cost (estimated at a few tens of microseconds for 64
+  rechecks), and its started, promoted, expired and refused counters, which are not logged.
+
+### The all-cores collector check fails while the collector is on
+
+`GameCollectorChecks` drives the editor against the installed game's `Vintagestory.runtimeconfig.json`
+and asserts that the file as shipped asks for the default collector. With the owner's collector on
+(since 2026-09-29 07:08), 14 of its 21 assertions fail with nothing wrong in the code. He was asked in
+Session 112 whether the check should use the saved backup or its built-in sample instead; not yet
+answered. Until then read those 14 failures as environmental.
 
 ### Stutter: what 0.4.134 left open (Session 111)
 
@@ -672,7 +705,9 @@ source on 2026-09-04; the section duplicated one the top of this file already ma
   path carry no block slots and are unchanged; they have not been exercised against this work.
 - **Near-field suppression now defaults to zero.** The artefact it guarded against - coarse cached
   geometry at arm's length in cells vanilla never proves, typically underground - has not been
-  re-tested. `.vhnear 48` restores it.
+  re-tested. `.vhnear 48` restores it. The owner's 2026-09-28 screenshot (Session 112) shows coarse
+  strips close to the player that the 48-block floor would have hidden. By inspection of that one
+  frame they are the stand-in route (G269, G270), not cells vanilla never proves.
 - ~~**The unload-hole fix is a mitigation.**~~ **Answered in Session 70 and closed.** It was
   never about unload timing. The 16-block margin was burying two seam defects - a wall charged to
   the wrong ownership cell (G136) and a crop cube claiming an occlusion vanilla does not provide
@@ -996,9 +1031,11 @@ Measurement still owed:
 Human-reported and still open:
 
 - Approaching terrain fast, cached and vanilla briefly fight where vanilla has just loaded.
-  This is ownership gain latency, resolves within a moment, and fails in the safe direction,
-  so it is accepted. If it becomes objectionable, confirm cells near the camera on a shorter
-  path rather than widening the budget again.
+  This is ownership gain latency and fails in the safe direction. **It became objectionable in
+  Session 112:** under a whole-footprint coarse stand-in it showed as floating slabs over new
+  ground (G269, G270). 0.4.135 takes the shorter path this entry asked for: announced chunks are
+  rechecked every frame until their mesh is up. Open until the owner's exploring test; see the
+  stand-in section at the top.
 - **Land colour: four causes found and fixed, 0.3.18 to 0.3.20.** The tile-to-tile step is
   human-confirmed fixed ("it looks so much better"); the follow-up green correction in
   0.3.19 has not been seen yet. Original diagnosis follows. Neighbouring cached
@@ -1086,8 +1123,9 @@ Human-reported and still open:
   normally achievable, so this is deliberately demoted rather than removed. If it becomes
   visible again, `.vhcoarse` already separates storage, mesh-worker, scheduling-slot and
   unexplained waits. Read `coarse cover waits` before changing a budget.
-- The brief cached/vanilla fight on extremely fast approach remains recorded for the same
-  reason. It resolves toward safe overlap, not a hole, and is outside ordinary movement.
+- The brief cached/vanilla fight is not limited to extremely fast approach: the owner met it while
+  exploring new ground in ordinary flight (Session 112). It resolves toward safe overlap, not a
+  hole; 0.4.135's fix is tracked in the stand-in section at the top.
 
 ## Flagged decisions awaiting human evidence
 
