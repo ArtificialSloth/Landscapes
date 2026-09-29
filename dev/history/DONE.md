@@ -2,6 +2,27 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-09-28..29 - The exploring stutter solved (0.4.132-0.4.134)
+
+- **The chunk thread's closure confirmed offline:** `loadOrGenerateChunkColumn_OnChunkThread`
+  builds `<>c__DisplayClass17_0` at `IL_0000`; the engine re-scans parked neighbour requests back to
+  back with one generation thread on 8+ processors (G261). Same-named closures in the core mods and
+  the owner's enabled mods were excluded.
+- **Multi-thread generation checked at the owner's request:** already off (`MaxWorldgenThreads: 1`);
+  its being off is what lets the thread spin.
+- **The chunk thread rests (0.4.132):** after an idle pass where the engine would spin (G262);
+  `/vhchunkrest`, `RestIdleChunkThread`. Headless: idle passes 75,734-168,385/s to 15-18/s, the
+  thread's garbage 713-816 to 9-35 MB/s, pregen 100.7 s against vanilla's 101.2. In play it cut total
+  garbage and collection time but not the feel (G263).
+- **The recorder's minute report left the render thread (0.4.132):** no slow frame blamed on it since.
+- **The larger gen0 budget was tested offline and not pursued:** capped at 128 MB, longer pauses
+  (G265). "Optimize RAM" was checked and does not touch the collector (G266).
+- **The all-cores collector (0.4.133 launcher, 0.4.134 setting):** the owner's "much smoother"; 1% low
+  92-138 FPS against 40-61, time frozen under 0.4 s a minute against 2.5-5.2 s, about 0.3-0.5 GB
+  extra. Offered as an opt-in Performance-tab switch that edits the game's start-up file (settled
+  decision 54). The recorder names the collector and reports the longest freeze, held frames, memory
+  and exact allocation (G264).
+
 ## 2026-09-26..28 - Claim re-reads, A4 dropped, the hitch recorder and less garbage (0.4.128-0.4.131)
 
 - **A4 dropped** (owner, 2026-09-26): its clean-shutdown marker cannot be built (G236) and A3 cut

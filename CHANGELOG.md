@@ -8,6 +8,21 @@ first.
 
 ## [Unreleased]
 
+**The stutter while exploring is solved, by an opt-in setting.** The small freezes are .NET
+garbage collections: with the game's default collector one core does each collection, 450-750 a
+minute while exploring new terrain, and each freezes the game for 10-20 ms. Two causes were found and
+treated. Most of the garbage came from the game's own chunk thread, which on PCs with 8 or more cores
+never rests while half-generated edge columns sit in its queue; 0.4.132 lets it rest, which cut the
+game's garbage and collection time but did not change the feel, because the freezes that remained
+were still several a second. The fix the owner could feel is the all-cores collector (.NET's Server
+GC): every core works on each collection, and they run 15-25 times less often. In his sessions the
+1% low rose from 40-57 to 92-138 FPS and the time frozen fell from 2.5-5.2 s to under 0.4 s a
+minute; he said it felt much smoother. It costs about 0.3-0.5 GB of memory, and the first minute
+after joining a world has a few longer freezes (59-139 ms) while the world loads. A mod cannot
+switch the collector inside a running game, so 0.4.134 offers it as a switch on a new Performance
+tab that adds one line to the game's start-up file and applies from the next start. A report to the
+game's developers has been drafted.
+
 **A player returning to a dedicated server now gets the distant terrain that changed while they
 were away.** Before, a player's game asked a server only for sections it did not already hold, and
 the live refresh reached only players online at the time. A section that changed while someone was
@@ -72,9 +87,9 @@ changed thousands of chunk rows that agreed between the one-thread controls. The
 therefore keeps only its Balanced behavior and does not expose thread controls or Fast/Maximum
 presets.
 
-**Known open:** hitches while exploring new terrain, with the minimum FPS dropping low
-periodically, reported by the owner on 0.4.125 with no known cause (the fog or Farseer, the
-savegame sweep changes, or something else) and noted for future performance work; the seam fog's
+**Known open:** the all-cores collector's first-minute freezes after joining, its memory cost
+beyond one short pair of sessions, and its behaviour on smaller machines, Linux and macOS; the next
+slowest frames (the game's entity ticking and this mod's `vh:prepare`, 2-4 ms each); the seam fog's
 `.vhfog` on/off cost; human-check 0.4.111's player-aware sweep behavior and run the sustained
 virgin-frontier three-way comparison; play section sync (0.4.127) on a dedicated server with a
 second player; complete
@@ -90,6 +105,39 @@ read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.134] - 2026-09-28
+
+**All-cores garbage collection, as an opt-in setting.** A new **Performance** tab in the settings
+holds one switch, off by default. Save adds one line to the game's own start-up file,
+`Vintagestory.runtimeconfig.json`, keeping a backup of the original; it applies from the next time
+the game starts. Switching it off takes the line back out. A game update replaces that file, so the
+mod sets it again on the next start. Switch it off before removing Vintage Horizons, or the game
+keeps it until its next update. A setting made by someone else is left alone.
+
+**The hitch recorder reports memory and the longest freeze.** Each minute's collections line now
+gives the longest freeze in one frame, how many frames collections held for 10 ms or more, and the
+game's memory. Its allocation total is now exact under either collector.
+
+## [0.4.133] - 2026-09-28
+
+**The hitch recorder names the garbage collector in use** when it starts, with any launch setting
+that chose it, so a session's log says which collector it ran with.
+
+## [0.4.132] - 2026-09-28
+
+**The game's chunk thread rests when it has nothing to do.** On PCs with 8 or more cores, with the
+game's default single world-generation thread, the thread that generates terrain never slept while
+half-generated edge columns waited in its queue: it re-checked them up to 170,000 times a second
+and made hundreds of MB of garbage a second doing it. It now sleeps as the game's other threads do
+after a check that finds nothing, and never when there is work. Generation is unchanged: a headless
+pre-generation of 961 columns took 100.7 s with the rest and 101.2 s without the patch.
+`/vhchunkrest on|off` switches it for the session; `RestIdleChunkThread` in the server config
+removes it entirely. It acts only where this mod's server side runs: singleplayer, LAN hosting or a
+server with the mod.
+
+**The hitch recorder's minute report no longer costs a slow frame.** It is written in the
+background instead of on the render thread, where it cost 14-58 ms once a minute.
 
 ## [0.4.131] - 2026-09-28
 

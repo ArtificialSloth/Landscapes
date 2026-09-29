@@ -667,6 +667,25 @@ live until the exact replacement persistence revision is acknowledged.
     frees its fetch slot at once (G256). Owed sections are fetched nearest first, inside the serving
     radius. Integrated play does not take part, because the sibling cache's rowids already say what
     changed.
+53. **The mod rests the game's chunk thread, and only where the engine would spin** (owner,
+    2026-09-28). With one world-generation thread on 8+ logical processors the engine re-scans
+    parked neighbour requests back to back while players explore (G261). A postfix on the queue scan
+    sleeps the thread for the engine's own `ServerThread.SleepMs` after a pass that found nothing and
+    only while the engine's interval is negative; a pass with work never rests, and generation order
+    and output are untouched. It is on by default where this mod's server side runs, switchable per
+    session (`/vhchunkrest`) and removable by config (`RestIdleChunkThread`). Enabling a second
+    generation thread also stops the spin but changes terrain, and was rejected (Session 91). The
+    hook sits on the scan, not on the interval getter, because the getter can be inlined (G262).
+54. **The all-cores garbage collector is offered by editing the game's own start-up file, opt-in**
+    (owner, 2026-09-28). The collector is fixed when the process starts, so a running mod cannot
+    choose it; `Vintagestory.runtimeconfig.json` beside the game is the only place that sets it for
+    every later start without a launcher. The Performance tab's switch, off by default, adds
+    `System.GC.Server` with a marker property naming this mod, keeps a one-time backup, and switching
+    off removes only what the mod added; a collector property set by anyone else is never touched.
+    Each client start keeps the file in step with the setting, because a game update replaces the
+    file. A file that cannot be read or written leaves the setting unchanged and says why. Only the
+    adaptive Server GC is offered: a larger gen0 budget and a fixed heap count both lengthen pauses
+    (G265).
 
 ## Concurrency invariants
 

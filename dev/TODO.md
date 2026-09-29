@@ -4,38 +4,40 @@
 
 ## Start here
 
-Read [Session 110](sessions/SESSION_110.md), then [Session 109](sessions/SESSION_109.md).
-Session 110 fixed the claim re-reads (0.4.128), recorded A4 as dropped, and chased the owner's
-stutter with the `.vhhitch` recorder. The slowest frames are .NET garbage collections; 0.4.131 cut
-this mod's share of the garbage (seam-fog rebuilds from about 100 MB/s to 1-2 MB/s) and the owner
-said the fog looked fine. Ask him what comes next; the stutter work below is the natural
-continuation.
+Read [Session 111](sessions/SESSION_111.md), then [Session 110](sessions/SESSION_110.md).
+The owner's stutter while exploring is solved for him by the all-cores garbage collector, now an
+opt-in switch on the settings editor's Performance tab (0.4.134, settled decision 54), and the
+game's chunk thread rests when it has nothing to do (0.4.132, settled decision 53). Ask him what
+comes next.
 
-### Stutter while exploring: what 0.4.131 left open (Session 110)
+### Stutter: what 0.4.134 left open (Session 111)
 
-The recorder writes a report a minute to the client log: frame-time lows, what was unusually slow in
-the slowest 1% of frames, allocation by thread and object type, collections by cause, and this mod's
-own jobs measured exactly. Read its lines before asking the owner anything about stutter.
+The recorder's collections line now gives the longest freeze in one frame, the frames held 10 ms or
+more, and memory; judge any change by those, not by MB/s (G263). Its startup line names the
+collector in force.
 
-- **The game's chunk thread is now most of the garbage.** While generating new terrain it allocated
-  365-677 MB/s, 60-84% of everything, almost all one closure type (`<>c__DisplayClass17_0`); over old
-  terrain it fell to 3-145 MB/s. The leading suspect is
-  `ServerSystemSupplyChunks.loadOrGenerateChunkColumn_OnChunkThread`, whose captured parameter makes
-  a closure on every call while `tryLoadOrGenerateChunkColumnsInQueue` rescans its request queue; a
-  worldgen mod's closure on the same thread is not excluded (G260). Confirm offline first
-  (decompile the IL, or resolve the event's `TypeID` in a test process). Any fix touches vanilla
-  code and is the owner's call.
-- **A launch setting for fewer collections**, for the owner to try: a larger gen0 budget through an
-  environment variable for the game process (for example `DOTNET_GCgen0size`). The recorder measures
-  the before and after. Not a mod change.
-- **The recorder's own minute report costs 14-58 ms on the render thread** at +0 s of each window
-  ("vh:hitchrecorder" in the worst frames). Format it off-thread.
-- **A ~415 ms freeze inside the game's end-of-frame step (`finfr`)** appeared once in each of the
-  0.4.129 and 0.4.131 sessions. Not garbage collection; cause unknown.
-- **This mod's remaining garbage** (0.4.131, exact): server capture tick 6-33 MB/s, client tick 4-17,
-  drawing callbacks 8-13. The capture ticks are mostly the whole-section `Runs`/`ColumnStart` rebuild
-  on every changed capture, which mesh and mip snapshots share by reference, so reusing them needs
-  reference tracking. The drawing callbacks have not been examined.
+- **The bug report to the game's developers** is drafted (Session 111, section 11); the owner sends
+  it. Its memory line is now known: about 0.3-0.5 GB, 5%, from the 0.4.134 pair.
+- **The Server GC's first minute after joining** has 56-139 ms collections while the world loads
+  (G267). Not investigated; the adaptive heap count growing and the startup sweep's burst are
+  candidates.
+- **Before recommending it to players:** a longer paired memory look (the 0.4.134 off session was
+  about two minutes, its first stationary), and a look on a smaller machine; Linux, macOS and a
+  read-only game folder are untested. Tell players about the Performance tab in the README and mod
+  description at the next release.
+- **The next slowest frames** are 2-4 ms spikes in the game's entity ticking (`tick-gtentity`) and
+  this mod's `vh:prepare`, with occasional 16-23 ms `vh:lod` frames. Not examined.
+- **This mod's remaining garbage:** 55-70 MB/s of large `UInt64[]` on the client and server main
+  threads (the capture path's whole-section `Runs`/`ColumnStart` rebuild, shared by reference with
+  mesh and mip snapshots, so reuse needs reference tracking) and the meshers' large `Int32[]`. Large
+  arrays are freed only by full collections.
+- **The installed-off headless run was 20% faster** than both vanilla and rest-on (80.9 s against
+  101.2 and 100.7 s for 961 columns). Repeat each mode in
+  `scripts/worldgen-thread-gate.ps1 -ChunkThreadRest` before saying anything about generation speed
+  beyond "rest on matches vanilla".
+- **The rest on a dedicated server with players** is untested; headless and singleplayer only.
+- **Unexplained single freezes:** the ~415 ms `finfr` freeze (Session 110) has not recurred; one
+  170 ms frame outside the profiled frame in the 0.4.134 session.
 - **The snow refresh shows no cost worth chasing:** in the 0.4.128 session it loaded 62 columns a
   minute while he stood still, beside 5-10 gen1 collections a minute and a 1% low near 210 FPS.
 

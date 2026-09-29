@@ -3,38 +3,45 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-09-28`
-**Mod version:** `0.4.131` - current private test build: the seam fog's and the distant-terrain meshers' storage is reused instead of allocated, cutting this mod's garbage while exploring (seam-fog rebuilds from about 100 MB/s to 1-2 MB/s); `.vhhitch` records frame-time lows and who allocates; claim re-reads work during the sweep (0.4.128). Verified, copy-installed, checkpointed and **owner-played** (2026-09-28): the fog looked fine
+**Status date:** `2026-09-29`
+**Mod version:** `0.4.134` - current private test build: an opt-in **All-Cores Garbage Collection** switch on the settings editor's new Performance tab adds the Server GC to the game's own start-up file (decision 54); the game's chunk thread rests when it has nothing to do (0.4.132, decision 53); the hitch recorder names the collector, reports memory and the longest freeze, and writes its minute report in the background. Verified, copy-installed, checkpointed and **owner-played** (2026-09-29): the setting runs the Server GC from a normal start, and the owner called the Server GC "much smoother"
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.121 `a5f528d`, 0.4.122 `d46b776`, 0.4.123 `b46cf0a`, 0.4.124 `1fb10f5`, 0.4.125 `92eb9c3`, 0.4.126 `e668f81`, 0.4.127 `89509e9`, 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.121 `a5f528d`, 0.4.122 `d46b776`, 0.4.123 `b46cf0a`, 0.4.124 `1fb10f5`, 0.4.125 `92eb9c3`, 0.4.126 `e668f81`, 0.4.127 `89509e9`, 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `143` C# files under `VintageHorizons/src`
+**Source files:** `145` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
 
-**The stutter while exploring is .NET garbage collection, and this mod's share is cut (0.4.128-0.4.131).**
-Session 110.
+**The stutter while exploring is solved for the owner by the all-cores garbage collector
+(0.4.128-0.4.134).** Sessions 110-111.
 
-- **Recorder:** `.vhhitch` (on by default) writes a report a minute to the client log: 1% and 0.1%
-  lows, what was unusually slow in the slowest 1% of frames from the engine's own frame profiler,
-  allocation by thread and object type from the runtime's allocation ticks, collections by cause, and
-  this mod's own jobs measured exactly. A failure switches it off with one log line (G259).
-- **Finding:** the slowest frames are gen1 collections of 10-20 ms, 160-330 a minute while exploring
-  new terrain. In 0.4.130, 840-930 MB/s was allocated while exploring: the game's chunk thread
-  365-470 MB/s in one closure type, vanilla tesselation 75-235, this mod about 25-30% led by
-  seam-fog rebuilds at 94-112 MB/s.
-- **0.4.131:** reused fog, mesh, cave-cull and capture storage. Seam-fog builds 0.3-2.2 MB/s; this
-  mod's exact jobs 25-60 MB/s; 1% lows while moving 63-103 FPS against 51-62. The game's chunk thread
-  is now 60-84% of all garbage while generating new terrain, and falls away over old terrain.
-- **Claims (0.4.128):** read-path answers are collected every tick, so an autosave during the load
-  pass no longer turns claim refresh off (G257). Sandbox-verified against 0.4.127; owner play read
-  back all 73 claims after a save.
-- **Terrain-change acceptance in the sandbox:** tests 2/3/16 (an edited WAL save detected column for
-  column) and 5 (a forced kill mid-write recovered exactly as predicted). A4 is dropped.
-- **Evidence:** sandbox-integration-tested and owner-played; the fog look human-tested. 25,913
+- **Cause:** the slowest frames are .NET gen1 collections, 10-20 ms each. With the default
+  (workstation) collector, a small collection runs after every 48 MB on the owner's CPU, 450-750 a
+  minute while exploring new terrain, and briefly-living objects (the game's chunk meshes waiting to
+  upload) survive them into gen1. While gen1 collections outnumber 1% of frames they set the 1% low
+  (G263).
+- **Chunk thread (0.4.132, decision 53):** with one generation thread on 8+ processors the engine
+  re-scanned parked neighbour requests up to 168,000 times a second, building a closure per request
+  (G261). The rest sleeps it after an idle pass only where the engine would spin. Headless: the
+  thread's garbage 713-816 MB/s to 9-35, its CPU 0.97 to 0.19 cores, pregen 100.7 s against vanilla's
+  101.2. In play total garbage fell (803 to 339-644 MB/s) but the owner felt no difference.
+- **All-cores collector (0.4.133 launcher, 0.4.134 setting, decision 54):** with the Server GC
+  (adaptive heap count), collections fell to 25-38 a minute, time frozen from 2.5-5.2 s to 0.26-0.40 s
+  a minute, the longest freeze from 35-40 to 22-23 ms and the 1% low to 92-138 FPS. The owner:
+  "Felt MUCH smoother." It costs about 0.3-0.5 GB (whole game 9.3-9.5 GB against 8.8-9.2), and the
+  first minute after joining has 56-139 ms collections (G267). The Performance tab's switch, off by
+  default, edits `Vintagestory.runtimeconfig.json` with a backup and applies from the next start.
+- **Recorder:** `.vhhitch` names the collector at start, writes its minute report in the background,
+  and each minute gives the longest freeze in one frame, frames held 10 ms or more, memory, exact
+  allocation (G264), allocation by thread and type, and this mod's jobs. The chunk thread rest adds
+  idle passes and the thread's exact allocation to the server-work line.
+- **Also:** this mod's own garbage was cut in 0.4.131 (seam-fog rebuilds from about 100 MB/s to 1-2);
+  claim re-reads work during the sweep (0.4.128, G257); terrain-change acceptance tests 2/3/16 and 5
+  passed in the sandbox; A4 is dropped.
+- **Evidence:** owner-played and human-tested for feel; the rest headless-integration-tested; 25,967
   assertions.
 
 **Section sync is built and passed a dedicated sandbox test (0.4.126-0.4.127).** Session 109; the
@@ -540,7 +547,9 @@ In an active world, the vanilla Settings header has a dedicated **Horizons** tab
   reach, the saved **Load terrain while paused** switch, and visual features with presets.
   **Anti-Aliasing** holds every TAA dial; **Farseer** holds its saved switch, reach, status,
   Outline detail, Hill softness and classic-look dials; **Generate** holds permanent
-  world-generation controls.
+  world-generation controls; **Performance** holds the opt-in **All-Cores Garbage Collection**
+  switch (0.4.134, decision 54), which applies from the next start and says what the current
+  session runs. The tab strip is 760 px for five tabs.
   - Descriptions appear on hover.
   - Secondary tabs sit below the vanilla header.
   - Compact rows and independently placed actions keep text and controls inside the page.
@@ -691,6 +700,15 @@ Session-only unless stated; client commands write their findings to the client l
 to the server log.
 
 - `.vhtaa` reports distant anti-aliasing (above); `.vhtaa show` tints what it touches.
+- `.vhhitch` (on by default) writes a report a minute to the client log (Current result above); it
+  logs the collector in force when it starts. `/vhchunkrest on|off` (controlserver) switches the
+  chunk thread rest for the session and logs who did; each server logs the rest's session totals on
+  shutdown.
+- Each client start logs "All-cores garbage collection: ..." with the setting, whether this session
+  runs it, and the state of the game's start-up file.
+- `scripts/vs-collector-test.cmd` starts the game normally, with a 128 MB gen0 budget, or with the
+  Server GC, changing nothing in the install. `scripts/worldgen-thread-gate.ps1 -ChunkThreadRest
+  On|Off|Absent` compares the rest headless.
 - The 30-second report's `chiselled blocks:` line (0.4.62) counts:
   - chiselled blocks captured as their material;
   - those with no material that can stand in;
@@ -729,10 +747,15 @@ to the server log.
 
 ## Performance and artifact evidence
 
-**Checks and builds.** The final fast tier passed **25,610 assertions with zero failures** at
-0.4.127, including 148 in `SectionSyncChecks`, whose whole-session check walks the plan's
-acceptance tests 8-10 against real SQLite files. The Release mod build completed with zero warnings
-and zero errors. Session 109 also built the Debug mod and benchmark mod for the sandbox runs.
+**Checks and builds.** The final fast tier passed **25,967 assertions with zero failures** at
+0.4.134, including `ChunkThreadRestChecks` (the real engine method patched and removed by exact id)
+and `GameCollectorChecks` (the start-up file edited, restored and backed up on a copy of the
+installed game's file). The Release mod build completed with zero warnings and zero errors.
+
+**Chunk thread rest, headless (Session 111).** One run each, vanilla plus this mod, 961 columns:
+patch absent 101.2 s, 1.25 server cores; installed but off 80.9 s, 1.30 cores, 75,734-168,385 idle
+passes/s, 713-816 MB/s on the chunk thread; on 100.7 s, 0.57 cores, 15-18 idle passes/s, 9-35 MB/s.
+The installed-off run's speed is unexplained.
 
 Measured costs, and what is not measured:
 - **Sibling-cache scanner.** Its cost is in the current-result table. Merging into held sections
@@ -897,17 +920,16 @@ It covers:
 
 ## Next work
 
-Begin with [Session 110](dev/sessions/SESSION_110.md) and the top of [TODO](dev/TODO.md).
+Begin with [Session 111](dev/sessions/SESSION_111.md) and the top of [TODO](dev/TODO.md).
 
-1. **Ask the owner what comes next.** The natural continuation is the stutter:
-   - **The game's chunk thread** makes 60-84% of the garbage while generating new terrain, one
-     closure type (G260). Confirm whose closure it is offline; any fix touches vanilla code and is
-     his call.
-   - **A larger gen0 budget as a launch setting** for him to try, measured by the recorder.
-   - **The recorder's minute report** costs 14-58 ms on the render thread; format it off-thread.
-   - **A ~415 ms freeze in the game's end-of-frame step** seen once in each of two sessions.
-   - **This mod's remaining garbage:** the whole-section rebuild on every changed capture, and the
-     drawing callbacks.
+1. **Ask the owner what comes next.** The stutter is solved for him; what it left:
+   - **The bug report** to the game's developers is drafted; the owner sends it.
+   - **The Server GC's first-minute collections** (56-139 ms while the world loads, G267).
+   - **Before recommending it to players:** a longer paired memory look, a smaller machine, Linux and
+     macOS, and the README and mod description at release.
+   - **The next slowest frames:** entity ticking and this mod's `vh:prepare`, 2-4 ms spikes.
+   - **This mod's remaining garbage:** 55-70 MB/s of large `UInt64[]` from the capture rebuild.
+   - **The installed-off headless run was 20% faster**; repeat each mode before claiming speed.
 2. **Section sync's remaining evidence:** a dedicated server with a second player changing terrain
    while the first is offline, and a measured large-world re-check. The singleplayer first run is
    done.
@@ -928,8 +950,9 @@ Begin with [Session 110](dev/sessions/SESSION_110.md) and the top of [TODO](dev/
 10. **Older TODO debt:** P3's after-comparison; winter convergence, re-judged once the snow
     refresh's backlog has drained; pause loading; Session 84 diagnostic cleanup.
 
-[Session 110](dev/sessions/SESSION_110.md) is the authoritative stutter and claim-path continuation
+[Session 111](dev/sessions/SESSION_111.md) is the authoritative stutter and collector continuation
 point;
+[Session 110](dev/sessions/SESSION_110.md) retains the hitch recorder and the claim-path fix;
 [Session 109](dev/sessions/SESSION_109.md) is the authoritative section-sync continuation point;
 [Session 108](dev/sessions/SESSION_108.md) is the authoritative Farseer-fog continuation point;
 [Session 107](dev/sessions/SESSION_107.md) retains the natural bank and the terrain-built outline, and
@@ -945,7 +968,7 @@ point;
   look, and the Generate,
   delivery, Settings, structure-colour, anti-aliasing, tree/ice, handoff, winter and water history.
 - Architecture owns the established invariants, and `dev/WIRE_HISTORY.md` owns compatibility.
-- G166-G260 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
+- G166-G268 in `dev/GOTCHAS.md` preserve the recent proven traps, including client-store startup,
   buried joins, bounded regeneration, stable all-level ownership, post-water volumetric fog, the
   distinction between pacing priority-load submissions and yielding their downstream engine work,
   the engine generation counter's saved-load blind spot, route-halo generation, and now what a
@@ -960,7 +983,12 @@ point;
   index leads with the equality, why a fetch slot released only at durability throttles
   catch-up to the save checkpoint, why a shared reader's answers must be collected in every phase,
   why `array[Lookup()] += value` writes past a grown array, why a diagnostic in the render loop needs
-  its own safety net, and why an allocation tick names a closure without its class.
+  its own safety net, why an allocation tick names a closure without its class, and now why the
+  engine's chunk thread spins with one generation thread on 8+ processors, why a tiny virtual getter
+  is the wrong thing to patch, why removing throwaway garbage does not change the felt stutter, why
+  the approximate allocation count under-reads under the Server GC, why a bigger gen0 budget
+  lengthens pauses, why "Optimize RAM" is not a collector setting, why the Server GC's first minute
+  is not its steady state, and why an A/B's off side must keep its instrumentation.
 
 The active performance route remains
 [the main-thread performance plan](dev/plans/PLAN_MAIN_THREAD_PERFORMANCE.md). GPU renderer work

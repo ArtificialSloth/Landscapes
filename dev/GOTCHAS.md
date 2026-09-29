@@ -4968,3 +4968,126 @@ decompiling. Resolving the event's `TypeID` to a `Type` would name it, but only 
 table; weigh that risk before doing it inside the game.
 
 **Found:** 2026-09-28, Session 110.
+
+### G261 - With one generation thread on 8+ processors the engine's chunk thread never sleeps while anything is queued
+
+**Trigger:** attributing garbage or CPU on the game's `chunkdbthread`, or changing world generation
+or its scheduling.
+
+**Trap:** `ServerSystemSupplyChunks.GetUpdateInterval` returns `additionalWorldGenThreadsCount - 1`
+whenever column requests are queued and `Environment.ProcessorCount >= 8`; with the default
+`MaxWorldgenThreads: 1` that is -1, and `ServerThread.Update` treats a negative interval as "do not
+sleep". Generating new terrain parks neighbour requests at the pass their neighbours needed
+(`EnsureMinimumWorldgenPassAt`), so the queue stays non-empty while a player explores and the thread
+re-scans it back to back: 75,000-168,000 passes a second in a headless pregen. Every pass calls
+`loadOrGenerateChunkColumn_OnChunkThread` per parked request, which builds a closure on entry because
+it captures its parameter for the `Done` branch's main-thread task: 713-816 MB/s headless and 285-677
+MB/s in the owner's play, 60-84% of all allocation. Over old terrain nothing parks and the thread
+sleeps. A second generation thread makes the interval 0 and stops the spin, but changes the
+generated terrain (Session 91).
+
+**Safer action:** judge the chunk thread by passes that found work, not by CPU or allocation. The
+mod's `ChunkThreadRest` (0.4.132, `/vhchunkrest`) sleeps it for `ServerThread.SleepMs` after an idle
+pass where the interval is negative, and counts idle passes either way.
+
+**Found:** 2026-09-28, Session 111.
+
+### G262 - Patch a method that cannot be inlined, not a tiny virtual getter
+
+**Trigger:** changing an engine loop's cadence with Harmony, as the chunk thread rest does.
+
+**Trap:** the obvious hook, a postfix on the few-line virtual `GetUpdateInterval`, is exactly what
+tiered compilation with guarded devirtualization may inline into `ServerThread.Update` before the
+mod patches it, after which the patch never runs from that call site. The same getter is also read
+by the server main thread for its own tick decisions.
+
+**Safer action:** hook a method the JIT will not inline - a loop with a `try/finally`, such as
+`tryLoadOrGenerateChunkColumnsInQueue` - that runs only on the thread whose behaviour should
+change, and call the getter from there instead of patching it.
+
+**Found:** 2026-09-28, Session 111.
+
+### G263 - Removing garbage that dies at once does not change the felt stutter
+
+**Trigger:** chasing frame-time lows by reducing allocation.
+
+**Trap:** 0.4.132 removed most of the game's allocation while exploring (the chunk thread's
+closures) and the owner felt no difference. Throwaway objects only make small collections more
+frequent; the freezes a player feels are the mid-sized (gen1) collections, which objects that live
+briefly (meshes waiting to upload) cause by surviving the small ones. With 3-5 of those a second,
+10-20 ms each, the 1% low stays where it is until they fall below about 1% of frames (roughly 150 a
+minute), whatever the total.
+
+**Safer action:** judge a change by the frames held 10 ms or more and the longest freeze (the
+recorder's collections line since 0.4.134), not by MB/s. Reducing what survives briefly, or a
+collector that does each collection faster and less often, is what moves the feel.
+
+**Found:** 2026-09-28, Session 111.
+
+### G264 - `GC.GetTotalAllocatedBytes(false)` under-reads under the Server GC
+
+**Trigger:** measuring allocation per window, as the hitch recorder does.
+
+**Trap:** the approximate count advances only when an allocating thread takes a new allocation
+region. Under the Server GC's large regions it lagged the owner's 0.4.133 windows by up to 85%: 47-62
+MB/s reported where the per-thread samples added up to about 340.
+
+**Safer action:** use `GC.GetTotalAllocatedBytes(precise: true)` for windowed totals; it is cheap at
+a window boundary.
+
+**Found:** 2026-09-28, Session 111 (fixed in 0.4.134).
+
+### G265 - A bigger gen0 budget lengthens every pause, and it caps at 128 MB
+
+**Trigger:** tuning the .NET collector for the game's stutter.
+
+**Trap:** `DOTNET_GCgen0size` is honoured on .NET 10 but capped at 128 MB (`GCGen0MaxBudget`; 256 MB
+requested gives 128). In a probe shaped like the game's heap, 128 MB cut collections 2.6x but raised
+the median pause from 27 to 64 ms. The Server GC with every heap fixed
+(`DOTNET_GCDynamicAdaptationMode=0`) collected only 10 times but paused up to 246 ms. Frequency and
+duration trade against each other.
+
+**Safer action:** judge collector settings in the game by the recorder's longest freeze and held
+frames. The adaptive Server GC (`System.GC.Server` alone) is the setting the owner accepted.
+
+**Found:** 2026-09-28, Session 111.
+
+### G266 - The game's "Optimize RAM" setting does not touch the collector
+
+**Trigger:** looking for an existing game setting behind collection pauses.
+
+**Trap:** nothing in 1.22.7 sets the collector's mode or budget. `optimizeRamMode` sets how long an
+untouched client chunk stays unpacked (80 s off, 8 s Optimize, 4 s Aggressive) and the chunk data
+pool size, and forces LOH-compacting full collections in the main menu above 300 MB. Aggressive also
+forces one in game up to every ten minutes (every 30 s unfocused), halves particle pools and unloads
+sounds and shapes. Packing and unpacking chunks adds work and garbage rather than removing it.
+
+**Safer action:** treat it as a memory setting. With RAM to spare it can be off, as its own tooltip
+says; a deliberate freeze every ten minutes points at Aggressive.
+
+**Found:** 2026-09-28, Session 111.
+
+### G267 - The Server GC's first minute after joining has long collections
+
+**Trigger:** judging the all-cores collector, or a hitch report, by a session's first minute.
+
+**Trap:** in both owner sessions with the Server GC, the minute the world loaded had several
+collections of 56-139 ms, while every later minute's longest was 22-23 ms.
+
+**Safer action:** read the minutes after the first; treat the first minute's freezes as an open
+cost of the setting, not as its steady state.
+
+**Found:** 2026-09-29, Session 111.
+
+### G268 - An A/B whose off side uninstalls the instrumented code has no numbers for that side
+
+**Trigger:** comparing a patched behaviour on and off in the worldgen gate or any harness.
+
+**Trap:** the first "off" run pinned `RestIdleChunkThread = false`, which leaves the patch
+uninstalled, so it reported no idle passes or allocation for vanilla at all.
+
+**Safer action:** keep the instrumentation installed and switch only the behaviour
+(`-ChunkThreadRest Off` sends `/vhchunkrest off`); keep a separate uninstalled run (`Absent`) to show
+that the instrumentation itself costs nothing.
+
+**Found:** 2026-09-28, Session 111.
