@@ -29,6 +29,149 @@ public static class VanillaReadinessChecks
         OwnershipStopsAtTheEnginesDrawRange(c);
         RecordedSpheresDriveTheLossSweep(c);
         BandOwnershipIgnoresTheCellsNoMeshOccupies(c);
+        FreshChunksAreRecheckedUntilHandedOver(c);
+        FreshChunkWatchesEndCleanly(c);
+    }
+
+    /// <summary>
+    /// A chunk the engine has just announced is rechecked at the front of every frame's probes
+    /// until it is handed to the game (0.4.135).
+    ///
+    /// <para>
+    /// The engine announces a chunk before tesselating it, so the probe answering the
+    /// announcement finds nothing and leaves the cell Pending in no queue. Before this it waited
+    /// for the interior sweep - about 190 frames at a 256-block view distance - while vanilla was
+    /// already drawing it and the cache drew it too, which is how coarse stand-ins came to show
+    /// over freshly loaded ground. What must not change is the rule for handing it over: still
+    /// two observations a render frame apart, through the publication handshake.
+    /// </para>
+    /// </summary>
+    static void FreshChunksAreRecheckedUntilHandedOver(Check c)
+    {
+        var model = new VanillaRenderReadiness(8, 4);
+        model.SetWindow(0, 0, 8, 8);
+        DrainQueue(model);
+        var fresh = new VanillaChunkCell(3, 1, 3);
+        var swept = new VanillaChunkCell(5, 2, 5);
+
+        // The announcement and the probe that answers it, before tesselation.
+        model.EnqueueCandidate(fresh, 10, engineEvent: true);
+        c.True(model.Watch(fresh, nowMs: 1000), "an announced cell goes on the fresh-chunk list");
+        c.Eq(1, model.PendingWatches, "and takes one place on it");
+        model.TryDequeueCandidate(out _);
+        model.Observe(fresh, rendered: false, 10, out _);
+        c.Eq(VanillaReadinessState.Pending, model.State(fresh), "the first probe finds nothing to hand over");
+
+        // Next frame: sweep work queued earlier does not hold it back.
+        model.EnqueueCandidate(swept, 11);
+        c.Eq(1, model.PromoteWatched(11, 1016, 10_000, 64, promote: true),
+            "the watched cell is put back into the probes");
+        c.True(model.TryDequeueCandidate(out VanillaChunkCell first), "and is probed");
+        c.Eq(fresh, first, "ahead of sweep work that was queued before it");
+        c.False(model.Observe(fresh, rendered: true, 11, out _),
+            "one observation still hands nothing over");
+        c.True(model.TryDequeueCandidate(out VanillaChunkCell second) && second == swept,
+            "the sweep's cell is still probed in the same frame");
+
+        // The frame after: the watch and the deferred observation both want it; it is probed once.
+        c.Eq(1, model.PromoteWatched(12, 1032, 10_000, 64, promote: true),
+            "the watched cell is promoted again for its second look");
+        c.Eq(0, model.PromoteObserved(12, 8),
+            "the deferred observation finds it already at the front and does not queue it twice");
+        c.True(model.TryDequeueCandidate(out VanillaChunkCell again) && again == fresh,
+            "it is probed first");
+        c.False(model.TryDequeueCandidate(out _), "and only once");
+        c.True(model.Observe(fresh, rendered: true, 12, out VanillaReadinessPublication ready),
+            "a second observation a frame later proposes the hand-over");
+        c.True(model.ResolvePublication(ready, accepted: true), "through the ordinary handshake");
+        c.Eq(1000L, model.TakeAnnouncement(fresh), "the announcement time is there to measure the wait");
+        c.Eq(0L, model.TakeAnnouncement(fresh), "and is taken only once");
+
+        c.Eq(0, model.PromoteWatched(13, 1048, 10_000, 64, promote: true),
+            "a handed-over cell is not probed again from the list");
+        c.Eq(0, model.PendingWatches, "and leaves it");
+        c.False(model.Watch(fresh, 2000), "a committed cell has nothing to wait for and is not watched");
+
+        // A cell the sweep already queued keeps its place rather than appearing twice.
+        var queued = new VanillaChunkCell(1, 0, 1);
+        DrainQueue(model);
+        model.EnqueueCandidate(queued, 20);
+        model.Watch(queued, 3000);
+        c.Eq(0, model.PromoteWatched(20, 3000, 10_000, 64, promote: true),
+            "a watched cell that is already queued is not queued again");
+        c.True(model.TryDequeueCandidate(out VanillaChunkCell only) && only == queued, "it is still there once");
+        c.False(model.TryDequeueCandidate(out _), "and nowhere else");
+    }
+
+    /// <summary>
+    /// The ways a watch ends without a hand-over, each returning the cell to the ordinary sweeps -
+    /// which is all this list ever changes: how soon a cell is looked at, never what it is given.
+    /// </summary>
+    static void FreshChunkWatchesEndCleanly(Check c)
+    {
+        // Past its limit.
+        VanillaRenderReadiness model = WatchModel();
+        var late = new VanillaChunkCell(2, 0, 2);
+        model.Watch(late, 1000);
+        c.Eq(0, model.PromoteWatched(1, 1000 + 10_001, 10_000, 64, promote: true),
+            "a cell still waiting past the limit is not promoted");
+        c.Eq(1L, model.WatchesExpired, "it is counted as expired");
+        c.False(model.IsWatched(late), "and leaves the list");
+        c.Eq(0L, model.TakeAnnouncement(late), "taking its announcement with it");
+
+        // Switched off: the list is only kept tidy.
+        model = WatchModel();
+        var idle = new VanillaChunkCell(2, 1, 2);
+        model.Watch(idle, 5000);
+        c.Eq(0, model.PromoteWatched(2, 5016, 10_000, 64, promote: false),
+            "with fast confirmation off nothing is promoted");
+        c.False(model.TryDequeueCandidate(out _), "and nothing is queued");
+        c.True(model.IsWatched(idle), "but the cell stays listed, so its wait is still measured");
+        c.Eq(5000L, model.TakeAnnouncement(idle), "from when it was announced");
+        c.Eq(0, model.PromoteWatched(3, 5032, 10_000, 64, promote: true),
+            "a watch whose announcement was already taken is over");
+        c.False(model.IsWatched(idle), "and leaves the list rather than being measured twice");
+
+        // Unwatched by the caller (out of range, or tesselated to nothing).
+        model = WatchModel();
+        var buried = new VanillaChunkCell(4, 0, 4);
+        model.Watch(buried, 6000);
+        model.Unwatch(buried);
+        c.False(model.IsWatched(buried), "an unwatched cell is off the list at once");
+        c.Eq(0, model.PromoteWatched(3, 6016, 10_000, 64, promote: true),
+            "and its stale entry promotes nothing");
+        c.Eq(0, model.PendingWatches, "and is dropped");
+
+        // Its column leaving the window. A ring slot then serves another column, which must not
+        // inherit either the watch or the time it was measured from.
+        var moving = new VanillaRenderReadiness(8, 4);
+        moving.SetWindow(0, 0, 4, 4);
+        DrainQueue(moving);
+        var departing = new VanillaChunkCell(1, 1, 1);
+        moving.Watch(departing, 7000);
+        moving.SetWindow(8, 8, 4, 4);
+        DrainQueue(moving);
+        var arriving = new VanillaChunkCell(9, 1, 9);
+        c.False(moving.IsWatched(arriving), "the column now in that ring slot is not watched");
+        c.Eq(0L, moving.TakeAnnouncement(arriving), "and has no announcement of its own");
+        c.Eq(0, moving.PromoteWatched(4, 7016, 10_000, 64, promote: true),
+            "the departed column's entry promotes nothing");
+        c.Eq(0, moving.PendingWatches, "and is dropped");
+
+        // World teardown empties the list.
+        model = WatchModel();
+        model.Watch(new VanillaChunkCell(5, 3, 5), 8000);
+        model.Clear();
+        c.Eq(0, model.PendingWatches, "clearing the tracker empties the list");
+    }
+
+    /// <summary>An 8x8 window with its setup work drained, for one watch scenario each.</summary>
+    static VanillaRenderReadiness WatchModel()
+    {
+        var model = new VanillaRenderReadiness(8, 4);
+        model.SetWindow(0, 0, 8, 8);
+        DrainQueue(model);
+        return model;
     }
 
     /// <summary>
@@ -935,6 +1078,8 @@ public static class VanillaReadinessChecks
         model.QueueReadyShell(0, 0, 0, 0, ref boundaryCursor, 1);
         model.TryDequeueCandidate(out VanillaChunkCell warmCell);
         model.Observe(warmCell, rendered: true, 10, out _);
+        model.Watch(cell, 1000);
+        model.PromoteWatched(20, 1000, 10_000, 64, promote: true);
         long before = GC.GetAllocatedBytesForCurrentThread();
         for (int i = 0; i < 10_000; i++)
         {
@@ -942,13 +1087,16 @@ public static class VanillaReadinessChecks
             _ = model.Classify(section);
             model.QueueReadyShell(0, 0, 0, 0, ref boundaryCursor, 1);
             model.QueueMaintenanceCells(ref interiorCursor, 1);
+            model.Watch(cell, 1000);
+            model.PromoteWatched(20, 1000, 10_000, 64, promote: true);
             model.PromoteObserved(20, 1);
             while (model.TryDequeueCandidate(out VanillaChunkCell queued))
                 model.Observe(queued, rendered: true, 20, out _);
         }
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         c.Eq(0L, allocated,
-            "converged lookup, revalidation scheduling, probing, and classification allocate nothing");
+            "converged lookup, revalidation scheduling, fresh-chunk rechecks, probing, and "
+            + "classification allocate nothing");
     }
 
     /// <summary>
@@ -1000,6 +1148,20 @@ public static class VanillaReadinessChecks
         // during static construction would leave this false with everything above passing.
         c.True(VanillaChunkGeometry.Available,
             "the renderer's chunk geometry query bound against the installed game");
+
+        // The fresh-chunk recheck asks whether a chunk's mesh is still on its way, which is the
+        // only thing that tells a chunk waiting for upload from one buried in rock. An unbound
+        // field would quietly send every fresh chunk back to the slow sweep - the behaviour the
+        // recheck exists to replace - so the installed game is asked directly.
+        foreach (string name in VanillaChunkGeometry.UploadStateFieldNames)
+        {
+            FieldInfo? field = clientChunk.GetField(name,
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            c.True(field != null, $"ClientChunk still declares {name}");
+            c.True(field?.FieldType == typeof(bool), $"{name} is still a bool");
+        }
+        c.True(VanillaChunkGeometry.UploadStateAvailable,
+            "the fresh-chunk recheck can read whether a chunk's mesh is still on its way");
 
         // The culler's verdict is the only signal that means "drawing this now". It is
         // public API and needs no reflection, but a game update could still move it, and

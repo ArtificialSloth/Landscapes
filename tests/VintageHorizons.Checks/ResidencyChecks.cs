@@ -17,6 +17,7 @@ public static class ResidencyChecks
     public static void Run(Check c)
     {
         NothingToLoad(c);
+        PlaceholderAncestorsHaveNothingToLoad(c);
         StoredButEvicted(c);
         AlreadyInFlight(c);
         FailedLoadIsRemembered(c);
@@ -36,6 +37,36 @@ public static class ResidencyChecks
         c.False(world.TryGetForRender(Key, out _), "an unknown key has no section to render");
         c.True(world.EnsureResident(Key), "an unknown key is resident enough to proceed");
         c.Eq(0, requested.Count, "and nothing was asked of the storage thread");
+    }
+
+    /// <summary>
+    /// An ancestor registered only so the quadtree can reach a finer key has no row anywhere.
+    /// Mip propagation into it used to wait on a background read that could only come back
+    /// empty, once per level, while the parent above stood in for the whole area coarsely.
+    /// </summary>
+    static void PlaceholderAncestorsHaveNothingToLoad(Check c)
+    {
+        var world = new LodWorld();
+        var requested = new List<long>();
+        int inlineLoads = 0;
+        world.RequestAsyncLoad = requested.Add;
+        world.LoadFromStore = _ => { inlineLoads++; return null; };
+        world.InstallStoredKey(0, 3, 4, applyToParent: false);
+        long parent = LodWorld.ParentKey(Key);
+
+        c.True(world.HasDataSet.Contains(parent) && !world.AvailableDataSet.Contains(parent),
+            "setup: the level-1 ancestor is a placeholder the store never held");
+        c.True(world.EnsureResident(parent), "a placeholder has nothing to wait for");
+        c.Eq(0, requested.Count, "and no background read is started for it");
+        c.False(world.LoadFailed.Contains(parent), "nor is it recorded as a failed read");
+
+        world.GetOrCreateSection(parent);
+        c.Eq(0, inlineLoads, "creating it asks the store for nothing either");
+        c.True(world.AvailableDataSet.Contains(parent), "and it is a real section from then on");
+
+        // The stored key itself still takes the careful path.
+        c.False(world.EnsureResident(Key), "a stored key still waits for its row");
+        c.SeqEq(new[] { Key }, requested, "and only the stored key was read");
     }
 
     /// <summary>

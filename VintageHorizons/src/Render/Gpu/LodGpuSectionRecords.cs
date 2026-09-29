@@ -401,11 +401,20 @@ internal sealed class LodGpuIndirectBuilder
     /// <summary>
     /// Adds one CPU-approved candidate, in the traversal's own front-to-back order.
     /// A section with no geometry is dropped rather than turned into an empty command.
+    ///
+    /// <para>
+    /// <paramref name="quarters"/> limits a coarse stand-in to the quarters it is standing in
+    /// for (<see cref="LodStandInPolicy"/>); zero is the whole section. Only clustered geometry
+    /// can honour it, because only clusters are cut at quarter edges - whole-section streams
+    /// draw whole, which is what every stand-in did before 0.4.135. A stand-in whose waiting
+    /// quarters hold no geometry is recorded with nothing to draw: that is not a failure.
+    /// </para>
     /// </summary>
     public bool Add(
         in LodGpuGeometryMirror.MirroredSection section,
         in LodGpuSectionFacts facts,
-        bool visible = true)
+        bool visible = true,
+        int quarters = 0)
     {
         bool geometryReady = Clustered
             ? section.ClusteredPackedQuads.IsLive && section.PackedClusters.Length > 0
@@ -418,9 +427,9 @@ internal sealed class LodGpuIndirectBuilder
             return false;
         }
 
-        int bucket = BucketFor(section.GroupId);
         if (Clustered)
         {
+            bool anySelected = false;
             foreach (LodPackedCluster cluster in section.PackedClusters)
             {
                 if (!cluster.HasGeometry)
@@ -428,11 +437,19 @@ internal sealed class LodGpuIndirectBuilder
                     CandidatesDropped++;
                     return false;
                 }
+                anySelected |= LodStandInPolicy.DrawsCluster(quarters, cluster.Cell);
+            }
+            if (!anySelected)
+            {
+                AddedSections++;
+                return true;
             }
 
+            int clusterBucket = BucketFor(section.GroupId);
             foreach (LodPackedCluster cluster in section.PackedClusters)
             {
-                buckets[bucket].Add(new Entry(
+                if (!LodStandInPolicy.DrawsCluster(quarters, cluster.Cell)) continue;
+                buckets[clusterBucket].Add(new Entry(
                     section,
                     facts,
                     LodGpuCullBounds.FromCluster(facts, cluster),
@@ -445,6 +462,7 @@ internal sealed class LodGpuIndirectBuilder
         }
         else
         {
+            int bucket = BucketFor(section.GroupId);
             buckets[bucket].Add(new Entry(
                 section,
                 facts,

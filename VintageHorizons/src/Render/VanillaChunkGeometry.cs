@@ -301,6 +301,68 @@ static class VanillaChunkGeometry
         }
     }
 
+    /// <summary>
+    /// Whether the engine still has this chunk's mesh on the way: queued to be tesselated
+    /// (<c>enquedForRedraw</c>), tesselated and waiting in the upload queue
+    /// (<c>queuedForUpload</c>, set when tesselation starts and cleared by
+    /// <c>ChunkTesselatorManager.OnBeforeFrame</c> as it hands the mesh to the pool), or never
+    /// visited by the tesselator at all (drawn counter zero).
+    ///
+    /// <para>
+    /// This is what separates the two chunks the geometry gate cannot tell apart. One freshly
+    /// generated and not yet uploaded will hold geometry a moment from now and is worth checking
+    /// again next frame; one buried in rock was tesselated and uploaded as nothing, and never
+    /// will. Both hold no pool geometry right now.
+    /// </para>
+    /// <para>
+    /// Internal fields, so bound like the others and reported unavailable rather than guessed.
+    /// An unavailable answer makes the caller stop watching, which only returns the chunk to the
+    /// ordinary background sweep - slower ownership, never wrong ownership.
+    /// </para>
+    /// </summary>
+    public static bool TryMeshStillComing(IWorldChunk? chunk, out bool coming)
+    {
+        coming = false;
+        if (chunk is not ClientChunk client || !UploadStateAvailable) return false;
+        try
+        {
+            coming = QueuedForRedraw!(client) || QueuedForUpload!(client) || DrawnCounter!(client) == 0;
+            return true;
+        }
+        catch
+        {
+            coming = false;
+            return false;
+        }
+    }
+
+    static readonly System.Func<ClientChunk, bool>? QueuedForUpload = BindBool("queuedForUpload");
+    static readonly System.Func<ClientChunk, bool>? QueuedForRedraw = BindBool("enquedForRedraw");
+
+    /// <summary>The upload-state fields this build binds, for the check tier to verify.</summary>
+    public static readonly string[] UploadStateFieldNames = { "queuedForUpload", "enquedForRedraw" };
+
+    /// <summary>False when a game update moved any of the fields <see cref="TryMeshStillComing"/> reads.</summary>
+    public static bool UploadStateAvailable =>
+        QueuedForUpload != null && QueuedForRedraw != null && DrawnCounter != null;
+
+    static System.Func<ClientChunk, bool>? BindBool(string field)
+    {
+        try
+        {
+            FieldInfo? info = typeof(ClientChunk).GetField(field,
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            if (info == null || info.FieldType != typeof(bool)) return null;
+            ParameterExpression chunk = Expression.Parameter(typeof(ClientChunk), "chunk");
+            return Expression.Lambda<System.Func<ClientChunk, bool>>(
+                Expression.Field(chunk, info), chunk).Compile();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     static int DrawnCount(ClientChunk chunk, out bool known)
     {
         known = false;

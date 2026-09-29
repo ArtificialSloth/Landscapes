@@ -26,6 +26,12 @@ uniform vec3 sunColor;
 uniform float dayLight;
 uniform float cacheHandoffDistance;
 
+// Which quarters of this section a coarse stand-in covers: one bit per child section,
+// qz * 2 + qx. Zero is the whole section - every ordinary draw, and what a program that never
+// sets it reads. Only the passes drawn section by section set it; opaque ground is limited by
+// selecting its clusters instead. See LodStandInPolicy and lodownershiptest.fsh.
+uniform int vhStandInQuarters;
+
 // Per-cell vanilla ownership. One texel per 32x32x32 vanilla render chunk, stored as Y
 // slices stacked down a single 2D texture because the public client API binds 2D textures
 // only. maskEnabled stays 0 until the chunk mask is both requested and uploaded, so the

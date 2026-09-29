@@ -52,6 +52,8 @@ public static class Program
         ("pure", "GPU indirect layout", GpuIndirectChecks.Run),
         ("pure", "packed opaque quads", PackedQuadChecks.Run),
         ("pure", "packed opaque clusters", PackedClusterChecks.Run),
+        ("pure", "stand-in quarters", StandInChecks.Run),
+        ("static", "stand-in wiring", StandInChecks.RunWiring),
         ("pure", "depth pyramid", HzbChecks.Run),
         ("pure", "hzb projection", HzbProjectionChecks.Run),
         ("pure", "hzb field harness", HzbFieldChecks.Run),

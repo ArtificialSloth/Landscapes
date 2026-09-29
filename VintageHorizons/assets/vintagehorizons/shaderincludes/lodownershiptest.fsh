@@ -3,6 +3,18 @@
     int ownershipBand = int(vertexColor.a * 255.0 + 0.5) / TINT_SLOTS;
     if (ownershipBand == 1 && waterSurfaceVisible == 0) discard;
 
+    // A coarse section standing in for finer terrain that is not ready yet covers only the
+    // quarters it is standing in for; its other quarters are drawn by their own finer sections,
+    // and drawing them here too would lay this coarse water over theirs. A quarter is half the
+    // section on each axis. Zero - every ordinary draw - skips the test entirely.
+    if (vhStandInQuarters != 0)
+    {
+        float vhHalfSection = columnBlocks * 32.0;
+        int vhQuarter = (sectionLocal.x < vhHalfSection ? 0 : 1)
+            + (sectionLocal.z < vhHalfSection ? 0 : 2);
+        if ((vhStandInQuarters & (1 << vhQuarter)) == 0) discard;
+    }
+
     // Retain a broad fallback overlap for chunks that are still streaming, then give
     // the close field entirely to ready vanilla terrain so the approximate surfaces do
     // not mix. This boundary is deliberately much nearer than the old 78.5% cutoff.

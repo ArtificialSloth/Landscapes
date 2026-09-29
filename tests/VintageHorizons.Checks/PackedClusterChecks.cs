@@ -15,6 +15,82 @@ public static class PackedClusterChecks
         ClusterCommands(c);
         SelectedClusterRetention(c);
         MissingClustersFailOpen(c);
+        StandInQuartersSelectClusters(c);
+    }
+
+    /// <summary>
+    /// A coarse section standing in for one waiting quarter submits that quarter's clusters and no
+    /// others (0.4.135). Before, it submitted all sixteen and covered the three ready quarters too.
+    /// </summary>
+    static void StandInQuartersSelectClusters(Check c)
+    {
+        var backend = new FakeBackend();
+        LodGpuArenaLimits small = new(256 * 1024, 8 * 1024 * 1024, 16);
+        using var mirror = new LodGpuGeometryMirror(
+            backend, 8 * 1024 * 1024,
+            vertexLimits: small, indexLimits: small,
+            packedLimits: small, clusteredPackedLimits: small);
+        long key = LodWorld.SectionKey(3, 5, 6);
+        MeshResult mesh = LodMesher.BuildMesh(Fixtures.Job(
+            Fixtures.SolidSection(yTop: 70, yBottom: 5), key));
+        mirror.Mirror(Publication(key, mesh, includeClusters: true));
+        mirror.TryGet(key, out LodGpuGeometryMirror.MirroredSection section);
+
+        int northEast = LodStandInPolicy.QuarterBit(1, 0);
+        var expectedStarts = new List<int>();
+        foreach (LodPackedCluster cluster in section.PackedClusters)
+        {
+            if (LodStandInPolicy.QuarterOfCluster(cluster.Cell) != northEast) continue;
+            expectedStarts.Add((int)((section.FirstClusteredPackedQuad + cluster.FirstQuad)
+                * LodPackedQuadFormat.PulledVerticesPerQuad));
+        }
+        c.True(expectedStarts.Count > 0 && expectedStarts.Count < section.PackedClusters.Length,
+            "setup: one quarter holds some of the section's clusters, not all");
+
+        var quarter = new LodGpuIndirectBuilder(packed: true, clustered: true);
+        quarter.Begin();
+        c.True(quarter.Add(section, Facts(key), quarters: northEast),
+            "a stand-in covering one quarter is recorded");
+        quarter.End(mirror);
+        c.Eq(expectedStarts.Count, quarter.CommandCount, "it submits only that quarter's clusters");
+        var starts = new List<int>();
+        for (int i = 0; i < quarter.CommandCount; i++)
+            starts.Add(LodGpuIndirectCommand.ReadInt(
+                quarter.Commands, i, LodGpuPackedIndirectCommand.BaseVertexOffset));
+        c.SeqEq(expectedStarts, starts, "and exactly those clusters' quad ranges");
+        c.Eq(1, quarter.AddedSections, "coverage is still counted per section");
+
+        var whole = new LodGpuIndirectBuilder(packed: true, clustered: true);
+        whole.Begin();
+        whole.Add(section, Facts(key));
+        whole.End(mirror);
+        c.Eq(section.PackedClusters.Length, whole.CommandCount,
+            "an ordinary draw still submits every cluster");
+
+        // A waiting quarter with no ground in it: recorded, nothing to draw, and not a failure -
+        // a refusal here would be reported as a missing section and trip the required-path alarm.
+        long cornerKey = LodWorld.SectionKey(3, 9, 9);
+        MeshResult corner = LodMesher.BuildMesh(Fixtures.Job(NorthWestOnly(), cornerKey));
+        mirror.Mirror(Publication(cornerKey, corner, includeClusters: true));
+        mirror.TryGet(cornerKey, out LodGpuGeometryMirror.MirroredSection cornerSection);
+        var empty = new LodGpuIndirectBuilder(packed: true, clustered: true);
+        empty.Begin();
+        c.True(empty.Add(cornerSection, Facts(cornerKey), quarters: LodStandInPolicy.QuarterBit(1, 1)),
+            "a stand-in for a quarter with no ground in it is still recorded");
+        c.Eq(0, empty.CommandCount, "with nothing to draw");
+        c.Eq(0, empty.CandidatesDropped, "and is not counted as refused");
+    }
+
+    /// <summary>Ground in the north-west quarter only.</summary>
+    static LodSection NorthWestOnly()
+    {
+        var section = new LodSection();
+        section.FindOrAddPaletteEntry(blockId: 1, color: 0x00806040, flags: 0);
+        ulong[] run = { LodSection.PackRun(0, 30, 0) };
+        for (int cz = 0; cz < LodSection.GridSize / 2; cz++)
+            for (int cx = 0; cx < LodSection.GridSize / 2; cx++)
+                section.SetColumn(LodSection.ColumnIndex(cx, cz), run);
+        return section;
     }
 
     static void GridAndExactCoverage(Check c)

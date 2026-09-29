@@ -314,7 +314,12 @@ public class LodWorld
 
         // A previously-evicted section must come back from disk, not start empty -
         // capture merges and mip propagation would otherwise clobber stored data.
-        if (HasDataSet.Contains(key))
+        //
+        // Only a key some store actually holds can have a row. An ancestor that exists only
+        // because a finer key was registered under it (see RegisterInTree) has none, so
+        // asking the store for it is a synchronous miss on the game tick, paid once per
+        // level every time new ground gets its first data.
+        if (AvailableDataSet.Contains(key))
         {
             section = LoadFromStore?.Invoke(key);
             if (section != null)
@@ -798,9 +803,18 @@ public class LodWorld
     /// ever creating an empty section that would shadow -- and then overwrite -- a
     /// stored row. It is TryGetForRender's policy with one difference: a key with
     /// nothing to load is "proceed" here, rather than "no mesh".
+    ///
+    /// An ancestor that only the quadtree skeleton holds - synthesised when a finer key was
+    /// registered, never stored anywhere - also has nothing to load. It used to start a
+    /// background read anyway, which came back empty a tick or more later, once per level.
+    /// That wait sat directly in front of the first mesh for brand-new ground: until the
+    /// ancestors hold data their parent stands in for them, coarsely, over its whole area.
     /// </summary>
-    public bool EnsureResident(long key) =>
-        TryGetForRender(key, out _) || !LoadsInFlight.Contains(key);
+    public bool EnsureResident(long key)
+    {
+        if (!Sections.ContainsKey(key) && !AvailableDataSet.Contains(key)) return true;
+        return TryGetForRender(key, out _) || !LoadsInFlight.Contains(key);
+    }
 
     public string DescribeLevels()
     {

@@ -27,6 +27,12 @@ internal sealed class VanillaRenderReadiness
     /// </summary>
     const byte MaskExcludedFlag = 8;
 
+    /// <summary>
+    /// A cell the engine has just announced, rechecked at the front of every frame's probes
+    /// until vanilla has its mesh up. See <see cref="Watch"/>.
+    /// </summary>
+    const byte WatchedFlag = 16;
+
     readonly int capacity;
     readonly int capacityMask;
     readonly int verticalChunks;
@@ -63,10 +69,19 @@ internal sealed class VanillaRenderReadiness
     readonly VanillaChunkCell[] observations;
     readonly Dictionary<long, int>[] readyCounts;
 
+    /// <summary>
+    /// When the engine announced each cell, in the caller's milliseconds; 0 for none. It is
+    /// what a watch expires against, and what the confirmation delay is measured from.
+    /// </summary>
+    readonly long[] announcedMs;
+    readonly VanillaChunkCell[] watches;
+
     int candidateHead;
     int candidateCount;
     int observationHead;
     int observationCount;
+    int watchHead;
+    int watchCount;
     int minChunkX;
     int minChunkZ;
     int width;
@@ -75,6 +90,11 @@ internal sealed class VanillaRenderReadiness
 
     public int PendingCandidates => candidateCount;
     public int PendingObservations => observationCount;
+    public int PendingWatches => watchCount;
+    public long WatchesStarted { get; private set; }
+    public long WatchesPromoted { get; private set; }
+    public long WatchesExpired { get; private set; }
+    public long WatchesRefused { get; private set; }
     public int HorizontalCapacity => capacity;
     public int VerticalChunks => verticalChunks;
 
@@ -96,7 +116,8 @@ internal sealed class VanillaRenderReadiness
         + (sphereCentreX.LongLength + sphereCentreZ.LongLength) * sizeof(float)
         + pendingPublicationTokens.LongLength * sizeof(long)
         + candidateFrames.LongLength * sizeof(long)
-        + (candidates.LongLength + observations.LongLength) * (sizeof(int) * 3L);
+        + announcedMs.LongLength * sizeof(long)
+        + (candidates.LongLength + observations.LongLength + watches.LongLength) * (sizeof(int) * 3L);
     public int CommittedReadyCells { get; private set; }
     public long CandidateEventsAccepted { get; private set; }
     public long CandidateEventsCoalesced { get; private set; }
@@ -132,6 +153,8 @@ internal sealed class VanillaRenderReadiness
         candidates = new VanillaChunkCell[cells];
         candidateFrames = new long[cells];
         observations = new VanillaChunkCell[cells];
+        announcedMs = new long[cells];
+        watches = new VanillaChunkCell[cells];
         readyCounts = new Dictionary<long, int>[LodWorld.MaxLevel + 1];
         for (int level = 0; level < readyCounts.Length; level++)
             readyCounts[level] = new Dictionary<long, int>();
@@ -434,6 +457,144 @@ internal sealed class VanillaRenderReadiness
             if (EnqueueCandidate(cell, renderFrame)) promoted++;
         }
         return promoted;
+    }
+
+    /// <summary>
+    /// Records that the engine has just announced this cell and puts it on the short list of
+    /// cells rechecked at the front of every frame's probes (<see cref="PromoteWatched"/>).
+    ///
+    /// <para>
+    /// The engine announces a chunk before it has tesselated it, so the probe that answers the
+    /// announcement nearly always finds nothing to hand over yet and leaves the cell Pending in
+    /// no queue. Before this list it then waited for the interior sweep to come round - about
+    /// 190 frames across a 256-block window - while vanilla was already drawing the chunk and
+    /// the cache was drawing it too. That is the "brief fight where vanilla has just loaded",
+    /// and when the cached geometry there was a coarse stand-in it showed as floating slabs.
+    /// </para>
+    /// <para>
+    /// Only the timing of the recheck changes. Ownership is still granted by the same two
+    /// observations, range rule and geometry gate, so nothing can be handed over sooner than
+    /// the engine is actually drawing it. A committed cell is not watched: it has nothing to
+    /// wait for. The first announcement's time is kept, so a chunk dirtied again while it is
+    /// still waiting is measured from when it first arrived.
+    /// </para>
+    /// </summary>
+    public bool Watch(VanillaChunkCell cell, long nowMs)
+    {
+        if (!TryGetCellIndex(cell, prepareColumn: false, out int index)) return false;
+        if ((VanillaReadinessState)states[index] == VanillaReadinessState.VanillaReady) return false;
+        if (announcedMs[index] == 0) announcedMs[index] = Math.Max(1, nowMs);
+        if ((flags[index] & WatchedFlag) != 0) return true;
+        if (watchCount == watches.Length)
+        {
+            WatchesRefused++;
+            return false;
+        }
+
+        flags[index] |= WatchedFlag;
+        watches[(watchHead + watchCount) % watches.Length] = cell;
+        watchCount++;
+        WatchesStarted++;
+        return true;
+    }
+
+    /// <summary>
+    /// Takes a cell off the watch list, leaving its announcement time for the caller to take.
+    /// The ring entry is dropped lazily the next time <see cref="PromoteWatched"/> reaches it.
+    /// </summary>
+    public void Unwatch(VanillaChunkCell cell)
+    {
+        if (!TryGetCellIndex(cell, prepareColumn: false, out int index)) return;
+        flags[index] &= unchecked((byte)~WatchedFlag);
+    }
+
+    public bool IsWatched(VanillaChunkCell cell) =>
+        TryGetCellIndex(cell, prepareColumn: false, out int index)
+        && (flags[index] & WatchedFlag) != 0;
+
+    /// <summary>
+    /// When the engine announced this cell, in the caller's milliseconds, and forgets it; 0 when
+    /// it was never announced. Taken once - at the commit it was waiting for, or when a watch
+    /// ends without one - so a much later commit cannot report a wait it did not have.
+    /// </summary>
+    public long TakeAnnouncement(VanillaChunkCell cell)
+    {
+        if (!TryGetCellIndex(cell, prepareColumn: false, out int index)) return 0;
+        long announced = announcedMs[index];
+        announcedMs[index] = 0;
+        return announced;
+    }
+
+    /// <summary>
+    /// Puts watched cells at the FRONT of the probe queue, examining at most
+    /// <paramref name="maxCells"/> of them, and drops the ones that no longer need it:
+    /// committed, unwatched, out of the window, or older than <paramref name="limitMs"/> since
+    /// their announcement. A dropped cell falls back to the ordinary sweeps, which is exactly
+    /// the behaviour before this list existed.
+    ///
+    /// <para>
+    /// With <paramref name="promote"/> false it only drops, so the list cannot fill while fast
+    /// confirmation is switched off, and announcement times stay measurable for comparison.
+    /// </para>
+    /// </summary>
+    public int PromoteWatched(long renderFrame, long nowMs, long limitMs, int maxCells, bool promote)
+    {
+        int promoted = 0;
+        int budget = Math.Min(maxCells, watchCount);
+        for (int n = 0; n < budget; n++)
+        {
+            VanillaChunkCell cell = watches[watchHead];
+            watchHead = (watchHead + 1) % watches.Length;
+            watchCount--;
+
+            if (!TryGetCellIndex(cell, prepareColumn: false, out int index)
+                || (flags[index] & WatchedFlag) == 0) continue;
+
+            // No announcement left means someone already took it - the watch is over whatever the
+            // flag says, and it must not be measured again.
+            bool ready = (VanillaReadinessState)states[index] == VanillaReadinessState.VanillaReady;
+            long announced = announcedMs[index];
+            if (ready || announced == 0 || nowMs - announced > limitMs)
+            {
+                if (!ready && announced != 0)
+                {
+                    WatchesExpired++;
+                    announcedMs[index] = 0;
+                }
+                flags[index] &= unchecked((byte)~WatchedFlag);
+                continue;
+            }
+
+            if (promote && EnqueueCandidateFront(cell, renderFrame))
+            {
+                promoted++;
+                WatchesPromoted++;
+            }
+            watches[(watchHead + watchCount) % watches.Length] = cell;
+            watchCount++;
+        }
+        return promoted;
+    }
+
+    /// <summary>
+    /// Admits a cell at the head of the probe queue so it is probed this frame, ahead of sweep
+    /// and revalidation work. A cell already queued keeps its place rather than appearing twice.
+    /// </summary>
+    bool EnqueueCandidateFront(VanillaChunkCell cell, long renderFrame)
+    {
+        if (!TryGetCellIndex(cell, prepareColumn: false, out int index)) return false;
+        if ((flags[index] & QueuedFlag) != 0) return false;
+        if (candidateCount == candidates.Length) return false;
+
+        if ((VanillaReadinessState)states[index] == VanillaReadinessState.Unknown)
+            states[index] = (byte)VanillaReadinessState.Pending;
+        flags[index] |= QueuedFlag;
+        candidateHead = (candidateHead - 1 + candidates.Length) % candidates.Length;
+        candidates[candidateHead] = cell;
+        candidateFrames[candidateHead] = renderFrame;
+        candidateCount++;
+        ScheduledCandidatesAccepted++;
+        return true;
     }
 
     /// <summary>
@@ -837,6 +998,8 @@ internal sealed class VanillaRenderReadiness
         candidateCount = 0;
         observationHead = 0;
         observationCount = 0;
+        watchHead = 0;
+        watchCount = 0;
         minChunkX = minChunkZ = width = depth = 0;
         CommittedReadyCells = 0;
         for (int level = 0; level < readyCounts.Length; level++) readyCounts[level].Clear();
@@ -849,6 +1012,10 @@ internal sealed class VanillaRenderReadiness
         CandidateEventsDropped = 0;
         ScheduledCandidatesAccepted = 0;
         ScheduledCandidatesCoalesced = 0;
+        WatchesStarted = 0;
+        WatchesPromoted = 0;
+        WatchesExpired = 0;
+        WatchesRefused = 0;
     }
 
     public void GetStateCounts(out int unknown, out int pending, out int observed, out int ready)
@@ -1273,6 +1440,9 @@ internal sealed class VanillaRenderReadiness
         Array.Clear(flags, baseIndex, verticalChunks);
         Array.Clear(observedFrames, baseIndex, verticalChunks);
         Array.Clear(pendingPublicationTokens, baseIndex, verticalChunks);
+        // The watch flag went with the flags above; the time it was measured from goes too,
+        // or the arriving column would expire against the departed one's announcement.
+        Array.Clear(announcedMs, baseIndex, verticalChunks);
         // The recorded spheres are ring-addressed like everything else, so a slot changing
         // hands must forget them too - G44's failure with a different payload. An arriving
         // column inheriting the departed column's sphere would be tested against the wrong

@@ -87,6 +87,19 @@ public partial class LodTerrainRenderer : IRenderer
     internal const int ReadinessGuardChunks = 2;
 
     /// <summary>
+    /// How long a chunk the engine has just announced is rechecked every frame, and how many of
+    /// those rechecks one frame may start. See <see cref="VanillaRenderReadiness.Watch"/>.
+    ///
+    /// Ten seconds covers a tesselation queue backed up by exploring - most chunks are handed
+    /// over within a few frames of their mesh reaching the pool, and a buried chunk leaves the
+    /// list at its first probe after upload - and anything still waiting past it returns to the
+    /// ordinary sweep. Sixty-four rechecks cost a few tens of microseconds and go first in the
+    /// probe budget, so the sweeps behind them keep most of it.
+    /// </summary>
+    internal const long FreshChunkWatchMilliseconds = 10_000;
+    internal const int FreshChunkWatchesPerFrame = 64;
+
+    /// <summary>
     /// Pulled back from the nearest column that is not wholly owned. A cell becomes ready
     /// when two render-frame-separated probes agree, which is a tessellation signal rather
     /// than proof that vanilla's replacement mesh is on screen, so the handoff stops one
@@ -1800,6 +1813,7 @@ public partial class LodTerrainRenderer : IRenderer
                     sb.Append(' ').Append(state);
                 }
             }
+            sb.Append("; covering ").Append(LodStandInPolicy.Describe(StandInQuartersFor(key)));
         }
 
         return shown == 0 ? "no coarse draws: every drawn node is at or below its wanted level" : sb.ToString();
@@ -2072,9 +2086,13 @@ public partial class LodTerrainRenderer : IRenderer
     {
         // ClientWorldMap raises this from the main thread after installing the chunk but
         // before tessellation. Store only value coordinates; never retain the engine chunk.
-        readiness?.EnqueueCandidate(
-            new VanillaChunkCell(chunkCoord.X, chunkCoord.Y, chunkCoord.Z), frameCounter,
-            engineEvent: true);
+        var cell = new VanillaChunkCell(chunkCoord.X, chunkCoord.Y, chunkCoord.Z);
+        readiness?.EnqueueCandidate(cell, frameCounter, engineEvent: true);
+        // Before tessellation means the probe above usually finds nothing to hand over yet.
+        // Watched, the cell is rechecked every frame until its mesh is up instead of waiting
+        // for the interior sweep while vanilla and the cache both draw it. Recorded whether or
+        // not fast confirmation is on, so `.vhstandin off` still measures the old delay.
+        readiness?.Watch(cell, Environment.TickCount64);
         NoteGapChunkEvent(chunkCoord.X, chunkCoord.Y, chunkCoord.Z, reason);
     }
 
@@ -2309,9 +2327,15 @@ public partial class LodTerrainRenderer : IRenderer
 
     bool HasAnyMesh(long key) => sectionMeshes.ContainsKey(key) || waterMeshes.ContainsKey(key);
 
-    bool AllVisibleChildrenCovered(long key)
+    /// <summary>
+    /// The quarters whose finer piece is in view but has no mesh yet, one bit per child as
+    /// <see cref="LodStandInPolicy.QuarterBit"/> numbers them. Zero means every visible finer
+    /// piece is ready and the parent may stop drawing. Every child is examined, uncovered or
+    /// not, so the coarse-wait counters see all of them.
+    /// </summary>
+    int UncoveredVisibleChildren(long key)
     {
-        bool covered = true;
+        int uncovered = 0;
         for (int qz = 0; qz < 2; qz++)
         {
             for (int qx = 0; qx < 2; qx++)
@@ -2347,12 +2371,12 @@ public partial class LodTerrainRenderer : IRenderer
                 {
                     // The radial planner owns demand eligibility. The parent keeps
                     // covering until that orientation-independent wave reaches this gate.
-                    covered = false;
+                    uncovered |= LodStandInPolicy.QuarterBit(qx, qz);
                     CountCoarseWait(ck);
                 }
             }
         }
-        return covered;
+        return uncovered;
     }
 
     /// <summary>
@@ -2403,19 +2427,42 @@ public partial class LodTerrainRenderer : IRenderer
         int level = LodWorld.KeyLevel(key);
         int wanted = LodWorld.WantedLevelForSq(NearestDistanceSqTo(key));
 
-        if (level > 0 && ((level > wanted && AllVisibleChildrenCovered(key)) || !hasMesh))
+        if (level > 0 && level > wanted)
         {
-            bool anyChildDrew = false;
-            for (int qz = 0; qz < 2; qz++)
+            // Asked with or without a mesh of our own, as it always was, so the coarse-wait
+            // counters describe the same population they did before stand-ins were split.
+            int uncovered = UncoveredVisibleChildren(key);
+            if (!hasMesh) return CollectChildren(key, skipQuarters: 0);
+
+            if (uncovered == 0)
             {
-                for (int qx = 0; qx < 2; qx++)
-                {
-                    long ck = LodWorld.ChildKey(key, qx, qz);
-                    if (world.HasDataSet.Contains(ck)) anyChildDrew |= CollectDrawNodes(ck);
-                }
+                if (CollectChildren(key, skipQuarters: 0)) return true;
+                // Every finer piece is ready but none of them is in view: this one is.
+                drawList.Add(key);
+                return true;
             }
-            if (anyChildDrew || !hasMesh) return anyChildDrew;
+
+            // Standing in for finer terrain that is not ready. A parent covers until its
+            // children are ready, so this can be coarse but never a hole - and it covers only
+            // the quarters that are waiting. The other quarters draw their own finer terrain,
+            // and a kilometre-wide section no longer puts coarse columns over all the ground
+            // around the player because one new piece appeared at the edge of what is loaded.
+            // Only clustered opaque geometry can be limited to a quarter, so any other opaque path
+            // - a diagnostic override - keeps whole stand-ins rather than drawing coarse ground
+            // over the finer ground its ready quarters would then also draw.
+            int quarters = LodStandInPolicy.StandInQuarters(uncovered,
+                StandInFix && clusterDrawingThisFrame);
+            if (quarters != 0)
+            {
+                CollectChildren(key, skipQuarters: quarters);
+                standInQuarters[key] = (byte)quarters;
+            }
+            drawList.Add(key);
+            NoteStandIn(key, level, uncovered, quarters);
+            return true;
         }
+
+        if (level > 0 && !hasMesh) return CollectChildren(key, skipQuarters: 0);
 
         if (hasMesh)
         {
@@ -2423,6 +2470,69 @@ public partial class LodTerrainRenderer : IRenderer
             return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Walks the children that exist, except those in <paramref name="skipQuarters"/>, and says
+    /// whether any of them drew.
+    /// </summary>
+    bool CollectChildren(long key, int skipQuarters)
+    {
+        bool anyChildDrew = false;
+        for (int qz = 0; qz < 2; qz++)
+        {
+            for (int qx = 0; qx < 2; qx++)
+            {
+                if ((skipQuarters & LodStandInPolicy.QuarterBit(qx, qz)) != 0) continue;
+                long ck = LodWorld.ChildKey(key, qx, qz);
+                if (world.HasDataSet.Contains(ck)) anyChildDrew |= CollectDrawNodes(ck);
+            }
+        }
+        return anyChildDrew;
+    }
+
+    /// <summary>
+    /// This frame's stand-ins that cover only some quarters, keyed by section. A section absent
+    /// from it draws whole, which is every ordinary draw. Cleared with the draw list.
+    /// </summary>
+    readonly Dictionary<long, byte> standInQuarters = new();
+
+    /// <summary>The quarters this frame draws of a section, or zero for all of it.</summary>
+    int StandInQuartersFor(long key) =>
+        standInQuarters.TryGetValue(key, out byte quarters) ? quarters : 0;
+
+    /// <summary>
+    /// Two fixes for coarse distant terrain showing over the game's own ground, switchable
+    /// together for comparison in the same session (<c>.vhstandin</c>, not saved):
+    /// <list type="bullet">
+    /// <item>a coarse section standing in for finer terrain that is not ready covers only the
+    /// quarters that are waiting, rather than its whole area;</item>
+    /// <item>a chunk the game has just announced is rechecked every frame until its mesh is up,
+    /// rather than waiting for the interior sweep while both draw it.</item>
+    /// </list>
+    /// Off restores both behaviours as they were before 0.4.135.
+    /// </summary>
+    public bool StandInFix { get; set; } = true;
+
+    /// <summary>
+    /// Takes a cell off the fresh-chunk list for good: it cannot be handed to the game however
+    /// often it is asked (out of range, or tesselated to nothing), so the ordinary sweeps own it
+    /// again. Its announcement is dropped too, so a much later commit reports no wait.
+    /// </summary>
+    void EndFreshChunkWatch(VanillaChunkCell cell)
+    {
+        if (readiness == null) return;
+        readiness.Unwatch(cell);
+        readiness.TakeAnnouncement(cell);
+    }
+
+    /// <summary>A cell was just handed to the game: it leaves the list, and its wait is recorded.</summary>
+    void NoteFreshChunkConfirmed(VanillaChunkCell cell)
+    {
+        if (readiness == null) return;
+        readiness.Unwatch(cell);
+        long announced = readiness.TakeAnnouncement(cell);
+        if (announced > 0) RecordFreshChunkConfirmed(Environment.TickCount64 - announced);
     }
 
     /// <summary>
@@ -3421,6 +3531,11 @@ public partial class LodTerrainRenderer : IRenderer
                     }
                 }
             }
+            // Freshly announced chunks go to the front of this frame's probes, ahead of the
+            // sweeps, and ahead of the observations promoted just below so a watched cell's
+            // second look is not queued behind them. Off, the list is only kept tidy.
+            readiness.PromoteWatched(frameCounter, Environment.TickCount64,
+                FreshChunkWatchMilliseconds, FreshChunkWatchesPerFrame, promote: StandInFix);
             readiness.PromoteObserved(frameCounter, ReadinessProbeCatchUpItemsPerFrame);
 
             bool catchingUp = readiness.PendingCandidates >= ReadinessProbeCatchUpQueueDepth;
@@ -3558,6 +3673,9 @@ public partial class LodTerrainRenderer : IRenderer
                 {
                     rendered = false;
                     ReadinessOwnershipDeniedBeyondViewDistance++;
+                    // Out of the engine's range, it will not be drawn however often it is
+                    // asked. The range sweep and ordinary probes pick it up if the player nears.
+                    EndFreshChunkWatch(cell);
                 }
 
                 if (rendered && ChunkMaskEnabled && atOwnershipDecision)
@@ -3607,6 +3725,7 @@ public partial class LodTerrainRenderer : IRenderer
                     {
                         rendered = false;
                         ReadinessOwnershipDeniedBeyondViewDistance++;
+                        EndFreshChunkWatch(cell);
                     }
                 }
 
@@ -3629,6 +3748,11 @@ public partial class LodTerrainRenderer : IRenderer
                 {
                     rendered = false;
                     ReadinessOwnershipDeniedNoGeometry++;
+                    // A mesh still on its way is worth checking again next frame. One uploaded
+                    // as nothing - rock with no exposed face - never will be, so it returns to
+                    // the sweep, as does any chunk whose upload state cannot be read.
+                    if (!VanillaChunkGeometry.TryMeshStillComing(decisionChunk, out bool coming) || !coming)
+                        EndFreshChunkWatch(cell);
                 }
 
                 if (!readiness.Observe(cell, rendered, frameCounter,
@@ -3647,6 +3771,7 @@ public partial class LodTerrainRenderer : IRenderer
                 readinessHandoffStale = true;
                 if (publication.Ready) ReadinessReadyTransitions++;
                 else ReadinessLostTransitions++;
+                if (publication.Ready) NoteFreshChunkConfirmed(publication.Cell);
             }
 
             // After the probes, so a cell committed this frame is swept with the sphere the
@@ -5592,6 +5717,7 @@ public partial class LodTerrainRenderer : IRenderer
     {
         waterFrame.Invalidate();
         drawList.Clear();
+        standInQuarters.Clear();
         if (AutoUnpause && capi.IsGamePaused) capi.PauseGame(false);
         if (ContinueLoadingWhilePaused && capi.IsGamePaused) PausedLoadingPump?.Invoke();
 
@@ -5724,8 +5850,10 @@ public partial class LodTerrainRenderer : IRenderer
 
         phaseStart = LodPhaseCost.Start(TrackPhaseAllocations);
         drawList.Clear();
+        standInQuarters.Clear();
         foreach (long top in world.TopLevelKeys) CollectDrawNodes(top);
         WalkCost.Add(phaseStart);
+        EndStandInFrame();
         LastDrawCount = drawList.Count;
         LastTraversalCulledCount = traversalCulledThisFrame;
         LastSubtreeCulledCount = subtreeCulledThisFrame;
@@ -7737,6 +7865,13 @@ public partial class LodTerrainRenderer : IRenderer
             prog!.UniformMatrix("modelMatrix", modelMat.Values);
             prog.Uniform("columnBlocks", (float)LodWorld.ColumnStepBlocks(LodWorld.KeyLevel(key)));
 
+            // The quarters a stand-in covers, for the passes drawn section by section - water,
+            // thin cover and their depth and OIT companions. Without it a stand-in's water would
+            // lie over the finer water its ready quarters already draw. Set for every section,
+            // zero for ordinary ones, because a uniform carries its last value into the next draw.
+            // Opaque ground takes no uniform: its clusters are selected before they are drawn.
+            prog.Uniform("vhStandInQuarters", StandInQuartersFor(key));
+
             // Projection/fog use camera-relative coordinates, but colour noise needs the
             // section's stable world origin or a fixed patch changes colour while flying.
             // This uniform does not affect geometry, so float precision at extreme world
@@ -7868,7 +8003,10 @@ public partial class LodTerrainRenderer : IRenderer
         //
         // A refused packed span must enter this frame's missing list. It must not disappear
         // from accounting merely because an unused expanded mirror record exists.
-        return builder.Add(section, lastSectionFacts);
+        //
+        // A stand-in covering only some quarters submits only their clusters. Clusters are cut
+        // exactly at quarter edges, so this is that quarter's geometry and nothing else.
+        return builder.Add(section, lastSectionFacts, quarters: StandInQuartersFor(key));
     }
 
     int culledThisFrame;

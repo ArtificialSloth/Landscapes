@@ -3589,6 +3589,34 @@ public partial class VintageHorizonsModSystem : ModSystem
                     $"[VintageHorizons] near suppression {renderer.NearSuppressionBlocks:0} blocks.");
             });
 
+        capi.ChatCommands.Create("vhstandin")
+            .WithDescription("The 0.4.135 fix for rough distant terrain briefly appearing over the "
+                + "game's own ground. On, a coarse piece standing in for finer terrain that is not "
+                + "ready covers only the part that is waiting, and chunks the game has just loaded "
+                + "are handed to it within a frame or two. Off restores the old behaviour so the two "
+                + "can be compared. Not saved; every session starts on.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
+            .HandleWith(args =>
+            {
+                if (renderer == null)
+                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                if (args.Parsers[0].IsMissing)
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] stand-in fix {(renderer.StandInFix ? "on" : "off")}. "
+                        + "The log gets a 'stand-in check' line each minute either way.");
+
+                renderer.StandInFix = (bool)args[0];
+                // Logged as well as shown, so the minute reports on either side of the switch can
+                // be told apart without anyone having to remember when it was flipped (G72).
+                string state = renderer.StandInFix
+                    ? "on: coarse stand-ins cover only the part that is waiting, and freshly loaded "
+                        + "chunks are handed to the game within a frame or two"
+                    : "off: coarse stand-ins cover their whole area and freshly loaded chunks wait for "
+                        + "the background sweep, as before 0.4.135";
+                Mod.Logger.Notification("[VintageHorizons] stand-in fix {0}", state);
+                return TextCommandResult.Success("[VintageHorizons] stand-in fix " + state + ".");
+            });
+
         capi.ChatCommands.Create("vhtexture")
             .WithDescription("Draw distant ground with the game's own block textures inside the "
                 + "blending band, instead of one flat colour per block. "

@@ -176,6 +176,7 @@ public partial class VintageHorizonsModSystem
     void AddHandoffConfiguration(List<string> lines)
     {
         Heading(lines, "HANDOFF / CULLING");
+        Entry(lines, ".vhstandin", renderer.StandInFix);
         Entry(lines, ".vhpaint", renderer.MaskDebugPaint);
         Entry(lines, ".vhskip", renderer.WholeMeshSkip);
         Entry(lines, ".vhbackface", renderer.OpaqueBackfaceCulling);
