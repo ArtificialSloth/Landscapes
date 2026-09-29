@@ -260,6 +260,9 @@ public sealed class LodHitchRecorder : IRenderer
         public readonly int[] GcNow = new int[3];
         public TimeSpan GcPauseNow;
         public long AllocatedNow;
+        public long HeapBytes;
+        public long CommittedBytes;
+        public long WorkingSetBytes;
         public readonly Dictionary<string, (long Bytes, long Runs)> JobsNow = new();
         public LodAllocationSampler.Window? Sampled;
         public string? ChunkThread;
@@ -722,7 +725,7 @@ public sealed class LodHitchRecorder : IRenderer
         for (int g = 0; g < 3; g++) w.GcAtStart[g] = GC.CollectionCount(g);
         w.GcPauseAtStart = GC.GetTotalPauseDuration();
         sampler?.TakeWindow();
-        w.AllocatedAtStart = GC.GetTotalAllocatedBytes(false);
+        w.AllocatedAtStart = GC.GetTotalAllocatedBytes(precise: true);
         LodHitchActivity.ReadJobs(w.JobsAtStart);
         w.ChunkAtStart = ChunkThreadRest.Read();
     }
@@ -743,7 +746,14 @@ public sealed class LodHitchRecorder : IRenderer
         LodHitchActivity.Read(closed.ActivityNow);
         for (int g = 0; g < 3; g++) closed.GcNow[g] = GC.CollectionCount(g);
         closed.GcPauseNow = GC.GetTotalPauseDuration();
-        closed.AllocatedNow = GC.GetTotalAllocatedBytes(false);
+        // Exact: the approximate count advances only when a thread takes a new allocation
+        // region, and under the Server GC's large regions it lagged the 0.4.133 session's
+        // windows by up to 85% (47-62 MB/s reported where the samples added up to ~340).
+        closed.AllocatedNow = GC.GetTotalAllocatedBytes(precise: true);
+        GCMemoryInfo memory = GC.GetGCMemoryInfo();
+        closed.HeapBytes = memory.HeapSizeBytes;
+        closed.CommittedBytes = memory.TotalCommittedBytes;
+        closed.WorkingSetBytes = Environment.WorkingSet;
         closed.Sampled = sampler?.TakeWindow();
         LodHitchActivity.ReadJobs(closed.JobsNow);
         closed.SinglePlayer = capi?.IsSinglePlayer == true;
@@ -982,15 +992,29 @@ public sealed class LodHitchRecorder : IRenderer
         int gen1 = w.GcNow[1] - w.GcAtStart[1];
         int gen2 = w.GcNow[2] - w.GcAtStart[2];
         double pauseMs = (w.GcPauseNow - w.GcPauseAtStart).TotalMilliseconds;
+        // What a player feels is the longest freezes, not the total, and the collector setting
+        // trades how often against how long; memory is what the all-cores collector costs.
+        float longestGcMs = 0;
+        int heldTenMs = 0;
+        for (int i = 0; i < w.RecordCount; i++)
+        {
+            float gc = w.Records[i].GcMs;
+            if (gc > longestGcMs) longestGcMs = gc;
+            if (gc >= 10) heldTenMs++;
+        }
+        const double Gb = 1024.0 * 1024.0 * 1024.0;
         lines.Add(string.Format(
-            "   garbage collections gen0/1/2 {0}/{1}/{2}, {3:0} ms paused in total; {4}",
+            "   garbage collections gen0/1/2 {0}/{1}/{2}, {3:0} ms paused in total, longest {5:0} ms in "
+            + "one frame, {6} frames held 10 ms or more; memory: collected heap {7:0.0} GB, committed "
+            + "{8:0.0} GB, whole game {9:0.0} GB; {4}",
             gen0, gen1, gen2, pauseMs,
             w.SinglePlayer
                 ? $"server work in this process: sweep loads {w.ActivityNow[0] - w.ActivityAtStart[0]}, "
                   + $"snow refresh loads {w.ActivityNow[1] - w.ActivityAtStart[1]}, "
                   + $"audit recaptures {w.ActivityNow[2] - w.ActivityAtStart[2]}, "
                   + $"savegame re-reads {w.ActivityNow[3] - w.ActivityAtStart[3]}; {w.ChunkThread}"
-                : "server work is not visible from a remote server's client"));
+                : "server work is not visible from a remote server's client",
+            longestGcMs, heldTenMs, w.HeapBytes / Gb, w.CommittedBytes / Gb, w.WorkingSetBytes / Gb));
 
         // Who made the garbage behind those collections.
         long allocated = w.AllocatedNow - w.AllocatedAtStart;

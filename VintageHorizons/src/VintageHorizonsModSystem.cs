@@ -231,6 +231,13 @@ public class VintageHorizonsConfig
     public float TaaNudge = LodTaaMath.DefaultNudge;
     public float TaaSharpen = LodTaaMath.DefaultSharpen;
     public float TaaClip = LodTaaMath.DefaultClip;
+
+    /// <summary>
+    /// Start the game with .NET's all-cores (Server) garbage collector, by one property in the
+    /// game's own start-up file (<see cref="GameCollectorSetting"/>). Off by default: it edits a
+    /// file in the game folder, it applies only from the next start, and it uses more memory.
+    /// </summary>
+    public bool AllCoresGarbageCollection;
 }
 
 /// <summary>The normal 50 ms game-tick cadence, expressed over a pause-safe monotonic clock.</summary>
@@ -323,6 +330,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             config = new VintageHorizonsConfig();
         }
         ResetOutdatedFogDials(configLoaded);
+        SyncGameCollector();
 
         // Before anything that can return early, and before the connection handshake:
         // the server learns we speak this channel at handshake time and never again. A
@@ -2708,16 +2716,19 @@ public partial class VintageHorizonsModSystem : ModSystem
         var worldGen = new WorldGenTuning(
             ConfiguredWorldGenPreferences(), assist, SaveWorldGenPreferences,
             openLiveWorldGen);
+        var collector = new CollectorTuning(
+            config.AllCoresGarbageCollection, () => GameCollectorSetting.InEffect,
+            SaveAllCoresGarbageCollection);
 
         return requestRecompose != null && requestClose != null
             ? new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
                 loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, silhouetteTuning, worldGen,
-                requestRecompose, requestClose, ApplyGuiConfig)
+                collector, requestRecompose, requestClose, ApplyGuiConfig)
             : new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
                 loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, silhouetteTuning, worldGen,
-                ApplyGuiConfig);
+                collector, ApplyGuiConfig);
     }
 
     LodWorldGenPreferences ConfiguredWorldGenPreferences()
@@ -2729,6 +2740,85 @@ public partial class VintageHorizonsModSystem : ModSystem
         int maxRadius = assist?.ServerSettings?.WorldGenMaxRadiusChunks ?? 256;
         return new LodWorldGenPreferences(config.WorldGenRadiusChunks, shape, centre,
             config.WorldGenCentreX, config.WorldGenCentreZ, "Balanced").Normalize(maxRadius);
+    }
+
+    /// <summary>
+    /// Keeps the game's start-up file in step with the all-cores collector setting and says in
+    /// the log what this session runs. A game update replaces the file, so a setting that is on
+    /// is set again here; like any change to it, that applies from the next start.
+    /// </summary>
+    void SyncGameCollector()
+    {
+        string? path = GameCollectorSetting.RuntimeConfigPath();
+        string file;
+        if (path == null)
+        {
+            file = "no start-up file was found beside the game";
+        }
+        else
+        {
+            GameCollectorSetting.FileState state;
+            try
+            {
+                state = GameCollectorSetting.ReadState(File.ReadAllText(path));
+            }
+            catch (Exception e)
+            {
+                state = GameCollectorSetting.FileState.Unavailable;
+                Mod.Logger.Warning("[VintageHorizons] The game's start-up file could not be read: {0}", e.Message);
+            }
+            bool fileOn = state is GameCollectorSetting.FileState.OnByThisMod
+                or GameCollectorSetting.FileState.OnElsewhere;
+            if (config.AllCoresGarbageCollection && !fileOn && state != GameCollectorSetting.FileState.Unavailable)
+            {
+                GameCollectorSetting.Apply(path, on: true, out string message);
+                file = message + " (the start-up file had lost it, as a game update does)";
+            }
+            else if (!config.AllCoresGarbageCollection && state == GameCollectorSetting.FileState.OnByThisMod)
+            {
+                GameCollectorSetting.Apply(path, on: false, out string message);
+                file = message;
+            }
+            else
+            {
+                file = "start-up file " + state switch
+                {
+                    GameCollectorSetting.FileState.OnByThisMod => "set by Vintage Horizons",
+                    GameCollectorSetting.FileState.OnElsewhere => "set outside Vintage Horizons",
+                    GameCollectorSetting.FileState.Off => "at the game's default",
+                    _ => "unreadable",
+                };
+            }
+        }
+        Mod.Logger.Notification(
+            "[VintageHorizons] All-cores garbage collection: {0} in this mod's settings, {1} in this session; {2}.",
+            config.AllCoresGarbageCollection ? "on" : "off",
+            GameCollectorSetting.InEffect ? "running" : "not running", file);
+    }
+
+    /// <summary>
+    /// The Performance tab's Save: edits the game's start-up file and says what happened, in
+    /// chat and in the log. A file that could not be changed leaves the setting as it was.
+    /// </summary>
+    string SaveAllCoresGarbageCollection(bool on)
+    {
+        if (on == config.AllCoresGarbageCollection) return "";
+        string? path = GameCollectorSetting.RuntimeConfigPath();
+        string message;
+        bool changed;
+        if (path == null)
+        {
+            message = "no start-up file was found beside the game, so nothing changed";
+            changed = false;
+        }
+        else
+        {
+            changed = GameCollectorSetting.Apply(path, on, out message);
+        }
+        if (changed) config.AllCoresGarbageCollection = on;
+        Mod.Logger.Notification("[VintageHorizons] {0}", message);
+        capi.ShowChatMessage("[VintageHorizons] " + char.ToUpperInvariant(message[0]) + message[1..] + ".");
+        return message;
     }
 
     void SaveWorldGenPreferences(LodWorldGenPreferences value)

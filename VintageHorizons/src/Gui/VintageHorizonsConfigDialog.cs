@@ -19,6 +19,13 @@ internal sealed record TaaTuning(LodTaaDials Initial, bool ShowInitial,
 internal sealed record VanillaDistanceTuning(int Initial, Func<int, int[]> Apply);
 
 /// <summary>
+/// The Performance tab's all-cores garbage collection switch (<see cref="GameCollectorSetting"/>):
+/// what the settings say, whether this session runs it, and Save, which edits the game's
+/// start-up file and reports what happened.
+/// </summary>
+internal sealed record CollectorTuning(bool Initial, Func<bool> InEffect, Func<bool, string> Save);
+
+/// <summary>
 /// One set of coordinates for both the standalone command window and the page embedded in
 /// vanilla Settings. Keeping the row edges here makes clipping a testable rule instead of a
 /// collection of unrelated literals.
@@ -30,8 +37,8 @@ internal static class VintageHorizonsConfigLayout
     internal const double Margin = 32;
     internal const double SwitchX = 824;
     internal const double ButtonY = Height - 58;
-    internal const double TabsWidth = 640;
-    internal const int PlannedTabCount = 4;
+    internal const double TabsWidth = 760;
+    internal const int PlannedTabCount = 5;
 
     internal const double ScaleY = 96;
     internal const double ScaleHeight = 210;
@@ -110,6 +117,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     const int AntiAliasingTab = 1;
     const int SilhouettesTab = 2;
     const int GenerateTab = 3;
+    const int PerformanceTab = 4;
 
     // The anti-aliasing rows: where each slider starts, how wide it is, and the row pitch.
     const double DialSliderX = VintageHorizonsConfigLayout.DialSliderX;
@@ -125,6 +133,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         "Keeps cache loading, LOD preparation and bounded terrain updates moving while the "
         + "singleplayer pause menu is open. It does not unpause the game simulation.";
 
+    const string AllCoresTip =
+        "Runs the game's garbage collection on every core instead of one, and far less often. "
+        + "Those collections are the small freezes behind stutter while exploring: about 20 times "
+        + "fewer in the owner's tests. Uses more memory. It adds one line to the game's own start-up "
+        + "file, so it applies from the next start; switch it off here before removing Vintage "
+        + "Horizons, or the game keeps it until its next update.";
+
     const string ShowTip =
         "Tints anti-aliased terrain magenta, stronger where it is fully applied, to show what the "
         + "sliders reach. For this session only; it is never saved. (.vhtaa show)";
@@ -135,6 +150,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     readonly VanillaDistanceTuning vanilla;
     readonly WorldGenTuning worldGen;
     readonly SilhouetteTuning silhouettes;
+    readonly CollectorTuning collector;
     readonly bool embedded;
     readonly Action? requestEmbeddedRecompose;
     readonly Action? requestEmbeddedClose;
@@ -149,6 +165,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     LodSilhouetteSettings pendingSilhouettes;
     bool pendingShowTaa;
     LodWorldGenPreferences pendingWorldGen;
+    bool pendingAllCores;
     LodThresholdScaleElement? scale;
     GuiComposer? activeComposer;
     bool sessionClosed;
@@ -170,10 +187,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
         TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
+        CollectorTuning collector,
         Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
             LodSilhouetteSettings> save)
         : this(capi, thresholds, automaticThresholds, automatic, farCap, loadWhilePaused,
-            visuals, vanilla, taa, silhouettes, worldGen, false, null, null, save)
+            visuals, vanilla, taa, silhouettes, worldGen, collector, false, null, null, save)
     {
         ComposeDialog();
     }
@@ -186,19 +204,20 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
         TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
-        Action requestRecompose, Action requestClose,
+        CollectorTuning collector, Action requestRecompose, Action requestClose,
         Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
             LodSilhouetteSettings> save)
         : this(capi, thresholds, automaticThresholds, automatic, farCap, loadWhilePaused,
-            visuals, vanilla, taa, silhouettes, worldGen, true, requestRecompose, requestClose, save)
+            visuals, vanilla, taa, silhouettes, worldGen, collector, true, requestRecompose,
+            requestClose, save)
     {
     }
 
     VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
-        TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen, bool embedded,
-        Action? requestRecompose, Action? requestClose,
+        TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
+        CollectorTuning collector, bool embedded, Action? requestRecompose, Action? requestClose,
         Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
             LodSilhouetteSettings> save) : base(capi)
     {
@@ -207,6 +226,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         this.silhouettes = silhouettes;
         this.vanilla = vanilla;
         this.worldGen = worldGen;
+        this.collector = collector;
+        pendingAllCores = collector.Initial;
         vanillaViewDistance = Math.Clamp(vanilla.Initial,
             LodThresholdScaleLayout.MinVanillaDistance,
             LodThresholdScaleLayout.MaxVanillaDistance);
@@ -487,6 +508,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (shownTab == AntiAliasingTab) ComposeAntiAliasing(composer);
         else if (shownTab == SilhouettesTab) ComposeSilhouettes(composer);
         else if (shownTab == GenerateTab) ComposeGenerate(composer);
+        else if (shownTab == PerformanceTab) ComposePerformance(composer);
         else ComposeGeneral(composer);
 
         composer.AddButton("Defaults", OnDefaults,
@@ -509,6 +531,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 new GuiTab { Name = "Anti-Aliasing", DataInt = AntiAliasingTab },
                 new GuiTab { Name = "Farseer", DataInt = SilhouettesTab },
                 new GuiTab { Name = "Generate", DataInt = GenerateTab },
+                new GuiTab { Name = "Performance", DataInt = PerformanceTab },
             },
             bounds, OnTabClicked,
             CairoFont.WhiteSmallText(), CairoFont.WhiteSmallText().WithColor(GuiStyle.ActiveButtonTextColor),
@@ -523,6 +546,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (shownTab == AntiAliasingTab) SetAntiAliasingValues();
         else if (shownTab == SilhouettesTab) SetSilhouetteValues();
         else if (shownTab == GenerateTab) SetGenerateValues();
+        else if (shownTab == PerformanceTab) SetPerformanceValues();
         else SetGeneralValues();
     }
 
@@ -618,6 +642,65 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         {
             activeComposer.GetSwitch(row.Key).On = row.Read(pendingVisuals);
         }
+    }
+
+    /// <summary>
+    /// Settings that change how the game itself runs rather than what is drawn. One row today:
+    /// all-cores garbage collection, with which the owner's exploring stutter went away in the
+    /// Session 111 measurements. It applies only from the next start, so the page says what this
+    /// session actually runs.
+    /// </summary>
+    void ComposePerformance(GuiComposer composer)
+    {
+        composer.AddStaticText("Performance", CairoFont.WhiteMediumText(),
+            ElementBounds.Fixed(Margin, Y(42), 480, 30));
+        composer.AddStaticText("Changes here apply from the next time you start the game.",
+            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(74), Width - 2 * Margin, 22));
+
+        const double rowY = 116;
+        composer.AddStaticText("All-Cores Garbage Collection", CairoFont.WhiteSmallishText(),
+            ElementBounds.Fixed(Margin, Y(rowY + 5), 650, 26));
+        composer.AddStaticText("More RAM", CairoFont.WhiteDetailText(),
+            EnumTextOrientation.Right,
+            ElementBounds.Fixed(SwitchX - 110, Y(rowY + 8), 100, 22));
+        composer.AddSwitch(OnAllCoresChanged,
+            ElementBounds.Fixed(SwitchX, Y(rowY), 32, 32), "all-cores-gc");
+        composer.AddHoverText(AllCoresTip, CairoFont.WhiteSmallText(), 380,
+            ElementBounds.Fixed(Margin, Y(rowY), SwitchX + 32 - Margin, RowHeight - 2),
+            "tip-all-cores-gc");
+        composer.AddDynamicText(AllCoresStatus(), CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(Margin, Y(rowY + RowHeight + 4), Width - 2 * Margin, 44),
+            "all-cores-status");
+    }
+
+    void SetPerformanceValues()
+    {
+        if (activeComposer?.Composed != true) return;
+        activeComposer.GetSwitch("all-cores-gc").On = pendingAllCores;
+        RefreshAllCoresStatus();
+    }
+
+    void OnAllCoresChanged(bool on)
+    {
+        pendingAllCores = on;
+        RefreshAllCoresStatus();
+    }
+
+    void RefreshAllCoresStatus()
+    {
+        if (activeComposer?.Composed != true || shownTab != PerformanceTab) return;
+        activeComposer.GetDynamicText("all-cores-status")
+            .SetNewText(AllCoresStatus(), false, true, false);
+    }
+
+    string AllCoresStatus()
+    {
+        string now = collector.InEffect()
+            ? "This session runs all-cores garbage collection."
+            : "This session runs the game's default garbage collection.";
+        return pendingAllCores == collector.InEffect()
+            ? now
+            : now + " Save, then restart the game, to switch.";
     }
 
     void ComposeAntiAliasing(GuiComposer composer)
@@ -1267,6 +1350,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// </summary>
     bool OnDefaults()
     {
+        if (shownTab == PerformanceTab)
+        {
+            pendingAllCores = false;
+            SetPerformanceValues();
+            return true;
+        }
+
         if (shownTab == AntiAliasingTab)
         {
             pendingTaa = LodTaaDials.Default;
@@ -1334,6 +1424,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (sessionClosed) return true;
         saved = true;
         worldGen.Save(pendingWorldGen.Normalize(ServerWorldGenMaxRadius()));
+        collector.Save(pendingAllCores);
         save(pendingThresholds, pendingAutomatic, pendingFarCap, pendingLoadWhilePaused,
             pendingVisuals, pendingTaa, pendingSilhouettes.Normalize());
         if (embedded)

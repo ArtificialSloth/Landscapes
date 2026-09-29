@@ -41,6 +41,7 @@ public static class Program
         ("pure", "phase timing", PhaseCostChecks.Run),
         ("pure", "hitch recorder", HitchRecorderChecks.Run),
         ("pure", "chunk thread rest", ChunkThreadRestChecks.Run),
+        ("fixture", "all-cores collector setting", GameCollectorChecks.Run),
         ("runtime", "allocation sampler", AllocationSamplerChecks.Run),
         ("pure", "reused storage", PoolingChecks.Run),
         ("fixture", "savegame read path", SavegameReaderChecks.Run),

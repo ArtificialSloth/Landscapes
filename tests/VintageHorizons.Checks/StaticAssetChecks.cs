@@ -2672,6 +2672,14 @@ public static class StaticAssetChecks
         c.True(VintageHorizonsConfigLayout.TabsWidth
                 / VintageHorizonsConfigLayout.PlannedTabCount >= 150,
             "the tab strip reserves at least 150 pixels each with the Farseer tab present");
+        c.True(VintageHorizonsConfigLayout.Margin + VintageHorizonsConfigLayout.TabsWidth
+                <= VintageHorizonsConfigLayout.Width,
+            "the widened five-tab strip still fits inside the window, embedded or standalone");
+        c.True(dialog.Contains("\"all-cores-gc\"", StringComparison.Ordinal)
+                && dialog.Contains("collector.Save(pendingAllCores);", StringComparison.Ordinal)
+                && mod.Contains("public bool AllCoresGarbageCollection;", StringComparison.Ordinal)
+                && mod.Contains("SyncGameCollector();", StringComparison.Ordinal),
+            "the Performance page saves its all-cores switch, and each start keeps the game's file in step");
 
         c.True(dialog.Contains("\"load-while-paused\"", StringComparison.Ordinal)
                 && mod.Contains("public bool LoadWhilePaused = true;", StringComparison.Ordinal)

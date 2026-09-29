@@ -239,6 +239,8 @@ public static class HitchRecorderChecks
 
         c.True(log.Contains("0 frames over twice the median, 0 over 50 ms"),
             "a steady run has no frames over twice the median");
+        c.True(log.Contains("longest 0 ms in one frame, 0 frames held 10 ms or more; memory: collected heap"),
+            "the collections line says the longest collection freeze and what memory the game holds");
         c.False(log.Contains("worst:"), "a steady run lists no worst frames");
     }
 
