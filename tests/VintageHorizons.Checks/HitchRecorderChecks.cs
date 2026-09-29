@@ -23,6 +23,20 @@ public static class HitchRecorderChecks
         SteadyRunReportsNoHitches(c);
         SurvivesManyStepNames(c);
         WritesTheMinuteOffTheCallingThread(c);
+        NamesTheCollector(c);
+    }
+
+    /// <summary>
+    /// The session's collector settings reach the log, so a launcher test can be told apart
+    /// from an ordinary session. The checks run under the default workstation collector.
+    /// </summary>
+    static void NamesTheCollector(Check c)
+    {
+        string described = LodHitchRecorder.DescribeCollector();
+        c.True(described.StartsWith("workstation", StringComparison.Ordinal),
+            "the checks' own collector is named as workstation: " + described);
+        c.True(Regex.IsMatch(described, @"gen0 allowance \d+ MB"),
+            "and its gen0 allowance is read from the runtime: " + described);
     }
 
     /// <summary>

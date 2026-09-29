@@ -413,6 +413,48 @@ public sealed class LodHitchRecorder : IRenderer
                 + "per thread (threads named vintagehorizons-* are this mod's), per kind of object, "
                 + "why each collection ran, and exactly what this mod's own jobs allocated. "
                 + "'.vhhitch off' stops it; '.vhhitch' writes the current minute now.");
+            logger.Notification("[VintageHorizons] Garbage collector in this process: {0}", DescribeCollector());
+        }
+    }
+
+    /// <summary>
+    /// The collector's mode and gen0 allowance as the runtime applied them, plus any launch
+    /// setting that asked for them. A session started from a launcher with a collector
+    /// setting is otherwise indistinguishable in the log from an ordinary one, and a setting
+    /// the runtime capped or ignored would pass for one it applied (Session 111: asking for a
+    /// 256 MB gen0 allowance gets 128 MB).
+    /// </summary>
+    internal static string DescribeCollector()
+    {
+        try
+        {
+            IReadOnlyDictionary<string, object> config = GC.GetConfigurationVariables();
+            bool server = config.TryGetValue("ServerGC", out object? s) && s is true;
+            bool background = config.TryGetValue("ConcurrentGC", out object? b) && b is true;
+            long allowance = config.TryGetValue("GCGen0MaxBudget", out object? g) ? Convert.ToInt64(g) : 0;
+            var text = new StringBuilder(server ? "server (every core collects)" : "workstation (one core collects)");
+            text.Append($", background full collections {(background ? "on" : "off")}");
+            text.Append(allowance > 0 ? $", gen0 allowance {allowance >> 20} MB" : ", gen0 allowance not reported");
+            if (server)
+            {
+                if (config.TryGetValue("HeapCount", out object? heaps)) text.Append($" per heap, up to {heaps} heaps");
+                if (config.TryGetValue("GCDynamicAdaptationMode", out object? adapt))
+                    text.Append(Convert.ToInt64(adapt) == 1 ? ", heap count adaptive" : ", heap count fixed");
+            }
+            var settings = Environment.GetEnvironmentVariables().Keys.Cast<string>()
+                .Where(k => k.StartsWith("DOTNET_GC", StringComparison.OrdinalIgnoreCase)
+                    || k.StartsWith("DOTNET_gcServer", StringComparison.OrdinalIgnoreCase)
+                    || k.StartsWith("COMPlus_GC", StringComparison.OrdinalIgnoreCase)
+                    || k.StartsWith("COMPlus_gcServer", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+                .Select(k => $"{k}={Environment.GetEnvironmentVariable(k)}")
+                .ToList();
+            text.Append(settings.Count == 0 ? "; no launch settings" : "; launch settings " + string.Join(", ", settings));
+            return text.ToString();
+        }
+        catch (Exception e)
+        {
+            return "not readable (" + e.Message + ")";
         }
     }
 
