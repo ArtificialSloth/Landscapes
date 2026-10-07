@@ -288,7 +288,7 @@ internal sealed class LodGpuIndirectDrawer : IDisposable
         if (Failed) return;
         Failed = true;
         FailureReason = reason;
-        warn("[VintageHorizons] Indirect cached-terrain drawing disabled for this session; "
+        warn("[Landscapes] Indirect cached-terrain drawing disabled for this session; "
             + "the established renderer takes the next frame: " + reason);
     }
 

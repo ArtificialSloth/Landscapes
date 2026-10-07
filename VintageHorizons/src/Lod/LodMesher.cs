@@ -780,7 +780,7 @@ public static class LodMesher
     ///
     /// The cost is walls between neighbouring crops and a top face under each one, all of it
     /// sealed inside solid geometry and invisible everywhere except the seam that needs it.
-    /// That is why it is a switch: see MeshJob.CutoutBlocksCover and `.vhcutout`.
+    /// That is why it is a switch: see MeshJob.CutoutBlocksCover and `.dlcutout`.
     /// </summary>
     static bool IsCutoutRun(SectionSnapshot s, ulong run, bool cutoutsCover) =>
         !cutoutsCover

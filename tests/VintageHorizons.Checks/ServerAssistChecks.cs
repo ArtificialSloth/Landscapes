@@ -160,7 +160,7 @@ public static class ServerAssistChecks
     /// there, and not only the next person to join.
     ///
     /// Both cases below were live defects. The first shipped in 0.2.0 and was reported from
-    /// the field: the manifest was sent once, at the greeting, so an admin running /vhgen
+    /// the field: the manifest was sent once, at the greeting, so an admin running /dlgen
     /// while people played built terrain none of them could ask for. The second was in the
     /// fix for the first, and is narrower and worse, because it needs no admin at all.
     /// </summary>
@@ -326,7 +326,7 @@ public static class ServerAssistChecks
 
     /// <summary>
     /// What a client concludes from the server's welcome. Every branch has to leave Status
-    /// set to something a player can act on, because .vhinfo prints it verbatim and it is
+    /// set to something a player can act on, because .dlinfo prints it verbatim and it is
     /// the only feedback anyone gets about why distant terrain is or is not arriving.
     /// </summary>
     static void ProtocolNegotiation(Check c)
@@ -725,7 +725,7 @@ public static class ServerAssistChecks
 
     /// <summary>
     /// "Not written yet" and "never" arrive as the same empty packet, and the client used
-    /// to read both as never. On a server that is sweeping or running /vhgen that is the
+    /// to read both as never. On a server that is sweeping or running /dlgen that is the
     /// common case, because the manifest carries mip parents that exist in memory before
     /// their row does, so a player lost those sections for the whole session.
     ///

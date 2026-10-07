@@ -28,7 +28,7 @@ An existing settled save can replace Seed:
 
 -ChunkThreadRest compares the game's chunk thread resting and spinning on the same seed
 (Session 111).  On installs Vintage Horizons' rest and leaves it on.  Off installs it and
-switches it off with /vhchunkrest before generating, so the run is the game's own
+switches it off with /dlchunkrest before generating, so the run is the game's own
 behaviour with the rest still counting passes and allocation.  Absent pins
 RestIdleChunkThread false, so the patch is not installed at all.  Default leaves the mod's
 own default in force.
@@ -75,7 +75,7 @@ $ModConfigSource = if ($ModConfigSource) { [IO.Path]::GetFullPath($ModConfigSour
     Join-Path $dataPath 'ModConfig'
 }
 $python = Get-Command python3, python -ErrorAction SilentlyContinue | Select-Object -First 1
-$effectiveRequiredModIds = @($RequiredModIds + 'vintagehorizons' | Sort-Object -Unique)
+$effectiveRequiredModIds = @($RequiredModIds + 'dodenslandscapes' | Sort-Object -Unique)
 
 function Assert-UnderGateBase {
     param([Parameter(Mandatory)][string]$Path)
@@ -103,7 +103,7 @@ function Get-VintageHorizonsZip {
     $version = ([string]($project.Project.PropertyGroup.Version |
         Where-Object { $_ } | Select-Object -First 1)).Trim()
     if (-not $version) { throw 'Could not read the Vintage Horizons project version.' }
-    $zip = Join-Path $repoRoot "dist\vintagehorizons_$version.zip"
+    $zip = Join-Path $repoRoot "dist\dodenslandscapes_$version.zip"
     if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
         throw "The exact current Vintage Horizons zip is missing: $zip"
     }
@@ -172,7 +172,7 @@ function Write-PinnedConfig {
     }
     if ($ChunkThreadRest -ne 'Default') { $pinned.RestIdleChunkThread = ($ChunkThreadRest -ne 'Absent') }
     $pinned | ConvertTo-Json | Set-Content -LiteralPath (
-        Join-Path $TargetDataPath 'ModConfig\vintagehorizons-server.json') -Encoding utf8
+        Join-Path $TargetDataPath 'ModConfig\dodenslandscapes-server.json') -Encoding utf8
     @{
         MaxWorldgenThreads = $Threads
         ServerMagicNumVersion = '1.3'
@@ -199,7 +199,7 @@ function Initialize-ModEnvironment {
 
     $copied = @()
     foreach ($entry in Get-ChildItem -LiteralPath $ModSource -Force) {
-        if ($entry.Name -match '^vintagehorizons(?:_|\.|$)') { continue }
+        if ($entry.Name -match '^dodenslandscapes(?:_|\.|$)') { continue }
         Copy-Item -LiteralPath $entry.FullName -Destination $modsTarget -Recurse
         $copied += $entry.Name
     }
@@ -497,8 +497,8 @@ function Invoke-IsolatedServer {
 
             if ($ready -and -not $commandSent) {
                 if ($Generate -and $ChunkThreadRest -eq 'Off') {
-                    $process.StandardInput.WriteLine('/vhchunkrest off')
-                    Write-Host '  sent /vhchunkrest off'
+                    $process.StandardInput.WriteLine('/dlchunkrest off')
+                    Write-Host '  sent /dlchunkrest off'
                 }
                 if ($Generate) {
                     $phase = 'generation'

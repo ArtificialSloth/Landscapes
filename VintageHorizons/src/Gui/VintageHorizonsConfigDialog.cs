@@ -62,7 +62,7 @@ internal static class VintageHorizonsConfigLayout
 }
 
 /// <summary>
-/// Client-only settings editor shared by the in-game Settings page and .vhconfig window.
+/// Client-only settings editor shared by the in-game Settings page and .dlconfig window.
 ///
 /// <para>
 /// Four tabs. General is how far and how finely cached terrain is drawn, and which of the
@@ -142,7 +142,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     const string ShowTip =
         "Tints anti-aliased terrain magenta, stronger where it is fully applied, to show what the "
-        + "sliders reach. For this session only; it is never saved. (.vhtaa show)";
+        + "sliders reach. For this session only; it is never saved. (.dltaa show)";
 
     readonly Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
         LodSilhouetteSettings> save;
@@ -177,7 +177,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// <summary>Set by Save, so closing afterwards keeps the anti-aliasing dials rather than putting them back.</summary>
     bool saved;
 
-    public override string DebugName => "vintagehorizons-config";
+    public override string DebugName => "dodenslandscapes-config";
     public override string? ToggleKeyCombinationCode => null;
     public override bool PrefersUngrabbedMouse => true;
 
@@ -469,7 +469,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         GuiComposer composer = capi.Gui
             .CreateCompo(DebugName, dialogBounds)
             .AddShadedDialogBG(ElementBounds.Fill, true)
-            .AddDialogTitleBar("Vintage Horizons", OnTitleClose)
+            .AddDialogTitleBar("Doden's Landscapes", OnTitleClose)
             .BeginChildElements();
 
         activeComposer = composer;
@@ -488,7 +488,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     internal void ComposeEmbedded(GuiComposer composer)
     {
         if (!embedded || sessionClosed)
-            throw new InvalidOperationException("This Vintage Horizons editor is not active in Settings.");
+            throw new InvalidOperationException("This Doden's Landscapes editor is not active in Settings.");
 
         activeComposer = composer;
         AddTabs(composer, ElementBounds.Fixed(Margin,
@@ -941,7 +941,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         LodAssistClient? client = worldGen.Client;
         if (client == null || !client.WorldGenerationAvailable)
-            return "Unavailable: load a world on a server running a current Vintage Horizons build.";
+            return "Unavailable: load a world on a server running a current Doden's Landscapes build.";
         if (NeedsLiveWorldGenWindow())
             return "Singleplayer is paused in Settings. Open live controls to start or manage generation.";
         if (client.WorldGenStatus?.Available == false)
@@ -1115,7 +1115,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             if (sessionClosed) return;
             if (embedded) requestEmbeddedRecompose?.Invoke();
             else if (IsOpened()) ComposeDialog();
-        }, "vintagehorizons-config-tab");
+        }, "dodenslandscapes-config-tab");
     }
 
     bool OnDialChanged(LodTaaSliders.Row row, int value)
@@ -1148,7 +1148,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     const string SeamFogTip = "Fog over the seam between Farseer and real terrain. Off draws "
         + "no fog and builds nothing for it, so switching it shows its whole cost; the seam "
-        + "is visible while it is off. .vhfog toggles it without saving.";
+        + "is visible while it is off. .dlfog toggles it without saving.";
 
     void OnSilhouetteFogChanged(bool on)
     {

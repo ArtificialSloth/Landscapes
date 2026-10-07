@@ -20,10 +20,10 @@ public static class WaterDepthPassChecks
         string root = GameAssemblies.RepoRoot;
         string renderer = File.ReadAllText(Path.Combine(root, "VintageHorizons", "src", "Render", "LodTerrainRenderer.cs"));
         string pass = File.ReadAllText(Path.Combine(root, "VintageHorizons", "src", "Render", "LodTerrainRenderer.WaterDepth.cs"));
-        string body = ModShaderSource.Read(Path.Combine(root, "VintageHorizons", "assets", "vintagehorizons", "shaderincludes", "lodterrainbody.fsh"));
-        string vertex = File.ReadAllText(Path.Combine(root, "VintageHorizons", "assets", "vintagehorizons", "shaders", "lodwaterdepth.vsh"));
-        string fragment = File.ReadAllText(Path.Combine(root, "VintageHorizons", "assets", "vintagehorizons", "shaders", "lodwaterdepth.fsh"));
-        string vertexBody = File.ReadAllText(Path.Combine(root, "VintageHorizons", "assets", "vintagehorizons", "shaderincludes", "lodwaterbody.vsh"));
+        string body = ModShaderSource.Read(Path.Combine(root, "VintageHorizons", "assets", "dodenslandscapes", "shaderincludes", "lodterrainbody.fsh"));
+        string vertex = File.ReadAllText(Path.Combine(root, "VintageHorizons", "assets", "dodenslandscapes", "shaders", "lodwaterdepth.vsh"));
+        string fragment = File.ReadAllText(Path.Combine(root, "VintageHorizons", "assets", "dodenslandscapes", "shaders", "lodwaterdepth.fsh"));
+        string vertexBody = File.ReadAllText(Path.Combine(root, "VintageHorizons", "assets", "dodenslandscapes", "shaderincludes", "lodwaterbody.vsh"));
         c.True(vertex.Contains("#include lodwaterbody.vsh")
             && fragment.Contains("#include lodterrainbody.fsh")
             && fragment.Contains("#define VH_WATER_DEPTH 1"),

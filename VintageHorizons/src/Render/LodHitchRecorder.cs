@@ -295,18 +295,18 @@ public sealed class LodHitchRecorder : IRenderer
             EndWindow("recorder switched off", inBackground: false);
             Disarm();
             enabled = false;
-            logger.Notification("[VintageHorizons] Hitch recorder off.");
+            logger.Notification("[Landscapes] Hitch recorder off.");
             return "Hitch recorder off. The partial minute was written to the client log.";
         }
         enabled = true;
-        logger.Notification("[VintageHorizons] Hitch recorder on; it starts with the next frame.");
+        logger.Notification("[Landscapes] Hitch recorder on; it starts with the next frame.");
         return "Hitch recorder on. It writes a report to the client log once a minute.";
     }
 
     /// <summary>Writes the current partial minute now, without waiting for the minute to end.</summary>
     public string ReportNow()
     {
-        if (!enabled) return "Hitch recorder is off. '.vhhitch on' starts it.";
+        if (!enabled) return "Hitch recorder is off. '.dlhitch on' starts it.";
         if (window.Frames == 0) return "No frames recorded yet in this minute.";
         EndWindow("on request", inBackground: true);
         return "Hitch report written to the client log.";
@@ -347,8 +347,8 @@ public sealed class LodHitchRecorder : IRenderer
             // hand the profiler back as it was found, and stay off for the session.
             enabled = false;
             logger.Error(
-                "[VintageHorizons] The hitch recorder failed and has switched itself off for this "
-                + "session; the game itself is unaffected. '.vhhitch on' tries again. {0}", e);
+                "[Landscapes] The hitch recorder failed and has switched itself off for this "
+                + "session; the game itself is unaffected. '.dlhitch on' tries again. {0}", e);
             Disarm();
         }
         finally
@@ -388,7 +388,7 @@ public sealed class LodHitchRecorder : IRenderer
                 // The frame breakdown still works without it; only "who allocated" is lost.
                 samplerUnavailable = true;
                 logger.Warning(
-                    "[VintageHorizons] The hitch recorder cannot sample allocations here ({0}); "
+                    "[Landscapes] The hitch recorder cannot sample allocations here ({0}); "
                     + "its reports will show pauses but not who caused them.", e.Message);
             }
         }
@@ -404,7 +404,7 @@ public sealed class LodHitchRecorder : IRenderer
         {
             legendLogged = true;
             logger.Notification(
-                "[VintageHorizons] Hitch recorder on. Once a minute this log gets the frame-time "
+                "[Landscapes] Hitch recorder on. Once a minute this log gets the frame-time "
                 + "lows and, for the slowest 1% of frames, what was unusually slow in them. Names are "
                 + "the game's own frame-profiler steps plus this mod's: 'vh:*' is this mod's drawing "
                 + "and 'before vh:*' the vanilla work just ahead of it; 'gametick' is every tick "
@@ -413,10 +413,10 @@ public sealed class LodHitchRecorder : IRenderer
                 + "for the graphics card; 'sleep' the FPS limiter; 'between frames' time outside the "
                 + "profiled frame; 'gc pause' .NET garbage collection, which stops every thread and in "
                 + "singleplayer is driven by the server half too. Each report also says who allocated: "
-                + "per thread (threads named vintagehorizons-* are this mod's), per kind of object, "
+                + "per thread (threads named dodenslandscapes-* are this mod's), per kind of object, "
                 + "why each collection ran, and exactly what this mod's own jobs allocated. "
-                + "'.vhhitch off' stops it; '.vhhitch' writes the current minute now.");
-            logger.Notification("[VintageHorizons] Garbage collector in this process: {0}", DescribeCollector());
+                + "'.dlhitch off' stops it; '.dlhitch' writes the current minute now.");
+            logger.Notification("[Landscapes] Garbage collector in this process: {0}", DescribeCollector());
         }
     }
 
@@ -804,12 +804,12 @@ public sealed class LodHitchRecorder : IRenderer
         {
             foreach (string line in ReportLines(closed))
             {
-                logger.Notification("[VintageHorizons]{0}", line);
+                logger.Notification("[Landscapes]{0}", line);
             }
         }
         catch (Exception e)
         {
-            logger.Warning("[VintageHorizons] The hitch report could not be written: {0}", e);
+            logger.Warning("[Landscapes] The hitch report could not be written: {0}", e);
         }
         finally
         {
@@ -923,7 +923,7 @@ public sealed class LodHitchRecorder : IRenderer
     }
 
     /// <summary>
-    /// The report's lines, each written after "[VintageHorizons]". Reads only the closed
+    /// The report's lines, each written after "[Landscapes]". Reads only the closed
     /// window, so it may run on any thread.
     /// </summary>
     List<string> ReportLines(Window w)

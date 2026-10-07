@@ -28,7 +28,7 @@ namespace VintageHorizons;
 /// itself, so it is allowed to settle: the safety check is let go and the memory rises to the
 /// still setting. Otherwise history may only say what the current frame's 3x3 neighbourhood
 /// could also say, which is what stops it smearing. Sharpening is applied on the way to the
-/// screen, never to the memory. Every trade-off is a saved `.vhtaa` dial; how each came to be is
+/// screen, never to the memory. Every trade-off is a saved `.dltaa` dial; how each came to be is
 /// told in lodtaaresolve.fsh.
 /// </para>
 /// <para>
@@ -45,7 +45,7 @@ public partial class LodTerrainRenderer
 {
     // ---- Settings -------------------------------------------------------------------------
 
-    /// <summary>Saved. The window's "Distant Anti-Aliasing" row and .vhtaa write it.</summary>
+    /// <summary>Saved. The window's "Distant Anti-Aliasing" row and .dltaa write it.</summary>
     public bool DistantAntiAliasing
     {
         get => distantAntiAliasing;
@@ -61,9 +61,9 @@ public partial class LodTerrainRenderer
     /// <summary>Session diagnostic: tint every anti-aliased pixel magenta by its strength.</summary>
     public bool TaaShowWeight { get; set; }
 
-    // The tuning dials. All saved and all set by .vhtaa; LodTaaMath says what each one trades.
+    // The tuning dials. All saved and all set by .dltaa; LodTaaMath says what each one trades.
 
-    /// <summary>Memory while the view turns. `.vhtaa blend`.</summary>
+    /// <summary>Memory while the view turns. `.dltaa blend`.</summary>
     public float TaaFeedback
     {
         get => taaFeedback;
@@ -72,7 +72,7 @@ public partial class LodTerrainRenderer
     }
     float taaFeedback = LodTaaMath.DefaultFeedback;
 
-    /// <summary>Memory once the whole camera has held still. `.vhtaa still`.</summary>
+    /// <summary>Memory once the whole camera has held still. `.dltaa still`.</summary>
     public float TaaStillFeedback
     {
         get => taaStillFeedback;
@@ -81,7 +81,7 @@ public partial class LodTerrainRenderer
     }
     float taaStillFeedback = LodTaaMath.DefaultStillFeedback;
 
-    /// <summary>How far distant terrain is nudged, as a share of half a pixel. `.vhtaa nudge`.</summary>
+    /// <summary>How far distant terrain is nudged, as a share of half a pixel. `.dltaa nudge`.</summary>
     public float TaaNudge
     {
         get => taaNudge;
@@ -89,7 +89,7 @@ public partial class LodTerrainRenderer
     }
     float taaNudge = LodTaaMath.DefaultNudge;
 
-    /// <summary>Sharpening on the way to the screen, 0 to 1. `.vhtaa sharpen`.</summary>
+    /// <summary>Sharpening on the way to the screen, 0 to 1. `.dltaa sharpen`.</summary>
     public float TaaSharpen
     {
         get => taaSharpen;
@@ -97,7 +97,7 @@ public partial class LodTerrainRenderer
     }
     float taaSharpen = LodTaaMath.DefaultSharpen;
 
-    /// <summary>Width of the safety check, in standard deviations. `.vhtaa clip`.</summary>
+    /// <summary>Width of the safety check, in standard deviations. `.dltaa clip`.</summary>
     public float TaaClip
     {
         get => taaClip;
@@ -138,7 +138,7 @@ public partial class LodTerrainRenderer
 
     /// <summary>
     /// Saved. Where anti-aliasing begins, as the on-screen width of one block in pixels; it is
-    /// full strength at half that. Larger reaches closer. `.vhtaa reach`.
+    /// full strength at half that. Larger reaches closer. `.dltaa reach`.
     /// </summary>
     public float TaaReachPixels
     {
@@ -284,14 +284,14 @@ public partial class LodTerrainRenderer
         taaErrorChecksLeft = TaaErrorCheckFrames;
         if (!ShaderLoadIsProvisional && !taaShaderOk)
             capi.Logger.Warning(
-                "[VintageHorizons] the distant anti-aliasing shaders did not compile; distant "
+                "[Landscapes] the distant anti-aliasing shaders did not compile; distant "
                 + "terrain draws without it and nothing else changes.");
     }
 
     IShaderProgram NewTaaProgram(string name)
     {
         IShaderProgram program = capi.Shader.NewShaderProgram();
-        program.AssetDomain = "vintagehorizons";
+        program.AssetDomain = "dodenslandscapes";
         program.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         program.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram(name, program);
@@ -726,7 +726,7 @@ public partial class LodTerrainRenderer
             if (taaReportedPendingError) continue;
             taaReportedPendingError = true;
             capi.Logger.Warning(
-                "[VintageHorizons] a GL error ({0}) was already pending {1}. It is not from "
+                "[Landscapes] a GL error ({0}) was already pending {1}. It is not from "
                 + "anti-aliasing; it is logged here because reading it cleared it.", pending, where);
         }
     }
@@ -746,7 +746,7 @@ public partial class LodTerrainRenderer
         if (taaFailure.Length > 0) return;
         taaFailure = reason;
         capi.Logger.Error(
-            "[VintageHorizons] distant anti-aliasing stopped for this session; distant terrain "
+            "[Landscapes] distant anti-aliasing stopped for this session; distant terrain "
             + "draws exactly as it did without it. Cause: {0}", reason);
     }
 
@@ -825,7 +825,7 @@ public partial class LodTerrainRenderer
         autoAppliedThresholds = wanted;
         LodWorld.SetLevelThresholds(wanted);
         AutoThresholdSummary = DescribeAutoValues(wanted);
-        capi.Logger.Notification("[VintageHorizons] automatic LOD thresholds applied: {0}",
+        capi.Logger.Notification("[Landscapes] automatic LOD thresholds applied: {0}",
             AutoThresholdSummary);
     }
 
@@ -861,7 +861,7 @@ public partial class LodTerrainRenderer
 
     /// <summary>
     /// Where anti-aliasing works at this reach, and in blocks at the current FOV and resolution,
-    /// for `.vhtaa reach` and the report. One clause, without a closing full stop.
+    /// for `.dltaa reach` and the report. One clause, without a closing full stop.
     /// </summary>
     public string DescribeTaaReach()
     {

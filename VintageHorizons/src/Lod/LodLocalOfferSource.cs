@@ -95,13 +95,13 @@ public sealed class LodLocalOfferSource : IDisposable
         this.logger = logger;
         scanThread = new Thread(ScanLoop)
         {
-            Name = "vintagehorizons-local-offers",
+            Name = "dodenslandscapes-local-offers",
             IsBackground = true,
             Priority = ThreadPriority.BelowNormal,
         };
         blobThread = new Thread(BlobLoop)
         {
-            Name = "vintagehorizons-local-blob-reader",
+            Name = "dodenslandscapes-local-blob-reader",
             IsBackground = true,
             Priority = ThreadPriority.BelowNormal,
         };

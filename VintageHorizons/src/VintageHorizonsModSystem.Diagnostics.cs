@@ -47,13 +47,13 @@ public partial class VintageHorizonsModSystem
     }
 
     /// <summary>
-    /// Every value here is an input to Vintage Horizons: a saved option, a live .vh command
+    /// Every value here is an input to Doden's Landscapes: a saved option, a live .dl command
     /// setting, or a development/server configuration. Runtime counters, engine state and
     /// hardware information are deliberately absent, so an unchanged screenshot is cheap.
     /// </summary>
     string[] BuildConfigurationColumns()
     {
-        var left = new List<string> { "Vintage Horizons " + Mod.Info.Version };
+        var left = new List<string> { "Doden's Landscapes " + Mod.Info.Version };
         var right = new List<string>();
 
         if (renderer is null)
@@ -80,34 +80,34 @@ public partial class VintageHorizonsModSystem
             config.LodThresholds, config.DetailDistance);
 
         Heading(lines, "SAVED CLIENT MOD");
-        Entry(lines, ".vhdefer", !config.IgnoreOtherLodMods);
-        Entry(lines, ".vhfar", DistanceOrUnlimited(config.FarViewDistanceCap));
+        Entry(lines, ".dldefer", !config.IgnoreOtherLodMods);
+        Entry(lines, ".dlfar", DistanceOrUnlimited(config.FarViewDistanceCap));
         AddThresholds(lines, thresholds);
-        Entry(lines, ".vhdetail auto", config.AutoLodThresholds);
-        Entry(lines, ".vhdetail target", Number(config.LodTargetPixels, "0.00") + " px");
-        Entry(lines, ".vhmask", config.ChunkMask);
-        Entry(lines, ".vhblend", visual.BlendPipeline);
-        Entry(lines, ".vhband", visual.SeamBand);
-        Entry(lines, ".vhtexture", visual.BlockTextures);
-        Entry(lines, ".vhtint field", visual.ClimateTint);
+        Entry(lines, ".dldetail auto", config.AutoLodThresholds);
+        Entry(lines, ".dldetail target", Number(config.LodTargetPixels, "0.00") + " px");
+        Entry(lines, ".dlmask", config.ChunkMask);
+        Entry(lines, ".dlblend", visual.BlendPipeline);
+        Entry(lines, ".dlband", visual.SeamBand);
+        Entry(lines, ".dltexture", visual.BlockTextures);
+        Entry(lines, ".dltint field", visual.ClimateTint);
         Entry(lines, "climate tint range", BlocksPerVoxel(visual.ClimateTintRange));
-        Entry(lines, ".vhtint climatewide", visual.FarBiomeColours);
-        Entry(lines, ".vhtint leaves", visual.LeafSeasonColours);
-        Entry(lines, ".vhslabs", visual.HalfBlockTerrain);
-        Entry(lines, ".vhtaa", visual.DistantAntiAliasing);
-        Entry(lines, ".vhtaa reach", Number(config.TaaReachPixels, "0.#") + " px");
-        Entry(lines, ".vhtaa nudge", Number(config.TaaNudge, "0.00"));
-        Entry(lines, ".vhtaa sharpen", Number(config.TaaSharpen, "0.00"));
-        Entry(lines, ".vhtaa blend", Number(config.TaaBlend, "0.00"));
-        Entry(lines, ".vhtaa still", Number(config.TaaStillBlend, "0.00"));
-        Entry(lines, ".vhtaa clip", Number(config.TaaClip, "0.00"));
-        Entry(lines, ".vhwater fresnel", visual.WaterEffects);
-        Entry(lines, ".vhwater depth", config.WaterDepthShading);
-        Entry(lines, ".vhwater alpha", Number(config.WaterMaxAlpha, "0.00"));
-        Entry(lines, ".vhwater clarity", Number(config.WaterClarity, "0.0") + " blocks");
-        Entry(lines, ".vhwater wave", config.WaterSeamStripBlocks + " blocks");
-        Entry(lines, ".vhwater walls", !config.SuppressUnknownWaterWalls);
-        Entry(lines, ".vhgpu", config.GpuArenas);
+        Entry(lines, ".dltint climatewide", visual.FarBiomeColours);
+        Entry(lines, ".dltint leaves", visual.LeafSeasonColours);
+        Entry(lines, ".dlslabs", visual.HalfBlockTerrain);
+        Entry(lines, ".dltaa", visual.DistantAntiAliasing);
+        Entry(lines, ".dltaa reach", Number(config.TaaReachPixels, "0.#") + " px");
+        Entry(lines, ".dltaa nudge", Number(config.TaaNudge, "0.00"));
+        Entry(lines, ".dltaa sharpen", Number(config.TaaSharpen, "0.00"));
+        Entry(lines, ".dltaa blend", Number(config.TaaBlend, "0.00"));
+        Entry(lines, ".dltaa still", Number(config.TaaStillBlend, "0.00"));
+        Entry(lines, ".dltaa clip", Number(config.TaaClip, "0.00"));
+        Entry(lines, ".dlwater fresnel", visual.WaterEffects);
+        Entry(lines, ".dlwater depth", config.WaterDepthShading);
+        Entry(lines, ".dlwater alpha", Number(config.WaterMaxAlpha, "0.00"));
+        Entry(lines, ".dlwater clarity", Number(config.WaterClarity, "0.0") + " blocks");
+        Entry(lines, ".dlwater wave", config.WaterSeamStripBlocks + " blocks");
+        Entry(lines, ".dlwater walls", !config.SuppressUnknownWaterWalls);
+        Entry(lines, ".dlgpu", config.GpuArenas);
         Entry(lines, "GPU indirect", config.IndirectDraw);
         Entry(lines, "GPU depth cull", config.DepthCull);
         Entry(lines, "GPU late depth", config.LateDepthPicture);
@@ -118,129 +118,129 @@ public partial class VintageHorizonsModSystem
         int[] thresholds = LodWorld.GetLevelThresholds();
 
         Heading(lines, "CLIENT CORE / SHAPE");
-        Entry(lines, ".vhdefer", !config.IgnoreOtherLodMods);
-        Entry(lines, ".vhfar", DistanceOrUnlimited(renderer.FarViewDistanceCap));
+        Entry(lines, ".dldefer", !config.IgnoreOtherLodMods);
+        Entry(lines, ".dlfar", DistanceOrUnlimited(renderer.FarViewDistanceCap));
         AddThresholds(lines, thresholds);
-        Entry(lines, ".vhdetail auto", renderer.AutoLodThresholds);
-        Entry(lines, ".vhdetail target", Number(renderer.LodTargetPixels, "0.00") + " px");
-        Entry(lines, ".vhmask", renderer.ChunkMaskEnabled);
-        Entry(lines, ".vhgap", renderer.HandoffGapLog);
-        Entry(lines, ".vhgap release", renderer.HandoffGapRelease);
-        Entry(lines, ".vhsky", renderer.SkyWitness);
-        Entry(lines, ".vhsky verify", renderer.SkyMaskVerify);
-        Entry(lines, ".vhlaterange", renderer.LateRangeCheck);
-        Entry(lines, ".vhblend", renderer.BlendPipelineEnabled);
-        Entry(lines, ".vhnear", Number(renderer.NearSuppressionBlocks, "0") + " blocks");
-        Entry(lines, ".vhslabs", HalfBlockMode(renderer));
-        Entry(lines, ".vhcutout", renderer.CutoutBlocksCover);
+        Entry(lines, ".dldetail auto", renderer.AutoLodThresholds);
+        Entry(lines, ".dldetail target", Number(renderer.LodTargetPixels, "0.00") + " px");
+        Entry(lines, ".dlmask", renderer.ChunkMaskEnabled);
+        Entry(lines, ".dlgap", renderer.HandoffGapLog);
+        Entry(lines, ".dlgap release", renderer.HandoffGapRelease);
+        Entry(lines, ".dlsky", renderer.SkyWitness);
+        Entry(lines, ".dlsky verify", renderer.SkyMaskVerify);
+        Entry(lines, ".dllaterange", renderer.LateRangeCheck);
+        Entry(lines, ".dlblend", renderer.BlendPipelineEnabled);
+        Entry(lines, ".dlnear", Number(renderer.NearSuppressionBlocks, "0") + " blocks");
+        Entry(lines, ".dlslabs", HalfBlockMode(renderer));
+        Entry(lines, ".dlcutout", renderer.CutoutBlocksCover);
 
         Heading(lines, ".VHBAND");
-        Entry(lines, ".vhband", renderer.BandEnabled);
-        Entry(lines, ".vhband shape", renderer.BandDebugPaint);
-        Entry(lines, ".vhband width", Number(renderer.BandWidthBlocks, "0") + " blocks");
-        Entry(lines, ".vhband step", Number(renderer.BandStepBlocks, "0") + " blocks");
-        Entry(lines, ".vhband inner", renderer.BandInnerDerived
+        Entry(lines, ".dlband", renderer.BandEnabled);
+        Entry(lines, ".dlband shape", renderer.BandDebugPaint);
+        Entry(lines, ".dlband width", Number(renderer.BandWidthBlocks, "0") + " blocks");
+        Entry(lines, ".dlband step", Number(renderer.BandStepBlocks, "0") + " blocks");
+        Entry(lines, ".dlband inner", renderer.BandInnerDerived
             ? "auto (" + Number(renderer.BandInnerBlocks, "0") + " blocks)"
             : Number(renderer.BandInnerBlocks, "0") + " blocks (pinned)");
-        Entry(lines, ".vhband strength", Number(renderer.BandStrength, "0.00"));
-        Entry(lines, ".vhband speckle", Number(renderer.BandSpeckle, "0.00"));
-        Entry(lines, ".vhband darken", Number(renderer.BandDarken, "0.00"));
-        Entry(lines, ".vhband saturate", Number(renderer.BandSaturate, "0.00"));
-        Entry(lines, ".vhband overlap", Number(renderer.OverlapMarginBlocks, "0") + " blocks");
-        Entry(lines, ".vhband sink", renderer.BandSinkVoxels + "/16 block");
+        Entry(lines, ".dlband strength", Number(renderer.BandStrength, "0.00"));
+        Entry(lines, ".dlband speckle", Number(renderer.BandSpeckle, "0.00"));
+        Entry(lines, ".dlband darken", Number(renderer.BandDarken, "0.00"));
+        Entry(lines, ".dlband saturate", Number(renderer.BandSaturate, "0.00"));
+        Entry(lines, ".dlband overlap", Number(renderer.OverlapMarginBlocks, "0") + " blocks");
+        Entry(lines, ".dlband sink", renderer.BandSinkVoxels + "/16 block");
 
         Heading(lines, "TEXTURE / TINT");
-        Entry(lines, ".vhtexture", renderer.BlockTexturesEnabled);
-        Entry(lines, ".vhtexture strength", Number(renderer.BlockTextureStrength, "0.00"));
-        Entry(lines, ".vhtexture detail", Number(renderer.BlockTextureDetail, "0.0"));
-        Entry(lines, ".vhtexture mips", Number(renderer.BlockTextureMipLimit, "0.0"));
-        Entry(lines, ".vhtint field", renderer.ClimateFieldTint);
-        Entry(lines, ".vhtint climatewide", renderer.ClimateFadeBlocks <= 0f);
+        Entry(lines, ".dltexture", renderer.BlockTexturesEnabled);
+        Entry(lines, ".dltexture strength", Number(renderer.BlockTextureStrength, "0.00"));
+        Entry(lines, ".dltexture detail", Number(renderer.BlockTextureDetail, "0.0"));
+        Entry(lines, ".dltexture mips", Number(renderer.BlockTextureMipLimit, "0.0"));
+        Entry(lines, ".dltint field", renderer.ClimateFieldTint);
+        Entry(lines, ".dltint climatewide", renderer.ClimateFadeBlocks <= 0f);
         Entry(lines, "climate tint range", BlocksPerVoxel(renderer.ClimateFadeBlocks));
-        Entry(lines, ".vhtint leaves", renderer.LeafSeasonVariation > 0f);
+        Entry(lines, ".dltint leaves", renderer.LeafSeasonVariation > 0f);
         Entry(lines, "leaf season amount", Number(renderer.LeafSeasonVariation, "0.00"));
-        Entry(lines, ".vhtint leafwide", renderer.LeafSeasonFadeBlocks > 2f);
+        Entry(lines, ".dltint leafwide", renderer.LeafSeasonFadeBlocks > 2f);
         Entry(lines, "leaf fade", BlocksPerVoxel(renderer.LeafSeasonFadeBlocks));
-        Entry(lines, ".vhtint leafcheap", renderer.LeafSeasonCheapRow);
+        Entry(lines, ".dltint leafcheap", renderer.LeafSeasonCheapRow);
 
         Heading(lines, "LIGHTING");
-        Entry(lines, ".vhtoplight", renderer.FlatTopLight);
-        Entry(lines, ".vhlight sun", renderer.LightSunLevel);
-        Entry(lines, ".vhlight moondir", renderer.LightMoonDirection);
-        Entry(lines, ".vhlight ramp", renderer.LightVanillaRamp);
-        Entry(lines, ".vhlight ambient", renderer.LightAmbientColor);
-        Entry(lines, ".vhlight boost", renderer.LightDayBoost);
-        Entry(lines, ".vhlight sky", renderer.LightSkyDayLight);
+        Entry(lines, ".dltoplight", renderer.FlatTopLight);
+        Entry(lines, ".dllight sun", renderer.LightSunLevel);
+        Entry(lines, ".dllight moondir", renderer.LightMoonDirection);
+        Entry(lines, ".dllight ramp", renderer.LightVanillaRamp);
+        Entry(lines, ".dllight ambient", renderer.LightAmbientColor);
+        Entry(lines, ".dllight boost", renderer.LightDayBoost);
+        Entry(lines, ".dllight sky", renderer.LightSkyDayLight);
     }
 
     void AddHandoffConfiguration(List<string> lines)
     {
         Heading(lines, "HANDOFF / CULLING");
-        Entry(lines, ".vhstandin", renderer.StandInFix);
-        Entry(lines, ".vhpaint", renderer.MaskDebugPaint);
-        Entry(lines, ".vhskip", renderer.WholeMeshSkip);
-        Entry(lines, ".vhbackface", renderer.OpaqueBackfaceCulling);
+        Entry(lines, ".dlstandin", renderer.StandInFix);
+        Entry(lines, ".dlpaint", renderer.MaskDebugPaint);
+        Entry(lines, ".dlskip", renderer.WholeMeshSkip);
+        Entry(lines, ".dlbackface", renderer.OpaqueBackfaceCulling);
         Entry(lines, "section height cull", renderer.SectionHeightCulling);
-        Entry(lines, ".vhsubtree", renderer.SubtreeHeightCulling);
-        Entry(lines, ".vhcavecull", renderer.CaveCulling);
+        Entry(lines, ".dlsubtree", renderer.SubtreeHeightCulling);
+        Entry(lines, ".dlcavecull", renderer.CaveCulling);
         Entry(lines, "cave cull reach", renderer.CaveCullReach + " blocks");
-        Entry(lines, ".vhfront", renderer.OpaqueFrontToBack);
-        Entry(lines, ".vhocclusion", renderer.OcclusionCullingEnabled);
-        Entry(lines, ".vhtemporal", renderer.TemporalOcclusionEnabled);
-        Entry(lines, ".vhtemporalprofile", renderer.TemporalOcclusionProfileName);
-        Entry(lines, ".vhgeom", renderer.GeometryOwnershipRule);
-        Entry(lines, ".vhexact", renderer.ExactDrawRange);
+        Entry(lines, ".dlfront", renderer.OpaqueFrontToBack);
+        Entry(lines, ".dlocclusion", renderer.OcclusionCullingEnabled);
+        Entry(lines, ".dltemporal", renderer.TemporalOcclusionEnabled);
+        Entry(lines, ".dltemporalprofile", renderer.TemporalOcclusionProfileName);
+        Entry(lines, ".dlgeom", renderer.GeometryOwnershipRule);
+        Entry(lines, ".dlexact", renderer.ExactDrawRange);
     }
 
     void AddWaterConfiguration(List<string> lines)
     {
         Heading(lines, ".VHWATER");
-        Entry(lines, ".vhwater near", renderer.WaterNearChunks + " chunks");
-        Entry(lines, ".vhwater edge", renderer.WaterEdgeChunks < 0
+        Entry(lines, ".dlwater near", renderer.WaterNearChunks + " chunks");
+        Entry(lines, ".dlwater edge", renderer.WaterEdgeChunks < 0
             ? "auto" : renderer.WaterEdgeChunks + " chunks");
-        Entry(lines, ".vhwater pipeline", renderer.WaterOitEnabled ? "oit" : "opaque");
-        Entry(lines, ".vhwater surface", renderer.WaterSurfaceVisible);
-        Entry(lines, ".vhwater texture", renderer.WaterSurfaceTexture);
-        Entry(lines, ".vhwater fresnel", renderer.WaterFresnel);
-        Entry(lines, ".vhwater glint", Number(renderer.WaterGlint, "0.00"));
-        Entry(lines, ".vhwater foam", Number(renderer.WaterFoam, "0.00"));
+        Entry(lines, ".dlwater pipeline", renderer.WaterOitEnabled ? "oit" : "opaque");
+        Entry(lines, ".dlwater surface", renderer.WaterSurfaceVisible);
+        Entry(lines, ".dlwater texture", renderer.WaterSurfaceTexture);
+        Entry(lines, ".dlwater fresnel", renderer.WaterFresnel);
+        Entry(lines, ".dlwater glint", Number(renderer.WaterGlint, "0.00"));
+        Entry(lines, ".dlwater foam", Number(renderer.WaterFoam, "0.00"));
         Entry(lines, "water shallowness", Number(renderer.WaterShallowness, "0.00"));
-        Entry(lines, ".vhwater depth", renderer.WaterDepthShading);
-        Entry(lines, ".vhwater alpha", Number(renderer.WaterMaxAlpha, "0.00"));
-        Entry(lines, ".vhwater clarity", Number(renderer.WaterClarity, "0.0") + " blocks");
-        Entry(lines, ".vhwater wave", renderer.WaterSeamStripBlocks + " blocks");
+        Entry(lines, ".dlwater depth", renderer.WaterDepthShading);
+        Entry(lines, ".dlwater alpha", Number(renderer.WaterMaxAlpha, "0.00"));
+        Entry(lines, ".dlwater clarity", Number(renderer.WaterClarity, "0.0") + " blocks");
+        Entry(lines, ".dlwater wave", renderer.WaterSeamStripBlocks + " blocks");
         Entry(lines, "water wave reach", Number(renderer.WaterWaveReachBlocks, "0") + " blocks");
-        Entry(lines, ".vhwater walls", !renderer.SuppressUnknownWaterWalls);
-        Entry(lines, ".vhwater murk", renderer.WaterGroundMurk);
-        Entry(lines, ".vhwater coverage", renderer.WaterDepthCoverage);
-        Entry(lines, ".vhwater junction", renderer.WaterJunctionDepth);
-        Entry(lines, ".vhwater repair", renderer.WaterDepthRepair);
+        Entry(lines, ".dlwater walls", !renderer.SuppressUnknownWaterWalls);
+        Entry(lines, ".dlwater murk", renderer.WaterGroundMurk);
+        Entry(lines, ".dlwater coverage", renderer.WaterDepthCoverage);
+        Entry(lines, ".dlwater junction", renderer.WaterJunctionDepth);
+        Entry(lines, ".dlwater repair", renderer.WaterDepthRepair);
     }
 
     void AddGpuConfiguration(List<string> lines)
     {
         Heading(lines, "GPU");
-        Entry(lines, ".vhgpu", renderer.GpuShadowRequested);
+        Entry(lines, ".dlgpu", renderer.GpuShadowRequested);
         Entry(lines, "GPU indirect", renderer.IndirectDrawEnabled);
         Entry(lines, "GPU packed", renderer.PackedDrawEnabled);
         Entry(lines, "GPU clusters", renderer.ClusterDrawEnabled);
         Entry(lines, "GPU depth cull", renderer.GpuCullEnabled);
-        Entry(lines, ".vhhzb", renderer.DepthPyramidEnabled);
+        Entry(lines, ".dlhzb", renderer.DepthPyramidEnabled);
         Entry(lines, "GPU late depth", renderer.LateDepthPyramid);
-        Entry(lines, ".vhtaa", renderer.DistantAntiAliasing);
-        Entry(lines, ".vhtaa show", renderer.TaaShowWeight);
-        Entry(lines, ".vhtaa reach", Number(renderer.TaaReachPixels, "0.#") + " px");
-        Entry(lines, ".vhtaa nudge", Number(renderer.TaaNudge, "0.00"));
-        Entry(lines, ".vhtaa sharpen", Number(renderer.TaaSharpen, "0.00"));
-        Entry(lines, ".vhtaa blend", Number(renderer.TaaFeedback, "0.00"));
-        Entry(lines, ".vhtaa still", Number(renderer.TaaStillFeedback, "0.00"));
-        Entry(lines, ".vhtaa clip", Number(renderer.TaaClip, "0.00"));
+        Entry(lines, ".dltaa", renderer.DistantAntiAliasing);
+        Entry(lines, ".dltaa show", renderer.TaaShowWeight);
+        Entry(lines, ".dltaa reach", Number(renderer.TaaReachPixels, "0.#") + " px");
+        Entry(lines, ".dltaa nudge", Number(renderer.TaaNudge, "0.00"));
+        Entry(lines, ".dltaa sharpen", Number(renderer.TaaSharpen, "0.00"));
+        Entry(lines, ".dltaa blend", Number(renderer.TaaFeedback, "0.00"));
+        Entry(lines, ".dltaa still", Number(renderer.TaaStillFeedback, "0.00"));
+        Entry(lines, ".dltaa clip", Number(renderer.TaaClip, "0.00"));
     }
 
     void AddDevelopmentConfiguration(List<string> lines)
     {
         Heading(lines, "DEVELOPMENT MOD");
-        Entry(lines, ".vhdiag", diagnosticsEnabled);
+        Entry(lines, ".dldiag", diagnosticsEnabled);
         Entry(lines, "allocation telemetry", allocationTelemetryEnabled);
         Entry(lines, "auto explore", autoExplore);
         Entry(lines, "auto unpause", renderer?.AutoUnpause
@@ -310,7 +310,7 @@ public partial class VintageHorizonsModSystem
     static void AddThresholds(List<string> lines, IReadOnlyList<int> thresholds)
     {
         for (int i = 0; i < thresholds.Count; i++)
-            Entry(lines, $".vhdetail L{i + 1}", thresholds[i] + " blocks");
+            Entry(lines, $".dldetail L{i + 1}", thresholds[i] + " blocks");
     }
 
     static string HalfBlockMode(LodTerrainRenderer value)

@@ -30,8 +30,8 @@ done
 
 CLIENT_LOG="$VH_SANDBOX/Logs/client-main.log"
 SERVER_LOG="$VH_SANDBOX/server/Logs/server-main.log"
-SERVER_CONFIG="$VH_SANDBOX/server/ModConfig/vintagehorizons-server.json"
-BENCH_BUILT="$VH_ROOT/bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/vintagehorizonsbench"
+SERVER_CONFIG="$VH_SANDBOX/server/ModConfig/dodenslandscapes-server.json"
+BENCH_BUILT="$VH_ROOT/bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/dodenslandscapesbench"
 PORT="${VH_TEST_PORT:-42425}"
 failures=0
 
@@ -53,11 +53,11 @@ fail()  { echo "  $1: FAILED"; failures=$((failures + 1)); }
 
 client_mod()   { "$VH_ROOT/scripts/deploy-sandbox.sh" client >/dev/null; }
 server_mod()   { "$VH_ROOT/scripts/deploy-sandbox.sh" server >/dev/null; }
-no_client_mod(){ rm -rf "${VH_SANDBOX:?}/Mods/vintagehorizons"; }
-no_server_mod(){ rm -rf "${VH_SANDBOX:?}/server/Mods/vintagehorizons"; }
+no_client_mod(){ rm -rf "${VH_SANDBOX:?}/Mods/dodenslandscapes"; }
+no_server_mod(){ rm -rf "${VH_SANDBOX:?}/server/Mods/dodenslandscapes"; }
 
-wipe_client_cache() { rm -rf "${VH_SANDBOX:?}/ModData/vintagehorizons"; }
-wipe_server_cache() { rm -rf "${VH_SANDBOX:?}/server/ModData/vintagehorizons"; }
+wipe_client_cache() { rm -rf "${VH_SANDBOX:?}/ModData/dodenslandscapes"; }
+wipe_server_cache() { rm -rf "${VH_SANDBOX:?}/server/ModData/dodenslandscapes"; }
 
 # Written before the server starts; it sanitizes and rewrites this file on load, so
 # reading it back afterwards also proves the round trip.
@@ -67,7 +67,7 @@ write_server_config() {
 }
 
 # VH_DEVTOOLS=1 in front of a call forwards the dev-tools switch to the server, which
-# is what registers the block-placing /vhgen edittest. Off everywhere else.
+# is what registers the block-placing /dlgen edittest. Off everywhere else.
 start_server() {
     cleanup
     VINTAGEHORIZONS_DEVTOOLS="${VH_DEVTOOLS:-0}" "$VH_ROOT/scripts/test-server.sh" >/dev/null
@@ -443,7 +443,7 @@ JSON
 
     # Session 2: generate 32,000 blocks from spawn - land no session has touched.
     start_server
-    echo "/vhgen start 12 480000 480000" > "$VH_SANDBOX/server/console.in"
+    echo "/dlgen start 12 480000 480000" > "$VH_SANDBOX/server/console.in"
     ok=1
     if vh_wait_for "$SERVER_LOG" "Generation finished" 600 "$VH_SANDBOX/server/server.pid"; then
         line="$(grep -o "Generation finished.*" "$SERVER_LOG" | tail -1)" || true
@@ -467,7 +467,7 @@ JSON
     [[ "$before" == "$after" && -n "$before" ]] \
         || { echo "      x the savegame changed: keys or content differ"; ok=0; }
 
-    db="$(ls "$VH_SANDBOX"/server/ModData/vintagehorizons/*-server.db 2>/dev/null | head -1)" || true
+    db="$(ls "$VH_SANDBOX"/server/ModData/dodenslandscapes/*-server.db 2>/dev/null | head -1)" || true
     sections=$(python3 -c "
 import sqlite3
 print(sqlite3.connect('file:$db?mode=ro', uri=True).execute('SELECT COUNT(*) FROM Section').fetchone()[0])" 2>/dev/null || echo 0)
@@ -531,7 +531,7 @@ JSON
         || { echo "      x the dev-tools notice is missing, so edittest is not registered"; ok=0; }
 
     # Experiment A, on land no session has touched.
-    echo "/vhgen diff 470000 470000" > "$VH_SANDBOX/server/console.in"
+    echo "/dlgen diff 470000 470000" > "$VH_SANDBOX/server/console.in"
     if vh_wait_for "$SERVER_LOG" "surface height delta median" 420 "$VH_SANDBOX/server/server.pid"; then
         grep -oE "Peek diff( at chunk|:) .*" "$SERVER_LOG" | tail -5 | sed 's/^/      - /'
 
@@ -584,7 +584,7 @@ JSON
 
     # Experiment B. No coordinates: the console falls back to spawn, which is loaded
     # and therefore has a column a marker can actually be placed into.
-    echo "/vhgen edittest" > "$VH_SANDBOX/server/console.in"
+    echo "/dlgen edittest" > "$VH_SANDBOX/server/console.in"
     if vh_wait_for "$SERVER_LOG" "MARKER PRESENT WHEN PEEKED" 240 "$VH_SANDBOX/server/server.pid"; then
         grep -oE "Edit test:.*" "$SERVER_LOG" | tail -3 | sed 's/^/      - /'
         verdict="$(grep -oE "MARKER PRESENT WHEN LOADED: (True|False)\. MARKER PRESENT WHEN PEEKED: (True|False)" "$SERVER_LOG" | tail -1)" || true
@@ -603,14 +603,14 @@ JSON
     [[ "$ok" == 1 ]] && echo "  peekdiff: ok" || fail "peekdiff"
 fi
 
-# --- Scenario 6d: /vhgen FROM A REAL PLAYER, SERVED ON REJOIN. --------------------
+# --- Scenario 6d: /dlgen FROM A REAL PLAYER, SERVED ON REJOIN. --------------------
 # The player path the console FIFO cannot exercise: chat registration, the privilege
 # gate, Caller.Pos. Then the part that makes it useful - a client with an empty cache
 # rejoins and receives the generated sections over the assist. The manifest is sent
 # once at handshake, so the SECOND join is the one that can see them.
 
 if wants generate; then
-    echo "  [generate] a player runs /vhgen; a rejoin fetches what it built"
+    echo "  [generate] a player runs /dlgen; a rejoin fetches what it built"
     client_mod; server_mod; wipe_client_cache; wipe_server_cache
     write_server_config <<'JSON'
 {
@@ -629,7 +629,7 @@ JSON
 
     # Join 1 types the command (the hook fires 15s after finalize) and leaves; the
     # server finishes the run on its own.
-    VINTAGEHORIZONS_AUTOCMD="/vhgen start 10" run_client "Level finalized" 30 || ok=0
+    VINTAGEHORIZONS_AUTOCMD="/dlgen start 10" run_client "Level finalized" 30 || ok=0
     vh_wait_for "$SERVER_LOG" "Generation finished" 600 "$VH_SANDBOX/server/server.pid" || {
         echo "      x generation never finished after the player command"; ok=0; }
     # Attributed to a player, not to the console. The line carries the player's own
@@ -658,7 +658,7 @@ fi
 # The scenario above proves the rejoin path, and in doing so hides this one: it leaves
 # and comes back, and the manifest a client gets on arrival is the only one it ever gets.
 # An admin who pre-generates while people are online has every one of them see nothing
-# until they relog, and ".vhwhy" says "no-data" for ground the server has held for hours.
+# until they relog, and ".dlwhy" says "no-data" for ground the server has held for hours.
 # Reported from the field against 0.2.0.
 #
 # One join, and the player stays. Everything the run builds has to reach them.
@@ -683,7 +683,7 @@ JSON
 
     # The server cache starts empty, so the manifest sent at join is empty too. Anything
     # this client ends up being offered can only have come from a later one.
-    VINTAGEHORIZONS_AUTOCMD="/vhgen start 10" run_client "Level finalized" 210 || ok=0
+    VINTAGEHORIZONS_AUTOCMD="/dlgen start 10" run_client "Level finalized" 210 || ok=0
 
     if ! grep -q "Generation finished" "$SERVER_LOG"; then
         echo "      x generation did not finish inside the session; the run proves nothing"
@@ -728,7 +728,7 @@ JSON
     [[ "$ok" == 1 ]] && echo "  live-manifest: ok" || fail "live-manifest"
 fi
 
-# --- Scenario 6e: /vhgen IN SINGLEPLAYER. -----------------------------------------
+# --- Scenario 6e: /dlgen IN SINGLEPLAYER. -----------------------------------------
 # The integration that has no server process: the guard leaves the server side idle,
 # the command opens the cache lazily hours after startup would have, and the client
 # adopts the result through the local offer source - which only works because the
@@ -739,7 +739,7 @@ if wants generate-sp; then
     client_mod
     # The integrated server reads the same ModConfig directory as the client sandbox.
     mkdir -p "$VH_SANDBOX/ModConfig"
-    cat > "$VH_SANDBOX/ModConfig/vintagehorizons-server.json" <<'JSON'
+    cat > "$VH_SANDBOX/ModConfig/dodenslandscapes-server.json" <<'JSON'
 {
   "EnableCapture": true,
   "SweepSavegame": false,
@@ -755,8 +755,8 @@ JSON
     # Radius 12, not something smaller: the client streams and self-captures its own
     # surroundings, so the adoption assertion needs generated sections beyond that.
     VINTAGEHORIZONS_AUTOUNPAUSE=1 VINTAGEHORIZONS_CREATIVE=1 VINTAGEHORIZONS_STATS=1 \
-    VINTAGEHORIZONS_AUTOCMD="/vhgen start 12" \
-        "$VH_ROOT/scripts/test-client.sh" -o vhgen-sp -p preset-surviveandbuild >/dev/null
+    VINTAGEHORIZONS_AUTOCMD="/dlgen start 12" \
+        "$VH_ROOT/scripts/test-client.sh" -o dlgen-sp -p preset-surviveandbuild >/dev/null
 
     ok=1
     vh_wait_for "$CLIENT_LOG" "Level finalized" 600 "$VH_SANDBOX/test-instance.pid" || ok=0
@@ -793,10 +793,10 @@ fi
 # creative and quietly test the same thing twice.
 
 if wants generate-survival; then
-    echo "  [generate-survival] a survival host can run /vhgen, with no creative mode"
+    echo "  [generate-survival] a survival host can run /dlgen, with no creative mode"
     client_mod
     mkdir -p "$VH_SANDBOX/ModConfig"
-    cat > "$VH_SANDBOX/ModConfig/vintagehorizons-server.json" <<'JSON'
+    cat > "$VH_SANDBOX/ModConfig/dodenslandscapes-server.json" <<'JSON'
 {
   "EnableCapture": true,
   "SweepSavegame": false,
@@ -804,7 +804,7 @@ if wants generate-survival; then
   "GenerateColumnsPerSecond": 32
 }
 JSON
-    SURV_WORLD="vhgen-survival"
+    SURV_WORLD="dlgen-survival"
     SP_SERVER_LOG="$VH_SANDBOX/Logs/server-main.log"
     rm -f "$CLIENT_LOG" "$SP_SERVER_LOG" "$VH_SANDBOX/Logs/client-chat.log"
     rm -f "${VH_SANDBOX:?}/Saves/$SURV_WORLD.vcdbs"*
@@ -814,7 +814,7 @@ JSON
     # short: this scenario asks whether the command is allowed to run at all, and
     # generate-sp already covers what a real run produces.
     VINTAGEHORIZONS_AUTOUNPAUSE=1 VINTAGEHORIZONS_STATS=1 \
-    VINTAGEHORIZONS_AUTOCMD="/vhgen start 4" \
+    VINTAGEHORIZONS_AUTOCMD="/dlgen start 4" \
         "$VH_ROOT/scripts/test-client.sh" -o "$SURV_WORLD" -p preset-surviveandbuild >/dev/null
 
     ok=1
@@ -836,7 +836,7 @@ JSON
         || { echo "      x the probe world was not survival"; ok=0; }
 
     vh_wait_for "$SP_SERVER_LOG" "Generation finished" 420 "$VH_SANDBOX/test-instance.pid" \
-        || { echo "      x /vhgen never completed for a survival host"; ok=0; }
+        || { echo "      x /dlgen never completed for a survival host"; ok=0; }
 
     # A privilege refusal answers in chat rather than failing loudly, so look for it.
     if grep -qiE 'privilege|not allowed|no permission' "$VH_SANDBOX/Logs/client-chat.log"; then
@@ -997,7 +997,7 @@ JSON
                 echo "      x expected two screenshots, got $shots"
                 failures=$((failures + 1))
             fi
-            rm -rf "${VH_SANDBOX:?}/Mods/vintagehorizonsbench"
+            rm -rf "${VH_SANDBOX:?}/Mods/dodenslandscapesbench"
         else
             echo "      - skipping the visual pair: build bench/VintageHorizonsBench first"
         fi
@@ -1024,7 +1024,7 @@ if wants deferral; then
         # matters for the same reason: defer-override writes IgnoreOtherLodMods into it,
         # and a suite that dies before its cleanup leaves that set for the next run, where
         # this scenario runs first and would fail for a reason that is not its own.
-        rm -f "$VH_SANDBOX/ModConfig/farseer-client.json" "$VH_SANDBOX/ModConfig/vintagehorizons.json"
+        rm -f "$VH_SANDBOX/ModConfig/farseer-client.json" "$VH_SANDBOX/ModConfig/dodenslandscapes.json"
         start_server
         # Deferring returns from StartClientSide before a world exists, so "Level
         # finalized" is never logged. The idle notice is the only marker there is.
@@ -1122,7 +1122,7 @@ fi
 # Two states the reported player can reach that scenarios 8 and 9 do not cover.
 #
 # The override is advertised: the idle log line and the README both tell a player to run
-# '.vhdefer off' when their other LOD mod has no readable switch. Advice we never tested
+# '.dldefer off' when their other LOD mod has no readable switch. Advice we never tested
 # is advice we should not be giving.
 #
 # The broken file is what a hand edit leaves behind. It must not decide anything: a parse
@@ -1143,7 +1143,7 @@ if wants defer-override; then
 
         # Part 1: Farseer switched ON, override set. We must draw regardless.
         rm -f "$VH_SANDBOX/ModConfig/farseer-client.json"
-        cat > "$VH_SANDBOX/ModConfig/vintagehorizons.json" <<'JSON'
+        cat > "$VH_SANDBOX/ModConfig/dodenslandscapes.json" <<'JSON'
 { "FarViewDistanceCap": 0, "DetailDistance": 512, "IgnoreOtherLodMods": true }
 JSON
         start_server
@@ -1168,7 +1168,7 @@ JSON
 
         # Part 2: no override, and a switch file that is not valid JSON. Deferring is the
         # only safe reading, and the mod must still start.
-        rm -f "$VH_SANDBOX/ModConfig/vintagehorizons.json"
+        rm -f "$VH_SANDBOX/ModConfig/dodenslandscapes.json"
         printf '{ "Enabled": fal\n' > "$VH_SANDBOX/ModConfig/farseer-client.json"
         start_server
         if run_client "VintageHorizons stays idle" 15; then
@@ -1179,24 +1179,24 @@ JSON
             fail "defer-override"
         fi
 
-        # Part 3: the escape hatch, driven the way a player drives it. '.vhdefer off' is
+        # Part 3: the escape hatch, driven the way a player drives it. '.dldefer off' is
         # what the idle log line and the README tell them to run, and it saves the config
         # from a state where the renderer does not exist. SaveConfig used to read the
         # renderer unconditionally, so this is the command whose failure would strand
         # exactly the player it exists to rescue.
-        rm -f "$VH_SANDBOX/ModConfig/farseer-client.json" "$VH_SANDBOX/ModConfig/vintagehorizons.json"
+        rm -f "$VH_SANDBOX/ModConfig/farseer-client.json" "$VH_SANDBOX/ModConfig/dodenslandscapes.json"
         start_server
         # Waits for the RESULT line, not the "sending" line. The first version waited for
         # the latter and passed while the command did nothing at all, because client-side
         # commands are not dispatched by SendChatMessage.
-        if VINTAGEHORIZONS_AUTOCMD=".vhdefer off" run_client "Auto-command result:" 15; then
-            assert_log --label "vhdefer    " --expect-idle || fail "defer-override"
+        if VINTAGEHORIZONS_AUTOCMD=".dldefer off" run_client "Auto-command result:" 15; then
+            assert_log --label "dldefer    " --expect-idle || fail "defer-override"
 
-            saved="$VH_SANDBOX/ModConfig/vintagehorizons.json"
+            saved="$VH_SANDBOX/ModConfig/dodenslandscapes.json"
             if [[ -f "$saved" ]] && python3 -c "import json,sys; sys.exit(0 if json.load(open('$saved')).get('IgnoreOtherLodMods') is True else 1)" 2>/dev/null; then
-                echo "      - .vhdefer off saved the override from an idle client"
+                echo "      - .dldefer off saved the override from an idle client"
             else
-                echo "      x .vhdefer off did not save the override"
+                echo "      x .dldefer off did not save the override"
                 fail "defer-override"
             fi
 
@@ -1213,7 +1213,7 @@ JSON
             fail "defer-override"
         fi
 
-        rm -f "$VH_SANDBOX/ModConfig/farseer-client.json" "$VH_SANDBOX/ModConfig/vintagehorizons.json"
+        rm -f "$VH_SANDBOX/ModConfig/farseer-client.json" "$VH_SANDBOX/ModConfig/dodenslandscapes.json"
         rm -rf "${VH_SANDBOX:?}/Mods/farseer" "${VH_SANDBOX:?}/server/Mods/farseer"
     else
         echo "      - skipping: no competing LOD mod at bench/mods/farseer"

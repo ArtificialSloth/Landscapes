@@ -8,7 +8,7 @@ namespace VintageHorizons.Net;
 /// <summary>
 /// Measures what a Terrain-pass peek produces, against two references.
 ///
-/// EXPERIMENT A (/vhgen diff) compares a peek against a full generation of the same
+/// EXPERIMENT A (/dlgen diff) compares a peek against a full generation of the same
 /// coordinates. This is the record behind the "generated terrain is missing things"
 /// caveat. The caveat used to say "no trees", which came from reading the
 /// EnumWorldGenPass doc comments rather than from measurement - the same method that
@@ -17,7 +17,7 @@ namespace VintageHorizons.Net;
 /// shrubs, rivulets and the snow layer, so the report lists what is actually absent
 /// instead of naming one example.
 ///
-/// EXPERIMENT B (/vhgen edittest) places a marker block, reads it back from the loaded
+/// EXPERIMENT B (/dlgen edittest) places a marker block, reads it back from the loaded
 /// world, then peeks the same coordinate and looks for it there. This is the evidence
 /// behind LodColumnMap.Classify never peeking a column that exists. The rule is
 /// currently justified by the API contract - PeekChunkColumn generates "from scratch
@@ -375,7 +375,7 @@ public class LodPeekDiff
                         logger.Warning(
                             "Edit test: the peek CONTAINED the placed marker. That contradicts "
                             + "the API contract this feature relies on. Investigate before "
-                            + "trusting /vhgen anywhere near edited terrain.");
+                            + "trusting /dlgen anywhere near edited terrain.");
                     }
 
                     report($"marker present when loaded: {presentWhenLoaded}, present when "

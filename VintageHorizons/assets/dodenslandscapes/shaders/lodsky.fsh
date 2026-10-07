@@ -1,6 +1,6 @@
 #version 430 core
 
-// `.vhsky`: counts sky that still shows below the horizon once all opaque terrain is drawn.
+// `.dlsky`: counts sky that still shows below the horizon once all opaque terrain is drawn.
 //
 // The depth test runs BEFORE this shader, so everything below happens only for pixels that
 // nothing opaque has covered. A pixel whose view ray points down, and would meet the lowest

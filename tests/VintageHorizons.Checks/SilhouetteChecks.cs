@@ -688,7 +688,7 @@ public static class SilhouetteChecks
         c.False(Source("src", "Silhouette", "LodHeightAccelerators.cs").Contains("before rivers", StringComparison.Ordinal),
             "no accelerator is labelled as before rivers: both include river valleys (G205)");
         c.True(Regex.IsMatch(assist,
-                @"Create\(""vhsilhouetteserver""\)[\s\S]*?RequiresPrivilege\(Privilege\.controlserver\)[\s\S]*?BeginSubCommand\(""compare""\)"),
+                @"Create\(""dlsilhouetteserver""\)[\s\S]*?RequiresPrivilege\(Privilege\.controlserver\)[\s\S]*?BeginSubCommand\(""compare""\)"),
             "the accelerator comparison is an admin subcommand of the server's silhouette command");
         c.True(run.Contains("IsBackground = true", StringComparison.Ordinal)
                 && run.Contains("accelerator.Sample(", StringComparison.Ordinal),
@@ -766,13 +766,13 @@ public static class SilhouetteChecks
     /// </summary>
     static void WorldgenErrorBrake(Check c)
     {
-        var brake = new LodWorldgenErrorBrake("[vintagehorizons]");
+        var brake = new LodWorldgenErrorBrake("[dodenslandscapes]");
         brake.Observe(Vintagestory.API.Common.EnumLogType.Error, "Exception: {0}", "before any preview");
         c.Eq(0, brake.ErrorsDuringPreviews, "an error with no previews outstanding does not count");
 
         brake.SetPreviewsOutstanding(4);
         brake.Observe(Vintagestory.API.Common.EnumLogType.Warning, "a warning");
-        brake.Observe(Vintagestory.API.Common.EnumLogType.Error, "[vintagehorizons] one of our own lines");
+        brake.Observe(Vintagestory.API.Common.EnumLogType.Error, "[dodenslandscapes] one of our own lines");
         c.Eq(0, brake.ErrorsDuringPreviews, "warnings and the mod's own errors do not count");
 
         brake.Observe(Vintagestory.API.Common.EnumLogType.Error, "Exception: {0}",
@@ -1830,12 +1830,12 @@ public static class SilhouetteChecks
         List<string> names = Regex.Matches(pass, @"\bp\.Uniform(?:Matrix)?\(""(\w+)""")
             .Select(m => m.Groups[1].Value).Distinct().ToList();
         string engine = Path.Combine(GameAssemblies.GamePath, "assets", "game", "shaderincludes");
-        string declared = Source("assets", "vintagehorizons", "shaders", "lodsilhouette.vsh")
-            + Source("assets", "vintagehorizons", "shaders", "lodsilhouette.fsh")
-            + Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogvolume.vsh")
-            + Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogvolume.fsh")
-            + Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogupsample.vsh")
-            + Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogupsample.fsh")
+        string declared = Source("assets", "dodenslandscapes", "shaders", "lodsilhouette.vsh")
+            + Source("assets", "dodenslandscapes", "shaders", "lodsilhouette.fsh")
+            + Source("assets", "dodenslandscapes", "shaders", "lodsilhouettefogvolume.vsh")
+            + Source("assets", "dodenslandscapes", "shaders", "lodsilhouettefogvolume.fsh")
+            + Source("assets", "dodenslandscapes", "shaders", "lodsilhouettefogupsample.vsh")
+            + Source("assets", "dodenslandscapes", "shaders", "lodsilhouettefogupsample.fsh")
             + File.ReadAllText(Path.Combine(engine, "fogandlight.vsh"))
             + File.ReadAllText(Path.Combine(engine, "fogandlight.fsh"));
         c.True(names.Count >= 15, $"found the silhouette pass's uniform uploads ({names.Count})");
@@ -1858,7 +1858,7 @@ public static class SilhouetteChecks
         foreach (string directory in new[]
         {
             Path.Combine(GameAssemblies.GamePath, "assets", "game", "shaderincludes"),
-            Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "assets", "vintagehorizons", "shaderincludes"),
+            Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "assets", "dodenslandscapes", "shaderincludes"),
         })
             foreach (string file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
                 sources[Path.GetFileName(file)] = File.ReadAllText(file);
@@ -1871,7 +1871,7 @@ public static class SilhouetteChecks
             foreach (string stage in new[] { "vsh", "fsh" })
             {
                 string code = (string)expand.Invoke(null,
-                    [program, Source("assets", "vintagehorizons", "shaders", "lodsilhouette." + stage), null])!;
+                    [program, Source("assets", "dodenslandscapes", "shaders", "lodsilhouette." + stage), null])!;
                 collect.Invoke(program, [code, names]);
             }
             c.True(program.textureLocations.ContainsKey("sky") && program.textureLocations.ContainsKey("glow"),
@@ -1921,13 +1921,13 @@ public static class SilhouetteChecks
         string waterDepth = Source("src", "Render", "LodTerrainRenderer.WaterDepth.cs");
         string fogPass = Source("src", "Render", "LodTerrainRenderer.SilhouetteFog.cs");
         string fogVolume = Source("src", "Render", "LodSilhouetteFogVolume.cs");
-        string vertex = Source("assets", "vintagehorizons", "shaders", "lodsilhouette.vsh");
-        string fragment = Source("assets", "vintagehorizons", "shaders", "lodsilhouette.fsh");
-        string inputs = Source("assets", "vintagehorizons", "shaderincludes", "lodfragmentinputs.fsh");
-        string finish = Source("assets", "vintagehorizons", "shaderincludes", "lodsurfacefinish.fsh");
-        string color = Source("assets", "vintagehorizons", "shaderincludes", "lodsilhouettecolor.fsh");
-        string fogVertex = Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogvolume.vsh");
-        string fogFragment = Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogvolume.fsh");
+        string vertex = Source("assets", "dodenslandscapes", "shaders", "lodsilhouette.vsh");
+        string fragment = Source("assets", "dodenslandscapes", "shaders", "lodsilhouette.fsh");
+        string inputs = Source("assets", "dodenslandscapes", "shaderincludes", "lodfragmentinputs.fsh");
+        string finish = Source("assets", "dodenslandscapes", "shaderincludes", "lodsurfacefinish.fsh");
+        string color = Source("assets", "dodenslandscapes", "shaderincludes", "lodsilhouettecolor.fsh");
+        string fogVertex = Source("assets", "dodenslandscapes", "shaders", "lodsilhouettefogvolume.vsh");
+        string fogFragment = Source("assets", "dodenslandscapes", "shaders", "lodsilhouettefogvolume.fsh");
         string dialog = Source("src", "Gui", "VintageHorizonsConfigDialog.cs");
         string scale = Source("src", "Gui", "LodThresholdScaleElement.cs");
         string mod = Source("src", "VintageHorizonsModSystem.cs")
@@ -2130,16 +2130,16 @@ public static class SilhouetteChecks
                     StringComparison.Ordinal),
             "the seam fog switch is a real off: no field is built or held, no pass is drawn, "
                 + "and Farseer is not held back waiting for fog");
-        c.True(mod.Contains("capi.ChatCommands.Create(\"vhfog\")", StringComparison.Ordinal)
+        c.True(mod.Contains("capi.ChatCommands.Create(\"dlfog\")", StringComparison.Ordinal)
                 && mod.Contains("current with { FogEnabled = action == \"on\" }", StringComparison.Ordinal)
                 && dialog.Contains("\"silhouette-fog\"", StringComparison.Ordinal)
                 && dialog.Contains("pendingSilhouettes with { FogEnabled = on }", StringComparison.Ordinal)
                 && mod.Contains("public bool SilhouetteFog = true;", StringComparison.Ordinal)
                 && mod.Contains("config.SilhouetteFog = value.FogEnabled;", StringComparison.Ordinal),
-            "the seam fog has a saved switch on the Farseer tab and a session .vhfog toggle");
+            "the seam fog has a saved switch on the Farseer tab and a session .dlfog toggle");
         int reset = mod.IndexOf("void ResetOutdatedFogDials(bool fromFile)", StringComparison.Ordinal);
         int guard = mod.IndexOf("if (!fromFile) return;", reset, StringComparison.Ordinal);
-        int store = mod.IndexOf("capi.StoreModConfig(config, \"vintagehorizons.json\");", reset,
+        int store = mod.IndexOf("capi.StoreModConfig(config, \"dodenslandscapes.json\");", reset,
             StringComparison.Ordinal);
         c.True(reset > 0 && guard > reset && store > guard
                 && mod.Contains("ResetOutdatedFogDials(configLoaded);", StringComparison.Ordinal)
@@ -2147,7 +2147,7 @@ public static class SilhouetteChecks
                     StringComparison.Ordinal)
                 && mod.Contains("public int SilhouetteFogModel;", StringComparison.Ordinal),
             "fog dials saved for an older fog model are reset once, and an unreadable file is never overwritten");
-        string upsample = Source("assets", "vintagehorizons", "shaders", "lodsilhouettefogupsample.fsh");
+        string upsample = Source("assets", "dodenslandscapes", "shaders", "lodsilhouettefogupsample.fsh");
         c.True(fogFragment.Contains("layout(location = 1) out float outDistance;", StringComparison.Ordinal)
                 && fogFragment.Contains("bool wantFar = ((lowTexel.x + lowTexel.y) & 1) == 0;",
                     StringComparison.Ordinal)

@@ -380,7 +380,7 @@ internal sealed class LodGpuCullPass : ILodGpuCullDispatch, IDisposable
         if (disabled) return false;
         disabled = true;
         LastFailure = reason;
-        warn("[VintageHorizons] GPU cull disabled for this session; cached terrain is drawn "
+        warn("[Landscapes] GPU cull disabled for this session; cached terrain is drawn "
             + "without depth suppression, which is complete and merely slower: " + reason);
         Release();
         return false;
@@ -391,7 +391,7 @@ internal sealed class LodGpuCullPass : ILodGpuCullDispatch, IDisposable
         if (!telemetryDisabled)
         {
             telemetryDisabled = true;
-            warn("[VintageHorizons] Live GPU-cull counters disabled; culling and drawing "
+            warn("[Landscapes] Live GPU-cull counters disabled; culling and drawing "
                 + "continue unchanged: " + reason);
             ReleaseTelemetry();
         }

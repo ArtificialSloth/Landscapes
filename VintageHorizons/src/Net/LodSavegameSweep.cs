@@ -555,7 +555,7 @@ public class LodSavegameSweep
 
             claimRefreshUnavailable = true;
             logger.Notification(
-                "[VintageHorizons] The savegame read path stopped answering requests to "
+                "[Landscapes] The savegame read path stopped answering requests to "
                 + "re-read captured columns, so their fingerprints are recorded from the "
                 + "startup reading instead. Those columns are examined again on the next "
                 + "world start; nothing captured is lost.");
@@ -789,7 +789,7 @@ public class LodSavegameSweep
                 snowRefresh.Add(cx, cz, chunksPerRegion);
 
             // Not in the savegame: the sweep indexes what exists and creates nothing, so
-            // there is no work here. Generation (/vhgen) is the feature that acts on this.
+            // there is no work here. Generation (/dlgen) is the feature that acts on this.
             if (action == EnumSweepColumnAction.Nothing) continue;
 
             // On the frontier of explored terrain. A load here would generate whatever is
@@ -1211,7 +1211,7 @@ public class LodSavegameSweep
     public long BackgroundWorkSignature => AuditsRequested + AuditMismatches + AuditPasses
         + Refreshed + SnowProbes + snowRefresh.Campaigns + snowRefresh.Pending;
 
-    /// <summary>One line for /vhserver; null when no sweep was configured.</summary>
+    /// <summary>One line for /dlserver; null when no sweep was configured.</summary>
     public string Status => AwaitingSavegameIndex
         ? "sweeping savegame: reading the savegame directly instead of probing the engine"
         : Done

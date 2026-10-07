@@ -6,9 +6,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyName>VintageHorizons</AssemblyName>
+    <AssemblyName>DodensLandscapes</AssemblyName>
     <RootNamespace>VintageHorizons</RootNamespace>
-    <Version>0.4.137</Version>
+    <Version>0.4.138</Version>
   </PropertyGroup>
 
   <!-- No debug info in Release: the zip never ships the .pdb, and generating one
@@ -66,10 +66,10 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Assemble a loadable mod folder at bin/<Config>/Mods/vintagehorizons (loaded via the addModPath launch flag) -->
+  <!-- Assemble a loadable mod folder at bin/<Config>/Mods/dodenslandscapes (loaded via the addModPath launch flag) -->
   <Target Name="PackageModFolder" AfterTargets="Build">
     <PropertyGroup>
-      <ModFolder>$(OutputPath)Mods/vintagehorizons/</ModFolder>
+      <ModFolder>$(OutputPath)Mods/dodenslandscapes/</ModFolder>
     </PropertyGroup>
     <ItemGroup>
       <AssetFiles Include="assets/**/*" />

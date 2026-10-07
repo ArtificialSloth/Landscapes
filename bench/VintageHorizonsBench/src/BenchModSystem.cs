@@ -185,7 +185,7 @@ public class BenchModSystem : ModSystem, IRenderer
             measureSec, outDir, route.Waypoints.Count(wp => wp.HasTrajectory), cooldownSec);
 
         capi.Event.LevelFinalize += OnLevelFinalize;
-        capi.Event.RegisterRenderer(this, EnumRenderStage.Done, "vintagehorizonsbench");
+        capi.Event.RegisterRenderer(this, EnumRenderStage.Done, "dodenslandscapesbench");
     }
 
     static double ReadDouble(string envName, double fallback)

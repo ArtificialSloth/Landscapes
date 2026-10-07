@@ -22,7 +22,7 @@ namespace VintageHorizons.Render;
 /// </summary>
 internal sealed class VanillaHorizonEffects : IDisposable
 {
-    internal const string HarmonyId = "vintagehorizons.horizoneffects";
+    internal const string HarmonyId = "dodenslandscapes.horizoneffects";
 
     static VanillaHorizonEffects? active;
 
@@ -67,7 +67,7 @@ internal sealed class VanillaHorizonEffects : IDisposable
         if (Interlocked.CompareExchange(ref active, this, null) != null)
         {
             logger.Error(
-                "Vintage Horizons found a second horizon-effects owner; vanilla horizon effects remain active.");
+                "Doden's Landscapes found a second horizon-effects owner; vanilla horizon effects remain active.");
             return false;
         }
 
@@ -83,7 +83,7 @@ internal sealed class VanillaHorizonEffects : IDisposable
         {
             Interlocked.CompareExchange(ref active, null, this);
             logger.Error(
-                "Vintage Horizons could not install terrain-wall suppression; vanilla behavior remains active.");
+                "Doden's Landscapes could not install terrain-wall suppression; vanilla behavior remains active.");
             return false;
         }
 
@@ -100,7 +100,7 @@ internal sealed class VanillaHorizonEffects : IDisposable
         if (target == null || patch == null)
         {
             logger?.Error(
-                "Vintage Horizons could not find the {0} hook; that pass keeps vanilla behavior.",
+                "Doden's Landscapes could not find the {0} hook; that pass keeps vanilla behavior.",
                 description);
             return;
         }
@@ -124,7 +124,7 @@ internal sealed class VanillaHorizonEffects : IDisposable
             {
             }
             logger?.Error(
-                "Vintage Horizons could not install the {0} hook; that pass keeps vanilla behavior: {1}",
+                "Doden's Landscapes could not install the {0} hook; that pass keeps vanilla behavior: {1}",
                 description, e.Message);
         }
     }
@@ -239,7 +239,7 @@ internal sealed class VanillaHorizonEffects : IDisposable
                 try
                 {
                     logger?.Error(
-                        "Vintage Horizons left vanilla liquid boundary faces unchanged after "
+                        "Doden's Landscapes left vanilla liquid boundary faces unchanged after "
                         + "the missing-neighbour check failed: {0}", e.Message);
                 }
                 catch
@@ -292,7 +292,7 @@ internal sealed class VanillaHorizonEffects : IDisposable
         try
         {
             logger?.Error(
-                "Vintage Horizons left terrain pass '{0}' unchanged after its wall-suppression override failed: {1}",
+                "Doden's Landscapes left terrain pass '{0}' unchanged after its wall-suppression override failed: {1}",
                 passName, reason);
         }
         catch
@@ -319,7 +319,7 @@ internal sealed class VanillaHorizonEffects : IDisposable
             try
             {
                 logger?.Error(
-                    "Vintage Horizons terrain-wall hook cleanup was refused but remains inactive: {0}",
+                    "Doden's Landscapes terrain-wall hook cleanup was refused but remains inactive: {0}",
                     cleanupError.Message);
             }
             catch

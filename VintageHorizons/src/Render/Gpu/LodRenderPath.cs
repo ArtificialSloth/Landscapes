@@ -368,7 +368,7 @@ internal sealed class LodRenderPathCoordinator : IDisposable
         try { shadow.Clear(identities.WorldEpoch); }
         catch (Exception e)
         {
-            warn("[VintageHorizons] GPU regional resources did not clear cleanly; the required "
+            warn("[Landscapes] GPU regional resources did not clear cleanly; the required "
                 + "packed renderer is unavailable: " + e.Message);
         }
     }
@@ -450,7 +450,7 @@ internal sealed class LodRenderPathCoordinator : IDisposable
             ShadowEnabled = false;
             try { shadow.Clear(identities.WorldEpoch); }
             catch { /* The failed CPU-only shadow has no visible authority or GL state. */ }
-            warn($"[VintageHorizons] GPU regional resources disabled after {operation} failed; "
+            warn($"[Landscapes] GPU regional resources disabled after {operation} failed; "
                 + "cached opaque terrain will be suppressed: " + e.Message);
         }
     }

@@ -7,7 +7,7 @@ namespace VintageHorizons.Silhouette;
 
 /// <summary>
 /// One presample (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P0.3), asked for with
-/// <c>/vhsilhouetteserver presample</c>. A background thread asks every accelerator for the height
+/// <c>/dlsilhouetteserver presample</c>. A background thread asks every accelerator for the height
 /// of every cell of a chunk square, one call per cell so each is timed, and writes the answers to a
 /// file that a later session compares with the real terrain once it has been generated.
 ///
@@ -26,7 +26,7 @@ internal sealed class LodAcceleratorPresampleRun : ILodBackgroundReport
     {
         var thread = new Thread(() => Run(path, cells, heldChunks, accelerators, seaLevel))
         {
-            Name = "vintagehorizons-silhouette-presample",
+            Name = "dodenslandscapes-silhouette-presample",
             IsBackground = true,
             Priority = ThreadPriority.BelowNormal,
         };

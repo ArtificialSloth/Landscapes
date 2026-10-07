@@ -47,7 +47,7 @@ uniform float vhTaaFullPixels;
 // complete vertex shader, so rejecting vertical faces here avoids paying that full price
 // for walls OpenGL will discard anyway. The test is exact for a vertical plane even after
 // global Y warping: the warp never changes which side of its X/Z plane the camera occupies.
-// It follows the ordinary back-face switch so `.vhbackface off` remains a complete escape.
+// It follows the ordinary back-face switch so `.dlbackface off` remains a complete escape.
 uniform int packedBackfaceCull;
 
 // How far to lower solid cached terrain, in blocks. A constant global offset, NOT a ramp
@@ -63,7 +63,7 @@ uniform int packedBackfaceCull;
 // The same fight between two similarly lit land surfaces is nearly invisible.
 //
 // A fraction of a block by default. Whether that is enough separation at the distance the
-// overlap actually sits is a depth-precision question no desk can answer, so `.vhband sink`
+// overlap actually sits is a depth-precision question no desk can answer, so `.dlband sink`
 // moves it.
 uniform float bandSinkBlocks;
 
@@ -82,7 +82,7 @@ uniform sampler2D blockTable;
 //
 // This carried three unpacked rows - the atlas rectangle, the texture's mean, and the grass
 // overlay's rectangle - eleven floats of flat varying per vertex, written on BOTH branches
-// and therefore paid in full even with `.vhblend off`, plus three table fetches per vertex to
+// and therefore paid in full even with `.dlblend off`, plus three table fetches per vertex to
 // produce them. The fragment stage reads them only inside the blend band, which is a thin
 // ring of the screen against millions of vertices, so the whole bundle was being computed and
 // carried for geometry that would never ask.
@@ -259,7 +259,7 @@ uniform float vhWaveReach;
 // per-tree variation spends, how much is the NOISE and how much is the FETCH. Baking the row
 // into the mesh removes only the first, so if that half is small there is nothing to bake for.
 // The picture it draws is wrong on purpose - the rows are a hash, not the game's - so this is
-// session-only and never saved. See `.vhtint leafcheap`.
+// session-only and never saved. See `.dltint leafcheap`.
 uniform int leafSeasonCheapRow;
 
 // The voxel size, in blocks, past which a vertex stops asking for its own climate and takes
@@ -273,7 +273,7 @@ uniform int leafSeasonCheapRow;
 // biome itself, and two sections either side of the cut-off would wear different ones. So
 // this is deliberately set far enough out that the cut falls between sections whose climates
 // have already converged, and it is a switch rather than a constant because only looking at
-// the horizon can say where that is. See `.vhtint climatewide`.
+// the horizon can say where that is. See `.dltint climatewide`.
 uniform float climateFadeBlocks;
 uniform int climateFieldEnabled;
 uniform int climateTintEnabled;

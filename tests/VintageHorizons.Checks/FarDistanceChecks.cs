@@ -95,11 +95,11 @@ public static class FarDistanceChecks
         c.Eq(2536f, LodFarDistance.Effective(0, 1000, 0),
             "vanilla view distance retains its safety margin without LOD meshes");
         c.Eq(10000f, LodFarDistance.Effective(10000, 1000, 0),
-            "unlimited .vhfar behavior follows the cached terrain edge");
+            "unlimited .dlfar behavior follows the cached terrain edge");
         c.Eq(4096f, LodFarDistance.Effective(10000, 1000, 4096),
-            "an explicit .vhfar cap limits the LOD far edge");
+            "an explicit .dlfar cap limits the LOD far edge");
         c.Eq(2536f, LodFarDistance.Effective(10000, 1000, 2048),
-            "the .vhfar cap cannot clip the vanilla view-distance safety band");
+            "the .dlfar cap cannot clip the vanilla view-distance safety band");
         c.Eq(4608f, LodFarDistance.RequiredProjection(4096),
             "the camera projection retains room beyond the visible LOD edge");
     }

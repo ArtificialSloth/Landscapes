@@ -636,7 +636,7 @@ internal sealed class LodGpuTelemetry : IDisposable
             {
                 nextProbeAttemptAt = LodGpuProbeRetryPolicy.NextAttemptTimestamp(
                     now, Stopwatch.Frequency);
-                log($"[VintageHorizons] GPU depth-copy check found a temporary frame-size "
+                log($"[Landscapes] GPU depth-copy check found a temporary frame-size "
                     + $"condition on attempt {probeAttempts}/{LodGpuProbeRetryPolicy.MaximumAttempts}; "
                     + $"retrying in {LodGpuProbeRetryPolicy.RetryDelayMilliseconds} ms: "
                     + DepthCopyValidation.FailureReason);
@@ -651,7 +651,7 @@ internal sealed class LodGpuTelemetry : IDisposable
                   + $"{Depth.AttachmentType} {Depth.AttachmentName}, {Depth.DepthBits}-bit, "
                   + $"{Depth.Samples}x, {Depth.DepthFunction} clear {Depth.ClearDepth:0.###}, {Depth.Convention}"
                 : "probe failed: " + Depth.FailureReason;
-            log($"[VintageHorizons] GPU probe: {Capabilities.Vendor} {Capabilities.Renderer}; "
+            log($"[Landscapes] GPU probe: {Capabilities.Vendor} {Capabilities.Renderer}; "
                 + $"GL {Capabilities.Version}, GLSL {Capabilities.ShadingLanguageVersion}; "
                 + $"timer {(Decision.TimerQueriesAvailable ? "yes" : "no")}, "
                 + $"regional MDI advertised {(Decision.RegionalIndirectAdvertised ? "yes" : "no")}, "
@@ -686,7 +686,7 @@ internal sealed class LodGpuTelemetry : IDisposable
             probeAttempted = true;
             nextProbeAttemptAt = 0;
             TimingActive = false;
-            warn("[VintageHorizons] GPU capability probe failed; legacy rendering remains active: "
+            warn("[Landscapes] GPU capability probe failed; legacy rendering remains active: "
                 + e.Message);
         }
     }
@@ -746,7 +746,7 @@ internal sealed class LodGpuTelemetry : IDisposable
         TimingActive = false;
         if (timingFailureReported) return;
         timingFailureReported = true;
-        warn("[VintageHorizons] Delayed GPU timing disabled; rendering is unchanged: " + e.Message);
+        warn("[Landscapes] Delayed GPU timing disabled; rendering is unchanged: " + e.Message);
     }
 
     public void Dispose()

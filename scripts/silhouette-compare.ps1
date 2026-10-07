@@ -16,12 +16,12 @@ repository-local, disposable data path, .testdata\silhouette-compare\<Profile>. 
 
 It runs two sessions on one fresh world:
 
-1. presample: /vhsilhouetteserver presample <Range> asks every accelerator for every cell of the
+1. presample: /dlsilhouetteserver presample <Range> asks every accelerator for every cell of the
    square around the world centre before that land is generated, writes the answers to disk, and
    the server stops.  A second process, because a generator in the same process could reuse the
    samplers' cached region data and agree with them for the wrong reason.
 2. compare: /wgen pregen <Range> generates the same square; once the queue has stayed empty,
-   /vhsilhouetteserver compare <Range> measures the accelerators against the real heights, both
+   /dlsilhouetteserver compare <Range> measures the accelerators against the real heights, both
    as sampled now and as presampled, and writes a map of every cell.
 
 Comparisons run while generation is idle, because whether the samplers are safe beside real
@@ -70,7 +70,7 @@ $ModConfigSource = if ($ModConfigSource) { [IO.Path]::GetFullPath($ModConfigSour
 $ClientSettings = if ($ClientSettings) { [IO.Path]::GetFullPath($ClientSettings) } else {
     Join-Path $dataPath 'clientsettings.json'
 }
-$effectiveRequiredModIds = @($RequiredModIds + 'vintagehorizons' | Sort-Object -Unique)
+$effectiveRequiredModIds = @($RequiredModIds + 'dodenslandscapes' | Sort-Object -Unique)
 
 function Assert-UnderCompareBase {
     param([Parameter(Mandatory)][string]$Path)
@@ -102,7 +102,7 @@ function Get-VintageHorizonsZip {
     $version = ([string]($project.Project.PropertyGroup.Version |
         Where-Object { $_ } | Select-Object -First 1)).Trim()
     if (-not $version) { throw 'Could not read the Vintage Horizons project version.' }
-    $zip = Join-Path $repoRoot "dist\vintagehorizons_$version.zip"
+    $zip = Join-Path $repoRoot "dist\dodenslandscapes_$version.zip"
     if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
         throw "The exact current Vintage Horizons zip is missing: $zip"
     }
@@ -141,7 +141,7 @@ function Select-EnabledMods {
     $selected = @()
     $skipped = @()
     foreach ($item in Get-ChildItem -LiteralPath $ModSource -Force) {
-        if ($item.Name -match '^vintagehorizons(?:_|\.|$)') { continue }
+        if ($item.Name -match '^dodenslandscapes(?:_|\.|$)') { continue }
         $identity = if ($item -is [IO.FileInfo] -and $item.Extension -ieq '.zip') { Read-ModIdentity $item } else { $null }
         if ($null -eq $identity) {
             $skipped += "$($item.Name) (identity unreadable)"
@@ -156,7 +156,7 @@ function Select-EnabledMods {
 
 function Assert-RequiredMods {
     param([Parameter(Mandatory)][object]$Mods)
-    $ids = @($Mods.Selected | ForEach-Object { $_.Id }) + 'vintagehorizons'
+    $ids = @($Mods.Selected | ForEach-Object { $_.Id }) + 'dodenslandscapes'
     foreach ($required in $effectiveRequiredModIds) {
         if ($ids -notcontains $required) { throw "The owner's enabled mods include no $required." }
     }
@@ -186,7 +186,7 @@ function Initialize-Environment {
         EnableWorldGeneration = $false
         PregenRadiusChunks = 0
     } | ConvertTo-Json | Set-Content -LiteralPath (
-        Join-Path $configsTarget 'vintagehorizons-server.json') -Encoding utf8
+        Join-Path $configsTarget 'dodenslandscapes-server.json') -Encoding utf8
 }
 
 # One server session. 'presample' asks the accelerators about the square before it is generated;
@@ -220,8 +220,8 @@ function Invoke-Server {
     $expectedColumns = (2 * $Range + 1) * (2 * $Range + 1)
     $refusals = @('Horizon silhouettes are off on this server', 'No height accelerator is installed',
         'The server holds no real heights', 'is already running; its report will follow')
-    $finishedLine = if ($Session -eq 'presample') { '[VintageHorizons] Accelerator presample finished' } else {
-        '[VintageHorizons] Accelerator comparison finished' }
+    $finishedLine = if ($Session -eq 'presample') { '[Landscapes] Accelerator presample finished' } else {
+        '[Landscapes] Accelerator comparison finished' }
     $report = [Collections.Generic.List[string]]::new()
     $phase = 'startup'
     $zeroSamples = 0
@@ -239,7 +239,7 @@ function Invoke-Server {
     }
 
     function Request-Stop {
-        Send-ServerCommand '/vhsilhouetteserver status'
+        Send-ServerCommand '/dlsilhouetteserver status'
         Send-ServerCommand '/stop'
         Set-Variable -Name stopSentAt -Scope 1 -Value $clock.Elapsed.TotalSeconds
         Set-Variable -Name phase -Scope 1 -Value 'stopping'
@@ -259,8 +259,8 @@ function Invoke-Server {
                 $line = $stdoutTask.GetAwaiter().GetResult()
                 if ($null -eq $line) { $stdoutTask = $null; break }
                 Add-Content -LiteralPath $consolePath -Value $line -Encoding utf8
-                if ($line.Contains('[VintageHorizons] Horizon silhouettes', [StringComparison]::Ordinal) -or
-                    $line.Contains('[VintageHorizons] Accelerator ', [StringComparison]::Ordinal) -or
+                if ($line.Contains('[Landscapes] Horizon silhouettes', [StringComparison]::Ordinal) -or
+                    $line.Contains('[Landscapes] Accelerator ', [StringComparison]::Ordinal) -or
                     $line.Contains('Horizon silhouettes: measuring', [StringComparison]::Ordinal)) {
                     # The report is shareable: the server logs full file paths, so the machine's own
                     # folders are replaced (dev/DocCheck.ps1 rejects personal paths in text files).
@@ -279,7 +279,7 @@ function Invoke-Server {
                 if ($phase -eq 'startup' -and $line.Contains('Dedicated Server now running', [StringComparison]::Ordinal)) {
                     Write-Host '  server ready'
                     if ($Session -eq 'presample') {
-                        Send-ServerCommand "/vhsilhouetteserver presample $Range"
+                        Send-ServerCommand "/dlsilhouetteserver presample $Range"
                         $phase = 'presampling'
                     } else {
                         Send-ServerCommand "/wgen pregen $Range"
@@ -295,8 +295,8 @@ function Invoke-Server {
                     if ([int]$Matches.queue -eq 0) { $zeroSamples++ } else { $zeroSamples = 0 }
                     if ($zeroSamples -ge 3) {
                         Write-Host ('  generation idle after {0:0}s' -f ($clock.Elapsed.TotalSeconds - $generationStarted))
-                        Send-ServerCommand '/vhsilhouetteserver status'
-                        Send-ServerCommand "/vhsilhouetteserver compare $Range"
+                        Send-ServerCommand '/dlsilhouetteserver status'
+                        Send-ServerCommand "/dlsilhouetteserver compare $Range"
                         $phase = 'comparing'
                     }
                 }
@@ -360,7 +360,7 @@ function Invoke-Server {
 $mods = Select-EnabledMods
 Write-Host 'Enabled mods to copy:'
 foreach ($mod in $mods.Selected) { Write-Host "  $($mod.Id) $($mod.Version)  ($($mod.File.Name))" }
-Write-Host "  vintagehorizons from $(Get-VintageHorizonsZip)"
+Write-Host "  dodenslandscapes from $(Get-VintageHorizonsZip)"
 if ($mods.Skipped.Count -gt 0) {
     Write-Host 'Left out:'
     foreach ($entry in $mods.Skipped) { Write-Host "  $entry" }
@@ -380,7 +380,7 @@ if (-not $NoPresample) { Invoke-Server -Session presample }
 Invoke-Server -Session compare
 Write-Host "  report: $(Join-Path $profileRoot 'compare-report.txt')"
 
-$map = Get-ChildItem -LiteralPath (Join-Path $profileRoot 'ModData\vintagehorizons\silhouette-compare') -Filter '*-map-*.csv.gz' -ErrorAction SilentlyContinue |
+$map = Get-ChildItem -LiteralPath (Join-Path $profileRoot 'ModData\dodenslandscapes\silhouette-compare') -Filter '*-map-*.csv.gz' -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 $python = Get-Command python3, python -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($null -eq $map) {

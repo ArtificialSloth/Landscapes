@@ -3,7 +3,7 @@ namespace VintageHorizons;
 /// <summary>
 /// Why the engine is not drawing a chunk whose mask texel is suppressing cached terrain.
 /// Every value except <see cref="Drawing"/> and <see cref="Unknown"/> is a frame in which
-/// nothing draws that ground: the sky-coloured flash that `.vhpaint` shows in magenta.
+/// nothing draws that ground: the sky-coloured flash that `.dlpaint` shows in magenta.
 /// </summary>
 internal enum VanillaGapReason : byte
 {
@@ -65,12 +65,12 @@ internal enum VanillaGapEnd : byte
     /// <summary>The cell's column scrolled out of the tracked window.</summary>
     LeftWindow,
 
-    /// <summary>`.vhgap release` handed it to the cache in the frame the scan found it.</summary>
+    /// <summary>`.dlgap release` handed it to the cache in the frame the scan found it.</summary>
     ReleasedByGapScan,
 }
 
 /// <summary>
-/// The pure half of `.vhgap`: which engine signal failed, and which failures the release
+/// The pure half of `.dlgap`: which engine signal failed, and which failures the release
 /// comparison may act on. Kept free of engine types so the rules have deterministic checks.
 /// </summary>
 internal static class VanillaHandoffGap
@@ -97,7 +97,7 @@ internal static class VanillaHandoffGap
     }
 
     /// <summary>
-    /// Whether `.vhgap release` may hand this cell to the cache. Only reasons the ordinary gain
+    /// Whether `.dlgap release` may hand this cell to the cache. Only reasons the ordinary gain
     /// path refuses as well: an unloaded or fresh chunk fails IsChunkRendered, a meshless one
     /// fails the pool-geometry gain gate, an out-of-range one fails the exact range rule, and
     /// air never takes a texel. Hidden and culled chunks would pass every one of those gates
@@ -133,7 +133,7 @@ internal static class VanillaHandoffGap
         VanillaGapEnd.VanillaResumed => "vanilla drew it again",
         VanillaGapEnd.HandedToCache => "handed to the cache",
         VanillaGapEnd.LeftWindow => "left the tracked window",
-        _ => "released by .vhgap",
+        _ => "released by .dlgap",
     };
 }
 

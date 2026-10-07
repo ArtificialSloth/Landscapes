@@ -10,7 +10,7 @@ public readonly record struct LodSilhouetteStoredTile(int TileX, int TileZ, LodS
 /// <summary>
 /// Silhouette tiles on disk (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER 4.3 and P5), one row per tile,
 /// sharing nothing with the section cache. The server uses
-/// <c>ModData/vintagehorizons/&lt;savegame&gt;-silhouette-server.db</c>; the client uses the same
+/// <c>ModData/dodenslandscapes/&lt;savegame&gt;-silhouette-server.db</c>; the client uses the same
 /// schema in <c>&lt;savegame&gt;-silhouette.db</c>.
 ///
 /// One dedicated thread owns the only connection (G9), unpooled so a world reloaded in the same
@@ -56,7 +56,7 @@ public sealed class LodSilhouetteStore : IDisposable
         this.mergeStoredRows = mergeStoredRows;
         thread = new Thread(Loop)
         {
-            Name = "vintagehorizons-silhouette-store",
+            Name = "dodenslandscapes-silhouette-store",
             IsBackground = true,
             Priority = ThreadPriority.BelowNormal,
         };

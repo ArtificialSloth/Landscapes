@@ -20,7 +20,7 @@ public static class TerrainSamplerChecks
         foreach (string directory in new[]
         {
             Path.Combine(GameAssemblies.GamePath, "assets", "game", "shaderincludes"),
-            Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "assets", "vintagehorizons", "shaderincludes")
+            Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "assets", "dodenslandscapes", "shaderincludes")
         })
             foreach (string file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
                 sources[Path.GetFileName(file)] = File.ReadAllText(file);
@@ -35,7 +35,7 @@ public static class TerrainSamplerChecks
                 foreach (string stage in new[] { "vsh", "fsh" })
                 {
                     string path = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "assets",
-                        "vintagehorizons", "shaders", variant + "." + stage);
+                        "dodenslandscapes", "shaders", variant + "." + stage);
                     string code = (string)expand.Invoke(null, [program, File.ReadAllText(path), null])!;
                     collect.Invoke(program, [code, names]);
                 }

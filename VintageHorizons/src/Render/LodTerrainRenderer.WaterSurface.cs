@@ -22,7 +22,7 @@ public partial class LodTerrainRenderer
     void LoadWaterSurfaceShader()
     {
         waterSurfaceProg = capi.Shader.NewShaderProgram();
-        waterSurfaceProg.AssetDomain = "vintagehorizons";
+        waterSurfaceProg.AssetDomain = "dodenslandscapes";
         waterSurfaceProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         waterSurfaceProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram("lodwater", waterSurfaceProg);
@@ -33,10 +33,10 @@ public partial class LodTerrainRenderer
         {
             if (waterSurfaceShaderOk)
                 capi.Logger.Notification(
-                    "[VintageHorizons] dedicated water surface shader ready; legacy shader retired.");
+                    "[Landscapes] dedicated water surface shader ready; legacy shader retired.");
             else
                 capi.Logger.Error(
-                    "[VintageHorizons] dedicated opaque water shader failed to compile; "
+                    "[Landscapes] dedicated opaque water shader failed to compile; "
                     + "selecting the opaque pipeline will suppress cached water.");
         }
     }
@@ -114,7 +114,7 @@ public partial class LodTerrainRenderer
         if (reportedRequiredWaterFailure == reason) return;
         reportedRequiredWaterFailure = reason;
         capi.Logger.Error(
-            "[VintageHorizons] REQUIRED WATER PATH FAILED; cached water/thin cover is "
+            "[Landscapes] REQUIRED WATER PATH FAILED; cached water/thin cover is "
             + "suppressed and no legacy/opaque fallback will run: {0}.", reason);
     }
 

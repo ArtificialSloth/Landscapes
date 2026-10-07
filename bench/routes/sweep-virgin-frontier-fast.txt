@@ -13,7 +13,7 @@
 # corridor, so the leg starts on saved terrain at chunk X 8050 - Session 102's endpoint -
 # and is virgin from its fourth chunk onward.
 #
-# Read PlayerActivityYieldTicks and the sweep's loaded count from the /vhserver status
+# Read PlayerActivityYieldTicks and the sweep's loaded count from the /dlserver status
 # line and server-main.log. The question is whether the sweep made any progress at all.
 
 sweep-frontier-crossing  257600  280  256000  0  -12  ->  258800  280  256000  1080  -12

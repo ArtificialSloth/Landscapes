@@ -1,7 +1,7 @@
 namespace VintageHorizons.Net;
 
 /// <summary>
-/// Admin knobs for the server side, in <c>ModConfig/vintagehorizons-server.json</c>
+/// Admin knobs for the server side, in <c>ModConfig/dodenslandscapes-server.json</c>
 /// (DESIGN.md §10.6). Written out on first run so the options are discoverable without
 /// reading the source.
 ///
@@ -99,7 +99,7 @@ public class LodServerConfig
     public int AuditColumnsPerSecond = 16;
 
     /// <summary>
-    /// Let an admin build the LOD cache around themselves with /vhgen. Columns nobody
+    /// Let an admin build the LOD cache around themselves with /dlgen. Columns nobody
     /// has generated are peeked: real worldgen runs from the seed, capture reads the
     /// result, and nothing is written to the savegame. Columns that exist are loaded
     /// under the same neighbourhood rule the sweep uses, so player edits stay correct.
@@ -112,14 +112,14 @@ public class LodServerConfig
     public bool EnableGenerateCommand = true;
 
     /// <summary>
-    /// The largest radius, in chunks, that /vhgen accepts. 0 disables the command as
+    /// The largest radius, in chunks, that /dlgen accepts. 0 disables the command as
     /// surely as the flag does. 128 is a 4096-block radius: 66,049 columns, roughly 48
     /// minutes at the engine's measured ~23 columns per second of worldgen.
     /// </summary>
     public int GenerateMaxRadiusChunks = 128;
 
     /// <summary>
-    /// The radius used when /vhgen start gets no argument. Small on purpose: a person
+    /// The radius used when /dlgen start gets no argument. Small on purpose: a person
     /// typing a command wants a result. 32 chunks is 4,225 columns, roughly 3 minutes.
     /// </summary>
     public int GenerateDefaultRadiusChunks = 32;
@@ -142,15 +142,15 @@ public class LodServerConfig
 
     /// <summary>
     /// Allow controlserver users to permanently generate a bounded part of the real
-    /// savegame with /vhworldgen. The command remains registered when this is false so it
+    /// savegame with /dlworldgen. The command remains registered when this is false so it
     /// can explain which setting disabled it.
     /// </summary>
     public bool EnableWorldGeneration = true;
 
-    /// <summary>Largest radius /vhworldgen accepts. 256 is 263,169 square columns.</summary>
+    /// <summary>Largest radius /dlworldgen accepts. 256 is 263,169 square columns.</summary>
     public int WorldGenMaxRadiusChunks = 256;
 
-    /// <summary>Radius used when /vhworldgen start omits one.</summary>
+    /// <summary>Radius used when /dlworldgen start omits one.</summary>
     public int WorldGenDefaultRadiusChunks = 32;
 
     /// <summary>
@@ -171,9 +171,9 @@ public class LodServerConfig
     /// <summary>
     /// Pre-build the cache around spawn at startup, in chunks of radius. 0 (default)
     /// means never, and the cache then fills only as players travel or an admin runs
-    /// /vhgen.
+    /// /dlgen.
     ///
-    /// This runs the same peek generator /vhgen uses. It generates terrain nobody has
+    /// This runs the same peek generator /dlgen uses. It generates terrain nobody has
     /// visited and captures it, and it writes NOTHING to the savegame - the first
     /// version loaded columns instead, which cost worldgen time and disk for terrain no
     /// player had seen. The setting still reveals map that nobody has explored, which is
@@ -304,10 +304,10 @@ public class LodServerConfig
     /// <summary>The audit needs the sweep's safety rules and its savegame read path.</summary>
     public bool AuditEnabled => SweepEnabled && AuditColumnsPerSecond > 0;
 
-    /// <summary>True when /vhgen is configured to accept a start.</summary>
+    /// <summary>True when /dlgen is configured to accept a start.</summary>
     public bool GenerateEnabled => EnableGenerateCommand && GenerateMaxRadiusChunks > 0;
 
-    /// <summary>True when /vhworldgen is configured to accept a new job.</summary>
+    /// <summary>True when /dlworldgen is configured to accept a new job.</summary>
     public bool WorldGenerationEnabled => EnableWorldGeneration && WorldGenMaxRadiusChunks > 0;
 
     public string Describe() =>

@@ -10,12 +10,12 @@ using Vintagestory.Client.NoObf;
 namespace VintageHorizons;
 
 /// <summary>
-/// `.vhsky`: a witness for the handoff flash that looks at the picture rather than at anyone's
+/// `.dlsky`: a witness for the handoff flash that looks at the picture rather than at anyone's
 /// beliefs about it.
 ///
 /// <para>
 /// Every measurement before this compared the mod's CPU ownership with the engine's CPU state
-/// (`.vhgap`), and a same-frame release of every gap it found left the flash unchanged. What
+/// (`.dlgap`), and a same-frame release of every gap it found left the flash unchanged. What
 /// the graphics card actually drew was never measured. This counts it. Straight after cached
 /// opaque terrain is drawn, one full-screen triangle on the far plane runs with the depth test
 /// ahead of its shader, so only pixels nothing opaque has covered reach it. A pixel whose view
@@ -117,7 +117,7 @@ public partial class LodTerrainRenderer
         }
         skyFailed = false;
         ResetSkyWitness(now);
-        string line = "[VintageHorizons] sky witness " + (on ? "on" : "off") + " at frame "
+        string line = "[Landscapes] sky witness " + (on ? "on" : "off") + " at frame "
             + frameCounter.ToString(CultureInfo.InvariantCulture) + ". " + DescribeSkyWitness();
         capi.Logger.Notification("{0}", line);
         return line;
@@ -129,7 +129,7 @@ public partial class LodTerrainRenderer
         SkyMaskVerify = on;
         skyVerifyUploads = skyVerifyMismatches = skyVerifyErrors = 0;
         skyUnpackReported = null;
-        string line = "[VintageHorizons] sky witness mask verify " + (on ? "on" : "off")
+        string line = "[Landscapes] sky witness mask verify " + (on ? "on" : "off")
             + " at frame " + frameCounter.ToString(CultureInfo.InvariantCulture) + ". "
             + DescribeSkyWitness();
         capi.Logger.Notification("{0}", line);
@@ -138,7 +138,7 @@ public partial class LodTerrainRenderer
 
     public string DescribeSkyWitness()
     {
-        if (!skyShaderOk) return "The sky witness shader is not available, so .vhsky cannot run.";
+        if (!skyShaderOk) return "The sky witness shader is not available, so .dlsky cannot run.";
         return "Sky witness " + (SkyWitness ? "on" : "off") + ", mask verify "
             + (SkyMaskVerify ? "on" : "off") + ". On counts sky showing below the horizon after "
             + "distant terrain is drawn and writes each flash to the client log with where it was "
@@ -166,7 +166,7 @@ public partial class LodTerrainRenderer
     void LoadSkyWitnessShader()
     {
         skyProg = capi.Shader.NewShaderProgram();
-        skyProg.AssetDomain = "vintagehorizons";
+        skyProg.AssetDomain = "dodenslandscapes";
         skyProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         skyProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram("lodsky", skyProg);
@@ -174,7 +174,7 @@ public partial class LodTerrainRenderer
         skyFailed = false;
         if (!ShaderLoadIsProvisional && !skyShaderOk)
             capi.Logger.Warning(
-                "[VintageHorizons] the sky witness shader did not compile; .vhsky is unavailable "
+                "[Landscapes] the sky witness shader did not compile; .dlsky is unavailable "
                 + "and nothing else changes.");
     }
 
@@ -215,7 +215,7 @@ public partial class LodTerrainRenderer
         {
             skyFailed = true;
             capi.Logger.Warning(
-                "[VintageHorizons] the sky witness stopped for this session; rendering is unchanged: {0}",
+                "[Landscapes] the sky witness stopped for this session; rendering is unchanged: {0}",
                 e.Message);
         }
         finally
@@ -442,7 +442,7 @@ public partial class LodTerrainRenderer
         int width = frame.ViewportWidth;
         int height = frame.ViewportHeight;
         var line = new StringBuilder(640);
-        line.Append("[VintageHorizons] sky: frame ").Append(frame.Frame)
+        line.Append("[Landscapes] sky: frame ").Append(frame.Frame)
             .Append(" (read ").Append(latency).Append(" frames later): ").Append(total)
             .Append(" px of sky below the horizon where cached terrain reaches, usual level ")
             .Append(level.ToString("0", CultureInfo.InvariantCulture)).Append(" px");
@@ -590,7 +590,7 @@ public partial class LodTerrainRenderer
             renderedNow = false;
         }
         line.Append("; vanilla renders it now: ").Append(renderedNow ? "yes" : "no");
-        if (HandoffGapLog && gapTracker.IsOpen(cell)) line.Append("; a .vhgap episode is open for it");
+        if (HandoffGapLog && gapTracker.IsOpen(cell)) line.Append("; a .dlgap episode is open for it");
     }
 
     bool TakeSkyLine(long now)
@@ -619,7 +619,7 @@ public partial class LodTerrainRenderer
         CultureInfo invariant = CultureInfo.InvariantCulture;
         double seconds = Math.Max(0.001, (now - skyIntervalStartMs) / 1000.0);
         var s = new StringBuilder(512);
-        s.Append("[VintageHorizons] sky summary, ").Append(seconds.ToString("0.0", invariant))
+        s.Append("[Landscapes] sky summary, ").Append(seconds.ToString("0.0", invariant))
             .Append(" s: ").Append(skyFramesDrawn).Append(" frames witnessed (")
             .Append(skyFramesBusy).Append(" skipped while the card was behind), ")
             .Append(skyFramesRead).Append(" read, ").Append(skyFramesWithSky)
@@ -628,7 +628,7 @@ public partial class LodTerrainRenderer
             s.Append(" (").Append(skyLinesSuppressed).Append(" over the line limit)");
         if (skyFramesBeforeVanilla > 0)
             s.Append("; ").Append(skyFramesBeforeVanilla)
-                .Append(" frames not witnessed because cached terrain is drawn before vanilla (.vhocclusion off)");
+                .Append(" frames not witnessed because cached terrain is drawn before vanilla (.dlocclusion off)");
         s.Append("; peak ").Append(skyPixelsPeak).Append(" px, usual level ")
             .Append(skyBaseline.Level.ToString("0", invariant))
             .Append(" px, horizon past the cache's reach peak ").Append(skyBeyondPeak)
@@ -662,7 +662,7 @@ public partial class LodTerrainRenderer
     }
 
     /// <summary>
-    /// `.vhsky verify`: straight after the mask texture upload, read it back and compare. Also
+    /// `.dlsky verify`: straight after the mask texture upload, read it back and compare. Also
     /// records the pixel-unpack state the upload ran under, because a buffer left bound to the
     /// unpack target, or a stray row length, turns a correct CPU copy into a wrong texture with
     /// no error at all.
@@ -685,7 +685,7 @@ public partial class LodTerrainRenderer
             {
                 skyUnpackReported = unpack;
                 capi.Logger.Warning(
-                    "[VintageHorizons] sky verify: the mask was uploaded under non-default pixel "
+                    "[Landscapes] sky verify: the mask was uploaded under non-default pixel "
                     + "unpack state at frame {0}: {1}", frameCounter, unpack);
             }
             if (error != ErrorCode.NoError)
@@ -693,7 +693,7 @@ public partial class LodTerrainRenderer
                 skyVerifyErrors++;
                 if (TakeSkyLine(now))
                     capi.Logger.Warning(
-                        "[VintageHorizons] sky verify: the mask upload at frame {0} left GL error {1} ({2})",
+                        "[Landscapes] sky verify: the mask upload at frame {0} left GL error {1} ({2})",
                         frameCounter, error, unpack);
             }
 
@@ -728,7 +728,7 @@ public partial class LodTerrainRenderer
             int capacity = readinessMask?.Width ?? 1;
             int row = first / capacity;
             capi.Logger.Warning(
-                "[VintageHorizons] sky verify: after the upload at frame {0} the card holds {1} "
+                "[Landscapes] sky verify: after the upload at frame {0} the card holds {1} "
                 + "texel(s) that differ from the CPU copy; first at ring x {2}, z {3}, layer {4}: "
                 + "card 0x{5:X8}, CPU 0x{6:X8} ({7})",
                 frameCounter, differing, first % capacity, row % capacity, row / capacity,
@@ -737,7 +737,7 @@ public partial class LodTerrainRenderer
         catch (Exception e)
         {
             SkyMaskVerify = false;
-            capi.Logger.Warning("[VintageHorizons] sky verify stopped: {0}", e.Message);
+            capi.Logger.Warning("[Landscapes] sky verify stopped: {0}", e.Message);
         }
     }
 

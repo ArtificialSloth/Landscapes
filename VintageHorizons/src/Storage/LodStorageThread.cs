@@ -271,7 +271,7 @@ public class LodStorageThread : IDisposable
             snapshot.ApplyToParent));
         thread = new Thread(Loop)
         {
-            Name = "vintagehorizons-storage",
+            Name = "dodenslandscapes-storage",
             IsBackground = true,
             Priority = ThreadPriority.BelowNormal,
         };

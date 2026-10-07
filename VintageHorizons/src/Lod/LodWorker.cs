@@ -452,7 +452,7 @@ public class LodWorker : IDisposable
     {
         captureThread = new Thread(CaptureLoop)
         {
-            Name = "vintagehorizons-capture",
+            Name = "dodenslandscapes-capture",
             IsBackground = true,
             Priority = ThreadPriority.BelowNormal,
         };
@@ -463,7 +463,7 @@ public class LodWorker : IDisposable
         // newly explored columns or every visible mesh behind it.
         mipThread = new Thread(MipLoop)
         {
-            Name = "vintagehorizons-mip",
+            Name = "dodenslandscapes-mip",
             IsBackground = true,
             Priority = ThreadPriority.BelowNormal,
         };
@@ -474,7 +474,7 @@ public class LodWorker : IDisposable
         {
             meshThreads[i] = new Thread(MeshLoop)
             {
-                Name = "vintagehorizons-mesh-" + i,
+                Name = "dodenslandscapes-mesh-" + i,
                 IsBackground = true,
                 Priority = ThreadPriority.BelowNormal,
             };

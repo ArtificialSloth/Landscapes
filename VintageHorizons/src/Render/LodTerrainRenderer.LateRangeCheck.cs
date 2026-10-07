@@ -7,7 +7,7 @@ namespace VintageHorizons;
 /// after the engine has moved the player for this frame.
 ///
 /// <para>
-/// Measured with `.vhsky` (0.4.52): every large flash was one frame of open sky on a chunk 65-67
+/// Measured with `.dlsky` (0.4.52): every large flash was one frame of open sky on a chunk 65-67
 /// blocks out - the edge of vanilla's own draw range at view distance 64, where
 /// <c>ViewDistanceSq</c> is 64 * 64 + 400 - in a cell the mask had handed to vanilla, over real
 /// loaded ground, while the engine still called the chunk rendered. The mask had not changed in
@@ -37,7 +37,7 @@ namespace VintageHorizons;
 /// water passes still to come read the same footprint.
 /// </para>
 /// <para>
-/// `.vhlaterange off` restores the old timing for a comparison. Session-only, on by default.
+/// `.dllaterange off` restores the old timing for a comparison. Session-only, on by default.
 /// </para>
 /// </summary>
 public partial class LodTerrainRenderer
@@ -84,7 +84,7 @@ public partial class LodTerrainRenderer
             // other way.
             lateRangeFailed = true;
             capi.Logger.Warning(
-                "[VintageHorizons] the late range check stopped for this session; ownership keeps "
+                "[Landscapes] the late range check stopped for this session; ownership keeps "
                 + "the old timing: {0}", e.Message);
         }
     }
@@ -93,7 +93,7 @@ public partial class LodTerrainRenderer
     {
         LateRangeCheck = on;
         lateRangeFailed = false;
-        string line = "[VintageHorizons] late range check " + (on ? "on" : "off") + " at frame "
+        string line = "[Landscapes] late range check " + (on ? "on" : "off") + " at frame "
             + frameCounter.ToString(CultureInfo.InvariantCulture) + ". " + DescribeLateRangeCheck();
         capi.Logger.Notification("{0}", line);
         return line;

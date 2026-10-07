@@ -76,12 +76,12 @@ public partial class LodTerrainRenderer
         waterDepthStageRenderer = new BeforeStageRenderer(CaptureWaterDepthStage, WaterDepthBeforeOrder, "waterdepth");
         waterCaptureEndRenderer = new BeforeStageRenderer(FinishWaterFrame, 0.99, "watercapture");
         waterOitRenderer = new BeforeStageRenderer(DrawWaterOit, WaterOitOrder, "water");
-        capi.Event.RegisterRenderer(prepareStageRenderer, EnumRenderStage.Before, "vintagehorizons-prepare");
-        capi.Event.RegisterRenderer(waterDepthStageRenderer, EnumRenderStage.Before, "vintagehorizons-waterdepth");
+        capi.Event.RegisterRenderer(prepareStageRenderer, EnumRenderStage.Before, "dodenslandscapes-prepare");
+        capi.Event.RegisterRenderer(waterDepthStageRenderer, EnumRenderStage.Before, "dodenslandscapes-waterdepth");
         lateRangeRenderer = new BeforeStageRenderer(RunLateRangeCheck, LateRangeBeforeOrder, "laterange");
-        capi.Event.RegisterRenderer(lateRangeRenderer, EnumRenderStage.Before, "vintagehorizons-laterange");
-        capi.Event.RegisterRenderer(waterCaptureEndRenderer, EnumRenderStage.AfterOIT, "vintagehorizons-watercapture");
-        capi.Event.RegisterRenderer(waterOitRenderer, EnumRenderStage.OIT, "vintagehorizons-water");
+        capi.Event.RegisterRenderer(lateRangeRenderer, EnumRenderStage.Before, "dodenslandscapes-laterange");
+        capi.Event.RegisterRenderer(waterCaptureEndRenderer, EnumRenderStage.AfterOIT, "dodenslandscapes-watercapture");
+        capi.Event.RegisterRenderer(waterOitRenderer, EnumRenderStage.OIT, "dodenslandscapes-water");
     }
 
     void UnregisterWaterDepthStages()
@@ -132,7 +132,7 @@ public partial class LodTerrainRenderer
     void LoadWaterDepthShader()
     {
         waterDepthProg = capi.Shader.NewShaderProgram();
-        waterDepthProg.AssetDomain = "vintagehorizons";
+        waterDepthProg.AssetDomain = "dodenslandscapes";
         waterDepthProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         waterDepthProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram("lodwaterdepth", waterDepthProg);
@@ -144,10 +144,10 @@ public partial class LodTerrainRenderer
         if (!ShaderLoadIsProvisional)
         {
             if (waterDepthShaderOk)
-                capi.Logger.Notification("[VintageHorizons] cached water-depth shader ready.");
+                capi.Logger.Notification("[Landscapes] cached water-depth shader ready.");
             else
                 capi.Logger.Error(
-                    "[VintageHorizons] cached water-depth shader unavailable; when murk/coverage "
+                    "[Landscapes] cached water-depth shader unavailable; when murk/coverage "
                     + "is requested cached water will be suppressed instead of using vanilla-only depth.");
         }
     }

@@ -7,12 +7,12 @@ cd "$REPO_DIR"
 
 VERSION=$(grep -oP '"version":\s*"\K[^"]+' VintageHorizons/modinfo.json)
 OUT="$REPO_DIR/dist"
-MOD_DIR="VintageHorizons/bin/Release/net10.0/Mods/vintagehorizons"
+MOD_DIR="VintageHorizons/bin/Release/net10.0/Mods/dodenslandscapes"
 
 dotnet build VintageHorizons -c Release
 
 mkdir -p "$OUT"
-ZIP="$OUT/vintagehorizons_${VERSION}.zip"
+ZIP="$OUT/dodenslandscapes_${VERSION}.zip"
 rm -f "$ZIP"
 
 # Windows installs the interpreter as "python" and no "python3", so resolve it rather

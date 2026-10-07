@@ -19,7 +19,7 @@ internal interface ILodBackgroundReport
 
 /// <summary>
 /// One run of the accelerator comparison (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P0.3), asked for
-/// with <c>/vhsilhouetteserver compare</c>.
+/// with <c>/dlsilhouetteserver compare</c>.
 ///
 /// A background thread asks each installed accelerator for the height of every cell where the
 /// server holds a real one, one cell at a time so each call is timed. Where an earlier session's
@@ -39,7 +39,7 @@ internal sealed class LodAcceleratorComparisonRun : ILodBackgroundReport
     {
         var thread = new Thread(() => Run(cells, accelerators, seaLevel, presamplePath, mapPath))
         {
-            Name = "vintagehorizons-silhouette-compare",
+            Name = "dodenslandscapes-silhouette-compare",
             IsBackground = true,
             Priority = ThreadPriority.BelowNormal,
         };

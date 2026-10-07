@@ -227,7 +227,7 @@ public static class DistantAntiAliasingChecks
     }
 
     static string Asset(string folder, string file) => File.ReadAllText(Path.Combine(
-        GameAssemblies.RepoRoot, "VintageHorizons", "assets", "vintagehorizons", folder, file))
+        GameAssemblies.RepoRoot, "VintageHorizons", "assets", "dodenslandscapes", folder, file))
         .Replace("\r\n", "\n");
 
     static string Source(params string[] parts) => File.ReadAllText(Path.Combine(

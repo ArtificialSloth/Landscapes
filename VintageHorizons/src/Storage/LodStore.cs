@@ -80,7 +80,7 @@ public class LodStore : SQLiteDBConnection
     {
         string error = "";
         bool ok = OpenOrCreate(filePath, ref error, true, true, false);
-        if (!ok) logger.Error("[VintageHorizons] Could not open LOD cache {0}: {1}", filePath, error);
+        if (!ok) logger.Error("[Landscapes] Could not open LOD cache {0}: {1}", filePath, error);
         return ok;
     }
 
@@ -176,7 +176,7 @@ public class LodStore : SQLiteDBConnection
             if (rows > 0)
             {
                 logger.Notification(
-                    "[VintageHorizons] Adding section versions to this server cache ({0} sections, "
+                    "[Landscapes] Adding section versions to this server cache ({0} sections, "
                     + "one time only). Clients can then be told exactly what changed while they were away.",
                     rows);
             }
@@ -212,7 +212,7 @@ public class LodStore : SQLiteDBConnection
         if (legacyWrite && !string.IsNullOrEmpty(generation))
         {
             logger.Notification(
-                "[VintageHorizons] An older build wrote to this server cache without section versions, "
+                "[Landscapes] An older build wrote to this server cache without section versions, "
                 + "so no client can trust its record of what changed. Every client re-checks the "
                 + "sections it holds against this cache the next time it joins.");
         }
@@ -279,7 +279,7 @@ public class LodStore : SQLiteDBConnection
             if (dropped > 0)
             {
                 logger.Notification(
-                    "[VintageHorizons] The savegame fingerprint now covers the landscape only, "
+                    "[Landscapes] The savegame fingerprint now covers the landscape only, "
                     + "so {0} older column claims no longer mean anything and were dropped. The "
                     + "next world start examines those columns once and records them again; no "
                     + "captured terrain is lost.", dropped);
@@ -321,7 +321,7 @@ public class LodStore : SQLiteDBConnection
                 discarded = (long)(count.ExecuteScalar() ?? 0L);
             }
             logger.Notification(
-                "[VintageHorizons] LOD cache format {0} is not ours ({1}); discarding {2} cached "
+                "[Landscapes] LOD cache format {0} is not ours ({1}); discarding {2} cached "
                 + "sections from the old format. They rebuild from capture as you play.",
                 existing, SchemaVersion, discarded);
         }
@@ -364,7 +364,7 @@ public class LodStore : SQLiteDBConnection
         }
         catch (Exception e)
         {
-            logger.Warning("[VintageHorizons] could not read remembered climate at {0},{1}: {2}",
+            logger.Warning("[Landscapes] could not read remembered climate at {0},{1}: {2}",
                 px, pz, e.Message);
             return null;
         }
@@ -390,7 +390,7 @@ public class LodStore : SQLiteDBConnection
         }
         catch (Exception e)
         {
-            logger.Warning("[VintageHorizons] could not store remembered climate at {0},{1}: {2}",
+            logger.Warning("[Landscapes] could not store remembered climate at {0},{1}: {2}",
                 px, pz, e.Message);
         }
     }
@@ -425,7 +425,7 @@ public class LodStore : SQLiteDBConnection
         }
         catch (Exception e)
         {
-            logger.Warning("[VintageHorizons] could not read column fingerprints, so the sweep "
+            logger.Warning("[Landscapes] could not read column fingerprints, so the sweep "
                 + "will examine every column as it did before: {0}", e.Message);
             found.Clear();
         }
@@ -465,7 +465,7 @@ public class LodStore : SQLiteDBConnection
         {
             // Dropping one is safe in the direction that costs work rather than correctness:
             // the column simply gets examined again next time.
-            logger.Warning("[VintageHorizons] could not store the column fingerprint at {0},{1}: "
+            logger.Warning("[Landscapes] could not store the column fingerprint at {0},{1}: "
                 + "{2}", cx, cz, e.Message);
         }
     }
@@ -489,7 +489,7 @@ public class LodStore : SQLiteDBConnection
         }
         catch (Exception e)
         {
-            logger.Warning("[VintageHorizons] could not clear the column fingerprint at {0},{1}: "
+            logger.Warning("[Landscapes] could not clear the column fingerprint at {0},{1}: "
                 + "{2}", cx, cz, e.Message);
         }
     }
@@ -668,7 +668,7 @@ public class LodStore : SQLiteDBConnection
             {
                 // Unreadable data must never linger to slow down or confuse future
                 // sessions - delete on sight; the area recaptures on exploration.
-                logger.Warning("[VintageHorizons] Deleting unreadable cached section L{0} {1},{2}", level, sx, sz);
+                logger.Warning("[Landscapes] Deleting unreadable cached section L{0} {1},{2}", level, sx, sz);
                 DeleteSection(level, sx, sz);
             }
             return section;
@@ -847,7 +847,7 @@ public class LodStore : SQLiteDBConnection
         }
         catch (Exception e)
         {
-            logger.Warning("[VintageHorizons] could not record {0} merged server-cache rows; "
+            logger.Warning("[Landscapes] could not record {0} merged server-cache rows; "
                 + "they merge again next session: {1}", records.Count, e.Message);
         }
     }
@@ -881,7 +881,7 @@ public class LodStore : SQLiteDBConnection
         catch (Exception e)
         {
             // No record is the safe reading: the server answers it with a full re-check.
-            logger.Warning("[VintageHorizons] could not read this cache's server-sync record, so it "
+            logger.Warning("[Landscapes] could not read this cache's server-sync record, so it "
                 + "will re-check every section it holds against the server: {0}", e.Message);
             return new Net.LodAssistSyncState("", Net.LodAssistSync.NoRecord, new());
         }
@@ -972,7 +972,7 @@ public class LodStore : SQLiteDBConnection
         }
         catch (Exception e)
         {
-            logger.Warning("[VintageHorizons] could not update this cache's server-sync record; the "
+            logger.Warning("[Landscapes] could not update this cache's server-sync record; the "
                 + "server will announce the same changes again next time: {0}", e.Message);
             return false;
         }

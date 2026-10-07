@@ -156,9 +156,9 @@ public static class StandInChecks
         string renderer = File.ReadAllText(Path.Combine(root, "VintageHorizons", "src", "Render",
             "LodTerrainRenderer.cs"));
         string inputs = File.ReadAllText(Path.Combine(root, "VintageHorizons", "assets",
-            "vintagehorizons", "shaderincludes", "lodfragmentinputs.fsh"));
+            "dodenslandscapes", "shaderincludes", "lodfragmentinputs.fsh"));
         string test = File.ReadAllText(Path.Combine(root, "VintageHorizons", "assets",
-            "vintagehorizons", "shaderincludes", "lodownershiptest.fsh"));
+            "dodenslandscapes", "shaderincludes", "lodownershiptest.fsh"));
         string mod = File.ReadAllText(Path.Combine(root, "VintageHorizons", "src",
             "VintageHorizonsModSystem.cs"));
 
@@ -226,8 +226,8 @@ public static class StandInChecks
             "a chunk whose mesh is not coming leaves the list at its first probe after upload");
 
         // The switch, and where the owner can see it.
-        c.True(mod.Contains("ChatCommands.Create(\"vhstandin\")", StringComparison.Ordinal),
-            ".vhstandin switches both fixes together for comparison");
+        c.True(mod.Contains("ChatCommands.Create(\"dlstandin\")", StringComparison.Ordinal),
+            ".dlstandin switches both fixes together for comparison");
     }
 
     static int Count(string text, string needle)

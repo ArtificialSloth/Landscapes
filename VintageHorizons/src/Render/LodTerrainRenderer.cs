@@ -192,7 +192,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// What the renderer's own frame costs, by phase, since the last stats report. Each
     /// of these is tens of microseconds against a ten-millisecond frame, which is well
     /// under what any frame-rate comparison can resolve, so they are timed rather than
-    /// inferred. Reported by .vhinfo and by the periodic stats line.
+    /// inferred. Reported by .dlinfo and by the periodic stats line.
     /// </summary>
     public LodPhaseCost PruneCost, ScheduleCost, UploadCost, GlUploadCost, MeshDisposeCost,
         EvictCost, SeasonalCost, FarDistanceCost, ReadinessCost, WalkCost, DrawCost;
@@ -377,7 +377,7 @@ public partial class LodTerrainRenderer : IRenderer
     ///
     /// Applied everywhere, deliberately NOT on the blend band. It describes the surface
     /// rather than correcting it, and fading it in across a band would put back a seam of
-    /// exactly the kind this work removes. `.vhwater fresnel off` restores the constant.
+    /// exactly the kind this work removes. `.dlwater fresnel off` restores the constant.
     /// </summary>
     public bool WaterFresnel { get; set; } = true;
 
@@ -497,7 +497,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// PAST the seam it exists to hide.
     /// </para>
     /// <para>
-    /// Negative means derive. `.vhband inner &lt;blocks&gt;` pins it and `.vhband inner auto`
+    /// Negative means derive. `.dlband inner &lt;blocks&gt;` pins it and `.dlband inner auto`
     /// gives it back, because only looking at the seam can settle whether the derivation and
     /// the eye agree.
     /// </para>
@@ -662,7 +662,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// `getBrightnessFromNormal` floors its shade at `normal.y * 0.95`, and the liquid shader
     /// does not shade by normal at all. Without it cached ground fell to 0.55 at dawn and
     /// dusk beside vanilla ground still at 0.95, which is why the colour matched at midday
-    /// and not at other times once the albedo itself was exact. On by default; `.vhtoplight
+    /// and not at other times once the albedo itself was exact. On by default; `.dltoplight
     /// off` restores the old shading for comparison.
     /// </summary>
     public bool FlatTopLight { get; set; } = true;
@@ -672,14 +672,14 @@ public partial class LodTerrainRenderer : IRenderer
     /// the sun position lerped toward the moon as moonlight overtakes sunlight, and vanilla
     /// terrain shades by it; without this, cached slopes are lit all night by a sun that is
     /// below the horizon while the vanilla slopes beside them are lit by the moon. Identical
-    /// to the old behaviour while the sun is up. `.vhlight moondir off` to compare.
+    /// to the old behaviour while the sun is up. `.dllight moondir off` to compare.
     /// </summary>
     public bool LightMoonDirection { get; set; } = true;
 
     /// <summary>
     /// Use vanilla's shade ramp, `max(0.45, 0.5 + 0.5 * dot)`, instead of
     /// `0.55 + 0.45 * max(0, dot)`. The old floor left every away-facing slope 22% brighter
-    /// than the vanilla slope beside it, at every time of day. `.vhlight ramp off` compares.
+    /// than the vanilla slope beside it, at every time of day. `.dllight ramp off` compares.
     /// </summary>
     public bool LightVanillaRamp { get; set; } = true;
 
@@ -690,7 +690,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// `SunColor` has no such floor and stays orange. Decoding the engine's own sunlight
     /// ramp offline showed the two hues invert after sundown - vanilla turns blue-grey while
     /// cached terrain turns orange - which is the reported "sunset and night look
-    /// substantially different". `.vhlight ambient off` to compare.
+    /// substantially different". `.dllight ambient off` to compare.
     /// </summary>
     public bool LightAmbientColor { get; set; } = true;
 
@@ -700,7 +700,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// while the sun is high and falls to 0 as it sets, so vanilla terrain is 22.7% brighter
     /// than cached terrain at midday and equal to it at dusk. This is the only one of the
     /// four that changes broad daylight, which is the case the owner reports as already
-    /// looking right, so it has its own switch. `.vhlight boost off` to compare.
+    /// looking right, so it has its own switch. `.dllight boost off` to compare.
     /// </summary>
     public bool LightDayBoost { get; set; } = true;
 
@@ -719,7 +719,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// Every cached surface was therefore 1.24x too bright. Measured against a flat
     /// two-block test patch at the seam on 2026-08-31: cached granite gravel read 1.39x
     /// vanilla's, 1.07x of which was the stored colour, leaving 1.29x for this.
-    /// `.vhlight sun off` restores the old brightness for comparison.
+    /// `.dllight sun off` restores the old brightness for comparison.
     /// </summary>
     public bool LightSunLevel { get; set; } = true;
 
@@ -748,7 +748,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// blocks over sea level - not `DayLightStrength`, which is what this shader passed. The
     /// band was therefore dissolving terrain into a sky a quarter too dim by day and too dark
     /// at night, with the error moving through the day like the terrain terms above.
-    /// `.vhlight sky off` to compare.
+    /// `.dllight sky off` to compare.
     /// </summary>
     public bool LightSkyDayLight { get; set; } = true;
 
@@ -772,7 +772,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// Opaque terrain has outward counter-clockwise winding and uses hardware back-face
     /// rejection; blended water and thin cover stay two-sided. Human testing across cliffs,
     /// caves, overhangs, and high/low views found no visual difference, while a same-view
-    /// A/B improved 218 to 260 FPS. `.vhbackface off` remains the immediate comparison and
+    /// A/B improved 218 to 260 FPS. `.dlbackface off` remains the immediate comparison and
     /// compatibility fallback.
     /// </summary>
     public bool OpaqueBackfaceCulling { get; set; } = true;
@@ -805,7 +805,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// time and upload bandwidth with it.
     ///
     /// Default ON after the surface-only rule and its tunnel guards were accepted in game.
-    /// `.vhcavecull off` remains the immediate fallback; changing it re-meshes the world so the
+    /// `.dlcavecull off` remains the immediate fallback; changing it re-meshes the world so the
     /// switch can be judged in one place without relogging. The environment can pin it off.
     /// </summary>
     public bool CaveCulling { get; set; } =
@@ -814,7 +814,7 @@ public partial class LodTerrainRenderer : IRenderer
     int halfBlockLevels = NearHalfBlockLevels;
 
     /// <summary>
-    /// What `.vhslabs surface` and `.vhslabs near` select: all of level 0, out to the
+    /// What `.dlslabs surface` and `.dlslabs near` select: all of level 0, out to the
     /// configured L1 transition (512 blocks by default), independently of the blend band.
     /// </summary>
     internal const int NearHalfBlockLevels = 1;
@@ -828,7 +828,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// Surface-only level 0 is the default after the owner's same-scene test found very
     /// little performance cost. It applies throughout level 0, not merely in the blend
     /// band, and retains the landscape result while the exact all-run version remains
-    /// available through `.vhslabs near` and `.vhslabs all`.
+    /// available through `.dlslabs near` and `.dlslabs all`.
     /// </summary>
     public int HalfBlockLevels
     {
@@ -856,13 +856,13 @@ public partial class LodTerrainRenderer : IRenderer
     ///
     /// On restores the behaviour before 0.3.163. The cost of the fix is geometry that is
     /// invisible everywhere except that seam, so this exists to A/B the frame rate rather than
-    /// the picture. Changing it re-meshes every resident section. See `.vhcutout`.
+    /// the picture. Changing it re-meshes every resident section. See `.dlcutout`.
     /// </summary>
     public bool CutoutBlocksCover { get; set; }
 
     /// <summary>
     /// Darken submerged ground and deep water by the water standing above it. Changing it
-    /// re-meshes every resident section. See `.vhwater depth`.
+    /// re-meshes every resident section. See `.dlwater depth`.
     ///
     /// Water absorbs one light level per block, so vanilla draws a lakebed under 8 blocks at
     /// 70% of the shore beside it and one under 20 at 26%. Cached terrain carries no
@@ -953,7 +953,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// what it carried, in blocks. Smaller is murkier and darkens with depth faster.
     ///
     /// Changing it rebuilds every resident mesh, because the factor is baked in when the mesh
-    /// is built. See `.vhwater clarity`.
+    /// is built. See `.dlwater clarity`.
     /// </summary>
     public float WaterClarity
     {
@@ -976,7 +976,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// <summary>
     /// How many blocks either side of a 32-block vanilla chunk plane keep one water quad per
     /// block, so the surface can hold vanilla's wave where a seam can appear. 0 turns the wave
-    /// off entirely. Changing it rebuilds every resident mesh. See `.vhwater wave`.
+    /// off entirely. Changing it rebuilds every resident mesh. See `.dlwater wave`.
     ///
     /// One block is the measured sweet spot: it is full per-block fidelity in the only place a
     /// seam can land, for +1.02% of the mesh, against +16.32% for doing it everywhere and
@@ -999,7 +999,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// <summary>
     /// Drop water walls against any neighbour we have no capture for, not just an absent
     /// section. A DIAGNOSTIC first: it exists so the seam band can be attributed by flipping
-    /// it. Default false, which is the established behaviour. See `.vhwater walls`.
+    /// it. Default false, which is the established behaviour. See `.dlwater walls`.
     /// </summary>
     public bool SuppressUnknownWaterWalls
     {
@@ -1078,7 +1078,7 @@ public partial class LodTerrainRenderer : IRenderer
             {
                 waterAbsorptionDeferred = true;
                 capi.Logger.Notification(
-                    "[VintageHorizons] water depth shading has nothing to apply yet: "
+                    "[Landscapes] water depth shading has nothing to apply yet: "
                     + $"sun brightness {capi.World.SunBrightness}, {levels.Length} levels, "
                     + $"open water {open:0.000}. Retrying on the next mesh.");
             }
@@ -1087,7 +1087,7 @@ public partial class LodTerrainRenderer : IRenderer
 
         waterAbsorption = table;
         capi.Logger.Notification(
-            "[VintageHorizons] water depth shading resolved: " + DescribeWaterAbsorption());
+            "[Landscapes] water depth shading resolved: " + DescribeWaterAbsorption());
 
         // Anything meshed while the answer was unavailable is built unshaded and would stay
         // that way for the session - the join is exactly when the world is least ready to
@@ -1099,14 +1099,14 @@ public partial class LodTerrainRenderer : IRenderer
             if (queued > 0)
             {
                 capi.Logger.Notification(
-                    $"[VintageHorizons] rebuilding {queued} sections meshed before it resolved.");
+                    $"[Landscapes] rebuilding {queued} sections meshed before it resolved.");
             }
         }
         return table;
     }
 
     /// <summary>
-    /// What the depth table actually resolved to, for the log and for `.vhwater`. A person
+    /// What the depth table actually resolved to, for the log and for `.dlwater`. A person
     /// cannot copy chat out of the game, and "it had no effect" and "it is applying 1.00 at
     /// every depth" look identical on screen; this is the line that tells them apart.
     /// </summary>
@@ -1158,7 +1158,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// Submit opaque cached sections nearest-first so mountain depth can reject farther
     /// hidden fragments before their shader runs. Water keeps the traversal order because
     /// alpha blending has different ordering rules. A same-view human A/B improved 149 to
-    /// 173 FPS with no visible change; `.vhfront off` remains the immediate fallback.
+    /// 173 FPS with no visible change; `.dlfront off` remains the immediate fallback.
     /// </summary>
     public bool OpaqueFrontToBack { get; set; } = true;
 
@@ -1264,7 +1264,7 @@ public partial class LodTerrainRenderer : IRenderer
                         orderError, restoreError);
                 }
                 capi.Logger.Warning(
-                    "[VintageHorizons] Post-vanilla depth culling unavailable; restored ordinary render order: {0}",
+                    "[Landscapes] Post-vanilla depth culling unavailable; restored ordinary render order: {0}",
                     orderError.Message);
             }
         }
@@ -1569,7 +1569,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// and times itself, and decides nothing. Off by default because it costs GPU time for
     /// no picture change, and because its cost against the drawing it could remove is
     /// exactly what has to be measured before anything is allowed to act on it.
-    /// `.vhhzb on` turns it on for a session.
+    /// `.dlhzb on` turns it on for a session.
     /// </summary>
     public bool DepthPyramidEnabled
     {
@@ -1891,7 +1891,7 @@ public partial class LodTerrainRenderer : IRenderer
     ///
     /// Level 0 is where it is worth paying for: one voxel is one block, so the 2-to-6 block leaf
     /// noise is reproduced at the scale vanilla draws it, beside the vanilla trees it has to
-    /// match. Defaults to 2 for that reason; `.vhtint leafwide on` restores the wider fade.
+    /// match. Defaults to 2 for that reason; `.dltint leafwide on` restores the wider fade.
     /// </summary>
     public float LeafSeasonFadeBlocks { get; set; } = 2f;
 
@@ -1905,7 +1905,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// whether that work is worth starting. Turning this on prices the noise alone.
     ///
     /// Session-only and deliberately unsaved: a wrong-coloured world must not survive a
-    /// restart. See `.vhtint leafcheap`.
+    /// restart. See `.dltint leafcheap`.
     /// </summary>
     public bool LeafSeasonCheapRow { get; set; }
     LoadedTexture? slotTableTexture;
@@ -1914,7 +1914,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// Tint distant terrain from the climate field instead of from the height ramp. The ramp
     /// stays until this is judged in place: it is one colour per block type sampled where the
     /// player stands, which is exactly the defect this replaces, but it is also the behaviour
-    /// every accepted build has drawn. See .vhtint field.
+    /// every accepted build has drawn. See .dltint field.
     /// </summary>
     public bool ClimateFieldTint { get; set; } = true;
 
@@ -1937,7 +1937,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// chosen between have usually already converged, and where they have not the cut falls
     /// on a section boundary far enough out that the fallback and the finished tint differ by
     /// less than the fog over them. It is a switch because only looking at a horizon with a
-    /// biome edge on it can say whether that is true in a given world; see `.vhtint
+    /// biome edge on it can say whether that is true in a given world; see `.dltint
     /// climatewide`.
     /// </para>
     /// </summary>
@@ -2030,7 +2030,7 @@ public partial class LodTerrainRenderer : IRenderer
         if (gpuFailureInjection.Stage == LodGpuFailureStage.Invalid)
         {
             capi.Logger.Warning(
-                "[VintageHorizons] Ignoring unknown {0} value '{1}'. Expected arena, shader, "
+                "[Landscapes] Ignoring unknown {0} value '{1}'. Expected arena, shader, "
                 + "depth-copy, draw, or off.",
                 LodGpuFailureInjection.EnvironmentVariable,
                 gpuFailureInjection.Requested);
@@ -2038,7 +2038,7 @@ public partial class LodTerrainRenderer : IRenderer
         else if (gpuFailureInjection.Armed)
         {
             capi.Logger.Warning(
-                "[VintageHorizons] Phase 9 GPU failure injection armed for {0}; this is a "
+                "[Landscapes] Phase 9 GPU failure injection armed for {0}; this is a "
                 + "test-only session and cached opaque terrain must fail visibly.",
                 gpuFailureInjection.Stage);
         }
@@ -2078,7 +2078,7 @@ public partial class LodTerrainRenderer : IRenderer
 
     void RegisterRenderer()
     {
-        capi.Event.RegisterRenderer(this, EnumRenderStage.Opaque, "vintagehorizons-lod");
+        capi.Event.RegisterRenderer(this, EnumRenderStage.Opaque, "dodenslandscapes-lod");
         rendererRegistered = true;
     }
 
@@ -2091,7 +2091,7 @@ public partial class LodTerrainRenderer : IRenderer
         // Before tessellation means the probe above usually finds nothing to hand over yet.
         // Watched, the cell is rechecked every frame until its mesh is up instead of waiting
         // for the interior sweep while vanilla and the cache both draw it. Recorded whether or
-        // not fast confirmation is on, so `.vhstandin off` still measures the old delay.
+        // not fast confirmation is on, so `.dlstandin off` still measures the old delay.
         readiness?.Watch(cell, Environment.TickCount64);
         NoteGapChunkEvent(chunkCoord.X, chunkCoord.Y, chunkCoord.Z, reason);
     }
@@ -2117,7 +2117,7 @@ public partial class LodTerrainRenderer : IRenderer
     {
         shaderLoadAttempts++;
         prog = capi.Shader.NewShaderProgram();
-        prog.AssetDomain = "vintagehorizons";
+        prog.AssetDomain = "dodenslandscapes";
 
         prog.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         prog.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
@@ -2142,12 +2142,12 @@ public partial class LodTerrainRenderer : IRenderer
         shaderOk = prog.Compile();
         if (shaderOk) LodTerrainSamplerLayout.Configure(prog);
         if (!shaderOk && !ShaderLoadIsProvisional)
-            capi.Logger.Error("[VintageHorizons] lodterrain shader failed to compile; LOD rendering disabled");
+            capi.Logger.Error("[Landscapes] lodterrain shader failed to compile; LOD rendering disabled");
 
         // The expanded indirect variant remains a diagnostic while its old representation
         // is removed. It is compiled for comparison but is no longer a visible fallback.
         indirectProg = capi.Shader.NewShaderProgram();
-        indirectProg.AssetDomain = "vintagehorizons";
+        indirectProg.AssetDomain = "dodenslandscapes";
         indirectProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         indirectProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram("lodterrainindirect", indirectProg);
@@ -2157,7 +2157,7 @@ public partial class LodTerrainRenderer : IRenderer
         // every fragment calculation and every uniform remain shared with the already
         // played indirect path; only vertex acquisition changes.
         packedProg = capi.Shader.NewShaderProgram();
-        packedProg.AssetDomain = "vintagehorizons";
+        packedProg.AssetDomain = "dodenslandscapes";
         packedProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         packedProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram("lodterrainpacked", packedProg);
@@ -2167,21 +2167,21 @@ public partial class LodTerrainRenderer : IRenderer
         // triangle and writes depth. A driver that refuses it costs the pyramid and
         // nothing else, and the established renderer never learns it existed.
         hzbProg = capi.Shader.NewShaderProgram();
-        hzbProg.AssetDomain = "vintagehorizons";
+        hzbProg.AssetDomain = "dodenslandscapes";
         hzbProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         hzbProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram("hzbreduce", hzbProg);
         hzbShaderOk = hzbProg.Compile();
         if (!hzbShaderOk && !ShaderLoadIsProvisional)
             capi.Logger.Warning(
-                "[VintageHorizons] the hzbreduce shader failed to compile; depth-pyramid "
+                "[Landscapes] the hzbreduce shader failed to compile; depth-pyramid "
                 + "occlusion is unavailable and nothing else changes");
 
         indirectShaderOk = indirectProg.Compile();
         if (indirectShaderOk) LodTerrainSamplerLayout.Configure(indirectProg);
         if (!indirectShaderOk && !ShaderLoadIsProvisional)
             capi.Logger.Warning(
-                "[VintageHorizons] the indirect lodterrain variant failed to compile; "
+                "[Landscapes] the indirect lodterrain variant failed to compile; "
                 + "the retired expanded diagnostic is unavailable");
 
         packedShaderOk = packedProg.Compile();
@@ -2198,12 +2198,12 @@ public partial class LodTerrainRenderer : IRenderer
             indirectShaderOk = false;
             packedShaderOk = false;
             capi.Logger.Error(
-                "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED: Phase 9 injected "
+                "[Landscapes] REQUIRED PACKED TERRAIN PATH FAILED: Phase 9 injected "
                 + "a shader failure; cached opaque terrain will be suppressed until reload.");
         }
         if (!packedShaderOk && !ShaderLoadIsProvisional)
             capi.Logger.Error(
-                "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED: the packed shader "
+                "[Landscapes] REQUIRED PACKED TERRAIN PATH FAILED: the packed shader "
                 + "did not compile; cached opaque terrain will be suppressed.");
 
         // Said once, when it actually worked, so the log carries positive evidence rather
@@ -2225,7 +2225,7 @@ public partial class LodTerrainRenderer : IRenderer
         {
             reportedShadersOk = true;
             capi.Logger.Notification(
-                "[VintageHorizons] shaders ready after {0} attempt(s): distant terrain {1}, "
+                "[Landscapes] shaders ready after {0} attempt(s): distant terrain {1}, "
                 + "packed path {2}, indirect path {3}, depth pyramid {4}.{5}",
                 shaderLoadAttempts,
                 shaderOk ? "ok" : "FAILED",
@@ -2269,14 +2269,14 @@ public partial class LodTerrainRenderer : IRenderer
         if (ShaderLoadIsProvisional)
         {
             capi.Logger.Notification(
-                "[VintageHorizons] {0}: the engine has not registered mod shader includes "
+                "[Landscapes] {0}: the engine has not registered mod shader includes "
                 + "yet. The reload that follows mod asset loading is the one that matters.",
                 name);
             return;
         }
 
         capi.Logger.Error(
-            "[VintageHorizons] the {0} shader body was not spliced in: the engine did not "
+            "[Landscapes] the {0} shader body was not spliced in: the engine did not "
             + "find lodterrainbody.vsh/.fsh among its shader includes. Cached terrain will "
             + "not draw. This is ours, not your setup.", name);
     }
@@ -2502,7 +2502,7 @@ public partial class LodTerrainRenderer : IRenderer
 
     /// <summary>
     /// Two fixes for coarse distant terrain showing over the game's own ground, switchable
-    /// together for comparison in the same session (<c>.vhstandin</c>, not saved):
+    /// together for comparison in the same session (<c>.dlstandin</c>, not saved):
     /// <list type="bullet">
     /// <item>a coarse section standing in for finer terrain that is not ready covers only the
     /// quarters that are waiting, rather than its whole area;</item>
@@ -3523,7 +3523,7 @@ public partial class LodTerrainRenderer : IRenderer
                     {
                         readinessAggregateReported = true;
                         capi.Logger.Warning(
-                            "[VintageHorizons] ownership audit repaired {0} section counts; a section "
+                            "[Landscapes] ownership audit repaired {0} section counts; a section "
                             + "was reporting itself fully covered by vanilla terrain when it was not. "
                             + "Please report this with the surrounding log.", repaired);
                     }
@@ -3653,7 +3653,7 @@ public partial class LodTerrainRenderer : IRenderer
                 // rule that would have admitted it. A deadlock: the accurate rule was gated on
                 // already being on the path that the inaccurate rule prevented reaching. At a
                 // 32-block view distance the gate is zero and ownership is impossible outright.
-                // `.vhexact audit` measured it: 7 of 15 drawn chunks uncovered, every one of
+                // `.dlexact audit` measured it: 7 of 15 drawn chunks uncovered, every one of
                 // them Pending, the nearest at 28 blocks.
                 // A first sighting still gets ONE denial, and only one that cannot deadlock:
                 // the column's nearest face against the widest bound any LOD level draws to.
@@ -3777,8 +3777,8 @@ public partial class LodTerrainRenderer : IRenderer
             SweepRangeLosses(frameCounter);
 
             // Measures this frame's final ownership against what the engine is drawing, and
-            // under `.vhgap release` withdraws ground nothing draws, before the handoff radius
-            // and the mask are published below. Off unless `.vhgap` is on.
+            // under `.dlgap release` withdraws ground nothing draws, before the handoff radius
+            // and the mask are published below. Off unless `.dlgap` is on.
             ScanHandoffGaps(frameCounter);
 
             // Ownership the tracker can actually prove, converted into the radius the
@@ -3824,7 +3824,7 @@ public partial class LodTerrainRenderer : IRenderer
             {
                 readinessFailureReported = true;
                 capi.Logger.Warning(
-                    "[VintageHorizons] vanilla-readiness shadow tracker disabled; radial handoff remains active: {0}",
+                    "[Landscapes] vanilla-readiness shadow tracker disabled; radial handoff remains active: {0}",
                     e.Message);
             }
         }
@@ -4126,7 +4126,7 @@ public partial class LodTerrainRenderer : IRenderer
 
     /// <summary>
     /// How far water's footprint is grown past the ground footprint, in whole chunk columns.
-    /// Negative derives it; zero or more overrides it. See `.vhwater edge`.
+    /// Negative derives it; zero or more overrides it. See `.dlwater edge`.
     /// </summary>
     public int WaterEdgeChunks
     {
@@ -4179,7 +4179,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// still inside its draw range, which neither the sphere nor the player position can see
     /// coming. It was never shown to be covering that. What it was actually covering were two
     /// defects in the seam itself, both since fixed (G136, G137), and with those gone it buys
-    /// nothing and costs a permanently doubled band. `.vhband overlap <blocks>` puts it back
+    /// nothing and costs a permanently doubled band. `.dlband overlap <blocks>` puts it back
     /// live, and if a hole ever returns at the seam, that it helps is a clue about where to
     /// look rather than the answer.
     /// </para>
@@ -4217,7 +4217,7 @@ public partial class LodTerrainRenderer : IRenderer
         // would sit in the buffer unseen until something else happened to dirty it.
         //
         // The dilation itself is the second trigger, and it needs its own: it changes when the
-        // refused ring changes - `.vhexact`, `.vhband overlap`, `.vhwater edge`, or the exact
+        // refused ring changes - `.dlexact`, `.dlband overlap`, `.dlwater edge`, or the exact
         // path becoming unavailable - and none of those touches ownership, so a revision-only
         // gate would leave water on the old growth until something unrelated moved the mask
         // (G66: a switch that changes how the renderer decides must invalidate what it decided).
@@ -4266,7 +4266,7 @@ public partial class LodTerrainRenderer : IRenderer
         {
             DisableReadinessMask();
             capi.Logger.Warning(
-                "[VintageHorizons] chunk readiness mask disabled; the measured handoff radius remains: {0}",
+                "[Landscapes] chunk readiness mask disabled; the measured handoff radius remains: {0}",
                 e.Message);
         }
         finally
@@ -4301,7 +4301,7 @@ public partial class LodTerrainRenderer : IRenderer
         }
 
         capi.Logger.Notification(
-            "[VintageHorizons] seam blending and L0 textures {0}; {1} live L0 section(s) "
+            "[Landscapes] seam blending and L0 textures {0}; {1} live L0 section(s) "
             + "queued for bounded re-meshing.", enabled ? "on" : "off", queued);
         return queued;
     }
@@ -4467,7 +4467,7 @@ public partial class LodTerrainRenderer : IRenderer
             SetTextureSlotEmission(false);
             MaybeReleaseBlockTextureTable();
             capi.Logger.Warning(
-                "[VintageHorizons] block textures disabled for this session; distant ground "
+                "[Landscapes] block textures disabled for this session; distant ground "
                 + "keeps its averaged colours: {0}", e.Message);
         }
     }
@@ -4512,7 +4512,7 @@ public partial class LodTerrainRenderer : IRenderer
             {
                 seamFieldCapacityWarned = true;
                 capi.Logger.Notification(
-                    "[VintageHorizons] blend band off: a {0}-cell seam field is past the {1}-cell limit "
+                    "[Landscapes] blend band off: a {0}-cell seam field is past the {1}-cell limit "
                     + "at this vanilla view distance.", required, BandMaxCapacityCells);
             }
             return;
@@ -4532,7 +4532,7 @@ public partial class LodTerrainRenderer : IRenderer
             // world coordinates, so anything else would address another place's distance.
             //
             // A changed margin does too, and it needs saying separately: the margin follows
-            // the band's inner offset, which follows the refused ring, which `.vhexact` moves
+            // the band's inner offset, which follows the refused ring, which `.dlexact` moves
             // by 46 blocks in one step. The capacity above only reacts when that crosses a
             // power of two, so without this the field would keep serving distances built for
             // a reach it no longer has - a switch that changed how the renderer decides
@@ -4587,7 +4587,7 @@ public partial class LodTerrainRenderer : IRenderer
         {
             DisableSeamField();
             capi.Logger.Warning(
-                "[VintageHorizons] blend band disabled for this session; cached terrain keeps its "
+                "[Landscapes] blend band disabled for this session; cached terrain keeps its "
                 + "current colouring: {0}", e.Message);
         }
     }
@@ -4608,7 +4608,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// whole design exists to avoid having one.
     ///
     /// The capacity clamp can still truncate it at extreme settings, where the same step
-    /// returns; `.vhband map` reports the weight the field actually ends on.
+    /// returns; `.dlband map` reports the weight the field actually ends on.
     /// </summary>
     int SeamFieldMarginCells()
     {
@@ -4715,7 +4715,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// terrain is an approximation and stands taller than the real world in places, so its
     /// geometry sits inside air cells; vanilla draws nothing in an air cell, so discarding
     /// there removes the only thing that was drawing and cuts the top off the cached
-    /// horizon. That is the band: painted red by `.vhpaint`, invisible to `.vhholes`
+    /// horizon. That is the band: painted red by `.dlpaint`, invisible to `.dlholes`
     /// because the tracker is right, and unaffected by every ownership rule tried, because
     /// ownership was never wrong.
     /// </para>
@@ -4745,7 +4745,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// ever as correct as the completeness of its update paths. One missing path - a column
     /// scrolling out of the ring without clearing its texels - held cached terrain suppressed
     /// over ground nothing was drawing, and no CPU-side check could see it, because every CPU
-    /// structure was right and only the mirror was wrong. `.vhholes` in particular cannot
+    /// structure was right and only the mirror was wrong. `.dlholes` in particular cannot
     /// find this class of fault at all: it walks cells the tracker owns, and the fault is a
     /// texel claiming ownership the tracker does not have.
     /// </para>
@@ -5084,7 +5084,7 @@ public partial class LodTerrainRenderer : IRenderer
             : $"{nearestReclaimed:0}-{farthestReclaimed:0} blocks out";
 
         var report = new StringBuilder();
-        report.Append("[VintageHorizons] draw-range ownership map: ")
+        report.Append("[Landscapes] draw-range ownership map: ")
             .Append(readiness.ActiveWidth).Append('x').Append(readiness.ActiveDepth)
             .Append(" chunk columns, ").Append(ownedColumns).Append(" owned (")
             .Append(measured).Append(" by the engine's own sphere, ")
@@ -5182,7 +5182,7 @@ public partial class LodTerrainRenderer : IRenderer
         string overshoot = DescribeGeometryOvershoot();
 
         var report = new StringBuilder();
-        report.Append("[VintageHorizons] section ownership: ").Append(total)
+        report.Append("[Landscapes] section ownership: ").Append(total)
             .Append(" resident cached meshes -- ").Append(cacheOnly).Append(" cache-only/")
             .Append(mixed).Append(" mixed/").Append(vanillaOnly)
             .Append(" vanilla-owned under the current whole-column rule; ")
@@ -5343,7 +5343,7 @@ public partial class LodTerrainRenderer : IRenderer
         double coverage = engineDraws == 0 ? 0 : 100.0 * covered / engineDraws;
 
         var report = new StringBuilder();
-        report.Append("[VintageHorizons] coverage audit: of ").Append(cells)
+        report.Append("[Landscapes] coverage audit: of ").Append(cells)
             .Append(" cells inside the draw radius the engine is drawing ").Append(engineDraws)
             .Append("; the mask covers ").Append(covered).Append(" of them (")
             .Append($"{coverage:0}").Append("%), leaving ").Append(uncovered)
@@ -5494,7 +5494,7 @@ public partial class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
-    /// The blend band in one clause of the periodic line, and the body of `.vhband`.
+    /// The blend band in one clause of the periodic line, and the body of `.dlband`.
     /// Build and upload cost are included because "nearly free" is this design's claim and
     /// an unmeasured claim is not one.
     /// </summary>
@@ -5532,25 +5532,25 @@ public partial class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
-    /// Answers `.vhtexture`. Logged as well as returned, because game chat cannot be copied
+    /// Answers `.dltexture`. Logged as well as returned, because game chat cannot be copied
     /// out and the refusal counts are the part worth keeping.
     /// </summary>
     public string DescribeBlockTextures()
     {
         string state = BlockTextureState();
-        capi.Logger.Notification("[VintageHorizons] block textures {0}", state);
+        capi.Logger.Notification("[Landscapes] block textures {0}", state);
         return "block textures " + state + ".";
     }
 
     /// <summary>
-    /// Answers `.vhband` with no argument. Written to the log as well as returned, because
+    /// Answers `.dlband` with no argument. Written to the log as well as returned, because
     /// game chat cannot be copied out and this line is the one worth keeping after a
     /// tuning pass.
     /// </summary>
     public string DescribeBlendBand()
     {
         string state = BandState();
-        capi.Logger.Notification("[VintageHorizons] band {0}", state);
+        capi.Logger.Notification("[Landscapes] band {0}", state);
         return "blending band " + state + ".";
     }
 
@@ -5559,7 +5559,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// would compute, plus the weight the field's own outer edge ends on.
     ///
     /// The band's shape was judged from a screenshot for three builds and the screenshot could
-    /// not answer the question. `.vhband shape on` paints the weight, but a ramp seen at a
+    /// not answer the question. `.dlband shape on` paints the weight, but a ramp seen at a
     /// shallow angle from altitude is a few pixels tall, so a gradient and a cliff look alike -
     /// and the number that decides which it is, the weight where the field's window stops, is
     /// not on screen at all. This puts both in the log, where they can be read exactly.
@@ -5594,7 +5594,7 @@ public partial class LodTerrainRenderer : IRenderer
         if (readiness != null && readinessMask != null)
         {
             int chunkStride = Math.Max(1, readiness.ActiveWidth / 96);
-            owned.Append("[VintageHorizons] vanilla ownership footprint: ")
+            owned.Append("[Landscapes] vanilla ownership footprint: ")
                 .Append(readiness.ActiveWidth).Append('x').Append(readiness.ActiveDepth)
                 .Append(" chunk columns (").Append(readiness.ActiveWidth * 32)
                 .Append(" blocks across), ").Append(readinessMask.ReadyTexels)
@@ -5604,7 +5604,7 @@ public partial class LodTerrainRenderer : IRenderer
                 // this map against the wrong one is how the band's circularity was
                 // mis-attributed twice.
                 .Append(RefusedOwnershipRingBlocks() <= 0f
-                    ? "Ownership follows vanilla's own chunk footprint exactly (.vhexact on), "
+                    ? "Ownership follows vanilla's own chunk footprint exactly (.dlexact on), "
                         + "so this IS where vanilla's terrain ends. "
                     : $"Ownership is denied past "
                         + $"{Math.Max(0f, ApprovedViewDistance() - RefusedOwnershipRingBlocks()):0}"
@@ -5628,7 +5628,7 @@ public partial class LodTerrainRenderer : IRenderer
         }
 
         var report = new StringBuilder();
-        report.Append("[VintageHorizons] blend band map: ")
+        report.Append("[Landscapes] blend band map: ")
             .Append(seamField.WidthCells).Append('x').Append(seamField.DepthCells)
             .Append(" cells of 8 blocks (")
             .Append(seamField.WidthCells * VanillaSeamDistanceField.CellBlocks)
@@ -5766,7 +5766,7 @@ public partial class LodTerrainRenderer : IRenderer
         {
             reportedPackedShaderOk = true;
             capi.Logger.Notification(
-                "[VintageHorizons] the packed lodterrain variant compiled after {0} "
+                "[Landscapes] the packed lodterrain variant compiled after {0} "
                 + "attempt(s); 12-byte quad drawing is available behind .vhpacked on",
                 shaderLoadAttempts);
         }
@@ -5932,7 +5932,7 @@ public partial class LodTerrainRenderer : IRenderer
         // command submission and is read only after a later frame reports it available.
         renderPaths.DrawOpaque();
 
-        // `.vhsky`: count sky still showing below the horizon now that all opaque terrain,
+        // `.dlsky`: count sky still showing below the horizon now that all opaque terrain,
         // vanilla's and ours, is in the depth buffer. Off by default; draws nothing visible.
         RunSkyWitness();
 
@@ -6044,7 +6044,7 @@ public partial class LodTerrainRenderer : IRenderer
         prog.Uniform("viewDistance", viewDistance);
         prog.Uniform("farViewDistance", EffectiveFarDistance);
         // The uniform exists in the shared body but only the packed decoder reads it.
-        // Keeping it tied to the established switch makes `.vhbackface off` disable both
+        // Keeping it tied to the established switch makes `.dlbackface off` disable both
         // the early exact rejection and OpenGL's later winding rejection together.
         prog.Uniform("packedBackfaceCull", OpaqueBackfaceCulling ? 1 : 0);
         // Distant anti-aliasing's nudge. Declared in the shared vertex inputs, because the water
@@ -6179,7 +6179,7 @@ public partial class LodTerrainRenderer : IRenderer
 
         // The table is bound whenever any mesh can be carrying a block slot, and NOT only
         // when textures are switched on: a textured quad's colour lives in the table too, so
-        // an unbound sampler here would leave `.vhtexture off` reading colours out of
+        // an unbound sampler here would leave `.dltexture off` reading colours out of
         // whatever texture happened to be on unit 0.
         if (blockTexturesLive && blockTableTexture != 0)
             prog.BindTexture2D("blockTable", blockTableTexture, BlockTableUnit);
@@ -6261,7 +6261,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// What the climate field path computes for one block, term by term, on the CPU using the
     /// same arithmetic the vertex shader runs.
     ///
-    /// The point is comparability: `.vhtint` already prints the game's own answer for a block,
+    /// The point is comparability: `.dltint` already prints the game's own answer for a block,
     /// and until now the only mod number beside it came from the height ramp. Reasoning about
     /// the difference from the ramp's number while the field is what draws is how two rounds
     /// of guessing happened. Every term is printed rather than the result alone, because the
@@ -6430,7 +6430,7 @@ public partial class LodTerrainRenderer : IRenderer
             gpuRendererPreference, gpuTelemetry.Decision);
         renderPaths.Configure(selection);
         capi.Logger.Notification(
-            "[VintageHorizons] Opaque renderer: packed GPU path required; per-section and "
+            "[Landscapes] Opaque renderer: packed GPU path required; per-section and "
             + "expanded fallbacks disabled. Capability result: {0}.",
             selection.Reason);
         if (selection.ShadowEnabled)
@@ -6442,8 +6442,8 @@ public partial class LodTerrainRenderer : IRenderer
         {
             requiredTerrainCapabilityFailure = DescribeGpuValidationFailure();
             capi.ShowChatMessage(
-                "[VintageHorizons] Distant terrain's GPU check did not pass, so cached terrain "
-                + "is hidden. Run .vhgpu on to re-check; details are in the client log.");
+                "[Landscapes] Distant terrain's GPU check did not pass, so cached terrain "
+                + "is hidden. Run .dlgpu on to re-check; details are in the client log.");
         }
     }
 
@@ -6462,7 +6462,7 @@ public partial class LodTerrainRenderer : IRenderer
         {
             reportedGpuFrameSizeDisagreement = true;
             capi.Logger.Notification(
-                "[VintageHorizons] GPU copy size comes from the concrete primary framebuffer "
+                "[Landscapes] GPU copy size comes from the concrete primary framebuffer "
                 + "{0}x{1}; IRenderAPI reports {2}x{3} and is diagnostic only.",
                 width, height, apiWidth, apiHeight);
         }
@@ -6480,7 +6480,7 @@ public partial class LodTerrainRenderer : IRenderer
         if (mode is LodGpuArenaMode.Off or LodGpuArenaMode.Invalid)
         {
             capi.Logger.Error(
-                "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED: GPU regional arenas "
+                "[Landscapes] REQUIRED PACKED TERRAIN PATH FAILED: GPU regional arenas "
                 + "are off; cached opaque terrain will be suppressed.");
             return;
         }
@@ -6521,7 +6521,7 @@ public partial class LodTerrainRenderer : IRenderer
             packedFarBuilder = new LodGpuIndirectBuilder(packed: true);
             clusterBuilder = new LodGpuIndirectBuilder(packed: true, clustered: true);
             clusterFarBuilder = new LodGpuIndirectBuilder(packed: true, clustered: true);
-            // .vhgpu can be run again while a drawer already exists - on to verify, for
+            // .dlgpu can be run again while a drawer already exists - on to verify, for
             // instance. The mirror disposes its own predecessor; this one has to be told.
             indirectDrawer?.Dispose();
             packedDrawer?.Dispose();
@@ -6537,7 +6537,7 @@ public partial class LodTerrainRenderer : IRenderer
             long packedCeiling = LodGpuArenaPolicy.PackedLimits(ceiling).CeilingBytes;
             long clusterCeiling = LodGpuArenaPolicy.PackedClusterLimits(ceiling).CeilingBytes;
             capi.Logger.Notification(
-                "[VintageHorizons] GPU arenas on: retaining {0} geometry only; ceilings are "
+                "[Landscapes] GPU arenas on: retaining {0} geometry only; ceilings are "
                 + "{1} MiB expanded, {2} MiB packed and {3} MiB clustered, with {4} MiB "
                 + "vertex pages and {5} page sets; content verification {6}. Sized for a "
                 + "{7} draw distance ({8} sections); each ceiling "
@@ -6559,7 +6559,7 @@ public partial class LodTerrainRenderer : IRenderer
         catch (Exception e)
         {
             capi.Logger.Error(
-                "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED: GPU arenas could "
+                "[Landscapes] REQUIRED PACKED TERRAIN PATH FAILED: GPU arenas could "
                 + "not start; cached opaque terrain will be suppressed: {0}", e.Message);
         }
     }
@@ -6645,7 +6645,7 @@ public partial class LodTerrainRenderer : IRenderer
             ShadowIndirectMissing = 0;
             ShadowIndirectCoverage = 0;
             capi.Logger.Notification(
-                "[VintageHorizons] GPU measurement shadow off; every arena buffer released.");
+                "[Landscapes] GPU measurement shadow off; every arena buffer released.");
             return;
         }
 
@@ -6653,11 +6653,11 @@ public partial class LodTerrainRenderer : IRenderer
         {
             requiredTerrainCapabilityFailure = DescribeGpuValidationFailure();
             capi.Logger.Warning(
-                "[VintageHorizons] GPU measurement shadow refused: {0}. Run .vhgpu on to "
+                "[Landscapes] GPU measurement shadow refused: {0}. Run .dlgpu on to "
                 + "re-check after the frame or window changes.", selection.Reason);
             capi.ShowChatMessage(
-                "[VintageHorizons] Distant terrain's GPU check still did not pass. Run "
-                + ".vhgpu on to re-check; details are in the client log.");
+                "[Landscapes] Distant terrain's GPU check still did not pass. Run "
+                + ".dlgpu on to re-check; details are in the client log.");
             return;
         }
 
@@ -6681,7 +6681,7 @@ public partial class LodTerrainRenderer : IRenderer
             queued++;
         }
         capi.Logger.Notification(
-            "[VintageHorizons] GPU regional path on; {0} live sections queued for "
+            "[Landscapes] GPU regional path on; {0} live sections queued for "
             + "re-mesh so the arenas match what is drawn. Give it a moment before reading "
             + "the numbers.", queued);
     }
@@ -6918,7 +6918,7 @@ public partial class LodTerrainRenderer : IRenderer
         catch (Exception e)
         {
             capi.Logger.Error(
-                "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED during draw; "
+                "[Landscapes] REQUIRED PACKED TERRAIN PATH FAILED during draw; "
                 + "cached opaque terrain is suppressed: {0}", e.Message);
         }
         finally
@@ -7021,7 +7021,7 @@ public partial class LodTerrainRenderer : IRenderer
         if (reportedRequiredTerrainFailure == reason) return;
         reportedRequiredTerrainFailure = reason;
         capi.Logger.Error(
-            "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED; cached opaque terrain "
+            "[Landscapes] REQUIRED PACKED TERRAIN PATH FAILED; cached opaque terrain "
             + "is suppressed and no legacy/expanded fallback will run: {0}.", reason);
     }
 
@@ -7048,7 +7048,7 @@ public partial class LodTerrainRenderer : IRenderer
             ? gpuTelemetry.Decision.Reason
             : depthCopy.FailureReason;
         return "GPU runtime validation did not pass: " + depthReason + "; "
-            + depthCopy.Dimensions.Describe() + ". Run .vhgpu on to re-check";
+            + depthCopy.Dimensions.Describe() + ". Run .dlgpu on to re-check";
     }
 
     /// <summary>
@@ -7090,7 +7090,7 @@ public partial class LodTerrainRenderer : IRenderer
             clusterBuilder = null;
             clusterFarBuilder = null;
             capi.Logger.Error(
-                "[VintageHorizons] REQUIRED PACKED TERRAIN PATH FAILED: indirect command "
+                "[Landscapes] REQUIRED PACKED TERRAIN PATH FAILED: indirect command "
                 + "building stopped; uncovered cached terrain will remain absent: {0}", e.Message);
         }
     }
@@ -7309,7 +7309,7 @@ public partial class LodTerrainRenderer : IRenderer
             return "on, but idle: turn batched terrain drawing on with .vhindirect on";
         if (!packedShaderOk) return "unavailable: the packed shader variant did not compile";
         if (mirror == null || packedDrawer == null)
-            return "unavailable: the regional arenas are not attached. Turn them on with .vhgpu on";
+            return "unavailable: the regional arenas are not attached. Turn them on with .dlgpu on";
         if (packedDrawer.Failed)
             return "FAILED; cached opaque terrain is suppressed: "
                 + packedDrawer.FailureReason;
@@ -7332,7 +7332,7 @@ public partial class LodTerrainRenderer : IRenderer
         if (!PackedDrawEnabled || !IndirectDrawEnabled)
             return "on, but idle: turn on .vhindirect and .vhpacked first";
         if (mirror == null || clusterBuilder == null)
-            return "unavailable: the regional arenas are not attached. Turn them on with .vhgpu on";
+            return "unavailable: the regional arenas are not attached. Turn them on with .dlgpu on";
         return $"on: each section is up to {LodPackedClusterBuilder.CellCount} exact draw clusters. "
             + $"Last frame {LastIndirectCommands} cluster commands in {LastIndirectBatches} "
             + $"multi-draws, {LastIndirectLeftovers} whole sections missing with no fallback. "
@@ -7352,13 +7352,13 @@ public partial class LodTerrainRenderer : IRenderer
     {
         if (!GpuCullEnabled) return "off: every section the CPU approves is drawn";
         if (cullPass == null)
-            return "on, but idle: the regional arenas are not attached. Turn them on with .vhgpu on";
+            return "on, but idle: the regional arenas are not attached. Turn them on with .dlgpu on";
         if (!IndirectDrawEnabled)
             return "on, but idle: culling zeroes a batched draw command, and batching is off. "
                 + "Turn it on with .vhindirect on";
         if (!DepthPyramidEnabled)
             return "on, but idle: there is no depth pyramid to test against. "
-                + "Turn it on with .vhhzb on";
+                + "Turn it on with .dlhzb on";
         if (!cullPass.Available)
         {
             // The two are completely different answers and used to print the same words. One
@@ -7380,7 +7380,7 @@ public partial class LodTerrainRenderer : IRenderer
     {
         if (!indirectShaderOk) return "unavailable: the indirect shader variant did not compile";
         if (indirectDrawer == null || gpuShadow.Mirror == null)
-            return "unavailable: the regional arenas are not attached. Turn them on with .vhgpu on";
+            return "unavailable: the regional arenas are not attached. Turn them on with .dlgpu on";
         if (indirectDrawer.Failed) return indirectDrawer.Describe();
         if (!IndirectDrawEnabled)
             return "off: cached opaque terrain is suppressed; no per-section renderer runs";
@@ -7705,7 +7705,7 @@ public partial class LodTerrainRenderer : IRenderer
         if (temporalOcclusionFailureReported) return;
         temporalOcclusionFailureReported = true;
         capi.Logger.Warning(
-            "[VintageHorizons] delayed occlusion disabled; all cached terrain remains visible: {0}",
+            "[Landscapes] delayed occlusion disabled; all cached terrain remains visible: {0}",
             error.Message);
     }
 
@@ -8080,14 +8080,14 @@ public partial class LodTerrainRenderer : IRenderer
             {
                 reportedHzbFailure = true;
                 capi.Logger.Warning(
-                    "[VintageHorizons] the depth pyramid could not be built and nothing "
+                    "[Landscapes] the depth pyramid could not be built and nothing "
                     + "depends on it yet: {0}", LastHzbBuild.FailureReason);
             }
             else if (LastHzbBuild.Built && !reportedHzbBuilt)
             {
                 reportedHzbBuilt = true;
                 capi.Logger.Notification(
-                    "[VintageHorizons] depth pyramid built: {0}x{1}, {2} levels.",
+                    "[Landscapes] depth pyramid built: {0}x{1}, {2} levels.",
                     LastHzbBuild.Width, LastHzbBuild.Height, LastHzbBuild.Levels);
             }
         }
@@ -8096,7 +8096,7 @@ public partial class LodTerrainRenderer : IRenderer
             LastHzbBuild = default;
             DepthPyramidEnabled = false;
             capi.Logger.Warning(
-                "[VintageHorizons] depth pyramid disabled for this session; rendering is "
+                "[Landscapes] depth pyramid disabled for this session; rendering is "
                 + "unchanged: {0}", e.Message);
         }
         finally
@@ -8274,7 +8274,7 @@ public partial class LodTerrainRenderer : IRenderer
             {
                 reportedHzbClassifier = true;
                 capi.Logger.Warning(
-                    "[VintageHorizons] depth-pyramid classification is unavailable and "
+                    "[Landscapes] depth-pyramid classification is unavailable and "
                     + "nothing that draws depends on it: {0}", hzbClassifier.LastFailure);
             }
             return false;
@@ -8284,7 +8284,7 @@ public partial class LodTerrainRenderer : IRenderer
         {
             reportedHzbClassifier = true;
             capi.Logger.Notification(
-                "[VintageHorizons] depth-pyramid classification running in shadow: it "
+                "[Landscapes] depth-pyramid classification running in shadow: it "
                 + "counts what a depth test would hide and hides nothing.");
         }
 
@@ -8340,7 +8340,7 @@ public partial class LodTerrainRenderer : IRenderer
         catch (Exception e)
         {
             capi.Logger.Warning(
-                "[VintageHorizons] depth-pyramid classification stopped; rendering is "
+                "[Landscapes] depth-pyramid classification stopped; rendering is "
                 + "unchanged: {0}", e.Message);
             hzbClassifier?.Dispose();
             hzbClassifier = null;
@@ -8367,7 +8367,7 @@ public partial class LodTerrainRenderer : IRenderer
         float lookX, float lookY, float lookZ, int maxBlocks)
     {
         if (!hzbShaderOk) return "the hzbreduce shader is not available, so no pyramid exists";
-        if (!DepthPyramidEnabled) return "the depth pyramid is off. Turn it on with .vhhzb on";
+        if (!DepthPyramidEnabled) return "the depth pyramid is off. Turn it on with .dlhzb on";
         if (depthPyramid == null || !depthPyramid.Allocated) return "no pyramid has been built yet";
 
         // Its own array, and not the one the cull writes: this runs on the chat thread while
@@ -8567,8 +8567,8 @@ public partial class LodTerrainRenderer : IRenderer
     {
         if (!SubtreeHeightCulling)
         {
-            return "subtree height culling off. Turn it on with .vhsubtree on, look up or "
-                + "down or fly for a few seconds, then run .vhsubtree again";
+            return "subtree height culling off. Turn it on with .dlsubtree on, look up or "
+                + "down or fly for a few seconds, then run .dlsubtree again";
         }
 
         var report = new System.Text.StringBuilder();
@@ -8586,9 +8586,9 @@ public partial class LodTerrainRenderer : IRenderer
         report.Append(SubtreeCulledNodes == 0
             ? "nothing has been rejected vertically yet. That is a real answer, not a "
                 + "failure: it would mean the bounds are correct and never tight enough to "
-                + "reject. Run .vhsubtree reset, then look straight up or straight down for "
+                + "reject. Run .dlsubtree reset, then look straight up or straight down for "
                 + "a few seconds and read it again"
-            : "run .vhsubtree reset before a specific view to measure that view alone");
+            : "run .dlsubtree reset before a specific view to measure that view alone");
         return report.ToString();
     }
 
@@ -8677,7 +8677,7 @@ public partial class LodTerrainRenderer : IRenderer
     {
         if (!hzbShaderOk) return "the hzbreduce shader is not available, so no pyramid exists";
         if (!DepthPyramidEnabled)
-            return "depth pyramid off. Turn it on with .vhhzb on, play for a few seconds, then run .vhhzb again";
+            return "depth pyramid off. Turn it on with .dlhzb on, play for a few seconds, then run .dlhzb again";
 
         var report = new System.Text.StringBuilder();
         report.Append("depth pyramid: ").Append(DescribeDepthPyramid());
@@ -8782,11 +8782,11 @@ public partial class LodTerrainRenderer : IRenderer
     /// </summary>
     public string DescribeDepthPyramidSubdivision() => hzbClassifier?.DescribeSubdivision() ?? "";
 
-    /// <summary>One line for the periodic report and for `.vhhzb`.</summary>
+    /// <summary>One line for the periodic report and for `.dlhzb`.</summary>
     public string DescribeDepthPyramid()
     {
         if (!hzbShaderOk) return "the hzbreduce shader is not available";
-        if (!DepthPyramidEnabled) return "off (.vhhzb on)";
+        if (!DepthPyramidEnabled) return "off (.dlhzb on)";
         if (depthPyramid == null) return "on, not yet built";
         string classifier = hzbClassifier == null
             ? "classification not started"

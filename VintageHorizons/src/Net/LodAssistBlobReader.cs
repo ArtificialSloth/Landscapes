@@ -66,7 +66,7 @@ internal sealed class LodAssistBlobReader : IDisposable
         this.trackAllocations = trackAllocations;
         thread = new Thread(Loop)
         {
-            Name = "vintagehorizons-assist-reader",
+            Name = "dodenslandscapes-assist-reader",
             IsBackground = true,
             Priority = ThreadPriority.BelowNormal,
         };

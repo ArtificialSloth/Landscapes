@@ -64,7 +64,7 @@ public static class WaterOitChecks
             && oit.Contains("GL.DeleteTexture(waterVanillaRevealageTexture)"),
             "the full-resolution coverage resources have an explicit disposal path");
 
-        string shaders = Path.Combine(root, "VintageHorizons/assets/vintagehorizons/shaders");
+        string shaders = Path.Combine(root, "VintageHorizons/assets/dodenslandscapes/shaders");
         c.Eq(ModShaderSource.Read(Path.Combine(shaders, "lodwater.vsh")),
             ModShaderSource.Read(Path.Combine(shaders, "lodwateroit.vsh")),
             "opaque and OIT surface programs use identical vertex source");

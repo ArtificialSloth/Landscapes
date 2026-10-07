@@ -756,7 +756,7 @@ public static class MesherChecks
 
         // The performance mode deliberately spends half-block geometry only on landscape
         // surfaces. The same buried slab rounds up and meets the lid, removing both hidden
-        // faces; the exact mode above remains available through `.vhslabs near`.
+        // faces; the exact mode above remains available through `.dlslabs near`.
         MeshResult surfaceOnly = LodMesher.BuildMesh(Fixtures.Job(
             stacked, surfaceHalfBlocksOnly: true));
         c.Eq(0, QuadsOnPlaneY(surfaceOnly.Xyz, 9.5f),

@@ -1,7 +1,7 @@
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// `.vhgap`: the classification its log prints, the rule that keeps its release comparison
+/// `.dlgap`: the classification its log prints, the rule that keeps its release comparison
 /// from fighting the gain path, the episode pairing, and the committed-cell walk it scans.
 /// </summary>
 public static class HandoffGapChecks

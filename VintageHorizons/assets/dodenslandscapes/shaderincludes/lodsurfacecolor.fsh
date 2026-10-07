@@ -27,7 +27,7 @@
     //
     // Behind a switch because it is a judgement call about how distant ground should look at
     // dawn and dusk, and the only way to settle that is to flip it while looking at the
-    // ground. See .vhtoplight.
+    // ground. See .dltoplight.
     if (flatTopLight == 1) shade = max(shade, clamp(normal.y, 0.0, 1.0) * 0.95);
 
     // Decode the tint slot, then snow line on up-facing terrain.

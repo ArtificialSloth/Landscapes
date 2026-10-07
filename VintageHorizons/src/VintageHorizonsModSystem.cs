@@ -52,7 +52,7 @@ public class VintageHorizonsConfig
     /// These were session-only switches for their first several builds - a player who turned
     /// one off had it back on at the next launch, which is the wrong default for the people
     /// they exist for. They are the settings a machine that cannot afford them needs to be
-    /// able to give up once. `.vhconfig` presents them; the `.vh*` commands still set the same
+    /// able to give up once. `.dlconfig` presents them; the `.dl*` commands still set the same
     /// values and save through the same path, so the window and the commands cannot disagree.
     /// </para>
     /// <para>
@@ -129,13 +129,13 @@ public class VintageHorizonsConfig
     /// <summary>
     /// Take the second depth picture mid-frame, between the near and far cached buckets, so
     /// cached terrain can hide cached terrain within the same frame. Default on with the rest
-    /// of the path; `.vhgpu off` disables it along with everything above it.
+    /// of the path; `.dlgpu off` disables it along with everything above it.
     /// </summary>
     public bool LateDepthPicture = true;
 
     /// <summary>
     /// Blend distant cached terrain over several frames so it stops shimmering as the camera
-    /// moves. See LodTerrainRenderer.Taa.cs. The window's "Distant Anti-Aliasing" row and .vhtaa
+    /// moves. See LodTerrainRenderer.Taa.cs. The window's "Distant Anti-Aliasing" row and .dltaa
     /// write it; on by default, and an older config file with no such key loads as on.
     /// </summary>
     public bool DistantAntiAliasing = true;
@@ -216,15 +216,15 @@ public class VintageHorizonsConfig
 
     /// <summary>
     /// How far in distant anti-aliasing reaches: the on-screen width of one block, in pixels,
-    /// where it begins. It is full strength where a block is half that wide. `.vhtaa reach`
+    /// where it begins. It is full strength where a block is half that wide. `.dltaa reach`
     /// writes it; larger reaches closer, but only ever over cached terrain.
     /// </summary>
     public float TaaReachPixels = LodTaaMath.DefaultReachPixels;
 
     /// <summary>
-    /// Distant anti-aliasing's tuning dials, all set by .vhtaa and explained on LodTaaMath:
+    /// Distant anti-aliasing's tuning dials, all set by .dltaa and explained on LodTaaMath:
     /// memory while turning and while still, how far terrain is nudged, sharpening, and the
-    /// width of the safety check. `.vhtaa reset` puts them back.
+    /// width of the safety check. `.dltaa reset` puts them back.
     /// </summary>
     public float TaaBlend = LodTaaMath.DefaultFeedback;
     public float TaaStillBlend = LodTaaMath.DefaultStillFeedback;
@@ -289,6 +289,10 @@ public partial class VintageHorizonsModSystem : ModSystem
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Client;
 
+    public override bool ShouldLoad(ICoreAPI api) => base.ShouldLoad(api) && !ModIdentity.OriginalModBlocks(api);
+
+    public override void StartPre(ICoreAPI api) => ModIdentity.TakeOverLegacyData(api, Mod.Logger);
+
     /// <summary>Everything the config file holds, so a partial save cannot drop a setting.</summary>
     VintageHorizonsConfig config = new();
     VintageHorizonsConfigDialog? configDialog;
@@ -321,7 +325,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         try
         {
             VintageHorizonsConfig? loaded =
-                capi.LoadModConfig<VintageHorizonsConfig>("vintagehorizons.json");
+                capi.LoadModConfig<VintageHorizonsConfig>("dodenslandscapes.json");
             configLoaded = loaded != null;
             config = loaded ?? new VintageHorizonsConfig();
         }
@@ -335,7 +339,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         // Before anything that can return early, and before the connection handshake:
         // the server learns we speak this channel at handshake time and never again. A
         // client that skips the registration makes the game log "Server sends me channel
-        // name vintagehorizons, but no client side mod registered it" on every join,
+        // name dodenslandscapes, but no client side mod registered it" on every join,
         // which reads like a broken install. The channel stays inert until Greet(), and
         // only the active path reaches that.
         assist = new LodAssistClient(capi, Mod.Logger, Mod.Info.Version);
@@ -349,7 +353,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         InstallDiagnostics();
 
         // Vanilla has no public mod-settings page registry in 1.22. The guarded adapter adds
-        // one in-world header button and leaves .vhconfig as the permanent fallback if the
+        // one in-world header button and leaves .dlconfig as the permanent fallback if the
         // private seam ever moves. Install before the deferral return: persisted settings are
         // still useful while a competing LOD renderer is active.
         settingsIntegration = new VintageHorizonsSettingsIntegration(
@@ -363,9 +367,9 @@ public partial class VintageHorizonsModSystem : ModSystem
         if (deferringTo != null)
         {
             Mod.Logger.Notification(
-                "'{0}' is installed and switched on, so VintageHorizons stays idle. Two LOD mods "
+                "'{0}' is installed and switched on, so Doden's Landscapes stays idle. Two LOD mods "
                 + "draw over each other and fight for the camera far plane. Switch '{0}' off in its "
-                + "own settings, then restart the game to use VintageHorizons instead. The mod "
+                + "own settings, then restart the game to use Doden's Landscapes instead. The mod "
                 + "decides this once at startup: if you switch the other mod off now, nothing "
                 + "changes until the next start.",
                 deferringTo);
@@ -373,7 +377,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
             // The idle path reaches no LevelFinalize handler of its own, so the dev hook
             // is wired straight to the event here. Without it the matrix cannot drive
-            // '.vhdefer off' from the state that command exists for.
+            // '.dldefer off' from the state that command exists for.
             capi.Event.LevelFinalize += RegisterAutoCommand;
             return;
         }
@@ -506,13 +510,13 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         // On by default while the 1% low is being chased: the owner cannot keep count of
         // hitches by eye, and a report he had to remember to start would miss the ones
-        // that matter. '.vhhitch off' removes it and restores the profiler.
+        // that matter. '.dlhitch off' removes it and restores the profiler.
         hitches = new LodHitchRecorder(capi, Mod.Logger);
-        capi.Event.RegisterRenderer(hitches, EnumRenderStage.Before, "vintagehorizons-hitches");
+        capi.Event.RegisterRenderer(hitches, EnumRenderStage.Before, "dodenslandscapes-hitches");
 
         RegisterCommands();
 
-        Mod.Logger.Notification("VintageHorizons {0} loaded (client-only)", Mod.Info.Version);
+        Mod.Logger.Notification("Doden's Landscapes {0} loaded (client-only)", Mod.Info.Version);
     }
 
     /// <summary>
@@ -521,7 +525,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// into a command would test something other than what players type. The delay lets
     /// the handshake and the privilege grant settle first.
     ///
-    /// Reachable from the idle path too, and not for symmetry: '.vhdefer off' is the
+    /// Reachable from the idle path too, and not for symmetry: '.dldefer off' is the
     /// escape hatch we tell an idle player to use, and it writes the config file from a
     /// state where the renderer does not exist. That is the one command whose failure
     /// would strand exactly the player it is meant to rescue.
@@ -579,14 +583,14 @@ public partial class VintageHorizonsModSystem : ModSystem
         if (switchedOff.Length > 0)
         {
             Mod.Logger.Notification(
-                "Installed but switched off in its own settings, so VintageHorizons is not "
+                "Installed but switched off in its own settings, so Doden's Landscapes is not "
                 + "staying idle for it: {0}", string.Join(", ", switchedOff));
         }
 
         if (drawing != null && config.IgnoreOtherLodMods)
         {
             Mod.Logger.Warning(
-                "'{0}' is switched on, and IgnoreOtherLodMods is set, so VintageHorizons is drawing "
+                "'{0}' is switched on, and IgnoreOtherLodMods is set, so Doden's Landscapes is drawing "
                 + "anyway. Switch '{0}' off in its own settings, or the two draw over the same ground.",
                 drawing);
             return null;
@@ -912,7 +916,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         if (localOffers == null)
         {
             // A null here means "not yet", not "never": the server side can open its
-            // cache long after this client finalized - /vhgen creates one on demand,
+            // cache long after this client finalized - /dlgen creates one on demand,
             // and a sweep's file can appear after a slow start. Opening once at
             // LevelFinalize and never looking again left both invisible for the whole
             // session.
@@ -936,7 +940,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             if (!loggedLocalOffers)
             {
                 loggedLocalOffers = true;
-                // Sweeps and /vhgen both fill the sibling cache; this line covers either.
+                // Sweeps and /dlgen both fill the sibling cache; this line covers either.
                 Mod.Logger.Notification(
                     "Server-side cache offers sections locally. The mod adopts the ones it "
                     + "lacks as the view needs them, and fills in the ones it already holds.");
@@ -1935,7 +1939,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             unknownTextureColor == 0 ? " (zero: magenta-block salvage disabled)" : "");
         ResolveWaterSurfaceTexture();
         renderer.ApplyZFar();
-        pipeline.Open("ModData/vintagehorizons");
+        pipeline.Open("ModData/dodenslandscapes");
         SetSilhouetteWorldStore();
 
         // AFTER Open, which is what creates the writer. Taking this at startup instead read a
@@ -1992,11 +1996,11 @@ public partial class VintageHorizonsModSystem : ModSystem
         // A survival player is moved by things the test did not ask for: knockback,
         // drowning, hunger, a mob, and at worst a death that respawns them somewhere
         // else entirely. Player position is an INPUT to most of what these scenarios
-        // measure - which chunks stream in, where /vhgen centres, and which positions
+        // measure - which chunks stream in, where /dlgen centres, and which positions
         // the absence verifier excludes as explainable by a nearby player. A scenario
         // whose subject wanders is measuring the wander.
         //
-        // Sent before the auto-command below fires, so a /vhgen run is already centred
+        // Sent before the auto-command below fires, so a /dlgen run is already centred
         // on a player who will stay put.
         if (autoExplore || Environment.GetEnvironmentVariable("VINTAGEHORIZONS_CREATIVE") == "1")
         {
@@ -2035,14 +2039,14 @@ public partial class VintageHorizonsModSystem : ModSystem
                 renderer.WaterSurfaceTextureSlot = 0;
                 renderer.WaterSurfaceTintSlot = -1;
                 Mod.Logger.Warning(
-                    "[VintageHorizons] standard water texture unavailable; cached water keeps its averaged surface colour.");
+                    "[Landscapes] standard water texture unavailable; cached water keeps its averaged surface colour.");
                 return;
             }
 
             renderer.WaterSurfaceTextureSlot = blockTextures.SlotFor(water, StableColorOf(water));
             renderer.WaterSurfaceTintSlot = TintSlotOf(water);
             Mod.Logger.Notification(
-                "[VintageHorizons] standard water surface texture: {0}, atlas slot {1}, tint slot {2}.",
+                "[Landscapes] standard water surface texture: {0}, atlas slot {1}, tint slot {2}.",
                 water.Code, renderer.WaterSurfaceTextureSlot, renderer.WaterSurfaceTintSlot);
         }
         catch (Exception e)
@@ -2050,7 +2054,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             renderer.WaterSurfaceTextureSlot = 0;
             renderer.WaterSurfaceTintSlot = -1;
             Mod.Logger.Warning(
-                "[VintageHorizons] standard water texture could not be resolved; cached water keeps its averaged surface colour: {0}",
+                "[Landscapes] standard water texture could not be resolved; cached water keeps its averaged surface colour: {0}",
                 e.Message);
         }
     }
@@ -2665,7 +2669,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// <summary>
     /// One editor-state factory for both entry points. Keeping the snapshot and save callback
     /// here prevents the Settings page from becoming a subtly different configuration system
-    /// from .vhconfig.
+    /// from .dlconfig.
     /// </summary>
     VintageHorizonsConfigDialog BuildConfigDialog(
         Action? requestRecompose, Action? requestClose)
@@ -2710,8 +2714,8 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     if (!OpenStandaloneConfigDialog())
                         capi.ShowChatMessage(
-                            "[VintageHorizons] The live configuration window could not open; use .vhconfig.");
-                }, "vintagehorizons-open-live-worldgen");
+                            "[Landscapes] The live configuration window could not open; use .dlconfig.");
+                }, "dodenslandscapes-open-live-worldgen");
             };
         var worldGen = new WorldGenTuning(
             ConfiguredWorldGenPreferences(), assist, SaveWorldGenPreferences,
@@ -2765,7 +2769,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             catch (Exception e)
             {
                 state = GameCollectorSetting.FileState.Unavailable;
-                Mod.Logger.Warning("[VintageHorizons] The game's start-up file could not be read: {0}", e.Message);
+                Mod.Logger.Warning("[Landscapes] The game's start-up file could not be read: {0}", e.Message);
             }
             bool fileOn = state is GameCollectorSetting.FileState.OnByThisMod
                 or GameCollectorSetting.FileState.OnElsewhere;
@@ -2783,15 +2787,15 @@ public partial class VintageHorizonsModSystem : ModSystem
             {
                 file = "start-up file " + state switch
                 {
-                    GameCollectorSetting.FileState.OnByThisMod => "set by Vintage Horizons",
-                    GameCollectorSetting.FileState.OnElsewhere => "set outside Vintage Horizons",
+                    GameCollectorSetting.FileState.OnByThisMod => "set by Doden's Landscapes",
+                    GameCollectorSetting.FileState.OnElsewhere => "set outside Doden's Landscapes",
                     GameCollectorSetting.FileState.Off => "at the game's default",
                     _ => "unreadable",
                 };
             }
         }
         Mod.Logger.Notification(
-            "[VintageHorizons] All-cores garbage collection: {0} in this mod's settings, {1} in this session; {2}.",
+            "[Landscapes] All-cores garbage collection: {0} in this mod's settings, {1} in this session; {2}.",
             config.AllCoresGarbageCollection ? "on" : "off",
             GameCollectorSetting.InEffect ? "running" : "not running", file);
     }
@@ -2816,8 +2820,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             changed = GameCollectorSetting.Apply(path, on, out message);
         }
         if (changed) config.AllCoresGarbageCollection = on;
-        Mod.Logger.Notification("[VintageHorizons] {0}", message);
-        capi.ShowChatMessage("[VintageHorizons] " + char.ToUpperInvariant(message[0]) + message[1..] + ".");
+        Mod.Logger.Notification("[Landscapes] {0}", message);
+        capi.ShowChatMessage("[Landscapes] " + char.ToUpperInvariant(message[0]) + message[1..] + ".");
         return message;
     }
 
@@ -2848,7 +2852,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     void RegisterCommands()
     {
         // Every answer also goes to the client log (G72): the owner cannot copy game chat.
-        capi.ChatCommands.Create("vhhitch")
+        capi.ChatCommands.Create("dlhitch")
             .WithDescription("Hitch recorder: once a minute it writes the frame-time lows and what was "
                 + "unusually slow in the slowest frames to the client log. on | off; with nothing, "
                 + "writes the current minute now.")
@@ -2856,49 +2860,49 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (hitches == null)
-                    return TextCommandResult.Success("[VintageHorizons] no hitch recorder: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no hitch recorder: another LOD mod is drawing.");
                 string word = args.Parsers[0].IsMissing ? "" : (string)args[0];
                 string reply = word.Equals("on", StringComparison.OrdinalIgnoreCase)
                     ? hitches.SetEnabled(true)
                     : word.Equals("off", StringComparison.OrdinalIgnoreCase)
                         ? hitches.SetEnabled(false)
                         : hitches.ReportNow();
-                Mod.Logger.Notification("[VintageHorizons] .vhhitch {0}: {1}", word, reply);
-                return TextCommandResult.Success("[VintageHorizons] " + reply);
+                Mod.Logger.Notification("[Landscapes] .dlhitch {0}: {1}", word, reply);
+                return TextCommandResult.Success("[Landscapes] " + reply);
             });
 
-        capi.ChatCommands.Create("vhdiag")
-            .WithDescription("Show or hide the Vintage Horizons diagnostics window for this session. Default off.")
+        capi.ChatCommands.Create("dldiag")
+            .WithDescription("Show or hide the Doden's Landscapes diagnostics window for this session. Default off.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
                 if (args.Parsers[0].IsMissing)
                 {
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] diagnostics window: {(diagnosticsEnabled ? "on" : "off")}");
+                        $"[Landscapes] diagnostics window: {(diagnosticsEnabled ? "on" : "off")}");
                 }
 
                 bool enabled = (bool)args[0];
                 bool opened = SetDiagnosticsEnabled(enabled);
                 return TextCommandResult.Success(!enabled
-                    ? "[VintageHorizons] diagnostics window off."
+                    ? "[Landscapes] diagnostics window off."
                     : opened
-                        ? "[VintageHorizons] diagnostics window on."
-                        : "[VintageHorizons] diagnostics window is on but could not open right now.");
+                        ? "[Landscapes] diagnostics window on."
+                        : "[Landscapes] diagnostics window is on but could not open right now.");
             });
 
-        capi.ChatCommands.Create("vhinfo")
-            .WithDescription("VintageHorizons status. Also written to the client log, which is the only "
+        capi.ChatCommands.Create("dlinfo")
+            .WithDescription("Doden's Landscapes status. Also written to the client log, which is the only "
                 + "copy long enough to read.")
             .HandleWith(_ => deferringTo != null
                 ? TextCommandResult.Success(
-                    $"[VintageHorizons] idle: '{deferringTo}' is installed and switched on, so it is "
+                    $"[Landscapes] idle: '{deferringTo}' is installed and switched on, so it is "
                     + "drawing the distant terrain. Switch it off in its own settings, or run "
-                    + "'.vhdefer off' to draw beside it. Either way, restart the game afterwards: "
+                    + "'.dldefer off' to draw beside it. Either way, restart the game afterwards: "
                     + "this is decided once at startup.")
                 : TextCommandResult.Success(
                 LogAndReturn("status",
-                $"[VintageHorizons] sections: {pipeline.World.Sections.Count} [{pipeline.World.DescribeLevels()}] " +
+                $"[Landscapes] sections: {pipeline.World.Sections.Count} [{pipeline.World.DescribeLevels()}] " +
                 $"({pipeline.CachedSectionsLoaded} from cache), meshes: {renderer.MeshCount}, " +
                 $"drawn: {renderer.LastDrawCount} [{renderer.DescribeDrawnLevels()}] " +
                 $"({renderer.LastTraversalCulledCount} subtrees traversal-culled, " +
@@ -2914,7 +2918,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 $"current far edge: {(int)renderer.EffectiveFarDistance}, " +
                 $"radial demand: {renderer.DescribeRadialDemand()}, " +
                 $"tints: {renderer.DescribeTintReadiness()}, " +
-                $"LOD thresholds: {string.Join('/', LodWorld.GetLevelThresholds())} (.vhconfig to change), " +
+                $"LOD thresholds: {string.Join('/', LodWorld.GetLevelThresholds())} (.dlconfig to change), " +
                 $"occlusion order: {renderer.DescribeOcclusionCulling()}, " +
                 $"delayed occlusion: {renderer.DescribeTemporalOcclusion()}, " +
                 $"readiness: {renderer.DescribeReadiness()}, " +
@@ -2932,7 +2936,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         // Registered in both states on purpose: the player who most needs this one is the
         // player we are currently idle for.
-        capi.ChatCommands.Create("vhdefer")
+        capi.ChatCommands.Create("dldefer")
             .WithDescription("Stay idle when another LOD mod draws. Default on. Off draws anyway.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
@@ -2940,7 +2944,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 if (args.Parsers[0].IsMissing)
                 {
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] defer to other LOD mods: {(config.IgnoreOtherLodMods ? "off" : "on")}"
+                        $"[Landscapes] defer to other LOD mods: {(config.IgnoreOtherLodMods ? "off" : "on")}"
                         + (deferringTo != null ? $" - idle now, because '{deferringTo}' is drawing" : ""));
                 }
 
@@ -2951,50 +2955,50 @@ public partial class VintageHorizonsModSystem : ModSystem
                 // network channel after the handshake, run a LevelFinalize that has already
                 // fired, and capture chunks whose ChunkDirty events are long past.
                 return TextCommandResult.Success(config.IgnoreOtherLodMods
-                    ? "[VintageHorizons] will draw even when another LOD mod is switched on (saved). "
+                    ? "[Landscapes] will draw even when another LOD mod is switched on (saved). "
                       + "Restart the game to apply. Switch the other mod off as well, or the two "
                       + "draw over the same ground."
-                    : "[VintageHorizons] will stay idle when another LOD mod is drawing (saved). "
+                    : "[Landscapes] will stay idle when another LOD mod is drawing (saved). "
                       + "Restart the game to apply.");
             });
 
         // Available even while deferring, because these are persisted player settings;
         // they will apply normally after the competing renderer is switched off.
-        capi.ChatCommands.Create("vhconfig")
-            .WithDescription("Open the Vintage Horizons settings window: detail and draw distance, which optional visual features are drawn, and an Anti-Aliasing tab of tuning sliders")
+        capi.ChatCommands.Create("dlconfig")
+            .WithDescription("Open the Doden's Landscapes settings window: detail and draw distance, which optional visual features are drawn, and an Anti-Aliasing tab of tuning sliders")
             .HandleWith(_ =>
             {
                 bool alreadyOpen = configDialog?.IsOpened() == true;
                 return OpenStandaloneConfigDialog()
                     ? TextCommandResult.Success(alreadyOpen
-                        ? "[VintageHorizons] configuration window focused."
-                        : "[VintageHorizons] configuration window opened.")
-                    : TextCommandResult.Success("[VintageHorizons] configuration window could not open right now.");
+                        ? "[Landscapes] configuration window focused."
+                        : "[Landscapes] configuration window opened.")
+                    : TextCommandResult.Success("[Landscapes] configuration window could not open right now.");
             });
 
-        capi.ChatCommands.Create("vhblend")
-            .WithDescription("Turn seam blending and L0 block textures off or on. Saved; also available in .vhconfig.")
+        capi.ChatCommands.Create("dlblend")
+            .WithDescription("Turn seam blending and L0 block textures off or on. Saved; also available in .dlconfig.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
                 if (args.Parsers[0].IsMissing)
                 {
-                    return TextCommandResult.Success("[VintageHorizons] "
+                    return TextCommandResult.Success("[Landscapes] "
                         + (deferringTo == null
                             ? renderer.DescribeBlendPipeline()
                             : config.BlendPipeline
-                                ? "blending on (saved; applies when Vintage Horizons is active)."
-                                : "blending off (saved; applies when Vintage Horizons is active)."));
+                                ? "blending on (saved; applies when Doden's Landscapes is active)."
+                                : "blending off (saved; applies when Doden's Landscapes is active)."));
                 }
 
                 bool enabled = (bool)args[0];
                 config.BlendPipeline = enabled;
                 if (deferringTo == null) ApplyBlendPipeline(enabled);
                 SaveConfig();
-                return TextCommandResult.Success("[VintageHorizons] "
+                return TextCommandResult.Success("[Landscapes] "
                     + (deferringTo == null
                         ? renderer.DescribeBlendPipeline()
-                        : $"blending {(enabled ? "on" : "off")} (saved; applies when Vintage Horizons is active).")
+                        : $"blending {(enabled ? "on" : "off")} (saved; applies when Doden's Landscapes is active).")
                     + (!enabled && deferringTo == null
                         ? " Live L0 terrain will finish changing over the next few seconds."
                         : ""));
@@ -3006,20 +3010,20 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         RegisterSilhouetteCommand();
 
-        // Named apart from ".vhwhy" on purpose. This one answers "why is that coarse",
+        // Named apart from ".dlwhy" on purpose. This one answers "why is that coarse",
         // the other answers "why is that missing", and registering both under one name
         // threw at startup and cost every command declared after it.
-        capi.ChatCommands.Create("vhcoarse")
+        capi.ChatCommands.Create("dlcoarse")
             .WithDescription("Explain why nearby LOD terrain draws coarser than the detail setting allows")
             .HandleWith(_ =>
             {
                 var at = capi.World.Player.Entity.Pos;
                 return TextCommandResult.Success(
-                    "[VintageHorizons] coarse draws:" + renderer.ExplainCoarseDraws(at.X, at.Z));
+                    "[Landscapes] coarse draws:" + renderer.ExplainCoarseDraws(at.X, at.Z));
             });
 
-        capi.ChatCommands.Create("vhfar")
-            .WithDescription("Cap VintageHorizons render distance in blocks (0 = unlimited)")
+        capi.ChatCommands.Create("dlfar")
+            .WithDescription("Cap Doden's Landscapes render distance in blocks (0 = unlimited)")
             .WithArgs(capi.ChatCommands.Parsers.Int("blocks"))
             .HandleWith(args =>
             {
@@ -3027,41 +3031,41 @@ public partial class VintageHorizonsModSystem : ModSystem
                 renderer.FarViewDistanceCap = blocks <= 0 ? 0 : GameMath.Clamp(blocks, 1024, 262144);
                 SaveConfig();
                 return TextCommandResult.Success(renderer.FarViewDistanceCap > 0
-                    ? $"[VintageHorizons] render distance capped at {renderer.FarViewDistanceCap} (saved)"
-                    : "[VintageHorizons] render distance unlimited (saved)");
+                    ? $"[Landscapes] render distance capped at {renderer.FarViewDistanceCap} (saved)"
+                    : "[Landscapes] render distance unlimited (saved)");
             });
 
-        capi.ChatCommands.Create("vhmask")
+        capi.ChatCommands.Create("dlmask")
             .WithDescription("Hand each vanilla chunk its own ground instead of using one distance. On by default; turn it off to fall back to a single measured distance.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
                 if (renderer.ChunkMaskFailed)
                     return TextCommandResult.Success(
-                        "[VintageHorizons] the chunk mask hit an error this session and stays off. " +
+                        "[Landscapes] the chunk mask hit an error this session and stays off. " +
                         "The distance handoff is drawing.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] chunk mask {(renderer.ChunkMaskEnabled ? "on" : "off")}. " +
+                        $"[Landscapes] chunk mask {(renderer.ChunkMaskEnabled ? "on" : "off")}. " +
                         "On gives each loaded vanilla chunk its own ground and skips cached terrain " +
                         "that is entirely replaced. Off uses a single measured distance.");
 
                 renderer.ChunkMaskEnabled = (bool)args[0];
                 SaveConfig();
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] chunk mask {(renderer.ChunkMaskEnabled ? "on" : "off")} (saved). " +
+                    $"[Landscapes] chunk mask {(renderer.ChunkMaskEnabled ? "on" : "off")} (saved). " +
                     "The change applies on the next frame.");
             });
 
-        capi.ChatCommands.Create("vhwhy")
+        capi.ChatCommands.Create("dlwhy")
             .WithDescription("Look at a hole and run this. Searches your line of sight for the first ground that nothing is drawing and says which part of the mod is responsible. Optional argument is how far to search, 512 blocks by default.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalInt("blocksAhead"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 // Searching the whole line of sight rather than one chosen distance: the
                 // hole a player is looking at is wherever it is, and a confident report
@@ -3081,17 +3085,17 @@ public partial class VintageHorizonsModSystem : ModSystem
                 string why = renderer.ExplainViewRay(
                     camera.X, camera.Y, camera.Z, look.X, look.Y, look.Z, range);
                 LogReportLines("why", why);
-                return TextCommandResult.Success("[VintageHorizons] " + why);
+                return TextCommandResult.Success("[Landscapes] " + why);
             });
 
-        capi.ChatCommands.Create("vhtint")
+        capi.ChatCommands.Create("dltint")
             .WithDescription("Take one block's distant colour apart: the stored colour, how much of "
                 + "it the live tint is not allowed to touch, and the tint itself against the game's "
                 + "own answer for the same block. Aim at a block, or name one, or stand on it. "
-                + "'.vhtint field on|off' switches per-area distant climate. "
-                + "'.vhtint leaves on|off' switches per-tree seasonal variation. "
-                + "'.vhtint leafwide on|off' spends it out to level 2 instead of level 0. "
-                + "'.vhtint leafcheap on|off' prices the noise alone - WRONG COLOURS, for a "
+                + "'.dltint field on|off' switches per-area distant climate. "
+                + "'.dltint leaves on|off' switches per-tree seasonal variation. "
+                + "'.dltint leafwide on|off' spends it out to level 2 instead of level 0. "
+                + "'.dltint leafcheap on|off' prices the noise alone - WRONG COLOURS, for a "
                 + "measurement only. "
                 + "Written to the client log, which is the only copy long enough to read.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("blockCode"),
@@ -3106,14 +3110,14 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     if (renderer == null)
                         return TextCommandResult.Success(
-                            "[VintageHorizons] no renderer: another LOD mod is drawing.");
+                            "[Landscapes] no renderer: another LOD mod is drawing.");
                     if (!args.Parsers[1].IsMissing)
                     {
                         renderer.ClimateFieldTint = (bool)args[1];
                         SaveConfig();
                     }
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] climate field "
+                        $"[Landscapes] climate field "
                         + $"{(renderer.ClimateFieldTint ? "on" : "off")}. "
                         + "On tints distant ground from the climate it stands in, cell by cell. "
                         + "Off is one climate for the whole view, taken where you are standing, "
@@ -3129,14 +3133,14 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     if (renderer == null)
                         return TextCommandResult.Success(
-                            "[VintageHorizons] no renderer: another LOD mod is drawing.");
+                            "[Landscapes] no renderer: another LOD mod is drawing.");
                     if (!args.Parsers[1].IsMissing)
                     {
                         renderer.LeafSeasonVariation = (bool)args[1] ? 1f : 0f;
                         SaveConfig();
                     }
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] leaf season variation "
+                        $"[Landscapes] leaf season variation "
                         + $"{(renderer.LeafSeasonVariation > 0f ? "on" : "off")}. "
                         + "On picks each patch of distant leaves its own row of the seasonal "
                         + "colour table, the way the game does, so a forest turns unevenly "
@@ -3154,7 +3158,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     if (renderer == null)
                         return TextCommandResult.Success(
-                            "[VintageHorizons] no renderer: another LOD mod is drawing.");
+                            "[Landscapes] no renderer: another LOD mod is drawing.");
                     if (!args.Parsers[1].IsMissing)
                     {
                         renderer.ClimateFadeBlocks = (bool)args[1]
@@ -3164,7 +3168,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                     }
                     bool everywhere = renderer.ClimateFadeBlocks <= 0f;
                     return TextCommandResult.Success(
-                        "[VintageHorizons] distant ground works out its own climate "
+                        "[Landscapes] distant ground works out its own climate "
                         + (everywhere
                             ? "at every level (zero fade)."
                             : $"out to {renderer.ClimateFadeBlocks:0} blocks per voxel.")
@@ -3187,12 +3191,12 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     if (renderer == null)
                         return TextCommandResult.Success(
-                            "[VintageHorizons] no renderer: another LOD mod is drawing.");
+                            "[Landscapes] no renderer: another LOD mod is drawing.");
                     if (!args.Parsers[1].IsMissing)
                         renderer.LeafSeasonFadeBlocks = (bool)args[1] ? 8f : 2f;
                     bool wide = renderer.LeafSeasonFadeBlocks > 2f;
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] leaf season variation reaches "
+                        $"[Landscapes] leaf season variation reaches "
                         + (wide ? "level 2" : "level 0 only")
                         + $" (zero at {renderer.LeafSeasonFadeBlocks:0} blocks per voxel). "
                         + "Off is level 0 alone, where one voxel is one block and the variation "
@@ -3200,7 +3204,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                         + "has to match. On spends it across levels 0 to 2 as well, which in a "
                         + "measured view meant 97 of 110 drawn sections paying for it instead "
                         + "of 31 - level 1 alone had more sections in view than level 0. "
-                        + "Needs .vhtint leaves on to show at all.");
+                        + "Needs .dltint leaves on to show at all.");
                 }
 
                 // The instrument for whether baking the season row is worth building. Not
@@ -3211,11 +3215,11 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     if (renderer == null)
                         return TextCommandResult.Success(
-                            "[VintageHorizons] no renderer: another LOD mod is drawing.");
+                            "[Landscapes] no renderer: another LOD mod is drawing.");
                     if (!args.Parsers[1].IsMissing)
                         renderer.LeafSeasonCheapRow = (bool)args[1];
                     return TextCommandResult.Success(
-                        "[VintageHorizons] leaf season row "
+                        "[Landscapes] leaf season row "
                         + (renderer.LeafSeasonCheapRow
                             ? "CHEAP HASH - the colours are wrong on purpose"
                             : "the engine's own noise")
@@ -3243,7 +3247,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                     Block? named = capi.World.GetBlock(new AssetLocation(code));
                     if (named == null || named.BlockId <= 0)
                         return TextCommandResult.Error(
-                            $"[VintageHorizons] no block called '{code}'. Give a full code such as "
+                            $"[Landscapes] no block called '{code}'. Give a full code such as "
                             + "soil-medium-normal, or leave it off and aim at one.");
                     // The named block is described where the player is standing: climate and
                     // season are functions of position, so it has to be asked somewhere.
@@ -3251,7 +3255,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 }
 
                 if (block == null || block.BlockId <= 0)
-                    return TextCommandResult.Error("[VintageHorizons] no block there to describe.");
+                    return TextCommandResult.Error("[Landscapes] no block there to describe.");
 
                 bool topSoil = TryTopSoilColor(block, out int composite, out LodUntintedShare share);
                 int slot = tints.PeekSlot(block, topSoil ? share : LodUntintedShare.None);
@@ -3277,10 +3281,10 @@ public partial class VintageHorizonsModSystem : ModSystem
                 // breaks the window you read it in is worse than no diagnostic.
                 string report = LogAndReturn("tint", string.Join('\n', lines));
                 return TextCommandResult.Success(
-                    "[VintageHorizons] " + report.Replace('<', '(').Replace('>', ')'));
+                    "[Landscapes] " + report.Replace('<', '(').Replace('>', ')'));
             });
 
-        capi.ChatCommands.Create("vhclimate")
+        capi.ChatCommands.Create("dlclimate")
             .WithDescription("How far the client actually has climate data, and how fast climate "
                 + "changes once it does. Decides whether distant terrain can be given its own "
                 + "biome colour or only the one under your feet. Written to the client log.")
@@ -3295,41 +3299,41 @@ public partial class VintageHorizonsModSystem : ModSystem
                 string[] lines = report.Split('\n');
                 string reach = Array.Find(lines, l => l.Contains("fully covered")) ?? "";
                 return TextCommandResult.Success(
-                    "[VintageHorizons] climate probe written to the client log. "
+                    "[Landscapes] climate probe written to the client log. "
                     + reach.Trim().Replace('<', '(').Replace('>', ')'));
             });
 
-        capi.ChatCommands.Create("vhpaint")
+        capi.ChatCommands.Create("dlpaint")
             .WithDescription("Paint the terrain the mask is hiding magenta instead of hiding it. Diagnostic.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] paint mode {(renderer.MaskDebugPaint ? "on" : "off")}.");
+                        $"[Landscapes] paint mode {(renderer.MaskDebugPaint ? "on" : "off")}.");
 
                 renderer.MaskDebugPaint = (bool)args[0];
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] paint mode {(renderer.MaskDebugPaint ? "on" : "off")}. " +
+                    $"[Landscapes] paint mode {(renderer.MaskDebugPaint ? "on" : "off")}. " +
                     "Magenta is terrain the mask is hiding. A gap that stays empty is not the mask.");
             });
 
-        // Session-only, like .vhpaint. The flash this exists for lasts a frame or two, too short
+        // Session-only, like .dlpaint. The flash this exists for lasts a frame or two, too short
         // to read on screen, and chat cannot be copied, so every switch and every finding goes to
         // the client log (G72).
-        capi.ChatCommands.Create("vhgap")
+        capi.ChatCommands.Create("dlgap")
             .WithDescription("Log every chunk the mask gives to vanilla while vanilla is not drawing it: "
                 + "one client-log line per gap, with the reason and how many frames it lasted. "
-                + "on | off. '.vhgap release on|off' also hands such chunks to the cache in the "
+                + "on | off. '.dlgap release on|off' also hands such chunks to the cache in the "
                 + "frame they are found, as a comparison.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
                       capi.ChatCommands.Parsers.OptionalWord("value"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 string part = args.Parsers[0].IsMissing ? "" : (string)args[0];
                 string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
@@ -3351,17 +3355,17 @@ public partial class VintageHorizonsModSystem : ModSystem
         // Session-only. The first measurement of what the graphics card actually drew at the
         // handoff: every earlier diagnostic compared CPU beliefs with each other. Every switch
         // and every finding goes to the client log (G72).
-        capi.ChatCommands.Create("vhsky")
+        capi.ChatCommands.Create("dlsky")
             .WithDescription("Watch for sky showing through the ground. After distant terrain is drawn, "
                 + "count sky below the horizon every frame and write each flash to the client log with "
-                + "where it was and how the chunk mask stood there. on | off. '.vhsky verify on|off' "
+                + "where it was and how the chunk mask stood there. on | off. '.dlsky verify on|off' "
                 + "also reads the mask back from the graphics card after every upload.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
                       capi.ChatCommands.Parsers.OptionalWord("value"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 string part = args.Parsers[0].IsMissing ? "" : (string)args[0];
                 string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
@@ -3377,12 +3381,12 @@ public partial class VintageHorizonsModSystem : ModSystem
                     if (value.Equals("off", StringComparison.OrdinalIgnoreCase))
                         return TextCommandResult.Success(renderer.SetSkyMaskVerify(false));
                 }
-                return TextCommandResult.Success("[VintageHorizons] " + renderer.DescribeSkyWitness());
+                return TextCommandResult.Success("[Landscapes] " + renderer.DescribeSkyWitness());
             });
 
         // Session-only. The fix for the handoff flash, switchable only so the old timing can be
-        // compared against it with .vhsky. Every switch goes to the client log (G72).
-        capi.ChatCommands.Create("vhlaterange")
+        // compared against it with .dlsky. Every switch goes to the client log (G72).
+        capi.ChatCommands.Create("dllaterange")
             .WithDescription("Check vanilla's draw range again after the game moves the player each frame, "
                 + "so a chunk leaving it goes to distant terrain in that same frame. On by default. "
                 + "on | off. Off restores the timing of 0.4.13 to 0.4.52, for comparison only.")
@@ -3390,21 +3394,21 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 string value = args.Parsers[0].IsMissing ? "" : (string)args[0];
                 if (value.Equals("on", StringComparison.OrdinalIgnoreCase))
                     return TextCommandResult.Success(renderer.SetLateRangeCheck(true));
                 if (value.Equals("off", StringComparison.OrdinalIgnoreCase))
                     return TextCommandResult.Success(renderer.SetLateRangeCheck(false));
-                return TextCommandResult.Success("[VintageHorizons] " + renderer.DescribeLateRangeCheck());
+                return TextCommandResult.Success("[Landscapes] " + renderer.DescribeLateRangeCheck());
             });
 
         // Session-only, like the other comparison switches. The point of shipping these is
         // that the owner stands at the seam and turns them until it disappears; the values
         // that survive that become defaults in source, so persisting them would only make
         // the next build disagree with what it says it does.
-        capi.ChatCommands.Create("vhband")
+        capi.ChatCommands.Create("dlband")
             .WithDescription("Blend the seam between game terrain and distant terrain. "
                 + "No argument reports the settings. on | off | shape | map | speckle | width | step | inner | strength | darken | saturate | sink | overlap.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
@@ -3414,7 +3418,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
                 string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
@@ -3429,14 +3433,14 @@ public partial class VintageHorizonsModSystem : ModSystem
                         renderer.BandEnabled = part == "on";
                         SaveConfig();
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] blending {part}. " + renderer.DescribeBlendBand());
+                            $"[Landscapes] blending {part}. " + renderer.DescribeBlendBand());
 
                     case "map":
                         // The picture cannot answer this one. A ramp seen from altitude is a
                         // few pixels tall, so a gradient and a cliff look identical, and the
                         // number that separates them is not on screen at all.
                         return TextCommandResult.Success(
-                            "[VintageHorizons] " + renderer.LogBlendBandMap());
+                            "[Landscapes] " + renderer.LogBlendBandMap());
 
                     case "shape":
                         // Judging the ring's outline is a different question from judging its
@@ -3444,102 +3448,102 @@ public partial class VintageHorizonsModSystem : ModSystem
                         // a bad correction being mistaken for one another.
                         if (value is not ("on" or "off"))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] shape view {(renderer.BandDebugPaint ? "on" : "off")}. "
+                                $"[Landscapes] shape view {(renderer.BandDebugPaint ? "on" : "off")}. "
                                 + "On paints the blending band by strength - red at the seam, "
                                 + "through yellow, to blue at its outer edge - so you can look down "
                                 + "at its shape without any colour change being involved.");
                         renderer.BandDebugPaint = value == "on";
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] shape view {(renderer.BandDebugPaint ? "on" : "off")}.");
+                            $"[Landscapes] shape view {(renderer.BandDebugPaint ? "on" : "off")}.");
 
                     case "width":
                         if (!float.TryParse(value, out float width))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] band width {renderer.BandWidthBlocks:0} blocks. "
+                                $"[Landscapes] band width {renderer.BandWidthBlocks:0} blocks. "
                                 + "Give a number of blocks. Wider hides a bigger colour step but "
                                 + "covers more ground.");
                         renderer.BandWidthBlocks = GameMath.Clamp(width, 8f, 2048f);
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] band width {renderer.BandWidthBlocks:0} blocks.");
+                            $"[Landscapes] band width {renderer.BandWidthBlocks:0} blocks.");
 
                     case "step":
                         if (!float.TryParse(value, out float step))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] step {renderer.BandStepBlocks:0} blocks. "
+                                $"[Landscapes] step {renderer.BandStepBlocks:0} blocks. "
                                 + "8, 16 or 32. Bigger steps read as chunkier terrain; there is "
                                 + "deliberately no smooth setting, because a ramp finer than one "
                                 + "block stops looking like ground.");
                         renderer.BandStepBlocks = GameMath.Clamp(step, 8f, 32f);
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] step {renderer.BandStepBlocks:0} blocks.");
+                            $"[Landscapes] step {renderer.BandStepBlocks:0} blocks.");
 
                     case "inner":
                         if (value is "auto")
                         {
                             renderer.BandInnerBlocks = -1f;
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] inner edge follows the overlap: "
+                                $"[Landscapes] inner edge follows the overlap: "
                                 + $"{renderer.BandInnerBlocks:0} blocks.");
                         }
                         if (!float.TryParse(value, out float inner))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] inner edge {renderer.BandInnerBlocks:0} blocks"
+                                $"[Landscapes] inner edge {renderer.BandInnerBlocks:0} blocks"
                                 + (renderer.BandInnerDerived ? " (following the overlap)" : " (pinned)")
                                 + ". Where distant terrain overlaps the game's own, the blending has "
                                 + "to start that far inside the seam you can see. It follows the "
-                                + "overlap on its own, so it is zero while .vhexact is on. Give a "
+                                + "overlap on its own, so it is zero while .dlexact is on. Give a "
                                 + "number to pin it, or 'auto' to hand it back.");
                         renderer.BandInnerBlocks = GameMath.Clamp(inner, 0f, 256f);
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] inner edge pinned at {renderer.BandInnerBlocks:0} blocks.");
+                            $"[Landscapes] inner edge pinned at {renderer.BandInnerBlocks:0} blocks.");
 
                     case "strength":
                         if (!float.TryParse(value, out float strength))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] strength {renderer.BandStrength:0.00}. "
+                                $"[Landscapes] strength {renderer.BandStrength:0.00}. "
                                 + "0 to 1. How much of the correction lands right at the seam.");
                         renderer.BandStrength = GameMath.Clamp(strength, 0f, 1f);
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] strength {renderer.BandStrength:0.00}.");
+                            $"[Landscapes] strength {renderer.BandStrength:0.00}.");
 
                     case "speckle":
                         if (!float.TryParse(value, out float speckle))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] speckle {renderer.BandSpeckle:0.00}. "
+                                $"[Landscapes] speckle {renderer.BandSpeckle:0.00}. "
                                 + "How much block-to-block variation distant terrain gets at the "
                                 + "seam, fading out across the band. The game's ground is never one "
                                 + "flat colour; this is what stops ours meeting it as a flat sheet. "
                                 + "0 turns it off.");
                         renderer.BandSpeckle = GameMath.Clamp(speckle, 0f, 1f);
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] speckle {renderer.BandSpeckle:0.00}.");
+                            $"[Landscapes] speckle {renderer.BandSpeckle:0.00}.");
 
                     case "darken":
                         if (!float.TryParse(value, out float darken))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] darken {renderer.BandDarken:0.00}. "
+                                $"[Landscapes] darken {renderer.BandDarken:0.00}. "
                                 + "How much dimmer distant terrain is made at the seam. Below 1 "
                                 + "darkens it. This works on whatever colour is already there, so "
                                 + "it does not carry one area's colour into another.");
                         renderer.BandDarken = GameMath.Clamp(darken, 0.5f, 1.5f);
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] darken {renderer.BandDarken:0.00}.");
+                            $"[Landscapes] darken {renderer.BandDarken:0.00}.");
 
                     case "saturate":
                         if (!float.TryParse(value, out float saturate))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] saturate {renderer.BandSaturate:0.00}. "
+                                $"[Landscapes] saturate {renderer.BandSaturate:0.00}. "
                                 + "How much more colourful, less washed out, distant terrain is "
                                 + "made at the seam. Above 1 pushes it further from grey without "
                                 + "deciding which colour it should be.");
                         renderer.BandSaturate = GameMath.Clamp(saturate, 0.5f, 2.5f);
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] saturate {renderer.BandSaturate:0.00}.");
+                            $"[Landscapes] saturate {renderer.BandSaturate:0.00}.");
 
                     case "overlap":
                         if (!float.TryParse(value, out float overlap))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] overlap +{renderer.OverlapMarginBlocks:0} blocks. "
+                                $"[Landscapes] overlap +{renderer.OverlapMarginBlocks:0} blocks. "
                                 + "How early distant terrain takes back ground from the game's own. "
                                 + "Zero by default since 0.3.163: it used to be 16, to hide a hole "
                                 + "at the seam that turned out to have two other causes, both now "
@@ -3547,27 +3551,27 @@ public partial class VintageHorizonsModSystem : ModSystem
                                 + "and say so, because that means something else is wrong.");
                         renderer.OverlapMarginBlocks = GameMath.Clamp(overlap, 0f, 256f);
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] overlap +{renderer.OverlapMarginBlocks:0} blocks. "
+                            $"[Landscapes] overlap +{renderer.OverlapMarginBlocks:0} blocks. "
                             + "Applies as the game re-checks chunks, within a second or so.");
 
                     case "sink":
                         if (!int.TryParse(value, out int sink))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] sink {renderer.BandSinkVoxels} of 16ths of a block. "
+                                $"[Landscapes] sink {renderer.BandSinkVoxels} of 16ths of a block. "
                                 + "Lowers distant terrain slightly so it stops fighting the game's own "
                                 + "terrain where the two overlap. Most visible underwater, on lake and "
                                 + "river floors. Raise it if the flickering is still there.");
                         renderer.BandSinkVoxels = GameMath.Clamp(sink, 0, 16);
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] sink {renderer.BandSinkVoxels} of 16ths of a block.");
+                            $"[Landscapes] sink {renderer.BandSinkVoxels} of 16ths of a block.");
 
                     default:
                         return TextCommandResult.Success(
-                            "[VintageHorizons] on | off | shape | speckle | width | step | inner | strength | darken | saturate | sink | overlap.");
+                            "[Landscapes] on | off | shape | speckle | width | step | inner | strength | darken | saturate | sink | overlap.");
                 }
             });
 
-        capi.ChatCommands.Create("vhnear")
+        capi.ChatCommands.Create("dlnear")
             .WithDescription("How close to you distant terrain stops being drawn, in blocks. "
                 + "0 draws it right up to the camera, which is what you want when the game's own "
                 + "view distance is turned down far enough to see it.")
@@ -3575,21 +3579,21 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
                 if (args.Parsers[0].IsMissing
                     || !float.TryParse((string)args[0], out float blocks))
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] near suppression {renderer.NearSuppressionBlocks:0} blocks. "
+                        $"[Landscapes] near suppression {renderer.NearSuppressionBlocks:0} blocks. "
                         + "0 is off. It used to be 48, to stop rough distant terrain appearing at "
                         + "arm's length where the game has not confirmed it is drawing - most "
                         + "likely underground. Raise it again if that comes back.");
 
                 renderer.NearSuppressionBlocks = GameMath.Clamp(blocks, 0f, 512f);
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] near suppression {renderer.NearSuppressionBlocks:0} blocks.");
+                    $"[Landscapes] near suppression {renderer.NearSuppressionBlocks:0} blocks.");
             });
 
-        capi.ChatCommands.Create("vhstandin")
+        capi.ChatCommands.Create("dlstandin")
             .WithDescription("The 0.4.135 fix for rough distant terrain briefly appearing over the "
                 + "game's own ground. On, a coarse piece standing in for finer terrain that is not "
                 + "ready covers only the part that is waiting, and chunks the game has just loaded "
@@ -3599,10 +3603,10 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] stand-in fix {(renderer.StandInFix ? "on" : "off")}.");
+                        $"[Landscapes] stand-in fix {(renderer.StandInFix ? "on" : "off")}.");
 
                 renderer.StandInFix = (bool)args[0];
                 // Logged as well as shown, so a report can be matched to the side of the switch it
@@ -3612,11 +3616,11 @@ public partial class VintageHorizonsModSystem : ModSystem
                         + "chunks are handed to the game within a frame or two"
                     : "off: coarse stand-ins cover their whole area and freshly loaded chunks wait for "
                         + "the background sweep, as before 0.4.135";
-                Mod.Logger.Notification("[VintageHorizons] stand-in fix {0}", state);
-                return TextCommandResult.Success("[VintageHorizons] stand-in fix " + state + ".");
+                Mod.Logger.Notification("[Landscapes] stand-in fix {0}", state);
+                return TextCommandResult.Success("[Landscapes] stand-in fix " + state + ".");
             });
 
-        capi.ChatCommands.Create("vhtexture")
+        capi.ChatCommands.Create("dltexture")
             .WithDescription("Draw distant ground with the game's own block textures inside the "
                 + "blending band, instead of one flat colour per block. "
                 + "on | off | strength | detail | mips.")
@@ -3625,7 +3629,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
                 switch (part)
@@ -3635,14 +3639,14 @@ public partial class VintageHorizonsModSystem : ModSystem
                         renderer.BlockTexturesEnabled = part == "on";
                         SaveConfig();
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] block textures {part}. "
+                            $"[Landscapes] block textures {part}. "
                             + renderer.DescribeBlockTextures());
 
                     case "detail":
                         if (!float.TryParse(
                                 args.Parsers[1].IsMissing ? "" : (string)args[1], out float detail))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] texture detail {renderer.BlockTextureDetail:0.0}. "
+                                $"[Landscapes] texture detail {renderer.BlockTextureDetail:0.0}. "
                                 + "How much sharper than the distance warrants to draw the texture. "
                                 + "0 is technically correct and invisible - at that range the game "
                                 + "shrinks a texture down to a single flat colour, which is the "
@@ -3650,51 +3654,51 @@ public partial class VintageHorizonsModSystem : ModSystem
                                 + "distant ground will sparkle as you move.");
                         renderer.BlockTextureDetail = GameMath.Clamp(detail, 0f, 8f);
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] texture detail {renderer.BlockTextureDetail:0.0}.");
+                            $"[Landscapes] texture detail {renderer.BlockTextureDetail:0.0}.");
 
                     case "mips":
                         if (!float.TryParse(
                                 args.Parsers[1].IsMissing ? "" : (string)args[1], out float mips))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] texture detail limit {renderer.BlockTextureMipLimit:0.0}. "
+                                $"[Landscapes] texture detail limit {renderer.BlockTextureMipLimit:0.0}. "
                                 + "How far away the real texture keeps being drawn before it hands "
                                 + "back to flat colour. Raise it if the texture stops before the "
                                 + "seam; lower it if distant ground picks up colours from the "
                                 + "wrong blocks.");
                         renderer.BlockTextureMipLimit = GameMath.Clamp(mips, 0f, 8f);
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] texture detail limit {renderer.BlockTextureMipLimit:0.0}.");
+                            $"[Landscapes] texture detail limit {renderer.BlockTextureMipLimit:0.0}.");
 
                     case "strength":
                         if (!float.TryParse(
                                 args.Parsers[1].IsMissing ? "" : (string)args[1], out float strength))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] texture strength {renderer.BlockTextureStrength:0.00}. "
+                                $"[Landscapes] texture strength {renderer.BlockTextureStrength:0.00}. "
                                 + "0 to 1. How much real texture shows where the band is strongest.");
                         renderer.BlockTextureStrength = GameMath.Clamp(strength, 0f, 1f);
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] texture strength {renderer.BlockTextureStrength:0.00}.");
+                            $"[Landscapes] texture strength {renderer.BlockTextureStrength:0.00}.");
 
                     default:
                         return TextCommandResult.Success(
-                            "[VintageHorizons] " + renderer.DescribeBlockTextures());
+                            "[Landscapes] " + renderer.DescribeBlockTextures());
                 }
             });
 
-        capi.ChatCommands.Create("vhtoplight")
+        capi.ChatCommands.Create("dltoplight")
             .WithDescription("Light flat cached ground the way the game lights flat ground, instead of by sun angle. On by default.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] flat-top lighting {(renderer.FlatTopLight ? "on" : "off")}.");
+                        $"[Landscapes] flat-top lighting {(renderer.FlatTopLight ? "on" : "off")}.");
 
                 renderer.FlatTopLight = (bool)args[0];
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] flat-top lighting {(renderer.FlatTopLight ? "on" : "off")}. " +
+                    $"[Landscapes] flat-top lighting {(renderer.FlatTopLight ? "on" : "off")}. " +
                     "The game never darkens flat ground as the sun drops; off shades it by sun angle " +
                     "as before. Worth comparing at dawn or dusk, not at midday.");
             });
@@ -3704,14 +3708,14 @@ public partial class VintageHorizonsModSystem : ModSystem
         // shaders settles what vanilla computes; it cannot settle whether copying it onto
         // terrain kilometres away looks right, and only the owner flipping these while
         // watching can.
-        capi.ChatCommands.Create("vhlight")
+        capi.ChatCommands.Create("dllight")
             .WithDescription("Match cached terrain lighting to the game's. sun | moondir | ramp | ambient | boost | sky | all, on or off. All on by default.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
                       capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 string DescribeLight() =>
                     $"sun {(renderer.LightSunLevel ? "on" : "off")}, " +
@@ -3722,11 +3726,11 @@ public partial class VintageHorizonsModSystem : ModSystem
                     $"sky {(renderer.LightSkyDayLight ? "on" : "off")}";
 
                 if (args.Parsers[0].IsMissing)
-                    return TextCommandResult.Success($"[VintageHorizons] lighting: {DescribeLight()}.");
+                    return TextCommandResult.Success($"[Landscapes] lighting: {DescribeLight()}.");
 
                 if (args.Parsers[1].IsMissing)
                     return TextCommandResult.Error(
-                        "[VintageHorizons] use: .vhlight sun | moondir | ramp | ambient | boost | sky | all, then on or off.");
+                        "[Landscapes] use: .dllight sun | moondir | ramp | ambient | boost | sky | all, then on or off.");
 
                 string part = ((string)args[0]).ToLowerInvariant();
                 bool on = (bool)args[1];
@@ -3774,10 +3778,10 @@ public partial class VintageHorizonsModSystem : ModSystem
                         break;
                     default:
                         return TextCommandResult.Error(
-                            "[VintageHorizons] use: .vhlight sun | moondir | ramp | ambient | boost | sky | all, then on or off.");
+                            "[Landscapes] use: .dllight sun | moondir | ramp | ambient | boost | sky | all, then on or off.");
                 }
 
-                return TextCommandResult.Success($"[VintageHorizons] lighting: {DescribeLight()}. {note}");
+                return TextCommandResult.Success($"[Landscapes] lighting: {DescribeLight()}. {note}");
             });
 
         // The one in-game switch for the whole GPU terrain path, and since 0.3.103 that path
@@ -3790,40 +3794,40 @@ public partial class VintageHorizonsModSystem : ModSystem
         // It is deliberately the ONLY remaining switch. The staging commands it used to sit
         // beside could each select a half-built configuration, which is a way to collect a
         // bug report against something nobody ships.
-        capi.ChatCommands.Create("vhgpu")
+        capi.ChatCommands.Create("dlgpu")
             .WithDescription("Turn the GPU terrain renderer off or on. off | on | verify. On by default; remembered between sessions.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("mode"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
-                        "[VintageHorizons] GPU terrain renderer " + renderer.DescribeGpuShadow());
+                        "[Landscapes] GPU terrain renderer " + renderer.DescribeGpuShadow());
 
                 string mode = (string)args[0];
                 if (!renderer.RequestGpuShadow(mode))
-                    return TextCommandResult.Error("[VintageHorizons] use: .vhgpu off | on | verify");
+                    return TextCommandResult.Error("[Landscapes] use: .dlgpu off | on | verify");
 
                 SaveConfig();
                 bool off = mode.Equals("off", StringComparison.OrdinalIgnoreCase);
                 return TextCommandResult.Success(off
-                    ? "[VintageHorizons] GPU terrain renderer switching off; buffers release next frame and cached opaque terrain will disappear. No legacy fallback exists."
-                    : "[VintageHorizons] GPU terrain renderer switching on"
+                    ? "[Landscapes] GPU terrain renderer switching off; buffers release next frame and cached opaque terrain will disappear. No legacy fallback exists."
+                    : "[Landscapes] GPU terrain renderer switching on"
                         + (mode.Equals("verify", StringComparison.OrdinalIgnoreCase)
                             ? " with content verification" : "")
                         + ". Live sections are re-meshed into it first, so wait a few seconds, "
-                        + "then run .vhgpu again for the numbers.");
+                        + "then run .dlgpu again for the numbers.");
             });
 
-        capi.ChatCommands.Create("vhskip")
+        capi.ChatCommands.Create("dlskip")
             .WithDescription("While the chunk mask is on: allow dropping a cached piece entirely when the game covers all of it. "
                 + "On by default. 'why' writes to the client log what is stopping it.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
                 switch (part)
@@ -3839,7 +3843,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                     case "0":
                         renderer.WholeMeshSkip = part is "on" or "true" or "1";
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] whole-piece skipping "
+                            $"[Landscapes] whole-piece skipping "
                             + $"{(renderer.WholeMeshSkip ? "on" : "off")}. Applies on the next frame.");
 
                     // The report that answers "why is nothing being dropped". It is a
@@ -3848,31 +3852,31 @@ public partial class VintageHorizonsModSystem : ModSystem
                     // because it is far too long for the chat window to hold (G72).
                     case "why":
                         return TextCommandResult.Success(
-                            "[VintageHorizons] " + renderer.LogSectionOwnershipMap());
+                            "[Landscapes] " + renderer.LogSectionOwnershipMap());
 
                     default:
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] whole-piece skipping {(renderer.WholeMeshSkip ? "on" : "off")}, "
+                            $"[Landscapes] whole-piece skipping {(renderer.WholeMeshSkip ? "on" : "off")}, "
                             + $"{renderer.VanillaOwnedDrawsSkipped} pieces dropped this interval. "
                             + "Off keeps the per-pixel mask working but never drops a whole cached "
-                            + "piece. '.vhskip why' writes to the client log what is stopping it.");
+                            + "piece. '.dlskip why' writes to the client log what is stopping it.");
                 }
             });
 
-        capi.ChatCommands.Create("vhbackface")
+        capi.ChatCommands.Create("dlbackface")
             .WithDescription("Reject back-facing cached opaque terrain. On by default and not saved.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] opaque back-face culling {(renderer.OpaqueBackfaceCulling ? "on" : "off")} (on by default, not saved).");
+                        $"[Landscapes] opaque back-face culling {(renderer.OpaqueBackfaceCulling ? "on" : "off")} (on by default, not saved).");
 
                 renderer.OpaqueBackfaceCulling = (bool)args[0];
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] opaque back-face culling {(renderer.OpaqueBackfaceCulling ? "on" : "off")} (on by default, not saved). " +
+                    $"[Landscapes] opaque back-face culling {(renderer.OpaqueBackfaceCulling ? "on" : "off")} (on by default, not saved). " +
                     "Applies on the next frame; water and thin cover remain two-sided.");
             });
 
@@ -3882,13 +3886,13 @@ public partial class VintageHorizonsModSystem : ModSystem
         // Phase 4 shadow work. It builds the depth pyramid and measures it, and hides
         // nothing at all - so the only thing to look for while it is on is whether the
         // frame rate moves, which is the number that decides whether the phase continues.
-        capi.ChatCommands.Create("vhhzb")
-            .WithDescription("Build the depth pyramid used to find terrain hidden behind hills. Measurement only; hides nothing. Off by default and not saved. `.vhhzb why` explains the piece you are looking at.")
+        capi.ChatCommands.Create("dlhzb")
+            .WithDescription("Build the depth pyramid used to find terrain hidden behind hills. Measurement only; hides nothing. Off by default and not saved. `.dlhzb why` explains the piece you are looking at.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("on"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
                 if (args.Parsers[0].IsMissing)
                 {
                     // Logged as well as shown. Game chat cannot be copied out, so a report
@@ -3898,7 +3902,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                     // actually be handed to somebody.
                     string report = renderer.ReportDepthPyramid();
                     LogReportLines("hzb", report);
-                    return TextCommandResult.Success("[VintageHorizons] " + report);
+                    return TextCommandResult.Success("[Landscapes] " + report);
                 }
 
                 string word = ((string)args[0]).ToLowerInvariant();
@@ -3914,30 +3918,30 @@ public partial class VintageHorizonsModSystem : ModSystem
                     string why = renderer.ExplainDepthPyramid(
                         camera.X, camera.Y, camera.Z, look.X, look.Y, look.Z, range);
                     LogReportLines("hzb why", why);
-                    return TextCommandResult.Success("[VintageHorizons] " + why);
+                    return TextCommandResult.Success("[Landscapes] " + why);
                 }
 
                 if (word != "on" && word != "off")
-                    return TextCommandResult.Error("[VintageHorizons] use: .vhhzb on | off | why");
+                    return TextCommandResult.Error("[Landscapes] use: .dlhzb on | off | why");
 
                 renderer.DepthPyramidEnabled = word == "on";
                 renderer.ResetDepthPyramidInterval();
 
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] depth pyramid {(renderer.DepthPyramidEnabled ? "on" : "off")} "
+                    $"[Landscapes] depth pyramid {(renderer.DepthPyramidEnabled ? "on" : "off")} "
                     + "(off by default, not saved). It copies the depth buffer and reduces it every "
                     + "frame, and nothing reads the result yet. Turn it on, play, and read the "
                     + "hzb line in the log: the question is what it costs, not what it hides. "
                     + "GPU timing " + renderer.DescribeGpuTiming() + ".");
             });
 
-        capi.ChatCommands.Create("vhcavecull")
+        capi.ChatCommands.Create("dlcavecull")
             .WithDescription("Stop building cavities outside the surface-light and straight-sight envelope. On by default. Changing it rebuilds distant terrain, which takes a few seconds.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("on"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 if (args.Parsers[0].IsMissing)
                 {
@@ -3965,7 +3969,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                     // say which safety rule kept the caves that are still standing - which
                     // is a thing to read afterwards, not a thing to squint at in chat.
                     LogReportLines("caves", live + "\n" + LodCaveCull.DescribeRetention());
-                    return TextCommandResult.Success("[VintageHorizons] " + live
+                    return TextCommandResult.Success("[Landscapes] " + live
                         + ". Flip it, wait for the rebuild, and run this again - the geometry"
                         + " total is the answer, not the picture. The per-reason breakdown of"
                         + " what survived is in the client log under 'caves:'.");
@@ -3974,13 +3978,13 @@ public partial class VintageHorizonsModSystem : ModSystem
                 string word = ((string)args[0]).ToLowerInvariant();
 
                 if (word != "on" && word != "off")
-                    return TextCommandResult.Error("[VintageHorizons] use: .vhcavecull on | off");
+                    return TextCommandResult.Error("[Landscapes] use: .dlcavecull on | off");
 
                 bool wanted = word == "on";
                 if (wanted == renderer.CaveCulling)
                 {
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] cave culling is already {word}.");
+                        $"[Landscapes] cave culling is already {word}.");
                 }
 
                 renderer.CaveCulling = wanted;
@@ -3993,15 +3997,15 @@ public partial class VintageHorizonsModSystem : ModSystem
                 int queued = renderer.RemeshAll();
 
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] cave culling {word}. Rebuilding {queued} distant "
+                    $"[Landscapes] cave culling {word}. Rebuilding {queued} distant "
                     + "sections - give it a few seconds. On, cavities outside both the daylight "
                     + "envelope and a straight surface sightline are not built. Straight mountain "
                     + "tunnels remain open without preserving hidden networks around bends. What to watch for is "
                     + "terrain that is missing or a cave mouth that has closed up - if you "
-                    + "see either, run .vhcavecull off and say where you were looking.");
+                    + "see either, run .dlcavecull off and say where you were looking.");
             });
 
-        capi.ChatCommands.Create("vhwater")
+        capi.ChatCommands.Create("dlwater")
             .WithDescription("How distant water meets the game's own. No argument reports the settings. "
                 + "off | a number of chunks | edge <chunks> | fresnel on|off | glint <0-1> | "
                 + "foam <0-2> | depth on|off | alpha <0.05-2> | clarity <blocks> | wave <blocks> | "
@@ -4013,7 +4017,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
                 string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
@@ -4025,12 +4029,12 @@ public partial class VintageHorizonsModSystem : ModSystem
                         // the game, so a setting that only ever reported to chat could not be
                         // read back when a screenshot disagreed with what the code should do.
                         capi.Logger.Notification(
-                            "[VintageHorizons] water settings: " + DescribeWater(renderer));
+                            "[Landscapes] water settings: " + DescribeWater(renderer));
                         capi.Logger.Notification(
-                            "[VintageHorizons] water depth shading: "
+                            "[Landscapes] water depth shading: "
                             + renderer.DescribeWaterAbsorption());
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] {DescribeWater(renderer)}. Use: .vhwater off |"
+                            $"[Landscapes] {DescribeWater(renderer)}. Use: .dlwater off |"
                             + " a number of CHUNKS | edge <chunks> | fresnel on/off |"
                             + " glint 0-1 | foam 0-2 | murk on/off."
                             + " Distant water hands over to the game's water at the game's own"
@@ -4041,7 +4045,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             + " noise, carried everywhere distant water is drawn.");
 
                     case "log":
-                        string waterLogReply = "[VintageHorizons] " + DescribeWater(renderer)
+                        string waterLogReply = "[Landscapes] " + DescribeWater(renderer)
                             + "; absorption " + renderer.DescribeWaterAbsorption()
                             + "; shader " + renderer.WaterShaderStatus
                             + "; " + (horizonEffects?.DescribeLiquidBoundary()
@@ -4057,23 +4061,23 @@ public partial class VintageHorizonsModSystem : ModSystem
                         {
                             renderer.WaterOitEnabled = value == "oit";
                         }
-                        string pipelineReply = "[VintageHorizons] requested water pipeline "
+                        string pipelineReply = "[Landscapes] requested water pipeline "
                             + (renderer.WaterOitEnabled ? "oit" : "opaque")
                             + "; " + renderer.DescribeWaterPipeline()
-                            + ". Changes next frame, no rebuild. Use .vhwater pipeline oit|opaque; .vhwater log after a short comparison.";
+                            + ". Changes next frame, no rebuild. Use .dlwater pipeline oit|opaque; .dlwater log after a short comparison.";
                         capi.Logger.Notification(pipelineReply);
                         return TextCommandResult.Success(pipelineReply);
 
                     case "shader":
                         return TextCommandResult.Error(
-                            "[VintageHorizons] the legacy water shader is retired. Dedicated "
-                            + "water is required; use .vhwater pipeline oit|opaque to compare its stages.");
+                            "[Landscapes] the legacy water shader is retired. Dedicated "
+                            + "water is required; use .dlwater pipeline oit|opaque to compare its stages.");
 
                     case "junction":
                         if (value != "on" && value != "off")
-                            return TextCommandResult.Success($"[VintageHorizons] junction depth {(renderer.WaterJunctionDepth ? "on" : "off")}, last frame {renderer.WaterJunctionStatus}. Use .vhwater junction on/off. Fills missing boundary depth from cached water geometry. Needs murk, coverage and surface on. Session only.");
+                            return TextCommandResult.Success($"[Landscapes] junction depth {(renderer.WaterJunctionDepth ? "on" : "off")}, last frame {renderer.WaterJunctionStatus}. Use .dlwater junction on/off. Fills missing boundary depth from cached water geometry. Needs murk, coverage and surface on. Session only.");
                         renderer.WaterJunctionDepth = value == "on";
-                        string junctionReply = "[VintageHorizons] junction depth "
+                        string junctionReply = "[Landscapes] junction depth "
                             + (renderer.WaterJunctionDepth ? "on" : "off")
                             + ". Changes next frame; no rebuild. Depth timing restarted. Session only.";
                         capi.Logger.Notification(junctionReply);
@@ -4081,26 +4085,26 @@ public partial class VintageHorizonsModSystem : ModSystem
 
                     case "repair":
                         if (value != "on" && value != "off")
-                            return TextCommandResult.Success($"[VintageHorizons] water-depth hole repair {(renderer.WaterDepthRepair ? "on" : "off")}. Use .vhwater repair on/off. Needs murk and coverage on.");
+                            return TextCommandResult.Success($"[Landscapes] water-depth hole repair {(renderer.WaterDepthRepair ? "on" : "off")}. Use .dlwater repair on/off. Needs murk and coverage on.");
                         renderer.WaterDepthRepair = value == "on";
-                        string repairReply = "[VintageHorizons] water-depth hole repair "
+                        string repairReply = "[Landscapes] water-depth hole repair "
                             + (renderer.WaterDepthRepair ? "on" : "off") + ". Immediate, no rebuild. Session only.";
                         capi.Logger.Notification(repairReply);
                         return TextCommandResult.Success(repairReply);
 
                     case "capture":
                         renderer.RequestWaterCapture();
-                        return TextCommandResult.Success("[VintageHorizons] Capturing the next frame's water depth and rendering stages. A brief pause is expected. The saved folder will be written to the client log.");
+                        return TextCommandResult.Success("[Landscapes] Capturing the next frame's water depth and rendering stages. A brief pause is expected. The saved folder will be written to the client log.");
 
                     case "murk":
                         if (value != "on" && value != "off")
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] ground murk {(renderer.WaterGroundMurk ? "on" : "off")}. "
-                                + "Use .vhwater murk on/off to compare the game's underwater "
+                                $"[Landscapes] ground murk {(renderer.WaterGroundMurk ? "on" : "off")}. "
+                                + "Use .dlwater murk on/off to compare the game's underwater "
                                 + "colour and fog on cached ground. Immediate; "
                                 + "independent of depth, clarity and water effects. Session only.");
                         renderer.WaterGroundMurk = value == "on";
-                        string murkReply = "[VintageHorizons] ground murk "
+                        string murkReply = "[Landscapes] ground murk "
                             + (renderer.WaterGroundMurk ? "on" : "off")
                             + ". Look at the seam now; no rebuild needed. Session only.";
                         capi.Logger.Notification(murkReply);
@@ -4109,12 +4113,12 @@ public partial class VintageHorizonsModSystem : ModSystem
                     case "coverage":
                         if (value != "on" && value != "off")
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] cached water depth coverage {(renderer.WaterDepthCoverage ? "on" : "off")}. "
-                                + "Use .vhwater coverage on/off. On extends the game's underwater "
+                                $"[Landscapes] cached water depth coverage {(renderer.WaterDepthCoverage ? "on" : "off")}. "
+                                + "Use .dlwater coverage on/off. On extends the game's underwater "
                                 + "depth image through cached water; off uses vanilla water only. "
                                 + $"Last frame: {renderer.WaterDepthDraws} water sections. Needs murk on. Session only.");
                         renderer.WaterDepthCoverage = value == "on";
-                        string coverageReply = "[VintageHorizons] cached water depth coverage "
+                        string coverageReply = "[Landscapes] cached water depth coverage "
                             + (renderer.WaterDepthCoverage ? "on" : "off")
                             + ". Takes effect next frame. Needs murk on. Session only.";
                         capi.Logger.Notification(coverageReply);
@@ -4123,11 +4127,11 @@ public partial class VintageHorizonsModSystem : ModSystem
                     case "surface":
                         if (value != "on" && value != "off")
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] cached water surface {(renderer.WaterSurfaceVisible ? "on" : "off")}. "
-                                + "Use .vhwater surface on/off to remove only Horizons water. "
+                                $"[Landscapes] cached water surface {(renderer.WaterSurfaceVisible ? "on" : "off")}. "
+                                + "Use .dlwater surface on/off to remove only Horizons water. "
                                 + "Ground, plants and the game's water keep drawing. Session only.");
                         renderer.WaterSurfaceVisible = value == "on";
-                        string surfaceReply = "[VintageHorizons] cached water surface "
+                        string surfaceReply = "[Landscapes] cached water surface "
                             + (renderer.WaterSurfaceVisible ? "on" : "off")
                             + ". Look at the band now; no rebuild needed. Session only.";
                         capi.Logger.Notification(surfaceReply);
@@ -4136,12 +4140,12 @@ public partial class VintageHorizonsModSystem : ModSystem
                     case "texture":
                         if (value != "on" && value != "off")
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] cached water texture {renderer.WaterSurfaceTextureStatus}. "
-                                + "Use .vhwater texture on/off. This applies the game's live "
+                                $"[Landscapes] cached water texture {renderer.WaterSurfaceTextureStatus}. "
+                                + "Use .dlwater texture on/off. This applies the game's live "
                                 + "water tile and its alpha to ordinary cached water. Immediate; "
                                 + "dedicated shader only; session only.");
                         renderer.WaterSurfaceTexture = value == "on";
-                        string textureReply = "[VintageHorizons] cached water texture "
+                        string textureReply = "[Landscapes] cached water texture "
                             + renderer.WaterSurfaceTextureStatus
                             + ". Look at the broad boundary band now; no rebuild needed. "
                             + "Dedicated shader only; session only.";
@@ -4153,7 +4157,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             System.Globalization.CultureInfo.InvariantCulture, out int edge))
                         {
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] water edge {renderer.WaterEdgeChunks} "
+                                $"[Landscapes] water edge {renderer.WaterEdgeChunks} "
                                 + "(-1 derives it). How many whole chunks further out than "
                                 + "distant GROUND distant water stops. Ground deliberately "
                                 + "overlaps the game's terrain to guard against holes; water "
@@ -4163,14 +4167,14 @@ public partial class VintageHorizonsModSystem : ModSystem
                         }
                         renderer.WaterEdgeChunks = edge;
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] water edge {renderer.WaterEdgeChunks}. "
+                            $"[Landscapes] water edge {renderer.WaterEdgeChunks}. "
                             + "Takes a moment to settle as ownership moves - look at a "
                             + "shoreline at distance.");
 
                     case "fresnel":
                         if (value is not ("on" or "off"))
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] opacity {(renderer.WaterFresnel ? "on" : "off")}. "
+                                $"[Landscapes] opacity {(renderer.WaterFresnel ? "on" : "off")}. "
                                 + "On gives distant water the game's own opacity, which changes with "
                                 + "the angle you look at it: see-through underfoot, solid further "
                                 + "out. Off makes it one flat value at every distance, which is what "
@@ -4178,14 +4182,14 @@ public partial class VintageHorizonsModSystem : ModSystem
                         renderer.WaterFresnel = value == "on";
                         SaveConfig();
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] {DescribeWater(renderer)}. Look now.");
+                            $"[Landscapes] {DescribeWater(renderer)}. Look now.");
 
                     case "glint":
                         if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
                             System.Globalization.CultureInfo.InvariantCulture, out float glint))
                         {
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] glint {renderer.WaterGlint:0.00}. 0 to 1. How much "
+                                $"[Landscapes] glint {renderer.WaterGlint:0.00}. 0 to 1. How much "
                                 + "of the game's sun reflection distant water carries. The game's "
                                 + "water is shiny out to its own horizon, so this is carried "
                                 + "everywhere rather than faded out - a term that ends somewhere "
@@ -4193,26 +4197,26 @@ public partial class VintageHorizonsModSystem : ModSystem
                         }
                         renderer.WaterGlint = glint;
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] glint {renderer.WaterGlint:0.00}. Look now.");
+                            $"[Landscapes] glint {renderer.WaterGlint:0.00}. Look now.");
 
                     case "foam":
                         if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
                             System.Globalization.CultureInfo.InvariantCulture, out float foam))
                         {
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] foam {renderer.WaterFoam:0.00}. 0 to 2. One is the game's "
+                                $"[Landscapes] foam {renderer.WaterFoam:0.00}. 0 to 2. One is the game's "
                                 + "own surface noise on open water, carried everywhere distant water "
                                 + "is drawn; values above one amplify it to compare a small residual "
                                 + "handoff mismatch. 0 turns it off.");
                         }
                         renderer.WaterFoam = foam;
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] foam {renderer.WaterFoam:0.00}. Look now.");
+                            $"[Landscapes] foam {renderer.WaterFoam:0.00}. Look now.");
 
                     case "depth":
                         if (value != "on" && value != "off")
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] depth shading "
+                                $"[Landscapes] depth shading "
                                 + $"{(renderer.WaterDepthShading ? "on" : "off")}. "
                                 + "On darkens ground under water by how deep it is, the way the "
                                 + "game does: water swallows one light level a block, so a bed "
@@ -4224,10 +4228,10 @@ public partial class VintageHorizonsModSystem : ModSystem
                         SaveConfig();
                         // The resolved table goes to the log every time, because "no effect"
                         // and "applying 1.00 at every depth" are the same picture.
-                        capi.Logger.Notification("[VintageHorizons] water depth shading: "
+                        capi.Logger.Notification("[Landscapes] water depth shading: "
                             + renderer.DescribeWaterAbsorption());
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] depth shading "
+                            $"[Landscapes] depth shading "
                             + $"{(renderer.WaterDepthShading ? "on" : "off")}. Rebuilding. "
                             + renderer.DescribeWaterAbsorption()
                             + ". Written to the log too.");
@@ -4235,7 +4239,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                     case "walls":
                         if (value != "on" && value != "off")
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] water walls "
+                                $"[Landscapes] water walls "
                                 + $"{(renderer.SuppressUnknownWaterWalls ? "OFF at unknown edges" : "on")}. "
                                 + "Where the cache has no record of what is beside a body of "
                                 + "water, the mesher draws the SIDE of that water - a sheet "
@@ -4248,7 +4252,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                         renderer.SuppressUnknownWaterWalls = value == "off";
                         SaveConfig();
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] water walls "
+                            $"[Landscapes] water walls "
                             + $"{(renderer.SuppressUnknownWaterWalls ? "OFF at unknown edges" : "on")}. "
                             + "Rebuilding - give it a few seconds, then look at the seam.");
 
@@ -4257,7 +4261,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             System.Globalization.CultureInfo.InvariantCulture, out int strip))
                         {
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] wave strip {renderer.WaterSeamStripBlocks} "
+                                $"[Landscapes] wave strip {renderer.WaterSeamStripBlocks} "
                                 + "blocks. The game does not draw water flat - it pushes every "
                                 + "liquid vertex up and down, a tenth of a block on a pond and "
                                 + "up to a whole one on the open sea - and ours was flat, so "
@@ -4271,7 +4275,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                         renderer.WaterSeamStripBlocks = strip;
                         SaveConfig();
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] wave strip {renderer.WaterSeamStripBlocks} blocks. "
+                            $"[Landscapes] wave strip {renderer.WaterSeamStripBlocks} blocks. "
                             + "Rebuilding.");
 
                     case "clarity":
@@ -4279,7 +4283,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             System.Globalization.CultureInfo.InvariantCulture, out float clarity))
                         {
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] clarity {renderer.WaterClarity:0} blocks. "
+                                $"[Landscapes] clarity {renderer.WaterClarity:0} blocks. "
                                 + "How far light gets back UP through the water to your eye. "
                                 + "The game's own light only models the sunlight going DOWN, one "
                                 + "level a block; the trip back is what its see-through surface "
@@ -4288,10 +4292,10 @@ public partial class VintageHorizonsModSystem : ModSystem
                         }
                         renderer.WaterClarity = clarity;
                         SaveConfig();
-                        capi.Logger.Notification("[VintageHorizons] water depth shading: "
+                        capi.Logger.Notification("[Landscapes] water depth shading: "
                             + renderer.DescribeWaterAbsorption());
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] clarity {renderer.WaterClarity:0} blocks. "
+                            $"[Landscapes] clarity {renderer.WaterClarity:0} blocks. "
                             + "Rebuilding. " + renderer.DescribeWaterAbsorption());
 
                     case "alpha":
@@ -4299,7 +4303,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             System.Globalization.CultureInfo.InvariantCulture, out float maxAlpha))
                         {
                             return TextCommandResult.Success(
-                                $"[VintageHorizons] alpha {renderer.WaterMaxAlpha:0.00}. 0.05 to 2. "
+                                $"[Landscapes] alpha {renderer.WaterMaxAlpha:0.00}. 0.05 to 2. "
                                 + "This caps the pre-texture Fresnel alpha. 2 is vanilla's own "
                                 + "ceiling; lower values deliberately leave more of the darkened "
                                 + "distant bed visible.");
@@ -4307,7 +4311,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                         renderer.WaterMaxAlpha = GameMath.Clamp(maxAlpha, 0.05f, 2f);
                         SaveConfig();
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] alpha {renderer.WaterMaxAlpha:0.00}. Look now.");
+                            $"[Landscapes] alpha {renderer.WaterMaxAlpha:0.00}. Look now.");
 
                     default:
                         int chunks;
@@ -4316,7 +4320,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             System.Globalization.CultureInfo.InvariantCulture, out chunks))
                         {
                             return TextCommandResult.Error(
-                                "[VintageHorizons] use: .vhwater off | a number of chunks | "
+                                "[Landscapes] use: .dlwater off | a number of chunks | "
                                 + "edge <chunks> | fresnel on/off | glint 0-1 | foam 0-2 | "
                                 + "depth on/off | alpha 0.05-2 | clarity <blocks> | wave <blocks> | "
                                 + "walls on/off");
@@ -4324,24 +4328,24 @@ public partial class VintageHorizonsModSystem : ModSystem
 
                         renderer.WaterNearChunks = chunks;
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] {DescribeWater(renderer)}. No rebuild needed - look now.");
+                            $"[Landscapes] {DescribeWater(renderer)}. No rebuild needed - look now.");
                 }
             });
 
-        capi.ChatCommands.Create("vhslabs")
+        capi.ChatCommands.Create("dlslabs")
             .WithDescription("Draw terrain slabs at half height. 'surface' is the default low-cost mode throughout level 0, independent of the blend band; 'near' also includes caves. Changing it rebuilds distant terrain.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("levels"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 if (args.Parsers[0].IsMissing)
                 {
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] half-block terrain: {DescribeSlabs(renderer)} "
+                        $"[Landscapes] half-block terrain: {DescribeSlabs(renderer)} "
                         + $"| live geometry {renderer.LiveOpaqueVertices:n0} opaque vertices over "
-                        + $"{renderer.MeshCount} meshes. Use: .vhslabs off | surface | near | all. "
+                        + $"{renderer.MeshCount} meshes. Use: .dlslabs off | surface | near | all. "
                         + "Surface and near cover all of level 0, not just the blend band. "
                         + "Read the vertex total on each setting after the rebuild settles - "
                         + "that number is the cost, and the picture is the benefit.");
@@ -4359,7 +4363,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 };
                 if (wanted < 0)
                     return TextCommandResult.Error(
-                        "[VintageHorizons] use: .vhslabs off | surface | near | all");
+                        "[Landscapes] use: .dlslabs off | surface | near | all");
 
                 renderer.HalfBlockLevels = wanted;
                 renderer.SurfaceHalfBlocksOnly = surfaceOnly;
@@ -4367,7 +4371,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 int queued = renderer.RemeshAll();
 
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] half-block terrain: {DescribeSlabs(renderer)}. "
+                    $"[Landscapes] half-block terrain: {DescribeSlabs(renderer)}. "
                     + $"Rebuilding {queued} distant sections - give it a few seconds. Mods that "
                     + "smooth the landscape with half blocks are otherwise rebuilt as full cubes "
                     + "out here, which puts the steps they removed back. What to watch for is the "
@@ -4376,20 +4380,20 @@ public partial class VintageHorizonsModSystem : ModSystem
             });
 
         // A geometry cost with no picture attached, so it needs a switch that reports the
-        // vertex total the same way .vhslabs does. The fix is invisible except at the seam it
+        // vertex total the same way .dlslabs does. The fix is invisible except at the seam it
         // exists for; the cost is not, and only a paired reading can weigh them.
-        capi.ChatCommands.Create("vhcutout")
+        capi.ChatCommands.Create("dlcutout")
             .WithDescription("Let crops, tall grass and vines hide the terrain behind them again. "
                 + "Off by default, which is correct. Changing it rebuilds distant terrain.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] plants hiding what is behind them: "
+                        $"[Landscapes] plants hiding what is behind them: "
                         + $"{(renderer.CutoutBlocksCover ? "ON - the old behaviour" : "off - correct")} "
                         + $"| live geometry {renderer.LiveOpaqueVertices:n0} opaque vertices over "
                         + $"{renderer.MeshCount} meshes. The game draws a crop as a see-through "
@@ -4402,32 +4406,32 @@ public partial class VintageHorizonsModSystem : ModSystem
                 renderer.CutoutBlocksCover = (bool)args[0];
                 int queued = renderer.RemeshAll();
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] plants hiding what is behind them: "
+                    $"[Landscapes] plants hiding what is behind them: "
                     + $"{(renderer.CutoutBlocksCover ? "ON - the old behaviour" : "off - correct")}. "
                     + $"Rebuilding {queued} distant sections - give it a few seconds, then read "
-                    + ".vhcutout again for the vertex total.");
+                    + ".dlcutout again for the vertex total.");
             });
 
         // The live toggle the aggregate bound was funded with. Unlike the retired staging
         // switches this selects nothing half-built: both sides are shipping renderers, and
         // the whole point of the item is a comparison somebody has to be able to make from
         // inside the view that shows it.
-        capi.ChatCommands.Create("vhsubtree")
-            .WithDescription("Cull whole quadtree branches by how tall the terrain under them really is. Default on. `.vhsubtree` reports what it rejected; `heights` reports how tall resident terrain claims to be; `reset` zeroes the count so one view can be measured on its own.")
+        capi.ChatCommands.Create("dlsubtree")
+            .WithDescription("Cull whole quadtree branches by how tall the terrain under them really is. Default on. `.dlsubtree` reports what it rejected; `heights` reports how tall resident terrain claims to be; `reset` zeroes the count so one view can be measured on its own.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("on"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 if (args.Parsers[0].IsMissing)
                 {
-                    // Into the log as well as the screen, for the same reason .vhhzb does
+                    // Into the log as well as the screen, for the same reason .dlhzb does
                     // it: chat cannot be copied out of the game, and these are lines of
                     // digits that would otherwise have to be retyped or photographed.
                     string report = renderer.ReportSubtreeCulling();
                     LogReportLines("subtree", report);
-                    return TextCommandResult.Success("[VintageHorizons] " + report);
+                    return TextCommandResult.Success("[Landscapes] " + report);
                 }
 
                 string word = ((string)args[0]).ToLowerInvariant();
@@ -4438,147 +4442,147 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     string heights = renderer.ReportLiveSectionHeights();
                     LogReportLines("subtree heights", heights);
-                    return TextCommandResult.Success("[VintageHorizons] " + heights);
+                    return TextCommandResult.Success("[Landscapes] " + heights);
                 }
 
                 if (word == "reset")
                 {
                     renderer.ResetSubtreeCullingInterval();
                     return TextCommandResult.Success(
-                        "[VintageHorizons] subtree cull counters zeroed. Hold a view for a few "
-                        + "seconds, then run .vhsubtree to see what that view alone rejected.");
+                        "[Landscapes] subtree cull counters zeroed. Hold a view for a few "
+                        + "seconds, then run .dlsubtree to see what that view alone rejected.");
                 }
 
                 if (word != "on" && word != "off")
                     return TextCommandResult.Error(
-                        "[VintageHorizons] use: .vhsubtree on | off | reset | heights");
+                        "[Landscapes] use: .dlsubtree on | off | reset | heights");
 
                 renderer.SubtreeHeightCulling = word == "on";
                 renderer.ResetSubtreeCullingInterval();
 
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] subtree height culling {(word == "on" ? "on" : "off")} "
+                    $"[Landscapes] subtree height culling {(word == "on" ? "on" : "off")} "
                     + "(default on, not saved). On, a branch of the quadtree is tested against how "
                     + "tall the terrain under it actually is; off, against a box running from "
                     + "bedrock to sky, which is what every branch used before this. The failure "
                     + "to watch for is terrain missing when you look up, look down, or fly high - "
-                    + "if you see that, run .vhsubtree off and say whether it comes back.");
+                    + "if you see that, run .dlsubtree off and say whether it comes back.");
             });
 
-        capi.ChatCommands.Create("vhfront")
+        capi.ChatCommands.Create("dlfront")
             .WithDescription("Submit cached opaque terrain front-to-back. On by default and not saved.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] opaque front-to-back submission {(renderer.OpaqueFrontToBack ? "on" : "off")} (on by default, not saved).");
+                        $"[Landscapes] opaque front-to-back submission {(renderer.OpaqueFrontToBack ? "on" : "off")} (on by default, not saved).");
 
                 renderer.OpaqueFrontToBack = (bool)args[0];
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] opaque front-to-back submission {(renderer.OpaqueFrontToBack ? "on" : "off")} (on by default, not saved). " +
+                    $"[Landscapes] opaque front-to-back submission {(renderer.OpaqueFrontToBack ? "on" : "off")} (on by default, not saved). " +
                     "Applies on the next frame; water keeps its existing order.");
             });
 
-        capi.ChatCommands.Create("vhocclusion")
+        capi.ChatCommands.Create("dlocclusion")
             .WithDescription("Draw cached terrain after vanilla so ordinary depth testing rejects hidden pixels. On by default.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] post-vanilla depth culling {renderer.DescribeOcclusionCulling()}. " +
+                        $"[Landscapes] post-vanilla depth culling {renderer.DescribeOcclusionCulling()}. " +
                         "On by default and not saved.");
 
                 renderer.OcclusionCullingEnabled = (bool)args[0];
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] post-vanilla depth culling {renderer.DescribeOcclusionCulling()}. " +
+                    $"[Landscapes] post-vanilla depth culling {renderer.DescribeOcclusionCulling()}. " +
                     "Applies on the next frame; on by default and not saved.");
             });
 
-        capi.ChatCommands.Create("vhtemporal")
+        capi.ChatCommands.Create("dltemporal")
             .WithDescription("Skip opaque cached meshes proven hidden on later frames. Aggressive profile on by default.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] delayed exact-geometry occlusion {renderer.DescribeTemporalOcclusion()}. " +
+                        $"[Landscapes] delayed exact-geometry occlusion {renderer.DescribeTemporalOcclusion()}. " +
                         "Aggressive profile on by default; not saved.");
 
                 renderer.TemporalOcclusionEnabled = (bool)args[0];
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] delayed exact-geometry occlusion {renderer.DescribeTemporalOcclusion()}. " +
-                    "Applies on the next frame; aggressive profile is the default. Use it with .vhocclusion on. " +
-                    "Tune live with .vhtemporalprofile safe|aggressive|extreme.");
+                    $"[Landscapes] delayed exact-geometry occlusion {renderer.DescribeTemporalOcclusion()}. " +
+                    "Applies on the next frame; aggressive profile is the default. Use it with .dlocclusion on. " +
+                    "Tune live with .dltemporalprofile safe|aggressive|extreme.");
             });
 
-        capi.ChatCommands.Create("vhtemporalprofile")
+        capi.ChatCommands.Create("dltemporalprofile")
             .WithDescription("Tune delayed occlusion: safe invalidates on turns; aggressive/extreme persist while turning.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWordRange(
                 "profile", ["safe", "aggressive", "extreme"]))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] delayed occlusion profile: {renderer.TemporalOcclusionProfileName}. " +
+                        $"[Landscapes] delayed occlusion profile: {renderer.TemporalOcclusionProfileName}. " +
                         "Safe invalidates on turns; aggressive persists through turns and rechecks quickly; " +
                         "extreme persists through all camera motion. Changes are not saved.");
 
                 string profile = (string)args[0];
                 if (!renderer.SetTemporalOcclusionProfile(profile))
                     return TextCommandResult.Error(
-                        "[VintageHorizons] profile must be safe, aggressive, or extreme.");
+                        "[Landscapes] profile must be safe, aggressive, or extreme.");
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] delayed occlusion profile: {renderer.TemporalOcclusionProfileName}. " +
+                    $"[Landscapes] delayed occlusion profile: {renderer.TemporalOcclusionProfileName}. " +
                     "Previous visibility was invalidated; the new profile applies immediately.");
             });
 
-        capi.ChatCommands.Create("vhholes")
+        capi.ChatCommands.Create("dlholes")
             .WithDescription("Find ground the mod has handed to the game that the game is not drawing. No need to look at anything.")
             .HandleWith(_ =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 var at = capi.World.Player.Entity.Pos;
-                // Logged as well as shown, like .vhwhy (G72).
+                // Logged as well as shown, like .dlwhy (G72).
                 string holes = renderer.ExplainOwnedButNotDrawn(at.X, at.Z, 4);
                 LogReportLines("holes", holes);
-                return TextCommandResult.Success("[VintageHorizons] " + holes);
+                return TextCommandResult.Success("[Landscapes] " + holes);
             });
 
-        capi.ChatCommands.Create("vhgeom")
+        capi.ChatCommands.Create("dlgeom")
             .WithDescription("While the chunk mask is on: wait for an uploaded vanilla mesh before first handing it terrain. On by default.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] geometry rule {(renderer.GeometryOwnershipRule ? "on" : "off")}. " +
+                        $"[Landscapes] geometry rule {(renderer.GeometryOwnershipRule ? "on" : "off")}. " +
                         "On delays a new handoff until vanilla holds uploaded terrain geometry; " +
-                        "it never revokes an established handoff. Only has an effect with .vhmask on.");
+                        "it never revokes an established handoff. Only has an effect with .dlmask on.");
 
                 renderer.GeometryOwnershipRule = (bool)args[0];
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] geometry rule {(renderer.GeometryOwnershipRule ? "on" : "off")}. " +
+                    $"[Landscapes] geometry rule {(renderer.GeometryOwnershipRule ? "on" : "off")}. " +
                     "The change applies on the next frame; new ownership settles over the next second or two.");
             });
 
         // Session-only. The two rules produce a visibly different seam, and the only honest
         // comparison is standing at one and switching, so this has to be live; persisting it
         // would let a saved setting silently disagree with what the build says it does.
-        capi.ChatCommands.Create("vhexact")
+        capi.ChatCommands.Create("dlexact")
             .WithDescription("Use the game's own measurement of how far it draws each chunk, "
                 + "instead of a safe estimate. No argument reports it; 'map' writes the "
                 + "measurement to the client log; 'audit' checks the mask against what the game "
@@ -4587,7 +4591,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
 
                 string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
                 switch (part)
@@ -4596,7 +4600,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                     case "off":
                         renderer.ExactDrawRange = part == "on";
                         return TextCommandResult.Success(
-                            $"[VintageHorizons] exact draw range {part}. "
+                            $"[Landscapes] exact draw range {part}. "
                             + (part == "on"
                                 ? "Distant terrain now stops exactly where the game's own terrain "
                                 + "starts, instead of overlapping the last two chunks of it."
@@ -4607,31 +4611,31 @@ public partial class VintageHorizonsModSystem : ModSystem
                     case "map":
                         // The chat window cannot hold this and the owner cannot copy from it,
                         // so it goes to the log and chat gets the one-line answer (G72).
-                        return TextCommandResult.Success("[VintageHorizons] " + renderer.LogExactRangeMap());
+                        return TextCommandResult.Success("[Landscapes] " + renderer.LogExactRangeMap());
 
                     // The only report that asks the GAME what it is drawing rather than asking
                     // the mod what it believes. Everything else here can agree with itself and
                     // still be wrong about the picture.
                     case "audit":
-                        return TextCommandResult.Success("[VintageHorizons] " + renderer.LogCoverageAudit());
+                        return TextCommandResult.Success("[Landscapes] " + renderer.LogCoverageAudit());
 
                     default:
                         return TextCommandResult.Success(
-                            "[VintageHorizons] " + renderer.DescribeExactRange()
+                            "[Landscapes] " + renderer.DescribeExactRange()
                             + " On means ownership is decided from the bounding sphere the game "
                             + "itself measures each chunk by, so distant terrain gives ground back "
                             + "at the exact chunk the game stops drawing. Off estimates that "
                             + "boundary and keeps a two-chunk overlap as a hole guard. "
-                            + "'.vhexact map' writes the measurement to the client log.");
+                            + "'.dlexact map' writes the measurement to the client log.");
                 }
             });
 
-        capi.ChatCommands.Create("vhdetail")
+        capi.ChatCommands.Create("dldetail")
             .WithDescription("LOD thresholds. auto (the default) chooses them from your field of view "
                 + "and render resolution so every level hands over at the same size on screen; "
                 + "<blocks> sets a fixed doubling sequence from that distance and switches automatic "
                 + "off; manual goes back to your own distances; target <pixels> sets the on-screen "
-                + "size automatic mode aims for. Saved; automatic is also a switch in .vhconfig.")
+                + "size automatic mode aims for. Saved; automatic is also a switch in .dlconfig.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("mode"),
                       capi.ChatCommands.Parsers.OptionalWord("value"))
             .HandleWith(args =>
@@ -4640,13 +4644,13 @@ public partial class VintageHorizonsModSystem : ModSystem
                 string reply;
                 if (mode.Length == 0)
                 {
-                    reply = "[VintageHorizons] " + DescribeLodThresholds();
+                    reply = "[Landscapes] " + DescribeLodThresholds();
                 }
                 else if (mode.Equals("auto", StringComparison.OrdinalIgnoreCase))
                 {
                     renderer.AutoLodThresholds = true;
                     SaveConfig();
-                    reply = "[VintageHorizons] automatic LOD thresholds on (saved); terrain "
+                    reply = "[Landscapes] automatic LOD thresholds on (saved); terrain "
                         + "re-selects over the next few seconds. " + DescribeLodThresholds();
                 }
                 else if (mode.Equals("manual", StringComparison.OrdinalIgnoreCase))
@@ -4655,7 +4659,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                     LodWorld.SetLevelThresholds(LodWorld.NormalizeLevelThresholds(
                         config.LodThresholds, config.DetailDistance));
                     SaveConfig();
-                    reply = "[VintageHorizons] automatic LOD thresholds off; back to your own "
+                    reply = "[Landscapes] automatic LOD thresholds off; back to your own "
                         + "distances (saved). " + DescribeLodThresholds();
                 }
                 else if (mode.Equals("target", StringComparison.OrdinalIgnoreCase))
@@ -4666,13 +4670,13 @@ public partial class VintageHorizonsModSystem : ModSystem
                         renderer.LodTargetPixels = pixels;
                         SaveConfig();
                         reply = string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                            $"[VintageHorizons] automatic LOD target {renderer.LodTargetPixels:0.00} px (saved). ")
+                            $"[Landscapes] automatic LOD target {renderer.LodTargetPixels:0.00} px (saved). ")
                             + DescribeLodThresholds();
                     }
                     else
                     {
                         reply = string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                            $"[VintageHorizons] automatic LOD target {renderer.LodTargetPixels:0.00} px. "
+                            $"[Landscapes] automatic LOD target {renderer.LodTargetPixels:0.00} px. "
                             + $"Give {LodAutoThresholds.MinTargetPixels:0.#} to "
                             + $"{LodAutoThresholds.MaxTargetPixels:0.#}: smaller keeps finer detail "
                             + $"further out, larger saves GPU time.");
@@ -4685,20 +4689,20 @@ public partial class VintageHorizonsModSystem : ModSystem
                     LodWorld.DetailDistance = GameMath.Clamp(blocks,
                         (int)LodWorld.MinDetailDistance, (int)LodWorld.MaxDetailDistance);
                     SaveConfig();
-                    reply = "[VintageHorizons] LOD thresholds reset to "
+                    reply = "[Landscapes] LOD thresholds reset to "
                         + $"{string.Join(", ", LodWorld.GetLevelThresholds())} (saved; automatic "
                         + "off). Terrain re-selects over the next few seconds.";
                 }
                 else
                 {
-                    reply = "[VintageHorizons] .vhdetail auto | manual | target <pixels> | <blocks>. "
+                    reply = "[Landscapes] .dldetail auto | manual | target <pixels> | <blocks>. "
                         + DescribeLodThresholds();
                 }
                 capi.Logger.Notification(reply);
                 return TextCommandResult.Success(reply);
             });
 
-        capi.ChatCommands.Create("vhtaa")
+        capi.ChatCommands.Create("dltaa")
             .WithDescription("Distant anti-aliasing: blends distant cached terrain over several frames "
                 + "so it stops shimmering as you move. on | off | show | reach <1-32> | "
                 + "nudge <0-1> | sharpen <0-1> | blend <0-0.97> | still <0-0.99> | clip <0.5-4> | "
@@ -4708,7 +4712,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 + "and still are the memory while turning and once the camera is still (higher is "
                 + "steadier but smears more); clip is the safety check's width (lower smears less "
                 + "but flickers more). On by default and everything is saved; also a switch in "
-                + ".vhconfig; reset puts the dials back. With no argument, reports what it is doing "
+                + ".dlconfig; reset puts the dials back. With no argument, reports what it is doing "
                 + "and what it costs, in chat and in the client log.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("mode"),
                       capi.ChatCommands.Parsers.OptionalWord("value"))
@@ -4722,11 +4726,11 @@ public partial class VintageHorizonsModSystem : ModSystem
                 string Dial(string name, string range, Action<float> set)
                 {
                     if (!TryParseSetting(value, out float setting))
-                        return $"[VintageHorizons] give .vhtaa {name} a value from {range}. "
+                        return $"[Landscapes] give .dltaa {name} a value from {range}. "
                             + renderer.DescribeTaaDials() + ".";
                     set(setting);
                     SaveConfig();
-                    return "[VintageHorizons] " + renderer.DescribeTaaDials() + ". Saved.";
+                    return "[Landscapes] " + renderer.DescribeTaaDials() + ". Saved.";
                 }
 
                 if (mode.Equals("on", StringComparison.OrdinalIgnoreCase)
@@ -4734,12 +4738,12 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     renderer.DistantAntiAliasing = mode.Equals("on", StringComparison.OrdinalIgnoreCase);
                     SaveConfig();
-                    reply = "[VintageHorizons] " + renderer.DescribeDistantAntiAliasing() + " Saved.";
+                    reply = "[Landscapes] " + renderer.DescribeDistantAntiAliasing() + " Saved.";
                 }
                 else if (mode.Equals("show", StringComparison.OrdinalIgnoreCase))
                 {
                     renderer.TaaShowWeight = !renderer.TaaShowWeight;
-                    reply = "[VintageHorizons] anti-aliased pixels "
+                    reply = "[Landscapes] anti-aliased pixels "
                         + (renderer.TaaShowWeight
                             ? "tinted magenta by strength; nothing else is touched. "
                             : "shown normally. ")
@@ -4759,7 +4763,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     renderer.ResetTaaDials();
                     SaveConfig();
-                    reply = "[VintageHorizons] anti-aliasing back to its defaults: "
+                    reply = "[Landscapes] anti-aliasing back to its defaults: "
                         + renderer.DescribeTaaDials() + "; " + renderer.DescribeTaaReach() + ". Saved.";
                 }
                 else if (mode.Equals("reach", StringComparison.OrdinalIgnoreCase))
@@ -4768,19 +4772,19 @@ public partial class VintageHorizonsModSystem : ModSystem
                     {
                         renderer.TaaReachPixels = reach;
                         SaveConfig();
-                        reply = "[VintageHorizons] " + renderer.DescribeTaaReach() + ". Saved.";
+                        reply = "[Landscapes] " + renderer.DescribeTaaReach() + ". Saved.";
                     }
                     else
                     {
                         reply = string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                            $"[VintageHorizons] {renderer.DescribeTaaReach()}. Give "
+                            $"[Landscapes] {renderer.DescribeTaaReach()}. Give "
                             + $"{LodTaaMath.MinReachPixels:0} to {LodTaaMath.MaxReachPixels:0} px: larger "
                             + $"reaches closer (default {LodTaaMath.DefaultReachPixels:0.#}).");
                     }
                 }
                 else
                 {
-                    reply = "[VintageHorizons] " + renderer.DescribeDistantAntiAliasing();
+                    reply = "[Landscapes] " + renderer.DescribeDistantAntiAliasing();
                 }
                 capi.Logger.Notification(reply);
                 return TextCommandResult.Success(reply);
@@ -4793,7 +4797,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         string live = string.Join(", ", LodWorld.GetLevelThresholds());
         return renderer.AutoLodThresholds
             ? $"LOD thresholds {live}; automatic: {renderer.DescribeAutoThresholds()}."
-            : $"LOD thresholds {live}; fixed. '.vhdetail auto' chooses them from your field of "
+            : $"LOD thresholds {live}; fixed. '.dldetail auto' chooses them from your field of "
                 + "view and resolution instead.";
     }
 
@@ -4844,7 +4848,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// The settings window's Anti-Aliasing tab, showing a slider's effect as it moves. Nothing is
     /// saved here; Save goes through <see cref="ApplyGuiConfig"/>, and closing without it calls
     /// this again with what was in force when the window opened. Every dial it carries is on
-    /// the side panel under its own `.vhtaa` name.
+    /// the side panel under its own `.dltaa` name.
     /// </summary>
     void PreviewTaaTuning(LodTaaDials dials, bool show)
     {
@@ -4979,9 +4983,9 @@ public partial class VintageHorizonsModSystem : ModSystem
         if (previous is 2 or 3)
         {
             if (!fromFile) return;
-            capi.StoreModConfig(config, "vintagehorizons.json");
+            capi.StoreModConfig(config, "dodenslandscapes.json");
             Mod.Logger.Notification(
-                "[VintageHorizons] the seam fog now hides the seam with a shallow strip and "
+                "[Landscapes] the seam fog now hides the seam with a shallow strip and "
                 + "leaves the bank above it see-through. Its two densities, the strip's and the "
                 + "bank's, were set once to {0:0}% and {1:0}%; your other fog dials are unchanged.",
                 defaults.FogSeamStrength * 100f, defaults.FogStrength * 100f);
@@ -4999,9 +5003,9 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.SilhouetteFogFadeSeconds = defaults.FogFadeSeconds;
         config.SilhouetteFogModel = LodSilhouetteFogVolume.FogModel;
         if (!fromFile) return;
-        capi.StoreModConfig(config, "vintagehorizons.json");
+        capi.StoreModConfig(config, "dodenslandscapes.json");
         Mod.Logger.Notification(
-            "[VintageHorizons] the seam fog was redesigned, so its dials were reset once to the "
+            "[Landscapes] the seam fog was redesigned, so its dials were reset once to the "
             + "new defaults. The values you had were tuned for the previous fog.");
     }
 
@@ -5049,7 +5053,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             config.LateDepthPicture = renderer.LateDepthPyramid;
         }
 
-        capi.StoreModConfig(config, "vintagehorizons.json");
+        capi.StoreModConfig(config, "dodenslandscapes.json");
     }
 
     public override void Dispose()

@@ -14,7 +14,7 @@ WORLD="${1:-vhsurvival}"
 PLAYSTYLE="${2:-preset-surviveandbuild}"
 
 MOD_PATH="$REPO_DIR/VintageHorizons/bin/Debug/net10.0/Mods"
-[ -d "$MOD_PATH/vintagehorizons" ] || { echo "No build output at $MOD_PATH - run: dotnet build VintageHorizons"; exit 1; }
+[ -d "$MOD_PATH/dodenslandscapes" ] || { echo "No build output at $MOD_PATH - run: dotnet build VintageHorizons"; exit 1; }
 
 # The desktop launcher's DOTNET_ROOT (~/.dotnet) is stale on this machine;
 # the system-wide SDK lives in /usr/share/dotnet.

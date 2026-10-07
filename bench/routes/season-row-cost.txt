@@ -13,8 +13,8 @@
 # raises against baking and which applies to a baked colour rather than a baked row.
 #
 # So the number that decides whether that work is worth starting is the split, and no
-# switch on the shipped build reports it: `.vhtint leaves off` removes both items at once.
-# `.vhtint leafcheap on` is the instrument - a cheap position hash in place of the noise,
+# switch on the shipped build reports it: `.dltint leaves off` removes both items at once.
+# `.dltint leafcheap on` is the instrument - a cheap position hash in place of the noise,
 # with the fetch left as scattered as it really is.
 #
 #   s0 -> s1  is the noise.        This is the ceiling for baking the row.
@@ -36,6 +36,6 @@
 warm1        512020  190  512010    0   -8
 warm2        512020  190  512010    0   -8
 s0-base      512020  190  512010    0   -8
-s1-cheaprow  512020  190  512010    0   -8  ! .vhtint leafcheap on
-s2-leavesoff 512020  190  512010    0   -8  ! .vhtint leaves off
-s3-restore   512020  190  512010    0   -8  ! .vhtint leafcheap off; .vhtint leaves on
+s1-cheaprow  512020  190  512010    0   -8  ! .dltint leafcheap on
+s2-leavesoff 512020  190  512010    0   -8  ! .dltint leaves off
+s3-restore   512020  190  512010    0   -8  ! .dltint leafcheap off; .dltint leaves on

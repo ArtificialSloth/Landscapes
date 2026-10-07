@@ -108,7 +108,7 @@ internal sealed class LodGpuDepthPyramid : IDisposable
         {
             reportedViewportMismatch = true;
             capi.Logger.Notification(
-                "[VintageHorizons] depth pyramid uses rendered frame {0}x{1}; the GL "
+                "[Landscapes] depth pyramid uses rendered frame {0}x{1}; the GL "
                 + "viewport is {2},{3} {4}x{5} and is not used as the copy size.",
                 frameWidth, frameHeight,
                 viewportProbe[0], viewportProbe[1], viewportProbe[2], viewportProbe[3]);

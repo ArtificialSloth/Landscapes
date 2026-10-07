@@ -8,7 +8,7 @@ namespace VintageHorizons.Net;
 /// answer was taken from the key count, so a server that was capturing and serving
 /// perfectly well reported "off" whenever its cache happened to be empty as somebody
 /// joined. An empty cache is the ordinary state of a fresh server, and of any server an
-/// admin is about to run /vhgen on. The client treats "off" as final - it stops reading
+/// admin is about to run /dlgen on. The client treats "off" as final - it stops reading
 /// manifests and sections for the rest of the session - so the terrain the admin then
 /// built reached nobody, and relogging was the only cure.
 ///

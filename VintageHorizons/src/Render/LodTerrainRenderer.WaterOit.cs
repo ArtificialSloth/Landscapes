@@ -30,7 +30,7 @@ public partial class LodTerrainRenderer
     void LoadWaterOitShader()
     {
         waterOitProg = capi.Shader.NewShaderProgram();
-        waterOitProg.AssetDomain = "vintagehorizons";
+        waterOitProg.AssetDomain = "dodenslandscapes";
         waterOitProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         waterOitProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram("lodwateroit", waterOitProg);
@@ -42,10 +42,10 @@ public partial class LodTerrainRenderer
         {
             if (waterOitShaderOk)
                 capi.Logger.Notification(
-                    "[VintageHorizons] dedicated water OIT shader ready; fallback disabled.");
+                    "[Landscapes] dedicated water OIT shader ready; fallback disabled.");
             else
                 capi.Logger.Error(
-                    "[VintageHorizons] dedicated water OIT shader failed to compile; an OIT "
+                    "[Landscapes] dedicated water OIT shader failed to compile; an OIT "
                     + "request will suppress cached water instead of selecting opaque rendering.");
         }
     }
@@ -77,7 +77,7 @@ public partial class LodTerrainRenderer
         {
             gpuTelemetry.ResetWaterInterval();
             previousWaterOit = waterFrame.UseOit;
-            capi.Logger.Notification("[VintageHorizons] water pipeline: {0}; surface timing interval restarted.", WaterPipelineStatus);
+            capi.Logger.Notification("[Landscapes] water pipeline: {0}; surface timing interval restarted.", WaterPipelineStatus);
         }
         if (waterFrame.UseOit) WaterOitSkipReason = "awaiting OIT";
         WaterJunctionSurfaceStatus = waterFrame.UseOit ? "awaiting OIT" : "opaque pipeline";

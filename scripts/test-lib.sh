@@ -62,7 +62,7 @@ vh_launch() {
     vh_rotate_log "$log"
     cd "$VH_GAME"
     # VH_STDIN, when set, must name a FIFO held open by a writer. The server reads
-    # console commands from it, which is how the matrix tier types /vhgen without a
+    # console commands from it, which is how the matrix tier types /dlgen without a
     # client. Everything else keeps the inherited stdin.
     if [[ -n "${VH_STDIN:-}" ]]; then
         "$@" < "$VH_STDIN" > "$log" 2>&1 &

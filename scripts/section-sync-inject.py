@@ -112,8 +112,8 @@ def main():
     profile_root = os.path.join(REPO, '.testdata', 'profiles', args.profile)
     if not os.path.isdir(profile_root):
         sys.exit('no sandbox profile at ' + profile_root)
-    server_path = one(profile_root, os.path.join(profile_root, 'server', 'ModData', 'vintagehorizons', '*-server.db'), False)
-    client_path = one(profile_root, os.path.join(profile_root, 'ModData', 'vintagehorizons', '*.db'), True)
+    server_path = one(profile_root, os.path.join(profile_root, 'server', 'ModData', 'dodenslandscapes', '*-server.db'), False)
+    client_path = one(profile_root, os.path.join(profile_root, 'ModData', 'dodenslandscapes', '*.db'), True)
     server = sqlite3.connect(server_path)
     client = sqlite3.connect(client_path)
     try:

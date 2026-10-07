@@ -180,7 +180,7 @@ internal sealed class LodGpuOpenGlArenaBackend : ILodGpuArenaBackend
     {
         if (reported) return;
         reported = true;
-        warn("[VintageHorizons] GPU arena shadow: " + message
+        warn("[Landscapes] GPU arena shadow: " + message
             + ". Visible legacy rendering is unchanged.");
     }
 }

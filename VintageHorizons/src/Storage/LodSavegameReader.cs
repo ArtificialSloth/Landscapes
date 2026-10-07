@@ -155,7 +155,7 @@ public sealed class LodSavegameReader : IDisposable
 
                 State = EnumSavegameReadState.Ready;
                 logger.Notification(
-                    "[VintageHorizons] Savegame read path open ({0} journal, change counter {1}). "
+                    "[Landscapes] Savegame read path open ({0} journal, change counter {1}). "
                     + "Read-only, on its own thread, and never a prerequisite: any failure turns "
                     + "it off for the session and the sweep behaves as it did before.",
                     JournalMode.Length == 0 ? "unknown" : JournalMode,
@@ -313,7 +313,7 @@ public sealed class LodSavegameReader : IDisposable
         try { connection?.Dispose(); } catch { /* already gone; nothing to salvage */ }
         connection = null;
         logger.Notification(
-            "[VintageHorizons] Savegame read path off for this session: {0}. This is an "
+            "[Landscapes] Savegame read path off for this session: {0}. This is an "
             + "accelerator, so the sweep continues exactly as it did without it.", reason);
     }
 

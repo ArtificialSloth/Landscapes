@@ -126,7 +126,7 @@ public partial class LodTerrainRenderer
         silhouetteFogStageRenderer = new BeforeStageRenderer(
             DrawSilhouetteFogVolume, SilhouetteFogAfterOitOrder, "silhouettefog");
         capi.Event.RegisterRenderer(silhouetteFogStageRenderer, EnumRenderStage.AfterOIT,
-            "vintagehorizons-silhouettefog");
+            "dodenslandscapes-silhouettefog");
     }
 
     void UnregisterSilhouetteFogStage()
@@ -392,7 +392,7 @@ public partial class LodTerrainRenderer
         {
             silhouetteFogReportedPendingError = true;
             capi.Logger.Warning(
-                "[VintageHorizons] {0} before seam-fog field upload; those errors came from an "
+                "[Landscapes] {0} before seam-fog field upload; those errors came from an "
                 + "earlier renderer.", advisory);
         }
         LodGlStateSnapshot state = LodGlStateGuard.Capture(
@@ -578,7 +578,7 @@ public partial class LodTerrainRenderer
         {
             silhouetteFogReportedPendingError = true;
             capi.Logger.Warning(
-                "[VintageHorizons] {0} before volumetric seam fog; those errors came from an "
+                "[Landscapes] {0} before volumetric seam fog; those errors came from an "
                 + "earlier renderer.", advisory);
         }
 
@@ -789,7 +789,7 @@ public partial class LodTerrainRenderer
     {
         silhouetteFogVolumeFailed = true;
         capi.Logger.Error(
-            "[VintageHorizons] volumetric Farseer seam fog stopped; Farseer is off for this "
+            "[Landscapes] volumetric Farseer seam fog stopped; Farseer is off for this "
             + "session instead of corrupting later render stages: {0}", reason);
         silhouettes.SetEnabled(false);
         ReleaseSilhouetteMeshes();

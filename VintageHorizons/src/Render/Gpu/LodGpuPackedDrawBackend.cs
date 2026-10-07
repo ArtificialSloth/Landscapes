@@ -243,7 +243,7 @@ internal sealed class LodGpuOpenGlPackedDrawBackend : ILodGpuDrawBackend
         if (!reported)
         {
             reported = true;
-            warn("[VintageHorizons] Packed indirect draw backend: " + message + ".");
+            warn("[Landscapes] Packed indirect draw backend: " + message + ".");
         }
         return false;
     }

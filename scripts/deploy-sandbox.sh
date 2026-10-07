@@ -22,7 +22,7 @@ case "$TARGET" in
     *) echo "usage: $(basename "$0") [client|server|both]" >&2; exit 2 ;;
 esac
 
-BUILT="$VH_ROOT/VintageHorizons/bin/Debug/net10.0/Mods/vintagehorizons"
+BUILT="$VH_ROOT/VintageHorizons/bin/Debug/net10.0/Mods/dodenslandscapes"
 
 echo "Building VintageHorizons..."
 (cd "$VH_ROOT" && dotnet build VintageHorizons -v quiet --nologo)
@@ -37,17 +37,17 @@ install_into() {
     mkdir -p "$dest"
     # Replace rather than merge: a file removed from the build must disappear here
     # too, or a stale asset outlives the change that deleted it.
-    rm -rf "${dest:?}/vintagehorizons"
+    rm -rf "${dest:?}/dodenslandscapes"
     cp -r "$BUILT" "$dest/"
-    echo "  $label: $dest/vintagehorizons"
+    echo "  $label: $dest/dodenslandscapes"
 }
 
 [[ "$TARGET" == "client" || "$TARGET" == "both" ]] && install_into "$VH_SANDBOX/Mods" "client"
 [[ "$TARGET" == "server" || "$TARGET" == "both" ]] && install_into "$VH_SANDBOX/server/Mods" "server"
 
-if [[ "$TARGET" == "client" && -d "$VH_SANDBOX/server/Mods/vintagehorizons" ]]; then
+if [[ "$TARGET" == "client" && -d "$VH_SANDBOX/server/Mods/dodenslandscapes" ]]; then
     echo "  note: the sandbox SERVER still has the mod installed." >&2
-    echo "        rm -rf '$VH_SANDBOX/server/Mods/vintagehorizons' for a vanilla server." >&2
+    echo "        rm -rf '$VH_SANDBOX/server/Mods/dodenslandscapes' for a vanilla server." >&2
 fi
 
 echo "Deployed $(grep -oP '"version":\s*"\K[^"]+' "$VH_ROOT/VintageHorizons/modinfo.json")"

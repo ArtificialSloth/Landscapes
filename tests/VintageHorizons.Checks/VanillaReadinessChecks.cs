@@ -175,7 +175,7 @@ public static class VanillaReadinessChecks
     }
 
     /// <summary>
-    /// The measurement behind `.vhskip why`: whether a section's own geometry band is owned,
+    /// The measurement behind `.dlskip why`: whether a section's own geometry band is owned,
     /// as against whether its whole bedrock-to-sky box is.
     ///
     /// <para>

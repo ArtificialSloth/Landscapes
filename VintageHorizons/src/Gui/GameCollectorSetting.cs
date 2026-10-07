@@ -97,7 +97,7 @@ internal static class GameCollectorSetting
             }
             if (state == FileState.OnElsewhere)
             {
-                outcome = "already set outside Vintage Horizons";
+                outcome = "already set outside Doden's Landscapes";
                 return null;
             }
             properties[ServerProperty] = true;
@@ -108,7 +108,7 @@ internal static class GameCollectorSetting
         {
             if (state == FileState.OnElsewhere)
             {
-                outcome = "set outside Vintage Horizons, so it was left as it is";
+                outcome = "set outside Doden's Landscapes, so it was left as it is";
                 return null;
             }
             if (state != FileState.OnByThisMod)
@@ -152,7 +152,7 @@ internal static class GameCollectorSetting
             string backup = path + BackupSuffix;
             if (!File.Exists(backup)) File.Copy(path, backup);
             // Written beside the file and moved over it, so a failure halfway leaves the old file.
-            string temporary = path + ".vintagehorizons-tmp";
+            string temporary = path + ".dodenslandscapes-tmp";
             File.WriteAllText(temporary, edited);
             File.Move(temporary, path, overwrite: true);
             return true;

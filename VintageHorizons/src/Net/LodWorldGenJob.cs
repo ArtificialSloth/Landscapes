@@ -126,7 +126,7 @@ internal sealed class LodWorldGenStateStore
             if (!File.Exists(Path)) return true;
             state = LodWorldGenState.Deserialize(File.ReadAllText(Path));
             if (state != null) return true;
-            reason = "the state file is not valid VintageHorizons world-generation JSON";
+            reason = "the state file is not valid Doden's Landscapes world-generation JSON";
             return false;
         }
         catch (Exception e)
@@ -247,7 +247,7 @@ internal sealed class LodWorldGenJob
         savegamePath = sapi.WorldManager.CurrentWorldFilepath;
 
         // Only this job's own durable cursor may omit an unfinished plan column. A server
-        // cache row can come from /vhgen or a frontier peek and therefore does not prove the
+        // cache row can come from /dlgen or a frontier peek and therefore does not prove the
         // real savegame contains that terrain. Every other column takes the engine's real
         // load/generate path; an unchanged authoritative row completes after capture below.
         doneCount = state.DoneCount();
@@ -620,7 +620,7 @@ internal sealed class LodWorldGenJob
     {
         if (faultReason.Length > 0) return;
         faultReason = reason;
-        logger.Error("Savegame world generation safety stop: {0}. Use /vhworldgen stop "
+        logger.Error("Savegame world generation safety stop: {0}. Use /dlworldgen stop "
             + "to retry releasing every kept column.", reason);
     }
 
@@ -655,7 +655,7 @@ internal sealed class LodWorldGenJob
                 ? FormatDuration(progress.EtaSeconds)
                 : "measuring";
             return string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "[VintageHorizons] World generation: {0}/{1} columns ({2}%), {3:0.0}/s over "
+                "[Landscapes] World generation: {0}/{1} columns ({2}%), {3:0.0}/s over "
                 + "the last minute, ETA {4}; disk +{5:0.0} MiB savegame, +{6:0.0} MiB cache; "
                 + "{7}; engine queue {8}/{9}, {10} kept, {11} retries, {12} failures.",
                 progress.DoneColumns, progress.TotalColumns, progress.Percent,
@@ -697,7 +697,7 @@ internal sealed class LodWorldGenJob
         string worldKey = sapi.World.SavegameIdentifier;
         if (string.IsNullOrEmpty(worldKey)) worldKey = "seed-" + sapi.World.Seed;
         worldKey = Regex.Replace(worldKey, "[^A-Za-z0-9_-]", "_");
-        return System.IO.Path.Combine(sapi.GetOrCreateDataPath("ModData/vintagehorizons"),
+        return System.IO.Path.Combine(sapi.GetOrCreateDataPath("ModData/dodenslandscapes"),
             worldKey + "-worldgen.json");
     }
 

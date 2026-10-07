@@ -412,7 +412,7 @@ public static class SlabField
     {
         string root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "VintagestoryData", "ModData", "vintagehorizons");
+            "VintagestoryData", "ModData", "dodenslandscapes");
         if (!Directory.Exists(root)) return null;
         return Directory.EnumerateFiles(root, "*.db")
             .Where(p => !p.EndsWith("-server.db", StringComparison.OrdinalIgnoreCase))

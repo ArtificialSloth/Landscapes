@@ -78,7 +78,7 @@ public static class SectionMergeChecks
     }
 
     /// <summary>
-    /// A generated peek (/vhgen) stores terrain with no snow observation. Capture never lets
+    /// A generated peek (/dlgen) stores terrain with no snow observation. Capture never lets
     /// one erase observed ground, and a newer save of the same key must not either; but a
     /// newer observed save does replace observed ground, which is how a melt reaches the client.
     /// </summary>

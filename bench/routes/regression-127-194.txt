@@ -4,8 +4,8 @@
 # Every state is measured by the same settle criterion, so the numbers are comparable in
 # a way a human reading an FPS counter between toggles is not.
 #
-# The subtraction is CUMULATIVE and the ORDER MATTERS. `.vhblend off` releases the seam
-# field and stops L0 quads carrying block-texture slots, which supersedes `.vhband off`
+# The subtraction is CUMULATIVE and the ORDER MATTERS. `.dlblend off` releases the seam
+# field and stops L0 quads carrying block-texture slots, which supersedes `.dlband off`
 # entirely - so the band is removed first, and the blend delta afterwards is the part the
 # band switch never touched: the per-vertex block table lookups and the three flat
 # varyings they feed.
@@ -22,9 +22,9 @@
 warm1        512020  190  512010    0   -8
 warm2        512020  190  512010    0   -8
 s0-base      512020  190  512010    0   -8
-s1-noband    512020  190  512010    0   -8  ! .vhband off
-s2-noblend   512020  190  512010    0   -8  ! .vhblend off
-s3-noclimate 512020  190  512010    0   -8  ! .vhtint field off
-s4-noslabs   512020  190  512010    0   -8  ! .vhslabs off
-s5-cutout    512020  190  512010    0   -8  ! .vhcutout on
-s6-restore   512020  190  512010    0   -8  ! .vhband on; .vhblend on; .vhtint field on; .vhslabs surface; .vhcutout off
+s1-noband    512020  190  512010    0   -8  ! .dlband off
+s2-noblend   512020  190  512010    0   -8  ! .dlblend off
+s3-noclimate 512020  190  512010    0   -8  ! .dltint field off
+s4-noslabs   512020  190  512010    0   -8  ! .dlslabs off
+s5-cutout    512020  190  512010    0   -8  ! .dlcutout on
+s6-restore   512020  190  512010    0   -8  ! .dlband on; .dlblend on; .dltint field on; .dlslabs surface; .dlcutout off

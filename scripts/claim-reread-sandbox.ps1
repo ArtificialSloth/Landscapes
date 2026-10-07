@@ -67,7 +67,7 @@ if (-not $Version) {
     $Version = ([string]($project.Project.PropertyGroup.Version | Where-Object { $_ } |
         Select-Object -First 1)).Trim()
 }
-$zip = Join-Path $repoRoot "dist\vintagehorizons_$Version.zip"
+$zip = Join-Path $repoRoot "dist\dodenslandscapes_$Version.zip"
 
 function Assert-UnderBase([string]$Path) {
     $root = [IO.Path]::GetFullPath($base).TrimEnd('\') + '\'
@@ -96,7 +96,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $GamePath 'VintagestoryServer.dll') 
 
 Assert-UnderBase $dataPath
 $saveTarget = Join-Path $dataPath 'Saves\default.vcdbs'
-$cacheDir = Join-Path $dataPath 'ModData\vintagehorizons'
+$cacheDir = Join-Path $dataPath 'ModData\dodenslandscapes'
 $cacheTarget = Join-Path $cacheDir ([IO.Path]::GetFileName($seedCache))
 
 if ($Fresh -or -not (Test-Path -LiteralPath $saveTarget)) {
@@ -131,7 +131,7 @@ if (-not $WithoutMod) { Copy-Item -LiteralPath $zip -Destination $modsDir }
     EnableWorldGeneration = $false
     PregenRadiusChunks = 0
     EnableSilhouettes = $false
-} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dataPath 'ModConfig\vintagehorizons-server.json') -Encoding utf8
+} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dataPath 'ModConfig\dodenslandscapes-server.json') -Encoding utf8
 
 @{
     ServerAutoSave = $AutoSaveSeconds
@@ -201,8 +201,8 @@ try {
                     Write-Host ("  {0,5:0}s claims: {1}" -f $clock.Elapsed.TotalSeconds, $claims)
                 }
             }
-            if ($line.Contains('[vintagehorizons] Savegame sweep', [StringComparison]::Ordinal)) {
-                $text = $line -replace '^.*\[vintagehorizons\]\s*', ''
+            if ($line.Contains('[dodenslandscapes] Savegame sweep', [StringComparison]::Ordinal)) {
+                $text = $line -replace '^.*\[dodenslandscapes\]\s*', ''
                 Write-Host ("  {0,5:0}s {1}" -f $clock.Elapsed.TotalSeconds, $text.Substring(0, [Math]::Min(150, $text.Length)))
             }
             $stdoutTask = $process.StandardOutput.ReadLineAsync()

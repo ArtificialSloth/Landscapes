@@ -100,7 +100,7 @@ public static class LodClimateProbe
     {
         IBlockAccessor blocks = world.BlockAccessor;
         var text = new System.Text.StringBuilder();
-        text.AppendLine("[VintageHorizons] climate availability and gradient, "
+        text.AppendLine("[Landscapes] climate availability and gradient, "
             + $"from {camX},{camZ}");
         text.AppendLine($"  world: sea level {world.SeaLevel}, region size {blocks.RegionSize}, "
             + $"map {blocks.MapSizeX} by {blocks.MapSizeZ}, LOD draws to {farDistance:F0} blocks");

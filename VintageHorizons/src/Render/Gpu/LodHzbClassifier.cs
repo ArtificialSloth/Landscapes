@@ -950,7 +950,7 @@ void main()
     void Disable(string reason)
     {
         LastFailure = reason;
-        warn("[VintageHorizons] depth-pyramid classification disabled; nothing that draws "
+        warn("[Landscapes] depth-pyramid classification disabled; nothing that draws "
             + "depends on it: " + reason);
         ReleaseGpuObjects();
     }

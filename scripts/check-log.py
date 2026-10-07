@@ -73,7 +73,7 @@ FATAL_LINES = [
     # Scoped to our own mod id and namespace on purpose: two scenarios deliberately
     # install Farseer, and this file reads every line in the log, so an unscoped needle
     # would turn another mod's bug into our test failure.
-    ("[vintagehorizons] An exception was thrown when trying to start the mod",
+    ("[dodenslandscapes] An exception was thrown when trying to start the mod",
      "the game could not start the mod"),
     ("for mod VintageHorizons.", "a mod lifecycle phase threw"),
 ]

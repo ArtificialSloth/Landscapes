@@ -1,6 +1,6 @@
 """Draw the accelerator comparison's map side by side (silhouette plan P0.3, D8).
 
-Reads a map file written by /vhsilhouetteserver compare: gzip CSV with x, z, the real height, its
+Reads a map file written by /dlsilhouetteserver compare: gzip CSV with x, z, the real height, its
 origin, and for each accelerator the height sampled now and, where a presample existed, the height
 sampled before the land was loaded. Writes three PNG panels and an HTML page beside the map:
 

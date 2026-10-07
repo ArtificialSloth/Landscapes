@@ -68,7 +68,7 @@ public static class WaterDepthRepairChecks
         c.Eq(1f, Repair(p, 4, 4), "surrounding surfaces at inconsistent depths cannot bridge a hole");
 
         string root = GameAssemblies.RepoRoot;
-        string shader = File.ReadAllText(Path.Combine(root, "VintageHorizons/assets/vintagehorizons/shaders/lodwaterrepair.fsh"));
+        string shader = File.ReadAllText(Path.Combine(root, "VintageHorizons/assets/dodenslandscapes/shaders/lodwaterrepair.fsh"));
         c.True(shader.Contains("if (texelFetch(sourceDepth, p, 0).r < 1.0) discard;")
             && shader.Contains("ry <= 2") && shader.Contains("rx <= 2")
             && shader.Contains("abs(horizontal - vertical) > 2.0 / 16777215.0")

@@ -249,7 +249,7 @@ public static class ConfigChecks
             "sanitize is idempotent for the rate");
     }
 
-    /// <summary>Describe() is what /vhserver prints, so admins read these words to check their config took.</summary>
+    /// <summary>Describe() is what /dlserver prints, so admins read these words to check their config took.</summary>
     static void Description(Check c)
     {
         string text = new LodServerConfig().Describe();

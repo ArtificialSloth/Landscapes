@@ -66,14 +66,14 @@ internal static class LodTaaMath
     /// </summary>
     public const float MaxReachPixels = 32f;
 
-    /// <summary>Memory while the view turns (`.vhtaa blend`): about the last thirty frames.</summary>
+    /// <summary>Memory while the view turns (`.dltaa blend`): about the last thirty frames.</summary>
     public const float DefaultFeedback = 0.97f;
 
-    /// <summary>The most turning memory `.vhtaa blend` accepts.</summary>
+    /// <summary>The most turning memory `.dltaa blend` accepts.</summary>
     public const float MaxFeedback = 0.97f;
 
     /// <summary>
-    /// Memory while the whole camera holds still (`.vhtaa still`). The nudge repeats every eight
+    /// Memory while the whole camera holds still (`.dltaa still`). The nudge repeats every eight
     /// frames, and a running blend of a repeating signal ripples: for a feature seen in one of
     /// the eight positions, by about 4.5% of its contrast at 0.9, 1.3% at 0.97 and 0.4% at 0.99.
     /// </summary>
@@ -109,7 +109,7 @@ internal static class LodTaaMath
     public const float StillTurn = 1e-5f;
 
     /// <summary>
-    /// Width of the safety check (`.vhtaa clip`), in standard deviations of the colours around a
+    /// Width of the safety check (`.dltaa clip`), in standard deviations of the colours around a
     /// pixel, and never wider than the colours actually there. Lower is tighter: less smear,
     /// more flicker. 4 is in effect the 0.4.58 check, the full range of the neighbourhood, which
     /// on snow - white tops beside dark walls in nearly every 3x3 - let almost any history through.
@@ -119,14 +119,14 @@ internal static class LodTaaMath
     public const float MaxClip = 4f;
 
     /// <summary>
-    /// How far terrain is nudged (`.vhtaa nudge`), as a share of the full half pixel. Lower is
+    /// How far terrain is nudged (`.dltaa nudge`), as a share of the full half pixel. Lower is
     /// crisper and shimmers more; 0 leaves only the blending. Half by default: sharper than the
     /// full nudge, with the long memory holding it steady.
     /// </summary>
     public const float DefaultNudge = 0.5f;
 
     /// <summary>
-    /// Sharpening of the anti-aliased terrain (`.vhtaa sharpen`), 0 to 1. Applied to the picture
+    /// Sharpening of the anti-aliased terrain (`.dltaa sharpen`), 0 to 1. Applied to the picture
     /// on its way to the screen and never to the memory, so it cannot build up frame on frame.
     /// </summary>
     public const float DefaultSharpen = 1f;

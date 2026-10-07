@@ -273,7 +273,7 @@ public static class HzbField
     {
         string root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "VintagestoryData", "ModData", "vintagehorizons");
+            "VintagestoryData", "ModData", "dodenslandscapes");
         if (!Directory.Exists(root)) return null;
 
         return Directory.EnumerateFiles(root, "*.db")

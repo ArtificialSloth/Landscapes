@@ -18,14 +18,14 @@ public partial class LodTerrainRenderer
     {
         if (waterCaptureDirectory != null)
         {
-            capi.Logger.Warning("[VintageHorizons] water capture incomplete: AfterOIT did not finish the previous frame.");
+            capi.Logger.Warning("[Landscapes] water capture incomplete: AfterOIT did not finish the previous frame.");
             waterCaptureDirectory = null;
         }
         if (!waterCaptureRequested) return;
         waterCaptureRequested = false;
         try
         {
-            string root = capi.GetOrCreateDataPath("VintageHorizons/water-captures");
+            string root = capi.GetOrCreateDataPath("Doden's Landscapes/water-captures");
             waterCaptureDirectory = Path.Combine(root, DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff")
                 + "-" + Guid.NewGuid().ToString("N")[..8]);
             Directory.CreateDirectory(waterCaptureDirectory);
@@ -80,14 +80,14 @@ public partial class LodTerrainRenderer
                     new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception e) { FailWaterCapture(e); return; }
-        capi.Logger.Notification("[VintageHorizons] water capture saved: {0}; cached depth draws: {1}",
+        capi.Logger.Notification("[Landscapes] water capture saved: {0}; cached depth draws: {1}",
             waterCaptureDirectory, WaterDepthDraws);
         waterCaptureDirectory = null;
     }
 
     void FailWaterCapture(Exception e)
     {
-        capi.Logger.Warning("[VintageHorizons] water capture failed: {0}", e.Message);
+        capi.Logger.Warning("[Landscapes] water capture failed: {0}", e.Message);
         waterCaptureDirectory = null;
     }
 

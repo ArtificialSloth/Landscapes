@@ -57,7 +57,7 @@ public static class KeyMathChecks
     ///
     /// Squaring changes rounding, so if the two ever disagree it is at a boundary. This
     /// lands exactly on every boundary and sweeps finely either side, at several
-    /// DetailDistance settings, because .vhdetail can change that live and the table has
+    /// DetailDistance settings, because .dldetail can change that live and the table has
     /// to be rebuilt when it does.
     ///
     /// A wrong answer here is not a slow frame, it is terrain drawn at the wrong detail

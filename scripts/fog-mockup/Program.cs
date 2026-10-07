@@ -42,7 +42,7 @@ int tileHeight = tileWidth * 9 / 16;
 Directory.CreateDirectory(outDir);
 
 string shader = File.ReadAllText(Path.Combine(repo,
-    "VintageHorizons", "assets", "vintagehorizons", "shaders", "lodsilhouettefogvolume.fsh"));
+    "VintageHorizons", "assets", "dodenslandscapes", "shaders", "lodsilhouettefogvolume.fsh"));
 string volume = File.ReadAllText(Path.Combine(repo,
     "VintageHorizons", "src", "Render", "LodSilhouetteFogVolume.cs"));
 float Default(string name) => float.Parse(Regex.Match(volume,

@@ -72,17 +72,17 @@ public static class StaticAssetChecks
             && !inventory.Contains("GPU adapter", StringComparison.Ordinal),
             "the panel does not reflect counters, game state or hardware diagnostics");
         c.True(inventory.Contains("string[] BuildConfigurationColumns()", StringComparison.Ordinal)
-            && inventory.Contains(".vhband speckle", StringComparison.Ordinal)
-            && inventory.Contains(".vhwater glint", StringComparison.Ordinal)
+            && inventory.Contains(".dlband speckle", StringComparison.Ordinal)
+            && inventory.Contains(".dlwater glint", StringComparison.Ordinal)
             && inventory.Contains("static void Entry(List<string> lines, string name, bool enabled)",
                 StringComparison.Ordinal),
             "the panel includes numeric .vh configuration as well as boolean switches");
 
         string commands = File.ReadAllText(Path.Combine(sourceRoot,
             "VintageHorizonsModSystem.cs"));
-        int diagStart = commands.IndexOf("ChatCommands.Create(\"vhdiag\")",
+        int diagStart = commands.IndexOf("ChatCommands.Create(\"dldiag\")",
             StringComparison.Ordinal);
-        int diagEnd = commands.IndexOf("ChatCommands.Create(\"vhinfo\")", diagStart,
+        int diagEnd = commands.IndexOf("ChatCommands.Create(\"dlinfo\")", diagStart,
             StringComparison.Ordinal);
         c.True(diagStart >= 0 && diagEnd > diagStart,
             "the diagnostics-window command is registered before commands available while deferring");
@@ -91,7 +91,7 @@ public static class StaticAssetChecks
             string diagCommand = commands[diagStart..diagEnd];
             c.True(diagCommand.Contains("OptionalBool(\"on\")", StringComparison.Ordinal)
                 && diagCommand.Contains("SetDiagnosticsEnabled(enabled)", StringComparison.Ordinal),
-                ".vhdiag accepts on/off and routes both states through the diagnostics owner");
+                ".dldiag accepts on/off and routes both states through the diagnostics owner");
         }
         c.True(inventory.Contains("bool diagnosticsEnabled = false;", StringComparison.Ordinal)
             && inventory.Contains("if (!diagnosticsEnabled) return;", StringComparison.Ordinal),
@@ -277,7 +277,7 @@ public static class StaticAssetChecks
     /// <summary>
     /// Every switch a command's own help text names has a handler.
     ///
-    /// Written after `.vhtint field on|off` was deleted by accident: removing the neighbouring
+    /// Written after `.dltint field on|off` was deleted by accident: removing the neighbouring
     /// `weight` switch cut from one comment to another and took the block between them with it.
     /// The build stayed green, the property it set was still there, and the help text still
     /// advertised it - so the only symptom would have been a switch that silently did nothing,
@@ -289,7 +289,7 @@ public static class StaticAssetChecks
             "src", "VintageHorizonsModSystem.cs"));
 
         var named = new HashSet<string>();
-        foreach (Match m in Regex.Matches(mod, @"'\.vh\w+ (\w+) on\|off'"))
+        foreach (Match m in Regex.Matches(mod, @"'\.dl\w+ (\w+) on\|off'"))
         {
             named.Add(m.Groups[1].Value);
         }
@@ -729,7 +729,7 @@ public static class StaticAssetChecks
             "src", "Render", "LodTerrainRenderer.cs"));
         string fragment = ShaderBody("fsh");
         string shaders = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "assets",
-            "vintagehorizons", "shaders");
+            "dodenslandscapes", "shaders");
 
         // The opacity term. Vanilla grades water by view angle; cached water was one flat
         // constant, which at the seam let the cached lakebed show through a surface vanilla
@@ -908,13 +908,13 @@ public static class StaticAssetChecks
                 "Environment.GetEnvironmentVariable(\"VINTAGEHORIZONS_CAVE_CULLING\") != \"0\"",
                 StringComparison.Ordinal),
             "cave culling starts on unless the environment explicitly disables it");
-        c.True(mod.Contains("ChatCommands.Create(\"vhcavecull\")", StringComparison.Ordinal),
-            "the cave-culling command uses the explicit .vhcavecull name");
+        c.True(mod.Contains("ChatCommands.Create(\"dlcavecull\")", StringComparison.Ordinal),
+            "the cave-culling command uses the explicit .dlcavecull name");
         c.False(mod.Contains("ChatCommands.Create(\"vhcaves\")", StringComparison.Ordinal),
             "the ambiguous old .vhcaves command is retired");
         c.True(mod.Contains("On by default. Changing it rebuilds distant terrain",
                 StringComparison.Ordinal),
-            "the .vhcavecull help text reports the shipping default");
+            "the .dlcavecull help text reports the shipping default");
     }
 
     /// <summary>
@@ -1004,7 +1004,7 @@ public static class StaticAssetChecks
 
         // The one GPU switch remains as a deliberate failure test. It may disable the product
         // path, but must not reactivate the retired renderer.
-        c.True(mod.Contains("ChatCommands.Create(\"vhgpu\")", StringComparison.Ordinal),
+        c.True(mod.Contains("ChatCommands.Create(\"dlgpu\")", StringComparison.Ordinal),
             "the packed path keeps one explicit fail-loud off switch");
         c.True(renderer.Contains("bool indirectWanted = packedWanted;", StringComparison.Ordinal)
             && renderer.Contains("void RejectIndirectLeftovers", StringComparison.Ordinal)
@@ -1020,7 +1020,7 @@ public static class StaticAssetChecks
         c.True(renderer.Contains("REQUIRED PACKED TERRAIN PATH FAILED", StringComparison.Ordinal)
             && mod.Contains("No legacy fallback exists", StringComparison.Ordinal),
             "missing packed prerequisites fail visibly in both log and command response");
-        c.True(mod.Contains("ChatCommands.Create(\"vhhzb\")", StringComparison.Ordinal),
+        c.True(mod.Contains("ChatCommands.Create(\"dlhzb\")", StringComparison.Ordinal),
             "and the depth report the owner reads stays available");
         c.True(bench.Contains("VINTAGEHORIZONS_GPU_INDIRECT", StringComparison.Ordinal)
             && bench.Contains("$GpuIndirect", StringComparison.Ordinal),
@@ -1041,7 +1041,7 @@ public static class StaticAssetChecks
             "delayed occlusion is suspended while batched drawing is on, in one place");
 
         string shaders = Path.Combine(
-            GameAssemblies.RepoRoot, "VintageHorizons", "assets", "vintagehorizons", "shaders");
+            GameAssemblies.RepoRoot, "VintageHorizons", "assets", "dodenslandscapes", "shaders");
 
         foreach (string stage in new[] { "vsh", "fsh" })
         {
@@ -1250,7 +1250,7 @@ public static class StaticAssetChecks
     /// rule that held in only one variant would be worse than no rule at all.
     /// </summary>
     static string ShaderBody(string stage) => ModShaderSource.Read(Path.Combine(
-        GameAssemblies.RepoRoot, "VintageHorizons", "assets", "vintagehorizons",
+        GameAssemblies.RepoRoot, "VintageHorizons", "assets", "dodenslandscapes",
         "shaderincludes", "lodterrainbody." + stage));
 
     static void PersistenceCadenceWiring(Check c)
@@ -1398,7 +1398,7 @@ public static class StaticAssetChecks
     static void TintSlotAgreement(Check c)
     {
         string assets = Path.Combine(
-            GameAssemblies.RepoRoot, "VintageHorizons", "assets", "vintagehorizons");
+            GameAssemblies.RepoRoot, "VintageHorizons", "assets", "dodenslandscapes");
 
         var found = new Dictionary<string, int>();
         foreach (string path in Directory.EnumerateFiles(assets, "*.*sh", SearchOption.AllDirectories))
@@ -2397,7 +2397,7 @@ public static class StaticAssetChecks
     /// <summary>
     /// The old every-200-sections progress notification ran inside the 50 ms owning-thread
     /// assist callback. The synchronous logger reproduced multi-millisecond service tails;
-    /// cumulative progress already belongs to the stats callback and /vhserver.
+    /// cumulative progress already belongs to the stats callback and /dlserver.
     /// </summary>
     static void AssistServeLoopDoesNotLogProgress(Check c)
     {
@@ -2457,7 +2457,7 @@ public static class StaticAssetChecks
             src, "Gui", "VintageHorizonsSettingsIntegration.cs"));
         string renderer = File.ReadAllText(Path.Combine(src, "Render", "LodTerrainRenderer.cs"));
 
-        c.True(mod.Contains("ChatCommands.Create(\"vhconfig\")", StringComparison.Ordinal),
+        c.True(mod.Contains("ChatCommands.Create(\"dlconfig\")", StringComparison.Ordinal),
             "the player-facing config command remains registered");
         c.True(dialog.Contains("new LodThresholdScaleElement", StringComparison.Ordinal),
             "the config window uses one shared multi-marker LOD scale");
@@ -2643,10 +2643,10 @@ public static class StaticAssetChecks
             "long anti-aliasing labels get a wide single-line smallish-text column");
 
         c.True(settings.Contains(
-                "internal const string HarmonyId = \"vintagehorizons.settingstab\"",
+                "internal const string HarmonyId = \"dodenslandscapes.settingstab\"",
                 StringComparison.Ordinal)
             && settings.Contains(
-                "internal const string PageCode = \"vintagehorizons\"",
+                "internal const string PageCode = \"dodenslandscapes\"",
                 StringComparison.Ordinal)
             && settings.Contains("AddToggleButton(\"Horizons\"", StringComparison.Ordinal),
             "the in-world vanilla Settings header carries a dedicated Horizons tab");
@@ -2657,8 +2657,8 @@ public static class StaticAssetChecks
         c.True(settings.Contains("EnqueueMainThreadTask", StringComparison.Ordinal)
             && settings.Contains("ComposeEmbedded(composer)", StringComparison.Ordinal),
             "the vanilla Settings page re-composes only after its originating click finishes");
-        c.True(settings.Contains("use .vhconfig instead", StringComparison.Ordinal)
-            && mod.Contains("ChatCommands.Create(\"vhconfig\")", StringComparison.Ordinal),
+        c.True(settings.Contains("use .dlconfig instead", StringComparison.Ordinal)
+            && mod.Contains("ChatCommands.Create(\"dlconfig\")", StringComparison.Ordinal),
             "a changed vanilla Settings seam fails back to the command window");
         c.True(settings.Contains("BeforeLeavingSettings", StringComparison.Ordinal)
             && settings.Contains("oldEditor?.CloseEmbedded();", StringComparison.Ordinal),
@@ -2698,7 +2698,7 @@ public static class StaticAssetChecks
             "turning far biome colour on turns the close half on with it");
         c.True(dialog.Contains("? v.ClimateTintRange", StringComparison.Ordinal),
             "and turning the close half off drops the far half back to the near range");
-        c.True(mod.Contains("ChatCommands.Create(\"vhblend\")", StringComparison.Ordinal),
+        c.True(mod.Contains("ChatCommands.Create(\"dlblend\")", StringComparison.Ordinal),
             "the same saved master switch is available as a simple command");
 
         // A water wall is drawn wherever nothing is known about what is beside the water, and
@@ -2873,7 +2873,7 @@ public static class StaticAssetChecks
     static void NoIntegerVectorUniforms(Check c)
     {
         string shaders = Path.Combine(
-            GameAssemblies.RepoRoot, "VintageHorizons", "assets", "vintagehorizons", "shaders");
+            GameAssemblies.RepoRoot, "VintageHorizons", "assets", "dodenslandscapes", "shaders");
         var offenders = new List<string>();
         int scanned = 0;
 
@@ -2906,7 +2906,7 @@ public static class StaticAssetChecks
         string mod = File.ReadAllText(Path.Combine(root, "VintageHorizons", "src",
             "VintageHorizonsModSystem.cs"));
 
-        c.True(mod.Contains("ChatCommands.Create(\"vhocclusion\")", StringComparison.Ordinal),
+        c.True(mod.Contains("ChatCommands.Create(\"dlocclusion\")", StringComparison.Ordinal),
             "the live occlusion toggle is registered");
         c.True(mod.Contains("VINTAGEHORIZONS_OCCLUSION_CULLING\") != \"0\"", StringComparison.Ordinal),
             "post-vanilla depth rejection is default-on with an explicit off override");
@@ -2924,8 +2924,8 @@ public static class StaticAssetChecks
             || renderer.Contains("lodocclusion", StringComparison.Ordinal)
             || renderer.Contains("LodOcclusionProbe", StringComparison.Ordinal),
             "the rejected proxy/conditional-render path is absent");
-        c.True(mod.Contains("ChatCommands.Create(\"vhtemporal\")", StringComparison.Ordinal)
-            && mod.Contains("ChatCommands.Create(\"vhtemporalprofile\")", StringComparison.Ordinal)
+        c.True(mod.Contains("ChatCommands.Create(\"dltemporal\")", StringComparison.Ordinal)
+            && mod.Contains("ChatCommands.Create(\"dltemporalprofile\")", StringComparison.Ordinal)
             && renderer.Contains("RenderOpaqueMesh(key, mesh)", StringComparison.Ordinal)
             && renderer.Contains("QueryTarget.AnySamplesPassed", StringComparison.Ordinal)
             && renderer.Contains("readiness.Classify(key) == VanillaSectionOwnership.Mixed", StringComparison.Ordinal),

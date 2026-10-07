@@ -504,7 +504,7 @@ internal sealed class LodSilhouetteBuilder
         foreach (Demand demand in demands.Values)
         {
             demand.Player.SendMessage(GlobalConstants.GeneralChatGroup,
-                "[VintageHorizons] The world generator stopped answering horizon silhouette previews, "
+                "[Landscapes] The world generator stopped answering horizon silhouette previews, "
                 + "so they are stopped for this session. If leaving the world now hangs, this is why; "
                 + "the server log has the details.", EnumChatType.Notification);
         }
@@ -565,7 +565,7 @@ internal sealed class LodSilhouetteBuilder
         foreach (Demand demand in demands.Values)
         {
             demand.Player.SendMessage(GlobalConstants.GeneralChatGroup,
-                "[VintageHorizons] The world generator reported errors during horizon silhouette "
+                "[Landscapes] The world generator reported errors during horizon silhouette "
                 + "previews, so they are stopped for this session. Silhouettes already built stay; "
                 + "the server log has the details.", EnumChatType.Notification);
         }

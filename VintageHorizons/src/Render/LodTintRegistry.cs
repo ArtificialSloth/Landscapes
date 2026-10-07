@@ -816,7 +816,7 @@ public class LodTintRegistry
     }
 
     /// <summary>
-    /// Take one slot apart, for `.vhtint`.
+    /// Take one slot apart, for `.dltint`.
     ///
     /// Three things separate the colour a cached surface is multiplied by from the colour the
     /// game would multiply the same block by, and each has its own line here so a reading can

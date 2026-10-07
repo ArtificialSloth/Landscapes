@@ -3,7 +3,7 @@ using System.Text;
 namespace VintageHorizons;
 
 /// <summary>
-/// The word layout <c>lodsky.fsh</c> writes for `.vhsky`, one buffer per frame in flight. The
+/// The word layout <c>lodsky.fsh</c> writes for `.dlsky`, one buffer per frame in flight. The
 /// shader indexes these words by number; <c>SkyWitnessChecks</c> holds the two together.
 /// </summary>
 internal static class SkyWitnessLayout

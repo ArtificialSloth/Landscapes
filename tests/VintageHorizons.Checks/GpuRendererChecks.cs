@@ -143,18 +143,18 @@ public static class GpuRendererChecks
                 probeFinalized: true,
                 runtimeSucceeded: true,
                 depthCopySucceeded: false),
-            ".vhgpu on re-arms a finalized depth-copy failure even when compute already passed");
+            ".dlgpu on re-arms a finalized depth-copy failure even when compute already passed");
         c.True(LodGpuProbeRetryPolicy.NeedsManualRecheck(
                 validationRequested: true,
                 probeFinalized: true,
                 runtimeSucceeded: false,
                 depthCopySucceeded: false),
-            ".vhgpu on can explicitly re-check a permanent capability failure");
+            ".dlgpu on can explicitly re-check a permanent capability failure");
 
         string renderer = File.ReadAllText(Path.Combine(
             GameAssemblies.RepoRoot, "VintageHorizons", "src", "Render", "LodTerrainRenderer.cs"));
         c.True(renderer.Contains("ShowChatMessage", StringComparison.Ordinal)
-            && renderer.Contains("Run .vhgpu on to re-check", StringComparison.Ordinal),
+            && renderer.Contains("Run .dlgpu on to re-check", StringComparison.Ordinal),
             "a final GPU-path failure gives the player the explicit re-check command");
     }
 

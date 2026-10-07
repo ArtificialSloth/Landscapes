@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// `.vhsky`: the word layout the shader and the renderer share, the rule that separates a flash
+/// `.dlsky`: the word layout the shader and the renderer share, the rule that separates a flash
 /// from sky that is always there, the ray a report is walked along, and the mask reading it
 /// prints. Also that every vertex reads the climate field, now the retired snow-line comparison is gone.
 /// </summary>
@@ -21,7 +21,7 @@ public static class SkyWitnessChecks
     }
 
     static string Asset(params string[] parts) => File.ReadAllText(Path.Combine(
-        new[] { GameAssemblies.RepoRoot, "VintageHorizons", "assets", "vintagehorizons" }
+        new[] { GameAssemblies.RepoRoot, "VintageHorizons", "assets", "dodenslandscapes" }
             .Concat(parts).ToArray()));
 
     static void TheShaderWritesTheLayoutTheRendererReads(Check c)

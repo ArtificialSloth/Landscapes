@@ -8,7 +8,7 @@
 #   pwsh -NoProfile -File scripts/bench-windows.ps1 `
 #     -Label completed-generation -Route bench/routes/completed-generation.txt `
 #     -ServerMod -ServerConfig bench/configs/completed-generation.json `
-#     -AutoCommand "/vhgen start 8 520000 520000" -RequireGenerationComplete `
+#     -AutoCommand "/dlgen start 8 520000 520000" -RequireGenerationComplete `
 #     -Settle 90 -SettleMax 90 -Measure 30 -Laps 1 -WarmupLaps 0
 
 completed-generation  512020  190  512010  0  -8

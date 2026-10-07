@@ -64,7 +64,7 @@ uniform int maskDebug;
 // The boundary between cached water and vanilla's is the ownership mask below - vanilla's
 // real chunk footprint - exactly as it is for solid ground. This is only a fallback for the
 // near field, where the mask can be slow to commit and the engine's own water is transparent
-// enough for a cached sheet under it to tint it. See .vhwater.
+// enough for a cached sheet under it to tint it. See .dlwater.
 uniform int waterNearChunks;
 
 // The camera's own vanilla chunk column, as two integer scalars. Never a Vec2i: the client's
@@ -144,7 +144,7 @@ uniform float waterShallowness;
 uniform float waterMaxAlpha;
 
 // Match chunkopaque's ground treatment beneath the engine's liquid-depth image.
-// Independent of mesh depth shading and surface effects; .vhwater murk is a live A/B.
+// Independent of mesh depth shading and surface effects; .dlwater murk is a live A/B.
 uniform int waterGroundMurk;
 uniform int waterSurfaceVisible;
 
@@ -286,7 +286,7 @@ uniform int flatTopLight;
 
 // The four terms below each close one measured gap between this shader and vanilla's
 // chunkopaque pair, and each has its own switch so a single dusk-to-night sweep can
-// attribute what it sees. See .vhlight. All default to on.
+// attribute what it sees. See .dllight. All default to on.
 //
 // 1 shades by the engine's own light vector, which follows the sun by day and swings
 // to the moon once moonlight beats sunlight; 0 keeps shading by the sun all night.
@@ -327,7 +327,7 @@ uniform int lightDayBoost;
 // Measured on a flat two-block test patch at the seam: cached granite gravel came out 1.39x
 // vanilla's, of which 1.07x was the stored colour and the remaining 1.29x was this.
 //
-// Uploaded as 1.0 when `.vhlight sun` is off, which is exactly the old behaviour and costs
+// Uploaded as 1.0 when `.dllight sun` is off, which is exactly the old behaviour and costs
 // no branch. Only the vanilla-ambient path takes it: the sunColor fallback beside it is the
 // pre-0.3.51 model kept for comparison, and scaling that would make it a third thing that
 // was never either.
@@ -338,7 +338,7 @@ uniform float sunLightLevel;
 // differ by a factor of 1.25 and by a night floor, so the band this shader fades terrain
 // into did not match the sky behind it, and the mismatch moved with the time of day.
 // SkyDaylight is internal to the engine, but every input to it is public, so the renderer
-// reconstructs it. See .vhlight sky.
+// reconstructs it. See .dllight sky.
 uniform int lightSkyDayLight;
 uniform float skyDayLight;
 

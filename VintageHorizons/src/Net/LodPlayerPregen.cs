@@ -6,7 +6,7 @@ using Vintagestory.API.Server;
 namespace VintageHorizons.Net;
 
 /// <summary>
-/// Walks a bounded area for /vhgen or /vhrefresh. Generation includes terrain that
+/// Walks a bounded area for /dlgen or /dlrefresh. Generation includes terrain that
 /// nobody has generated; refresh only recaptures terrain already in the vanilla save.
 ///
 /// Generation has three phases. PROBE asks the engine which columns exist, exactly as the sweep does.
@@ -140,7 +140,7 @@ public class LodPlayerPregen
 
     /// <summary>
     /// Apply the run's authority to a map classification. Refresh is intentionally unable
-    /// to select Peek: this pure boundary is the proof that /vhrefresh cannot generate a
+    /// to select Peek: this pure boundary is the proof that /dlrefresh cannot generate a
     /// missing vanilla column.
     /// </summary>
     public static EnumRunAction SelectAction(EnumColumnAction action, EnumPurpose purpose) =>
@@ -157,7 +157,7 @@ public class LodPlayerPregen
     ///
     /// World coordinates are never negative, so -1 means "not given". One coordinate
     /// alone used to be ignored in silence, and the run quietly centred somewhere else -
-    /// a person who typed "/vhgen start 10 480000" got a run around themselves and no
+    /// a person who typed "/dlgen start 10 480000" got a run around themselves and no
     /// hint that half their command went nowhere.
     /// </summary>
     public static EnumCentre ResolveCentre(int argX, int argZ, bool callerHasPosition)
@@ -345,7 +345,7 @@ public class LodPlayerPregen
                     continue;
 
                 case EnumRunAction.SkipMissing:
-                    // /vhrefresh is an observation command. An absent vanilla column
+                    // /dlrefresh is an observation command. An absent vanilla column
                     // supplies no snow truth and must remain absent.
                     workIndex++;
                     Missing++;
@@ -450,7 +450,7 @@ public class LodPlayerPregen
         // site to catch anything - the only symptom is a callback that never comes.
         logger.Warning(
             "Generation: {0} peeks never called back and were given up on ({1} total). "
-            + "Those columns are missing from the cache; run /vhgen again to retry them.",
+            + "Those columns are missing from the cache; run /dlgen again to retry them.",
             stale.Count, TimedOut);
     }
 
@@ -492,7 +492,7 @@ public class LodPlayerPregen
                 "Generation: {0} of {1} sampled positions that did not exist before the run "
                 + "now exist in the savegame. A peek must persist nothing, so something on "
                 + "this server generated terrain during the run - a worldgen mod is the "
-                + "likely cause. Treat /vhgen as unsafe here, and please report this.",
+                + "likely cause. Treat /dlgen as unsafe here, and please report this.",
                 verified.Regrown, verified.Checked);
         }
 
@@ -518,7 +518,7 @@ public class LodPlayerPregen
         logger.Notification(string.Format(format, reported));
     }
 
-    /// <summary>One line for /vhgen status and /vhserver.</summary>
+    /// <summary>One line for /dlgen status and /dlserver.</summary>
     public string Status => purpose == EnumPurpose.RefreshExisting
         ? RefreshStatus
         : GenerationStatus;

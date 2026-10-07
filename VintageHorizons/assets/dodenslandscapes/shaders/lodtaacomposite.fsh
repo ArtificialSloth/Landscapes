@@ -16,7 +16,7 @@ uniform sampler2D resolved;
 // Neighbour weight at this sharpening setting, before the contrast adaptation; 0 is off.
 uniform float sharpenLobe;
 
-// .vhtaa show: tint every anti-aliased pixel magenta by its strength.
+// .dltaa show: tint every anti-aliased pixel magenta by its strength.
 uniform int showWeight;
 
 layout(location = 0) out vec4 outColor;

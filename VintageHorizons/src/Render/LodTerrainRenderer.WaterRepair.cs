@@ -22,7 +22,7 @@ public partial class LodTerrainRenderer
     void LoadWaterRepairShader()
     {
         waterRepairProg = capi.Shader.NewShaderProgram();
-        waterRepairProg.AssetDomain = "vintagehorizons";
+        waterRepairProg.AssetDomain = "dodenslandscapes";
         waterRepairProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         waterRepairProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram("lodwaterrepair", waterRepairProg);
@@ -30,7 +30,7 @@ public partial class LodTerrainRenderer
         waterRepairFailed = false;
         if (!ShaderLoadIsProvisional && !waterRepairShaderOk)
             capi.Logger.Error(
-                "[VintageHorizons] requested water-depth repair shader unavailable; cached "
+                "[Landscapes] requested water-depth repair shader unavailable; cached "
                 + "water will be suppressed while repair is enabled.");
     }
 

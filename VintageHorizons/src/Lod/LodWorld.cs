@@ -94,8 +94,8 @@ public class LodWorld
 
     /// <summary>
     /// Compatibility shorthand for the first transition. Setting it rebuilds the
-    /// traditional doubling sequence, which keeps .vhdetail and older configuration
-    /// files meaningful while .vhconfig can edit every threshold independently.
+    /// traditional doubling sequence, which keeps .dldetail and older configuration
+    /// files meaningful while .dlconfig can edit every threshold independently.
     /// </summary>
     public static double DetailDistance
     {
@@ -533,7 +533,7 @@ public class LodWorld
     /// Measured at 951 resident sections, the walk cost 387us a frame and the prune pass
     /// runs the same test over the whole dirty set on top of that.
     ///
-    /// The table is rebuilt when any threshold changes, which .vhconfig can do live.
+    /// The table is rebuilt when any threshold changes, which .dlconfig can do live.
     /// Callers are the render frame and the eviction sweep, both on the main thread, so
     /// no lock is needed; a worker must not call this.
     /// </summary>

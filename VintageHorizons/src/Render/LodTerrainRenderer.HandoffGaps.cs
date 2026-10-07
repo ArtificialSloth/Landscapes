@@ -6,10 +6,10 @@ using Vintagestory.API.Common;
 namespace VintageHorizons;
 
 /// <summary>
-/// `.vhgap`: the handoff gap log, and its release comparison.
+/// `.dlgap`: the handoff gap log, and its release comparison.
 ///
 /// <para>
-/// The flash reported since the snow builds lasts a frame or two. `.vhpaint` turns it magenta,
+/// The flash reported since the snow builds lasts a frame or two. `.dlpaint` turns it magenta,
 /// so the mask is hiding cached terrain there, and without paint the sky shows through, so
 /// nothing else is drawing either. Turning the engine's occlusion culling off did not change
 /// it. The tracker's own counters cannot see this: they describe the tracker's beliefs, and
@@ -78,7 +78,7 @@ public partial class LodTerrainRenderer
         {
             ResetHandoffGaps(now);
             capi.Logger.Notification("{0}",
-                $"[VintageHorizons] gap log {(on ? "on" : "off")} at frame {frameCounter}; "
+                $"[Landscapes] gap log {(on ? "on" : "off")} at frame {frameCounter}; "
                 + $"release comparison {(HandoffGapRelease ? "on" : "off")}.{GapPrecondition()}");
         }
         return DescribeHandoffGaps();
@@ -98,7 +98,7 @@ public partial class LodTerrainRenderer
         }
         HandoffGapRelease = on;
         capi.Logger.Notification("{0}",
-            $"[VintageHorizons] gap release comparison {(on ? "on" : "off")} at frame {frameCounter}: "
+            $"[Landscapes] gap release comparison {(on ? "on" : "off")} at frame {frameCounter}: "
             + (on
                 ? "chunks the engine has stopped drawing (unloaded, fresh, air, no mesh, out of "
                     + "range) are handed to the cache in the frame the scan finds them."
@@ -108,14 +108,14 @@ public partial class LodTerrainRenderer
     }
 
     public string DescribeHandoffGaps() =>
-        $"[VintageHorizons] gap log {(HandoffGapLog ? "on" : "off")}, release comparison "
+        $"[Landscapes] gap log {(HandoffGapLog ? "on" : "off")}, release comparison "
         + $"{(HandoffGapRelease ? "on" : "off")}; {gapEpisodesTotal} gaps since it was turned on, "
         + $"{gapTracker.OpenCount} open now. Every gap, and a summary each busy second (every "
         + "10 s when quiet), goes to the client log." + GapPrecondition();
 
     string GapPrecondition() =>
         !ChunkMaskEnabled || readinessMaskFailed
-            ? " The ownership mask is off, so there is nothing to scan until .vhmask is on."
+            ? " The ownership mask is off, so there is nothing to scan until .dlmask is on."
             : "";
 
     void ResetHandoffGaps(long now)
@@ -324,7 +324,7 @@ public partial class LodTerrainRenderer
 
         VanillaChunkCell cell = episode.Cell;
         var line = new StringBuilder(320);
-        line.Append("[VintageHorizons] gap: chunk ")
+        line.Append("[Landscapes] gap: chunk ")
             .Append(cell.X).Append(',').Append(cell.Y).Append(',').Append(cell.Z)
             .Append(" hid cached terrain while vanilla drew nothing there for ")
             .Append(episode.VisibleFrames).Append(episode.VisibleFrames == 1 ? " frame (" : " frames (")
@@ -366,7 +366,7 @@ public partial class LodTerrainRenderer
         long queueAge = oldest < 0 ? 0 : Math.Max(0, frameCounter - oldest);
 
         capi.Logger.Notification("{0}",
-            $"[VintageHorizons] gap summary, {seconds} s: {began} began ("
+            $"[Landscapes] gap summary, {seconds} s: {began} began ("
             + $"unloaded {Began(VanillaGapReason.Unloaded)}, fresh {Began(VanillaGapReason.Fresh)}, "
             + $"air {Began(VanillaGapReason.Empty)}, no mesh {Began(VanillaGapReason.NoMesh)}, "
             + $"hidden {Began(VanillaGapReason.Hidden)}, "

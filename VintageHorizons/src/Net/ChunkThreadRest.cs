@@ -34,7 +34,7 @@ namespace VintageHorizons.Net;
 /// </summary>
 public static class ChunkThreadRest
 {
-    internal const string HarmonyId = "vintagehorizons.chunkthreadrest";
+    internal const string HarmonyId = "dodenslandscapes.chunkthreadrest";
     internal const string SupplierTypeName = "Vintagestory.Server.ServerSystemSupplyChunks";
     internal const string ScanMethodName = "tryLoadOrGenerateChunkColumnsInQueue";
 
@@ -122,7 +122,7 @@ public static class ChunkThreadRest
             log.Notification(
                 "Chunk thread rest installed and {0}: after a pass over its queue "
                 + "that found nothing to do, the game's chunk thread sleeps as its other threads do "
-                + "instead of going straight round again. Generation itself is unchanged. '/vhchunkrest {1}' "
+                + "instead of going straight round again. Generation itself is unchanged. '/dlchunkrest {1}' "
                 + "switches it {1} for this session.",
                 restOn ? "on" : "off", restOn ? "off" : "on");
             return true;
@@ -169,18 +169,18 @@ public static class ChunkThreadRest
         {
             if (patched == null)
             {
-                return "[VintageHorizons] The chunk thread rest is not installed: "
+                return "[Landscapes] The chunk thread rest is not installed: "
                     + (NotInstalledReason ?? "this server has not started it") + ".";
             }
             if (resting == on)
             {
-                return $"[VintageHorizons] The chunk thread rest is already {(on ? "on" : "off")}.";
+                return $"[Landscapes] The chunk thread rest is already {(on ? "on" : "off")}.";
             }
             resting = on;
             Interlocked.Increment(ref switches);
             logger?.Notification("Chunk thread rest switched {0} by {1}.",
                 on ? "on" : "off", who);
-            return $"[VintageHorizons] Chunk thread rest {(on ? "on" : "off")} for this session. "
+            return $"[Landscapes] Chunk thread rest {(on ? "on" : "off")} for this session. "
                 + "The hitch report's server-work line shows the difference each minute.";
         }
     }

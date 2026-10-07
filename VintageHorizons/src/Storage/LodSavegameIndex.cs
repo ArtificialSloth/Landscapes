@@ -230,7 +230,7 @@ public sealed class LodSavegameIndex : IDisposable
             // an earlier version of this line quoted the column count as though it were the
             // number of probes replaced, which it is not.
             logger.Notification(
-                "[VintageHorizons] Read the savegame directly in {0:0.0}s: {1} columns exist, "
+                "[Landscapes] Read the savegame directly in {0:0.0}s: {1} columns exist, "
                 + "{2} fingerprinted. Reading the file replaces probing the engine one position "
                 + "at a time through the thread that also loads terrain for players.",
                 finishedResult.ElapsedSeconds, exists.Count, prints.Count);
@@ -240,7 +240,7 @@ public sealed class LodSavegameIndex : IDisposable
         catch (Exception e)
         {
             logger.Notification(
-                "[VintageHorizons] Reading the savegame directly did not finish ({0}). "
+                "[Landscapes] Reading the savegame directly did not finish ({0}). "
                 + "The sweep falls back to probing the engine, exactly as before.", e.Message);
             Fail();
         }

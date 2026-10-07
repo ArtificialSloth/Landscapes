@@ -23,7 +23,7 @@ public readonly record struct LodAssistSpanChunk(
 /// <summary>
 /// Client half of the optional server assist (DESIGN.md §10). Stage 1 is handshake only:
 /// it establishes whether an assisting server is on the other end and reports that
-/// through .vhinfo. No terrain moves yet.
+/// through .dlinfo. No terrain moves yet.
 ///
 /// The failure path is the one that matters. Most servers will never have this mod, and
 /// on those the whole class must amount to a channel that is registered and never used.
@@ -45,7 +45,7 @@ public sealed class LodAssistClient
     /// <summary>True once a server has confirmed it will serve terrain.</summary>
     public bool Available => NegotiatedProtocol > 0;
 
-    /// <summary>One line for .vhinfo. Always set to something a player can act on.</summary>
+    /// <summary>One line for .dlinfo. Always set to something a player can act on.</summary>
     public string Status { get; private set; } = "not connected yet";
 
     /// <summary>
@@ -140,8 +140,8 @@ public sealed class LodAssistClient
         if (!channel.Connected)
         {
             // Much the commonest outcome, and not a problem: it is a plain server.
-            Status = "none (server does not have VintageHorizons)";
-            logger.Debug("VintageHorizons: no server assist (channel state {0})",
+            Status = "none (server does not have Doden's Landscapes)";
+            logger.Debug("Doden's Landscapes: no server assist (channel state {0})",
                 capi.Network.GetChannelState(LodAssist.ChannelName));
             return;
         }
@@ -161,7 +161,7 @@ public sealed class LodAssistClient
         catch (Exception e)
         {
             Status = "unavailable (handshake failed)";
-            logger.Warning("VintageHorizons: server assist handshake failed, continuing without it: {0}", e);
+            logger.Warning("Doden's Landscapes: server assist handshake failed, continuing without it: {0}", e);
         }
     }
 
@@ -185,9 +185,9 @@ public sealed class LodAssistClient
         {
             NegotiatedProtocol = 0;
             Status = reason.Length > 0
-                ? $"server has VintageHorizons but the assist is off ({reason})"
-                : "server has VintageHorizons but the assist is off";
-            logger.Notification("VintageHorizons: {0}", Status);
+                ? $"server has Doden's Landscapes but the assist is off ({reason})"
+                : "server has Doden's Landscapes but the assist is off";
+            logger.Notification("Doden's Landscapes: {0}", Status);
             return;
         }
 
@@ -197,13 +197,13 @@ public sealed class LodAssistClient
         {
             NegotiatedProtocol = 0;
             Status = $"server assist unusable (its protocol {msg.Protocol}, ours {LodAssist.Protocol})";
-            logger.Warning("VintageHorizons: {0}", Status);
+            logger.Warning("Doden's Landscapes: {0}", Status);
             return;
         }
 
         NegotiatedProtocol = negotiated;
         Status = $"connected to server {version} (protocol {negotiated})";
-        logger.Notification("VintageHorizons: server assist {0}", Status);
+        logger.Notification("Doden's Landscapes: server assist {0}", Status);
     }
 
     internal void OnWorldGenStatus(AssistWorldGenStatus status) =>
@@ -235,7 +235,7 @@ public sealed class LodAssistClient
         }
         catch (Exception e)
         {
-            logger.Warning("VintageHorizons: the silhouette request failed, continuing without it: {0}",
+            logger.Warning("Doden's Landscapes: the silhouette request failed, continuing without it: {0}",
                 e.Message);
             return false;
         }
@@ -253,7 +253,7 @@ public sealed class LodAssistClient
         }
         catch (Exception e)
         {
-            logger.Warning("VintageHorizons: the silhouette tile request failed: {0}", e.Message);
+            logger.Warning("Doden's Landscapes: the silhouette tile request failed: {0}", e.Message);
             return false;
         }
     }
@@ -328,7 +328,7 @@ public sealed class LodAssistClient
             {
                 RequestId = requestId,
                 Success = false,
-                Message = "[VintageHorizons] Generate World is unavailable on this server.",
+                Message = "[Landscapes] Generate World is unavailable on this server.",
                 State = EnumWorldGenRemoteState.Unavailable,
                 CanControl = CanControlWorldGeneration,
                 Action = action,
@@ -352,12 +352,12 @@ public sealed class LodAssistClient
         }
         catch (Exception e)
         {
-            logger.Warning("VintageHorizons: Generate World request failed: {0}", e);
+            logger.Warning("Doden's Landscapes: Generate World request failed: {0}", e);
             OnWorldGenStatus(new AssistWorldGenStatus
             {
                 RequestId = requestId,
                 Success = false,
-                Message = "[VintageHorizons] The Generate World request could not be sent.",
+                Message = "[Landscapes] The Generate World request could not be sent.",
                 State = WorldGenStatus?.State ?? EnumWorldGenRemoteState.Unavailable,
                 Available = WorldGenerationAvailable,
                 CanControl = CanControlWorldGeneration,
@@ -492,7 +492,7 @@ public sealed class LodAssistClient
         catch (Exception e)
         {
             foreach (long key in sent) inFlight.Remove(key);
-            logger.Warning("VintageHorizons: section request failed: {0}", e);
+            logger.Warning("Doden's Landscapes: section request failed: {0}", e);
             return Array.Empty<long>();
         }
     }
@@ -623,7 +623,7 @@ public sealed class LodAssistClient
                 // count it announced at join is no longer the number to measure against.
                 if (ManifestComplete)
                 {
-                    logger.Debug("VintageHorizons: server offered more sections, {0} now known",
+                    logger.Debug("Doden's Landscapes: server offered more sections, {0} now known",
                         RemoteKeys.Count);
                 }
                 else
@@ -633,7 +633,7 @@ public sealed class LodAssistClient
                     // mid-send, expected on a live server and worth seeing rather than silently
                     // tolerating once transfer starts trusting this set.
                     logger.Notification(
-                        "VintageHorizons: server key manifest complete - {0} keys received{1}",
+                        "Doden's Landscapes: server key manifest complete - {0} keys received{1}",
                         RemoteKeys.Count,
                         ManifestExpected > 0 && ManifestExpected != RemoteKeys.Count
                             ? $" (server announced {ManifestExpected})" : "");

@@ -16,7 +16,7 @@ public static class LodAssist
     /// Channel name, identical on both sides or they do not link up. Registering it is
     /// safe against a vanilla server: the channel simply never reaches Connected.
     /// </summary>
-    public const string ChannelName = "vintagehorizons";
+    public const string ChannelName = "dodenslandscapes";
 
     /// <summary>
     /// Wire protocol version, bumped whenever a message changes meaning rather than
@@ -141,7 +141,7 @@ public class AssistWelcome
     [ProtoMember(2)] public string ModVersion = "";
     [ProtoMember(3)] public bool Enabled;
 
-    /// <summary>Human-readable reason, surfaced verbatim by .vhinfo. Not parsed.</summary>
+    /// <summary>Human-readable reason, surfaced verbatim by .dlinfo. Not parsed.</summary>
     [ProtoMember(4)] public string Status = "";
 
     /// <summary>

@@ -3,7 +3,7 @@ using Vintagestory.API.Client;
 namespace VintageHorizons;
 
 /// <summary>
-/// Opt-in development side panel. It deliberately has no close action: use `.vhdiag off` so
+/// Opt-in development side panel. It deliberately has no close action: use `.dldiag off` so
 /// the command state and the visible window cannot disagree. Hold Alt to release the mouse,
 /// then drag the title bar.
 /// </summary>
@@ -23,7 +23,7 @@ internal sealed class VintageHorizonsDiagnosticsHud : HudElement
     readonly string[] previous = new string[ColumnCount];
     long nextRefreshAt;
 
-    public override string DebugName => "vintagehorizons-development-config";
+    public override string DebugName => "dodenslandscapes-development-config";
     public override string? ToggleKeyCombinationCode => null;
     public override bool PrefersUngrabbedMouse => false;
     public override bool Focusable => false;
@@ -91,13 +91,13 @@ internal sealed class VintageHorizonsDiagnosticsHud : HudElement
         {
             columns = new[]
             {
-                "Vintage Horizons\n\nConfiguration panel error = ON\n" + e.GetType().Name,
+                "Doden's Landscapes\n\nConfiguration panel error = ON\n" + e.GetType().Name,
                 "",
             };
         }
 
         if (columns.Length != ColumnCount)
-            columns = new[] { "Vintage Horizons\n\nConfiguration panel error = ON", "" };
+            columns = new[] { "Doden's Landscapes\n\nConfiguration panel error = ON", "" };
 
         // The snapshot contains settings only, so it normally never changes. More importantly,
         // an unchanged poll performs no Cairo text rebuild and no bounds/layout recalculation.

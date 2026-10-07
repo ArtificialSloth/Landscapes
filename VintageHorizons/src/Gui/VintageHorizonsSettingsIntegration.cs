@@ -14,9 +14,9 @@ namespace VintageHorizons;
 /// </summary>
 internal sealed class VintageHorizonsSettingsIntegration : IDisposable
 {
-    internal const string HarmonyId = "vintagehorizons.settingstab";
-    internal const string PageCode = "vintagehorizons";
-    const string ComposerName = "gamesettings-vintagehorizons";
+    internal const string HarmonyId = "dodenslandscapes.settingstab";
+    internal const string PageCode = "dodenslandscapes";
+    const string ComposerName = "gamesettings-dodenslandscapes";
     const double HorizonsButtonWidth = 116;
     const double HeaderGap = 15;
 
@@ -74,14 +74,14 @@ internal sealed class VintageHorizonsSettingsIntegration : IDisposable
             || escapeHome == null || escapeClosed == null)
         {
             logger.Warning(
-                "Vintage Horizons could not find the 1.22 in-game Settings seam; use .vhconfig instead.");
+                "Doden's Landscapes could not find the 1.22 in-game Settings seam; use .dlconfig instead.");
             return false;
         }
 
         if (Interlocked.CompareExchange(ref active, this, null) != null)
         {
             logger.Error(
-                "Vintage Horizons found a second Settings-tab owner; use .vhconfig instead.");
+                "Doden's Landscapes found a second Settings-tab owner; use .dlconfig instead.");
             return false;
         }
 
@@ -104,14 +104,14 @@ internal sealed class VintageHorizonsSettingsIntegration : IDisposable
             RemoveHooks();
             Interlocked.CompareExchange(ref active, null, this);
             logger.Warning(
-                "Vintage Horizons could not add its Settings tab; use .vhconfig instead: {0}",
+                "Doden's Landscapes could not add its Settings tab; use .dlconfig instead: {0}",
                 e.Message);
             return false;
         }
 
         installed = true;
         logger.Notification(
-            "Vintage Horizons is available from the in-game Settings header and .vhconfig");
+            "Doden's Landscapes is available from the in-game Settings header and .dlconfig");
         return true;
     }
 
@@ -172,7 +172,7 @@ internal sealed class VintageHorizonsSettingsIntegration : IDisposable
         catch (Exception e)
         {
             logger?.Warning(
-                "Vintage Horizons could not extend this Settings header; .vhconfig still works: {0}",
+                "Doden's Landscapes could not extend this Settings header; .dlconfig still works: {0}",
                 e.Message);
         }
     }
@@ -180,7 +180,7 @@ internal sealed class VintageHorizonsSettingsIntegration : IDisposable
     void QueueOpen(GuiCompositeSettings settings)
     {
         capi.Event.EnqueueMainThreadTask(() => OpenPage(settings),
-            "vintagehorizons-open-settings-page");
+            "dodenslandscapes-open-settings-page");
     }
 
     void OpenPage(GuiCompositeSettings settings)
@@ -209,7 +209,7 @@ internal sealed class VintageHorizonsSettingsIntegration : IDisposable
         catch (Exception e)
         {
             logger?.Error(
-                "Vintage Horizons could not compose its Settings page; returning to the pause menu: {0}",
+                "Doden's Landscapes could not compose its Settings page; returning to the pause menu: {0}",
                 e.InnerException?.Message ?? e.Message);
             IGameSettingsHandler? handler = activeHandler;
             CancelActivePage();
@@ -226,7 +226,7 @@ internal sealed class VintageHorizonsSettingsIntegration : IDisposable
     void QueueCloseActivePage()
     {
         capi.Event.EnqueueMainThreadTask(FinishActivePage,
-            "vintagehorizons-close-settings-page");
+            "dodenslandscapes-close-settings-page");
     }
 
     void FinishActivePage()

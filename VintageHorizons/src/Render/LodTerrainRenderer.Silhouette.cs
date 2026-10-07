@@ -131,17 +131,17 @@ public partial class LodTerrainRenderer
         // pays no compile (plan 4.10). A shader reload after that recompiles it with the others.
         if (!silhouetteShaderWanted) return;
         silhouetteProg = capi.Shader.NewShaderProgram();
-        silhouetteProg.AssetDomain = "vintagehorizons";
+        silhouetteProg.AssetDomain = "dodenslandscapes";
         silhouetteProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         silhouetteProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram("lodsilhouette", silhouetteProg);
         silhouetteFogVolumeProg = capi.Shader.NewShaderProgram();
-        silhouetteFogVolumeProg.AssetDomain = "vintagehorizons";
+        silhouetteFogVolumeProg.AssetDomain = "dodenslandscapes";
         silhouetteFogVolumeProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         silhouetteFogVolumeProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram("lodsilhouettefogvolume", silhouetteFogVolumeProg);
         silhouetteFogUpsampleProg = capi.Shader.NewShaderProgram();
-        silhouetteFogUpsampleProg.AssetDomain = "vintagehorizons";
+        silhouetteFogUpsampleProg.AssetDomain = "dodenslandscapes";
         silhouetteFogUpsampleProg.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         silhouetteFogUpsampleProg.FragmentShader =
             capi.Shader.NewShader(EnumShaderType.FragmentShader);
@@ -154,13 +154,13 @@ public partial class LodTerrainRenderer
         if (silhouetteShaderOk)
         {
             capi.Logger.Notification(
-                "[VintageHorizons] the lodsilhouette shader compiled; horizon silhouettes can draw.");
+                "[Landscapes] the lodsilhouette shader compiled; horizon silhouettes can draw.");
         }
         else
         {
             // Fails visibly, never plausibly (settled decision 26): nothing is drawn in its place.
             capi.Logger.Error(
-                "[VintageHorizons] the lodsilhouette shader failed to compile; horizon silhouettes "
+                "[Landscapes] the lodsilhouette shader failed to compile; horizon silhouettes "
                 + "stay off for this session. This is ours, not your setup.");
         }
     }
@@ -458,7 +458,7 @@ public partial class LodTerrainRenderer
             {
                 next?.Dispose();
                 if (++silhouetteUploadFailures == 1)
-                    capi.Logger.Error("[VintageHorizons] a horizon silhouette upload failed; "
+                    capi.Logger.Error("[Landscapes] a horizon silhouette upload failed; "
                         + "the previous complete tile remains: {0}", e);
                 continue;
             }

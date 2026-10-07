@@ -10,7 +10,7 @@ set -euo pipefail
 #
 # Examples:
 #   scripts/bench.sh vanilla                            # no LOD mod at all: the baseline
-#   scripts/bench.sh vintagehorizons --mods dist/vintagehorizons_0.1.0.zip
+#   scripts/bench.sh dodenslandscapes --mods dist/dodenslandscapes_0.1.0.zip
 #   scripts/bench.sh farseer --mods /path/farseer.zip --server-mods /path/farseer.zip
 #
 # The label names the configuration under test and appears in every output filename, so
@@ -93,7 +93,7 @@ install_mods "$CLIENT_MODS" "$client_mods"
 install_mods "$SERVER_MODS" "$server_mods"
 
 # The harness itself is always present on the client, whatever is under test.
-BENCH_MOD="$ROOT/bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/vintagehorizonsbench"
+BENCH_MOD="$ROOT/bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/dodenslandscapesbench"
 [[ -d "$BENCH_MOD" ]] || { echo "bench.sh: build the harness first (dotnet build bench/VintageHorizonsBench)" >&2; exit 2; }
 cp -r "$BENCH_MOD" "$CLIENT_MODS/"
 
@@ -101,7 +101,7 @@ cp -r "$BENCH_MOD" "$CLIENT_MODS/"
 if [[ -n "$detail" ]]; then
     mkdir -p "$VH_SANDBOX/ModConfig"
     printf '{\n  "FarViewDistanceCap": 0,\n  "DetailDistance": %s\n}\n' "$detail" \
-        > "$VH_SANDBOX/ModConfig/vintagehorizons.json"
+        > "$VH_SANDBOX/ModConfig/dodenslandscapes.json"
     echo "  detail distance pinned to $detail"
 fi
 

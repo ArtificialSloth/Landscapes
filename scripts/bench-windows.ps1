@@ -101,9 +101,9 @@ $serverMods = Join-Path $serverData 'Mods'
 $seedDir = Join-Path $sandboxRoot 'seed'
 $clientPidFile = Join-Path $sandbox 'test-instance.pid'
 $serverPidFile = Join-Path $serverData 'server.pid'
-$clientCacheDir = Join-Path $sandbox 'ModData\vintagehorizons'
+$clientCacheDir = Join-Path $sandbox 'ModData\dodenslandscapes'
 $serverCacheDir = if ($IntegratedSingleplayer) { $clientCacheDir } else {
-    Join-Path $serverData 'ModData\vintagehorizons'
+    Join-Path $serverData 'ModData\dodenslandscapes'
 }
 $clientMainLog = Join-Path $sandbox 'Logs\client-main.log'
 $seedManifest = Join-Path $benchOut 'seed-profile.json'
@@ -319,7 +319,7 @@ function Get-ReportedPersistedMipObligations {
     if (-not (Test-Path -LiteralPath $clientMainLog -PathType Leaf)) { return $null }
     $logText = Get-Content -LiteralPath $clientMainLog -Raw -ErrorAction Stop
     $found = [regex]::Matches(
-        $logText, '\[vintagehorizons\] LOD cache: [^\r\n]+ \((?<count>\d+) persisted mip obligations\)')
+        $logText, '\[dodenslandscapes\] LOD cache: [^\r\n]+ \((?<count>\d+) persisted mip obligations\)')
     if ($found.Count -eq 0) { return $null }
     return [int64]$found[$found.Count - 1].Groups['count'].Value
 }
@@ -656,7 +656,7 @@ function Get-ClientGpuRenderRecord {
     if (-not (Test-Path -LiteralPath $clientMainLog -PathType Leaf)) { return $null }
     $lines = @(Get-Content -LiteralPath $clientMainLog -ErrorAction Stop)
     $probeLine = @($lines | Where-Object {
-        ([string]$_).IndexOf('[VintageHorizons] GPU probe:', [StringComparison]::Ordinal) -ge 0
+        ([string]$_).IndexOf('[Landscapes] GPU probe:', [StringComparison]::Ordinal) -ge 0
     } | Select-Object -Last 1)[0]
 
     $timerPattern =
@@ -908,8 +908,8 @@ $requiredInputs = @(
     (Join-Path $game 'Vintagestory.dll'),
     (Join-Path $game 'VintagestoryServer.dll'),
     $routePath,
-    (Join-Path $repoRoot 'VintageHorizons/bin/Debug/net10.0/Mods/vintagehorizons'),
-    (Join-Path $repoRoot 'bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/vintagehorizonsbench')
+    (Join-Path $repoRoot 'VintageHorizons/bin/Debug/net10.0/Mods/dodenslandscapes'),
+    (Join-Path $repoRoot 'bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/dodenslandscapesbench')
 )
 if ($serverConfigPath) { $requiredInputs += $serverConfigPath }
 foreach ($required in $requiredInputs) {
@@ -974,11 +974,11 @@ if ($null -ne $seedRecords.serverCache) {
         (Join-Path $serverCacheDir ([string]$seedRecords.serverCache.name))
 }
 Assert-FreshAssembly `
-    (Join-Path $repoRoot 'VintageHorizons/bin/Debug/net10.0/Mods/vintagehorizons/VintageHorizons.dll') `
+    (Join-Path $repoRoot 'VintageHorizons/bin/Debug/net10.0/Mods/dodenslandscapes/DodensLandscapes.dll') `
     (Join-Path $repoRoot 'VintageHorizons/VintageHorizons.csproj') `
     (Join-Path $repoRoot 'VintageHorizons/src')
 Assert-FreshAssembly `
-    (Join-Path $repoRoot 'bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/vintagehorizonsbench/VintageHorizonsBench.dll') `
+    (Join-Path $repoRoot 'bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/dodenslandscapesbench/VintageHorizonsBench.dll') `
     (Join-Path $repoRoot 'bench/VintageHorizonsBench/VintageHorizonsBench.csproj') `
     (Join-Path $repoRoot 'bench/VintageHorizonsBench/src')
 $prelaunchCacheFiles = @(Get-ClientCacheFiles)
@@ -1030,16 +1030,16 @@ if (-not $IntegratedSingleplayer -and $null -eq $server) {
     New-Item -ItemType Directory -Path $serverMods | Out-Null
 }
 
-Copy-Item -LiteralPath (Join-Path $repoRoot 'VintageHorizons/bin/Debug/net10.0/Mods/vintagehorizons') -Destination $clientMods -Recurse
-Copy-Item -LiteralPath (Join-Path $repoRoot 'bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/vintagehorizonsbench') -Destination $clientMods -Recurse
+Copy-Item -LiteralPath (Join-Path $repoRoot 'VintageHorizons/bin/Debug/net10.0/Mods/dodenslandscapes') -Destination $clientMods -Recurse
+Copy-Item -LiteralPath (Join-Path $repoRoot 'bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/dodenslandscapesbench') -Destination $clientMods -Recurse
 if (-not $IntegratedSingleplayer -and $null -eq $server -and $ServerMod) {
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'VintageHorizons/bin/Debug/net10.0/Mods/vintagehorizons') -Destination $serverMods -Recurse
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'VintageHorizons/bin/Debug/net10.0/Mods/dodenslandscapes') -Destination $serverMods -Recurse
 }
 if ($serverConfigPath) {
     $serverConfigDir = if ($IntegratedSingleplayer) {
         Join-Path $sandbox 'ModConfig'
     } else { Join-Path $serverData 'ModConfig' }
-    $serverConfigTarget = Join-Path $serverConfigDir 'vintagehorizons-server.json'
+    $serverConfigTarget = Join-Path $serverConfigDir 'dodenslandscapes-server.json'
     Assert-UnderSandbox $serverConfigTarget
     New-Item -ItemType Directory -Path $serverConfigDir -Force | Out-Null
     Copy-Item -LiteralPath $serverConfigPath -Destination $serverConfigTarget -Force

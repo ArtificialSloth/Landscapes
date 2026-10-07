@@ -57,6 +57,10 @@ public class LodAssistServerSystem : ModSystem
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Server;
 
+    public override bool ShouldLoad(ICoreAPI api) => base.ShouldLoad(api) && !ModIdentity.OriginalModBlocks(api);
+
+    public override void StartPre(ICoreAPI api) => ModIdentity.TakeOverLegacyData(api, Mod.Logger);
+
     public override void StartServerSide(ICoreServerAPI api)
     {
         sapi = api;
@@ -98,8 +102,8 @@ public class LodAssistServerSystem : ModSystem
 
         api.Event.PlayerDisconnect += OnPlayerDisconnect;
 
-        api.ChatCommands.Create("vhserver")
-            .WithDescription("VintageHorizons server assist status")
+        api.ChatCommands.Create("dlserver")
+            .WithDescription("Doden's Landscapes server assist status")
             .RequiresPrivilege(Privilege.controlserver)
             .HandleWith(_ =>
             {
@@ -107,41 +111,41 @@ public class LodAssistServerSystem : ModSystem
                 LodServerConfig config = capture?.Config ?? new LodServerConfig();
                 var lines = new List<string>
                 {
-                    $"[VintageHorizons] {config.Describe()}. Cache: {capture?.SectionCount ?? 0} sections, "
+                    $"[Landscapes] {config.Describe()}. Cache: {capture?.SectionCount ?? 0} sections, "
                     + $"{capture?.ColumnsCaptured ?? 0} columns captured. Served {sectionsServed} sections "
                     + $"({bytesServed / 1e6:0.0} MB, {(sectionsServed > 0 ? blobReadMs / sectionsServed : 0):0.00}ms avg read), "
                     + $"{sectionsOutsideRadius} refused as out of radius, {sectionsRefused} refused unserved, "
                     + $"{pendingByPlayer.Count} players waiting, "
                     + $"{manifestDeltasSent} new-key and {refreshManifestsSent} refresh offers "
                     + "sent to connected players.",
-                    $"[VintageHorizons] Section sync: cache {DescribeCacheVersion(capture)}; "
+                    $"[Landscapes] Section sync: cache {DescribeCacheVersion(capture)}; "
                     + $"{syncLedger.Syncing} players syncing by version; {joinSpansSent} join spans "
                     + $"({fromZeroSpansSent} full re-checks) and {liveSpansSent} live spans sent, "
                     + $"{spanKeysSent} changed sections announced.",
                     capture?.CacheWorkStatusLine
                         ?? LodServerCaptureSystem.FormatCacheWorkStatus(0, 0, 0, 0, 0, 0, 0, 0),
                 };
-                if (capture?.SweepStatus is string sw) lines.Add("[VintageHorizons] " + sw + ".");
-                if (capture?.PregenStatus is string pg) lines.Add("[VintageHorizons] " + pg + ".");
-                if (capture?.GenerateStatus is string gn) lines.Add("[VintageHorizons] " + gn + ".");
-                if (capture?.RefreshStatus is string rf) lines.Add("[VintageHorizons] " + rf + ".");
+                if (capture?.SweepStatus is string sw) lines.Add("[Landscapes] " + sw + ".");
+                if (capture?.PregenStatus is string pg) lines.Add("[Landscapes] " + pg + ".");
+                if (capture?.GenerateStatus is string gn) lines.Add("[Landscapes] " + gn + ".");
+                if (capture?.RefreshStatus is string rf) lines.Add("[Landscapes] " + rf + ".");
                 if (capture?.WorldGenStatus is string wg) lines.Add(wg);
-                lines.Add("[VintageHorizons] Settings live in "
-                    + "ModConfig/vintagehorizons-server.json (restart to apply).");
+                lines.Add("[Landscapes] Settings live in "
+                    + "ModConfig/dodenslandscapes-server.json (restart to apply).");
 
                 foreach (string line in lines) Mod.Logger.Notification("{0}", line);
                 return TextCommandResult.Success(string.Join(Environment.NewLine, lines));
             });
 
         Mod.Logger.Notification(
-            "VintageHorizons {0} server assist listening. Players without the mod are "
+            "Doden's Landscapes {0} server assist listening. Players without the mod are "
             + "unaffected and do not need to install anything.",
             Mod.Info.Version);
     }
 
     void OnHello(IServerPlayer fromPlayer, AssistHello msg)
     {
-        Mod.Logger.Debug("VintageHorizons: assist hello from {0} (client {1}, protocol {2})",
+        Mod.Logger.Debug("Doden's Landscapes: assist hello from {0} (client {1}, protocol {2})",
             fromPlayer.PlayerName, msg.ModVersion, msg.Protocol);
 
         // Answered from the main thread, one tick later, rather than from here. Message
@@ -149,7 +153,7 @@ public class LodAssistServerSystem : ModSystem
         // from a HashSet the capture pipeline mutates every tick - reading it here is a
         // torn read, and the count would disagree with the manifest that follows it
         // (observed: announced 5634, sent 5638, four sections captured in between).
-        sapi.Event.EnqueueMainThreadTask(() => Answer(fromPlayer, msg), "vintagehorizons-hello");
+        sapi.Event.EnqueueMainThreadTask(() => Answer(fromPlayer, msg), "dodenslandscapes-hello");
     }
 
     /// <summary>
@@ -219,7 +223,7 @@ public class LodAssistServerSystem : ModSystem
         // Network callbacks are not the server owner thread. The generator, its confirmation
         // ledger and every engine query below are owner-thread state.
         sapi.Event.EnqueueMainThreadTask(() => HandleWorldGenRequest(fromPlayer, request),
-            "vintagehorizons-worldgen-request");
+            "dodenslandscapes-worldgen-request");
     }
 
     void OnSilhouetteRequest(IServerPlayer fromPlayer, AssistSilhouetteRequest request)
@@ -229,7 +233,7 @@ public class LodAssistServerSystem : ModSystem
         {
             if (silhouettes == null || !silhouettesOffered || !ledger.HasGreeted(fromPlayer.PlayerUID)) return;
             silhouettes.Request(fromPlayer, request);
-        }, "vintagehorizons-silhouette-request");
+        }, "dodenslandscapes-silhouette-request");
     }
 
     void OnSilhouetteTileRequest(IServerPlayer fromPlayer, AssistSilhouetteTileRequest request)
@@ -239,7 +243,7 @@ public class LodAssistServerSystem : ModSystem
             if (silhouettes == null || !silhouettesOffered || !ledger.HasGreeted(fromPlayer.PlayerUID))
                 return;
             silhouettes.RequestTiles(fromPlayer, request);
-        }, "vintagehorizons-silhouette-tile-request");
+        }, "dodenslandscapes-silhouette-tile-request");
     }
 
     bool SendSilhouetteManifest(IServerPlayer player, AssistSilhouetteManifest manifest)
@@ -301,7 +305,7 @@ public class LodAssistServerSystem : ModSystem
                 EnumWorldGenControlAction.Pause => owner.WorldGenPause(),
                 EnumWorldGenControlAction.Resume => owner.WorldGenResume(),
                 EnumWorldGenControlAction.Stop => owner.WorldGenStop(player.PlayerUID),
-                _ => (false, "[VintageHorizons] The Generate page sent an unknown action."),
+                _ => (false, "[Landscapes] The Generate page sent an unknown action."),
             };
         }
 
@@ -329,13 +333,13 @@ public class LodAssistServerSystem : ModSystem
         bool canControl, EnumWorldGenControlAction action)
     {
         if (!greeted)
-            return "[VintageHorizons] The Generate page has not completed its server handshake.";
+            return "[Landscapes] The Generate page has not completed its server handshake.";
         if (!captureAvailable)
-            return "[VintageHorizons] Savegame world generation is unavailable on this server.";
+            return "[Landscapes] Savegame world generation is unavailable on this server.";
         if (!Enum.IsDefined(action))
-            return "[VintageHorizons] The Generate page sent an unknown action.";
+            return "[Landscapes] The Generate page sent an unknown action.";
         if (action != EnumWorldGenControlAction.Status && !canControl)
-            return "[VintageHorizons] You may view progress, but controlserver permission is required to change it.";
+            return "[Landscapes] You may view progress, but controlserver permission is required to change it.";
         return null;
     }
 
@@ -345,9 +349,9 @@ public class LodAssistServerSystem : ModSystem
     /// Tell connected players about sections the cache gained since they joined.
     ///
     /// The manifest used to be sent once, on the greeting, and that was the only one a
-    /// client ever got. An admin running /vhgen while people were online therefore built
+    /// client ever got. An admin running /dlgen while people were online therefore built
     /// terrain none of them could ask for: a client only requests keys it has been
-    /// offered, so ".vhwhy" reported "no-data" for ground the server had held for hours,
+    /// offered, so ".dlwhy" reported "no-data" for ground the server had held for hours,
     /// and relogging was the only cure. Reported from the field against 0.2.0. A sweep
     /// that finishes late, and ordinary exploring by other players, did the same.
     ///
@@ -374,7 +378,7 @@ public class LodAssistServerSystem : ModSystem
 
         if (told == 0) return;
         manifestDeltasSent += told;
-        Mod.Logger.Debug("VintageHorizons: offered {0} newly cached sections to {1} player(s)",
+        Mod.Logger.Debug("Doden's Landscapes: offered {0} newly cached sections to {1} player(s)",
             delta.Length, told);
     }
 
@@ -430,7 +434,7 @@ public class LodAssistServerSystem : ModSystem
                 return;
             }
             syncLedger.Abandon(uid, query.Session);
-            Mod.Logger.Warning("VintageHorizons: could not read which cached sections changed for a "
+            Mod.Logger.Warning("Doden's Landscapes: could not read which cached sections changed for a "
                 + "player, so this session they receive live refreshes only; their record is kept.");
             return;
         }
@@ -447,7 +451,7 @@ public class LodAssistServerSystem : ModSystem
         {
             fromZeroSpansSent++;
             Mod.Logger.Notification(
-                "VintageHorizons: {0} has no record of this server's LOD cache (a first join since "
+                "Doden's Landscapes: {0} has no record of this server's LOD cache (a first join since "
                 + "section versions, or the cache was rebuilt since). Sent all {1} level-0 sections, "
                 + "cache version {2}: the client re-checks every one it holds, in the background.",
                 player.PlayerName, result.Keys.Length, result.To);
@@ -455,7 +459,7 @@ public class LodAssistServerSystem : ModSystem
         else
         {
             Mod.Logger.Notification(
-                "VintageHorizons: {0} was caught up to cache version {1}; {2} level-0 sections "
+                "Doden's Landscapes: {0} was caught up to cache version {1}; {2} level-0 sections "
                 + "changed since, up to version {3}.",
                 player.PlayerName, result.From, result.Keys.Length, result.To);
         }
@@ -485,7 +489,7 @@ public class LodAssistServerSystem : ModSystem
 
         refreshManifestsSent += told;
         if (told > 0)
-            Mod.Logger.Debug("VintageHorizons: offered {0} refreshed L0 sections to {1} player(s)",
+            Mod.Logger.Debug("Doden's Landscapes: offered {0} refreshed L0 sections to {1} player(s)",
                 result.Keys.Length, told);
     }
 
@@ -596,7 +600,7 @@ public class LodAssistServerSystem : ModSystem
             // cap that is the whole client, permanently stuck. Same rule as M7 stage 4:
             // only keys actually answered may be forgotten.
             foreach (long key in keys.Skip(room)) Refuse(fromPlayer, key);
-        }, "vintagehorizons-request");
+        }, "dodenslandscapes-request");
     }
 
     const int MaxQueuedPerPlayer = 256;
@@ -835,7 +839,7 @@ public class LodAssistServerSystem : ModSystem
 
         if (emptied != null) foreach (string uid in emptied) pendingByPlayer.Remove(uid);
 
-        // Cumulative progress is reported by the opt-in stats callback and /vhserver.
+        // Cumulative progress is reported by the opt-in stats callback and /dlserver.
         // Do not write a synchronous notification from this 50 ms owning-thread path:
         // the 200-section progress line itself reproduced multi-millisecond serve tails.
     }
@@ -1117,7 +1121,7 @@ public class LodAssistServerSystem : ModSystem
             }, player);
         }
 
-        Mod.Logger.Debug("VintageHorizons: sent {0} keys to {1} in {2} chunks",
+        Mod.Logger.Debug("Doden's Landscapes: sent {0} keys to {1} in {2} chunks",
             keys.Length, player.PlayerName, sequence);
     }
 
@@ -1154,14 +1158,14 @@ public class LodAssistServerSystem : ModSystem
             if (!sapi.Server.IsDedicated)
             {
                 Mod.Logger.Notification("Horizon silhouettes are switched off in "
-                    + "ModConfig/vintagehorizons-server.json: this world offers none and keeps no heights for them.");
+                    + "ModConfig/dodenslandscapes-server.json: this world offers none and keeps no heights for them.");
             }
             return;
         }
         if (!silhouettesOffered)
         {
             Mod.Logger.Notification("Horizon silhouettes: measuring heights only ({0}). Players are offered "
-                + "none; /vhsilhouetteserver compare can run.", LodServerConfig.MeasureSilhouettesVariable);
+                + "none; /dlsilhouetteserver compare can run.", LodServerConfig.MeasureSilhouettesVariable);
         }
         // A world that has never used silhouettes gets no file until a player asks for them: a
         // database opened in every singleplayer world "in case" is the cost the section cache's
@@ -1207,7 +1211,7 @@ public class LodAssistServerSystem : ModSystem
     {
         try
         {
-            string directory = sapi.GetOrCreateDataPath("ModData/vintagehorizons");
+            string directory = sapi.GetOrCreateDataPath("ModData/dodenslandscapes");
             return Path.Combine(directory, WorldFileKey() + "-silhouette-server.db");
         }
         catch (Exception e)
@@ -1238,8 +1242,8 @@ public class LodAssistServerSystem : ModSystem
     {
         TextCommandResult Status()
         {
-            string line = "[VintageHorizons] Horizon silhouettes: " + (silhouettes == null
-                ? "off on this server (EnableSilhouettes in ModConfig/vintagehorizons-server.json)"
+            string line = "[Landscapes] Horizon silhouettes: " + (silhouettes == null
+                ? "off on this server (EnableSilhouettes in ModConfig/dodenslandscapes-server.json)"
                 : (silhouettesOffered ? "" : "measuring heights only, players are offered none; ")
                     + silhouettes.Describe()) + ".";
             // Chat cannot be copied, so the same line always reaches the log.
@@ -1247,9 +1251,9 @@ public class LodAssistServerSystem : ModSystem
             return TextCommandResult.Success(line);
         }
 
-        // Not "vhsilhouette": that is the client's switch, and every command name stays unique
+        // Not "dlsilhouette": that is the client's switch, and every command name stays unique
         // across both sides (StaticAssetChecks.ChatCommandNamesAreUnique).
-        sapi.ChatCommands.Create("vhsilhouetteserver")
+        sapi.ChatCommands.Create("dlsilhouetteserver")
             .WithDescription("Horizon silhouettes on this server: tiles, heights, previews and the tile store")
             .RequiresPrivilege(Privilege.controlserver)
             .HandleWith(_ => Status())
@@ -1296,7 +1300,7 @@ public class LodAssistServerSystem : ModSystem
 
     /// <summary>A comparison file for this world, beside the tile store and named after the savegame.</summary>
     string CompareFilePath(string suffix) =>
-        Path.Combine(sapi.GetOrCreateDataPath("ModData/vintagehorizons/silhouette-compare"), WorldFileKey() + suffix);
+        Path.Combine(sapi.GetOrCreateDataPath("ModData/dodenslandscapes/silhouette-compare"), WorldFileKey() + suffix);
 
     /// <summary>The savegame's name made safe for a file name, as the section cache names its files.</summary>
     string WorldFileKey()
@@ -1311,12 +1315,12 @@ public class LodAssistServerSystem : ModSystem
         refusal = null;
         if (silhouettes == null)
         {
-            refusal = TextCommandResult.Error("[VintageHorizons] Horizon silhouettes are off on this server, "
+            refusal = TextCommandResult.Error("[Landscapes] Horizon silhouettes are off on this server, "
                 + "so there are no real heights to compare against.");
         }
         else if (acceleratorRun != null)
         {
-            refusal = TextCommandResult.Error("[VintageHorizons] A comparison or presample is already running; "
+            refusal = TextCommandResult.Error("[Landscapes] A comparison or presample is already running; "
                 + "its report will follow.");
         }
         else if (LodHeightAccelerators.Find(sapi) is { Count: > 0 } found)
@@ -1325,7 +1329,7 @@ public class LodAssistServerSystem : ModSystem
         }
         else
         {
-            refusal = TextCommandResult.Error("[VintageHorizons] No height accelerator is installed. This build "
+            refusal = TextCommandResult.Error("[Landscapes] No height accelerator is installed. This build "
                 + "knows Algernon's Terrain Sampler and Watersheds' own sampler.");
         }
         return null;
@@ -1340,7 +1344,7 @@ public class LodAssistServerSystem : ModSystem
         var run = new LodAcceleratorPresampleRun(CompareFilePath("-presample.csv.gz"), cells,
             silhouettes!.HeldChunks(cx, cz, radius), accelerators, sapi.World.SeaLevel);
         return StartAcceleratorRun("presample", run, args, string.Format(System.Globalization.CultureInfo.InvariantCulture,
-            "[VintageHorizons] Accelerator presample of {0} cells around chunk {1},{2} (radius {3} chunks), asking "
+            "[Landscapes] Accelerator presample of {0} cells around chunk {1},{2} (radius {3} chunks), asking "
             + "{4}. It runs in the background; each report follows in chat and the server log.",
             cells.Count, cx, cz, radius, string.Join(" and ", accelerators.Select(a => a.Name))));
     }
@@ -1353,7 +1357,7 @@ public class LodAssistServerSystem : ModSystem
         List<LodRealHeight> cells = silhouettes!.RealHeightCells(cx, cz, radius);
         if (cells.Count == 0)
         {
-            return TextCommandResult.Error("[VintageHorizons] The server holds no real heights in that square yet. "
+            return TextCommandResult.Error("[Landscapes] The server holds no real heights in that square yet. "
                 + "Load or explore some terrain, or switch silhouettes on, then try again.");
         }
         string map = CompareFilePath("-map-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss",
@@ -1361,7 +1365,7 @@ public class LodAssistServerSystem : ModSystem
         var run = new LodAcceleratorComparisonRun(cells, accelerators, sapi.World.SeaLevel,
             CompareFilePath("-presample.csv.gz"), map);
         return StartAcceleratorRun("comparison", run, args, string.Format(System.Globalization.CultureInfo.InvariantCulture,
-            "[VintageHorizons] Accelerator comparison at {0} cells where the server holds real heights ({1} captured, "
+            "[Landscapes] Accelerator comparison at {0} cells where the server holds real heights ({1} captured, "
             + "{2} previewed) around chunk {3},{4} (radius {5} chunks), against {6}. It runs in the background; each "
             + "report follows in chat and the server log.", cells.Count,
             cells.Count(p => p.Origin == EnumSilhouetteOrigin.Captured),
@@ -1386,7 +1390,7 @@ public class LodAssistServerSystem : ModSystem
         bool done = run.Finished;
         while (run.TryTakeLine(out string line))
         {
-            string text = "[VintageHorizons] Accelerator " + what + ", " + line + ".";
+            string text = "[Landscapes] Accelerator " + what + ", " + line + ".";
             // Chat cannot be copied, so every line also reaches the log.
             Mod.Logger.Notification("{0}", text);
             caller?.SendMessage(Vintagestory.API.Config.GlobalConstants.GeneralChatGroup, text,
@@ -1395,7 +1399,7 @@ public class LodAssistServerSystem : ModSystem
         if (!done) return;
         sapi.Event.UnregisterGameTickListener(acceleratorListener);
         acceleratorRun = null;
-        Mod.Logger.Notification("[VintageHorizons] Accelerator " + what + " finished.");
+        Mod.Logger.Notification("[Landscapes] Accelerator " + what + " finished.");
     }
 
     /// <summary>Main thread: the engine raises this from a main-thread task.</summary>
@@ -1415,6 +1419,6 @@ public class LodAssistServerSystem : ModSystem
     {
         if (silhouettes == null) return;
         sapi.Event.EnqueueMainThreadTask(() => silhouettes?.OfferCapturedHeights(cx, cz, heights, false),
-            "vintagehorizons-silhouette-heights");
+            "dodenslandscapes-silhouette-heights");
     }
 }

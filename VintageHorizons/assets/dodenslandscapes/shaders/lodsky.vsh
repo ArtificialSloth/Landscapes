@@ -1,6 +1,6 @@
 #version 430 core
 
-// `.vhsky`: one triangle over the whole viewport, placed on the far plane. With the depth test
+// `.dlsky`: one triangle over the whole viewport, placed on the far plane. With the depth test
 // at LEQUAL and depth writes off, a fragment survives only where nothing opaque was drawn.
 void main()
 {

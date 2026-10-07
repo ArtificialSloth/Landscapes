@@ -125,7 +125,7 @@ public static class WorldGenChecks
             "malformed state is refused instead of becoming a new job");
 
         string path = Path.Combine(Path.GetTempPath(),
-            "vintagehorizons-worldgen-check-" + Guid.NewGuid().ToString("N") + ".json");
+            "dodenslandscapes-worldgen-check-" + Guid.NewGuid().ToString("N") + ".json");
         var store = new LodWorldGenStateStore(path);
         try
         {

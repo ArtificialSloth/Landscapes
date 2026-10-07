@@ -57,7 +57,7 @@ public partial class VintageHorizonsModSystem
 
     void RegisterSilhouetteCommand()
     {
-        capi.ChatCommands.Create("vhsilhouette")
+        capi.ChatCommands.Create("dlsilhouette")
             .WithDescription("Horizon silhouettes: on, off, log or stats. The command is "
                 + "session-only; the settings tab saves the switch.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("action"))
@@ -81,17 +81,17 @@ public partial class VintageHorizonsModSystem
                         break;
                     default:
                         return TextCommandResult.Error(
-                            "[VintageHorizons] use .vhsilhouette on, off, log or stats");
+                            "[Landscapes] use .dlsilhouette on, off, log or stats");
                 }
 
                 // Chat cannot be copied, so the same line always reaches the log.
-                string line = "[VintageHorizons] " + DescribeSilhouettes();
+                string line = "[Landscapes] " + DescribeSilhouettes();
                 Mod.Logger.Notification("{0}", line);
                 return TextCommandResult.Success(line);
             });
 
         // A quick A/B switch for judging the seam fog's frame-time cost while playing.
-        capi.ChatCommands.Create("vhfog")
+        capi.ChatCommands.Create("dlfog")
             .WithDescription("Seam fog: on, off, or no argument to toggle. Session-only; the "
                 + "Farseer tab's Seam fog switch saves it.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("action"))
@@ -99,7 +99,7 @@ public partial class VintageHorizonsModSystem
             {
                 if (deferringTo != null || silhouettes == null)
                     return TextCommandResult.Error(
-                        "[VintageHorizons] seam fog is unavailable while another LOD mod draws.");
+                        "[Landscapes] seam fog is unavailable while another LOD mod draws.");
                 LodSilhouetteSettings current = CurrentSilhouetteSettings();
                 string action = args.Parsers[0].IsMissing
                     ? (current.FogEnabled ? "off" : "on")
@@ -113,9 +113,9 @@ public partial class VintageHorizonsModSystem
                     case "stats":
                         break;
                     default:
-                        return TextCommandResult.Error("[VintageHorizons] use .vhfog, .vhfog on or .vhfog off");
+                        return TextCommandResult.Error("[Landscapes] use .dlfog, .dlfog on or .dlfog off");
                 }
-                string line = "[VintageHorizons] " + DescribeSeamFog()
+                string line = "[Landscapes] " + DescribeSeamFog()
                     + " (the command is session-only).";
                 Mod.Logger.Notification("{0}", line);
                 return TextCommandResult.Success(line);

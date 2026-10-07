@@ -13,7 +13,7 @@ internal static class ModShaderSource
         path = Path.GetFullPath(path);
         if (!stack.Add(path)) throw new InvalidOperationException("Shader include cycle: " + path);
         string includes = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "assets",
-            "vintagehorizons", "shaderincludes");
+            "dodenslandscapes", "shaderincludes");
         string result = Regex.Replace(File.ReadAllText(path).Replace("\r\n", "\n"),
             @"(?m)^#include ([^\s]+)[ \t]*$", match =>
             {

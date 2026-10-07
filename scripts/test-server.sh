@@ -22,7 +22,7 @@ vh_guard_not_running "Test server" "$PIDFILE"
 mkdir -p "$DATA/tmp" "$DATA/Mods"
 export TMPDIR="$DATA/tmp"
 
-# A writable console. Scenarios type server commands (echo "/vhgen start 8" >
+# A writable console. Scenarios type server commands (echo "/dlgen start 8" >
 # console.in) without needing a client. The holder process keeps the FIFO open
 # between writers - without it, the first echo's close delivers EOF to the server
 # console. test-stop.sh kills the holder via its pidfile.

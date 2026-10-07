@@ -128,7 +128,7 @@ public static class WaterJunctionChecks
 
         string root = GameAssemblies.RepoRoot;
         string ownership = File.ReadAllText(Path.Combine(root,
-            "VintageHorizons/assets/vintagehorizons/shaderincludes/lodownershiptest.fsh"));
+            "VintageHorizons/assets/dodenslandscapes/shaderincludes/lodownershiptest.fsh"));
         c.True(ownership.Contains("#if defined(VH_WATER_DEPTH) || defined(VH_WATER_OIT)")
             && ownership.Contains("owned && ownershipBand == 1 && waterJunctionDepth == 1")
             && ownership.Contains("texelFetch(vanillaWaterDepth, ivec2(gl_FragCoord.xy), 0).r == 1.0")
