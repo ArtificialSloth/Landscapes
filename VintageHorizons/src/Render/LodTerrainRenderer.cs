@@ -2458,7 +2458,6 @@ public partial class LodTerrainRenderer : IRenderer
                 standInQuarters[key] = (byte)quarters;
             }
             drawList.Add(key);
-            NoteStandIn(key, level, uncovered, quarters);
             return true;
         }
 
@@ -2526,13 +2525,12 @@ public partial class LodTerrainRenderer : IRenderer
         readiness.TakeAnnouncement(cell);
     }
 
-    /// <summary>A cell was just handed to the game: it leaves the list, and its wait is recorded.</summary>
+    /// <summary>A cell was just handed to the game: it leaves the list, and its announcement with it.</summary>
     void NoteFreshChunkConfirmed(VanillaChunkCell cell)
     {
         if (readiness == null) return;
         readiness.Unwatch(cell);
-        long announced = readiness.TakeAnnouncement(cell);
-        if (announced > 0) RecordFreshChunkConfirmed(Environment.TickCount64 - announced);
+        readiness.TakeAnnouncement(cell);
     }
 
     /// <summary>
@@ -5853,7 +5851,6 @@ public partial class LodTerrainRenderer : IRenderer
         standInQuarters.Clear();
         foreach (long top in world.TopLevelKeys) CollectDrawNodes(top);
         WalkCost.Add(phaseStart);
-        EndStandInFrame();
         LastDrawCount = drawList.Count;
         LastTraversalCulledCount = traversalCulledThisFrame;
         LastSubtreeCulledCount = subtreeCulledThisFrame;

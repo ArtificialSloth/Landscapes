@@ -3602,12 +3602,11 @@ public partial class VintageHorizonsModSystem : ModSystem
                     return TextCommandResult.Success("[VintageHorizons] no renderer: another LOD mod is drawing.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] stand-in fix {(renderer.StandInFix ? "on" : "off")}. "
-                        + "The log gets a 'stand-in check' line each minute either way.");
+                        $"[VintageHorizons] stand-in fix {(renderer.StandInFix ? "on" : "off")}.");
 
                 renderer.StandInFix = (bool)args[0];
-                // Logged as well as shown, so the minute reports on either side of the switch can
-                // be told apart without anyone having to remember when it was flipped (G72).
+                // Logged as well as shown, so a report can be matched to the side of the switch it
+                // was seen on without anyone having to remember when it was flipped (G72).
                 string state = renderer.StandInFix
                     ? "on: coarse stand-ins cover only the part that is waiting, and freshly loaded "
                         + "chunks are handed to the game within a frame or two"
