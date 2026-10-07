@@ -1177,7 +1177,7 @@ public static class SilhouetteChecks
         var silent = new LodGenerationStallWatch();
         int declared = 0;
         for (t = 0; t <= 60_000; t += 50)
-            if (silent.Tick(t, workOutstanding: true)) declared++;
+            if (silent.Tick(t, workOutstanding: true) == LodGeneratorVerdict.Stalled) declared++;
         c.Eq(1, declared, "a stall is declared exactly once");
         c.Eq(LodGenerationStallWatch.DefaultSilenceMs, silent.StalledAtMs,
             "after 20 s of silence with work outstanding, and not before");
@@ -1193,6 +1193,50 @@ public static class SilhouetteChecks
         c.False(gap.Stalled, "a gap between builder ticks restarts the count instead of charging the generator");
         for (; t <= 42_000; t += 50) gap.Tick(t, workOutstanding: true);
         c.True(gap.Stalled, "silence after the gap still counts");
+
+        // 2026-10-07: the engine dropped one preview across a pause while its chunk thread went on
+        // making hundreds of passes a second. That is lost work, not a stuck thread.
+        var alive = new LodGenerationStallWatch();
+        long passes = 0;
+        int lost = 0, stalled = 0;
+        for (t = 0; t <= 65_000; t += 50)
+        {
+            passes += 13; // about 260 passes a second
+            LodGeneratorVerdict verdict = alive.Tick(t, workOutstanding: true, passes);
+            if (verdict == LodGeneratorVerdict.Lost) lost++;
+            if (verdict == LodGeneratorVerdict.Stalled) stalled++;
+        }
+        c.Eq(0, stalled, "silence while the thread keeps making passes is never declared a stall");
+        c.Eq(3, lost, "it is reported as lost once per 20 s of silence, so the builder asks again each time");
+        c.Eq(3, alive.LostVerdicts, "and counted");
+
+        var frozen = new LodGenerationStallWatch();
+        LodGeneratorVerdict last = LodGeneratorVerdict.Fine;
+        for (t = 0; t <= 20_000 && last == LodGeneratorVerdict.Fine; t += 50)
+            last = frozen.Tick(t, workOutstanding: true, threadPasses: 5_000);
+        c.Eq(LodGeneratorVerdict.Stalled, last, "a thread whose pass count stands still is still a stall (bodanboys)");
+        c.Eq(LodGenerationStallWatch.DefaultSilenceMs, frozen.StalledAtMs, "declared after the same 20 s");
+
+        var creeping = new LodGenerationStallWatch();
+        last = LodGeneratorVerdict.Fine;
+        passes = 0;
+        for (t = 0; t <= 20_000 && last == LodGeneratorVerdict.Fine; t += 50)
+        {
+            if (t % 1_000 == 0) passes++; // stuck inside long passes: a few over 20 s
+            last = creeping.Tick(t, workOutstanding: true, passes);
+        }
+        c.Eq(LodGeneratorVerdict.Stalled, last,
+            $"fewer than {LodGenerationStallWatch.AlivePasses} passes in the silence is not proof of life");
+
+        var resumed = new LodGenerationStallWatch();
+        passes = 0;
+        for (t = 0; t <= 10_000; t += 50) resumed.Tick(t, workOutstanding: true, passes += 13);
+        resumed.Answered(t);
+        last = LodGeneratorVerdict.Fine;
+        for (; t <= 31_000 && last == LodGeneratorVerdict.Fine; t += 50)
+            last = resumed.Tick(t, workOutstanding: true, passes); // the thread freezes after the answer
+        c.Eq(LodGeneratorVerdict.Stalled, last,
+            "passes made before the generator last answered do not excuse a silence after it");
     }
 
     static void GeneratorSilenceStopsTheBuilder(Check c)
@@ -1206,6 +1250,12 @@ public static class SilhouetteChecks
             "a stuck generator stops probes and previews while the independent accelerator may continue");
         c.True(Regex.IsMatch(builder, @"void Tick\(\)\s*\{[^}]*WatchGenerator\(now\);"),
             "the builder watches the generator on every tick");
+        c.True(builder.Contains("ChunkThreadRest.Installed ? ChunkThreadRest.Read().Passes : null", StringComparison.Ordinal),
+            "the watch is shown the chunk thread's own pass count, and nothing when the rest is not installed");
+        c.True(Regex.IsMatch(builder, @"verdict == LodGeneratorVerdict\.Lost\)\s*\{\s*ReissueLostPeeks\(now\);"),
+            "lost previews are asked for again instead of stopping previews");
+        c.True(Regex.IsMatch(builder, @"if \(peek\.Reissued\)\s*\{[^}]*TimedOut\+\+;"),
+            "a preview lost twice is given up rather than asked for forever");
     }
 
     static ushort[] HeightMap(Func<int, int, int> height)

@@ -111,7 +111,7 @@ internal sealed class LodSilhouetteBuilder
 
     enum EnumProbeStep { Probed, Exhausted, Paused }
 
-    readonly record struct PeekInFlight(int Cx, int Cz, long IssuedMs);
+    readonly record struct PeekInFlight(int Cx, int Cz, long IssuedMs, bool Reissued = false);
     readonly record struct AcceleratorResult(int TileX, int TileZ, int FallbackCx, int FallbackCz,
         int[]? Heights, string? Error);
 
@@ -151,7 +151,7 @@ internal sealed class LodSilhouetteBuilder
     readonly HashSet<long> dirtyTiles = new();
     readonly List<long> evictable = new();
 
-    public int Probed, Existing, Peeked, Landed, Empty, TimedOut, YieldTicks, TilesSent;
+    public int Probed, Existing, Peeked, Landed, Empty, TimedOut, Reissued, YieldTicks, TilesSent;
     public int ManifestsSent, TilesRequested, TilesRefused, TilesRetryable;
     public int AcceleratorTilesIssued, AcceleratorTilesLanded, AcceleratorCells, AcceleratorFailures,
         CoastPreviews;
@@ -469,11 +469,19 @@ internal sealed class LodSilhouetteBuilder
     /// <summary>
     /// When the world-generation thread stops answering, nothing the builder does can restart
     /// it, so it stops adding work and says what it was waiting for. In 0.4.77 the only symptom
-    /// was a hang when the player left the world.
+    /// was a hang when the player left the world. When the thread is visibly still working, the
+    /// silence was a lost request instead (<see cref="LodGenerationStallWatch"/>): ask again.
     /// </summary>
     void WatchGenerator(long now)
     {
-        if (!generatorWatch.Tick(now, peeksInFlight.Count > 0 || probesInFlight > 0)) return;
+        long? passes = ChunkThreadRest.Installed ? ChunkThreadRest.Read().Passes : null;
+        LodGeneratorVerdict verdict = generatorWatch.Tick(now, peeksInFlight.Count > 0 || probesInFlight > 0, passes);
+        if (verdict == LodGeneratorVerdict.Lost)
+        {
+            ReissueLostPeeks(now);
+            return;
+        }
+        if (verdict != LodGeneratorVerdict.Stalled) return;
         pendingPeeks.Clear();
 
         var waiting = new List<string>();
@@ -500,6 +508,43 @@ internal sealed class LodSilhouetteBuilder
                 + "so they are stopped for this session. If leaving the world now hangs, this is why; "
                 + "the server log has the details.", EnumChatType.Notification);
         }
+    }
+
+    /// <summary>
+    /// The thread kept working through the silence, so the previews still out were dropped, most
+    /// likely by the engine's first tick after a pause. Each is asked for once more; one lost a
+    /// second time is given up, like a timed-out preview, and its tile may be tried again later.
+    /// A late answer to the first request is harmless: the second finds nothing left to land.
+    /// </summary>
+    void ReissueLostPeeks(long now)
+    {
+        // Only existence checks were out: those cannot be named again, and the engine has no
+        // pause gate on them, so there is nothing to re-ask.
+        if (peeksInFlight.Count == 0) return;
+        var lost = peeksInFlight.Values.ToList();
+        int asked = 0, given = 0;
+        foreach (PeekInFlight peek in lost)
+        {
+            if (peek.Reissued)
+            {
+                peeksInFlight.Remove(LodColumnMap.Key(peek.Cx, peek.Cz));
+                claimedTiles.Remove(TileKeyOfChunk(peek.Cx, peek.Cz));
+                TimedOut++;
+                given++;
+                continue;
+            }
+            Reissued++;
+            asked++;
+            IssuePeek(peek.Cx, peek.Cz, now, reissue: true);
+        }
+        PeeksChanged();
+        if (generatorWatch.LostVerdicts > 5) return;
+        logger.Notification(
+            "Horizon silhouettes: {0} previews went unanswered for {1} s while the world-generation "
+            + "thread kept working, so they were lost rather than stuck (the game drops a preview "
+            + "waiting across a pause). Asked again for {2}; gave up on {3} lost twice.{4}",
+            lost.Count, LodGenerationStallWatch.DefaultSilenceMs / 1000, asked, given,
+            generatorWatch.LostVerdicts == 5 ? " Further occurrences this session are not logged." : "");
     }
 
     /// <summary>
@@ -821,11 +866,11 @@ internal sealed class LodSilhouetteBuilder
         });
     }
 
-    void IssuePeek(int cx, int cz, long now)
+    void IssuePeek(int cx, int cz, long now, bool reissue = false)
     {
-        peeksInFlight[LodColumnMap.Key(cx, cz)] = new PeekInFlight(cx, cz, now);
+        peeksInFlight[LodColumnMap.Key(cx, cz)] = new PeekInFlight(cx, cz, now, reissue);
         PeeksChanged();
-        Peeked++;
+        if (!reissue) Peeked++;
         sapi.WorldManager.PeekChunkColumn(cx, cz, new ChunkPeekOptions
         {
             UntilPass = EnumWorldGenPass.Terrain,
@@ -1166,10 +1211,10 @@ internal sealed class LodSilhouetteBuilder
         string text = string.Format(culture,
             "{0} player(s), {1} tiles in memory; heights from {2} loaded or previewed columns ({3} "
             + "matched their rain heights, like an old save's copy or bare ground); {4} lattice probes ({5} already hold terrain); previews {6} "
-            + "issued, {7} landed, {8} without heights, {9} timed out, {10} in flight; held {11} ticks "
-            + "for other generation; {12} tile messages sent ({13:0.0} KB)",
+            + "issued, {7} landed, {8} without heights, {9} timed out, {10} in flight, {11} asked again "
+            + "after being lost; held {12} ticks for other generation; {13} tile messages sent ({14:0.0} KB)",
             demands.Count, tiles.Count, CapturedColumns, RainColumns, Probed, Existing, Peeked, Landed,
-            Empty, TimedOut, peeksInFlight.Count, YieldTicks, TilesSent, BytesSent / 1024.0);
+            Empty, TimedOut, peeksInFlight.Count, Reissued, YieldTicks, TilesSent, BytesSent / 1024.0);
         text += string.Format(culture,
             "; delivery {0} manifests, {1} tile requests, {2} explicit refusals, {3} retryable",
             ManifestsSent, TilesRequested, TilesRefused, TilesRetryable);
