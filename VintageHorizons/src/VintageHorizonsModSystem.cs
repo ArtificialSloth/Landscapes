@@ -102,12 +102,12 @@ public class VintageHorizonsConfig
     public bool SuppressUnknownWaterWalls = false;
 
     /// <summary>
-    /// Draw even when another LOD mod is installed and switched on. The escape hatch for
-    /// the mods whose own switch we cannot read; see <see cref="OtherLodMods"/>. Read at
-    /// startup only, because turning the mod on mid-session is not something the startup
-    /// path supports.
+    /// The player chose "Don't show again" on the login notice about other LOD mods. It hides
+    /// only the general reminder: a listed LOD mod found switched on still brings the notice
+    /// back (owner, 2026-10-10). Replaces the old step-aside switch, which an older file may
+    /// still hold and the reader ignores: this mod no longer steps aside for anyone.
     /// </summary>
-    public bool IgnoreOtherLodMods = false;
+    public bool HideLodModNotice = false;
 
     /// <summary>
     /// The GPU render path switches, remembered per install.
@@ -289,22 +289,16 @@ public partial class VintageHorizonsModSystem : ModSystem
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Client;
 
-    public override bool ShouldLoad(ICoreAPI api) => base.ShouldLoad(api) && !ModIdentity.OriginalModBlocks(api);
-
     public override void StartPre(ICoreAPI api) => ModIdentity.TakeOverLegacyData(api, Mod.Logger);
 
     /// <summary>Everything the config file holds, so a partial save cannot drop a setting.</summary>
     VintageHorizonsConfig config = new();
     VintageHorizonsConfigDialog? configDialog;
 
-    /// <summary>Set when another LOD mod is drawing; we then stay out of its way.</summary>
-    string? deferringTo;
+    /// <summary>Other LOD mods found switched on at startup, by display name; see <see cref="OtherLodMods"/>.</summary>
+    string[] otherLodMods = Array.Empty<string>();
 
-    /// <summary>
-    /// Optional server assist (DESIGN.md §10). Created even while deferring, because the
-    /// channel has to be registered before the handshake either way; it simply never
-    /// greets, so it stays silent.
-    /// </summary>
+    /// <summary>Optional server assist (DESIGN.md §10).</summary>
     LodAssistClient? assist;
 
     /// <summary>
@@ -345,17 +339,15 @@ public partial class VintageHorizonsModSystem : ModSystem
         assist = new LodAssistClient(capi, Mod.Logger, Mod.Info.Version);
         assist.Register();
 
-        // Two LOD mods both extend the camera's far plane and both draw terrain out
-        // there, so they z-fight over the same ground. Defer rather than fight. What we
-        // must not do is defer to a mod that is installed but switched off, which leaves
-        // the player with nothing at all.
-        deferringTo = ChooseDeferralTarget();
+        // Two LOD mods both extend the camera's far plane and both draw terrain out there, so
+        // they draw over each other. This mod never steps aside (owner, 2026-10-10): it names
+        // what it found in the log, and the login notice tells the player to keep one.
+        otherLodMods = FindOtherLodMods();
         InstallDiagnostics();
 
         // Vanilla has no public mod-settings page registry in 1.22. The guarded adapter adds
         // one in-world header button and leaves .dlconfig as the permanent fallback if the
-        // private seam ever moves. Install before the deferral return: persisted settings are
-        // still useful while a competing LOD renderer is active.
+        // private seam ever moves.
         settingsIntegration = new VintageHorizonsSettingsIntegration(
             capi, CreateEmbeddedConfigDialog);
         if (!settingsIntegration.Install(Mod.Logger))
@@ -363,24 +355,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             settingsIntegration.Dispose();
             settingsIntegration = null;
         }
-
-        if (deferringTo != null)
-        {
-            Mod.Logger.Notification(
-                "'{0}' is installed and switched on, so Doden's Landscapes stays idle. Two LOD mods "
-                + "draw over each other and fight for the camera far plane. Switch '{0}' off in its "
-                + "own settings, then restart the game to use Doden's Landscapes instead. The mod "
-                + "decides this once at startup: if you switch the other mod off now, nothing "
-                + "changes until the next start.",
-                deferringTo);
-            RegisterCommands();
-
-            // The idle path reaches no LevelFinalize handler of its own, so the dev hook
-            // is wired straight to the event here. Without it the matrix cannot drive
-            // '.dldefer off' from the state that command exists for.
-            capi.Event.LevelFinalize += RegisterAutoCommand;
-            return;
-        }
+        capi.Event.LevelFinalize += ShowLodModNotice;
 
         LodWorld.SetLevelThresholds(LodWorld.NormalizeLevelThresholds(
             config.LodThresholds, config.DetailDistance));
@@ -524,11 +499,6 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// up. The harness cannot reach a detached server's console, and a second entry point
     /// into a command would test something other than what players type. The delay lets
     /// the handshake and the privilege grant settle first.
-    ///
-    /// Reachable from the idle path too, and not for symmetry: '.dldefer off' is the
-    /// escape hatch we tell an idle player to use, and it writes the config file from a
-    /// state where the renderer does not exist. That is the one command whose failure
-    /// would strand exactly the player it is meant to rescue.
     /// </summary>
     void RegisterAutoCommand()
     {
@@ -571,32 +541,51 @@ public partial class VintageHorizonsModSystem : ModSystem
     }
 
     /// <summary>
-    /// The mod to stay idle for, or null to draw. Reports what it found either way: a
-    /// player who sees no distant terrain needs the log to say which mod stopped us, and
-    /// a player whose other mod is switched off needs to know we noticed.
+    /// The listed LOD mods that are switched on, by display name, logged either way: a bug
+    /// report about a flickering horizon needs the log to name the other mod.
     /// </summary>
-    string? ChooseDeferralTarget()
+    string[] FindOtherLodMods()
     {
-        (string? drawing, string[] switchedOff) =
+        (string[] drawing, string[] switchedOff) =
             OtherLodMods.Inspect(capi.ModLoader.IsModEnabled, ReadOtherModSwitch);
 
         if (switchedOff.Length > 0)
         {
-            Mod.Logger.Notification(
-                "Installed but switched off in its own settings, so Doden's Landscapes is not "
-                + "staying idle for it: {0}", string.Join(", ", switchedOff));
+            Mod.Logger.Notification("Installed but switched off in its own settings: {0}",
+                string.Join(", ", switchedOff.Select(OtherLodModName)));
         }
 
-        if (drawing != null && config.IgnoreOtherLodMods)
+        string[] names = drawing.Select(OtherLodModName).ToArray();
+        if (names.Length > 0)
         {
-            Mod.Logger.Warning(
-                "'{0}' is switched on, and IgnoreOtherLodMods is set, so Doden's Landscapes is drawing "
-                + "anyway. Switch '{0}' off in its own settings, or the two draw over the same ground.",
-                drawing);
-            return null;
+            Mod.Logger.Warning("[Landscapes] {0}", LodModNotice.ConflictText(names));
         }
+        return names;
+    }
 
-        return drawing;
+    /// <summary>The name the player sees in the Mod Manager, or the mod id if the game has none.</summary>
+    string OtherLodModName(string modId) => capi.ModLoader.GetMod(modId)?.Info?.Name is { Length: > 0 } name
+        ? name
+        : modId;
+
+    /// <summary>
+    /// Once the world is up: the notice about other LOD mods. A listed one switched on always
+    /// shows it; otherwise it shows until the player chooses "Don't show again".
+    /// </summary>
+    void ShowLodModNotice()
+    {
+        if (otherLodMods.Length == 0 && config.HideLodModNotice) return;
+        var notice = new LodModNotice(capi, otherLodMods, otherLodMods.Length == 0, () =>
+        {
+            config.HideLodModNotice = true;
+            SaveConfig();
+            Mod.Logger.Notification("The login notice about other LOD mods will not show again "
+                + "unless one of them is switched on.");
+        });
+        if (!notice.TryOpen())
+        {
+            Mod.Logger.Warning("The login notice about other LOD mods could not open.");
+        }
     }
 
     /// <summary>Reads another mod's own switch. Null means "could not tell", which counts as on.</summary>
@@ -2676,34 +2665,25 @@ public partial class VintageHorizonsModSystem : ModSystem
     {
         // The player's own distances, which automatic mode leaves untouched in the file,
         // and what automatic mode would use right now, which the scale shows while it is on.
-        bool automatic = deferringTo == null
-            ? renderer.AutoLodThresholds
-            : config.AutoLodThresholds;
-        int[] thresholds = deferringTo == null && !automatic
+        bool automatic = renderer.AutoLodThresholds;
+        int[] thresholds = !automatic
             ? LodWorld.GetLevelThresholds()
             : LodWorld.NormalizeLevelThresholds(config.LodThresholds, config.DetailDistance);
-        int[] automaticThresholds = deferringTo == null
-            ? renderer.PreviewAutoThresholds()
-            : thresholds;
-        int farCap = deferringTo == null
-            ? renderer.FarViewDistanceCap
-            : config.FarViewDistanceCap;
+        int[] automaticThresholds = renderer.PreviewAutoThresholds();
+        int farCap = renderer.FarViewDistanceCap;
 
         // The Anti-Aliasing tab shows each slider's effect at once and puts back what was
-        // in force if the editor closes without Save. With no renderer there is nothing to
-        // preview, and Save still writes the file.
+        // in force if the editor closes without Save.
         var taaTuning = new TaaTuning(
-            deferringTo == null ? renderer.TaaDials : ConfiguredTaaDials(),
-            deferringTo == null && renderer.TaaShowWeight,
+            renderer.TaaDials,
+            renderer.TaaShowWeight,
             PreviewTaaTuning,
-            () => deferringTo == null ? renderer.ScreenBlockScale : 0f);
+            () => renderer.ScreenBlockScale);
         var silhouetteTuning = new SilhouetteTuning(
             CurrentSilhouetteSettings(), PreviewSilhouetteSettings, DescribeSilhouettes);
         var vanilla = new VanillaDistanceTuning(
             Math.Max(1, ClientSettings.ViewDistance), ApplyVanillaViewDistance);
-        bool loadWhilePaused = deferringTo == null
-            ? renderer.ContinueLoadingWhilePaused
-            : config.LoadWhilePaused;
+        bool loadWhilePaused = renderer.ContinueLoadingWhilePaused;
         Action<LodWorldGenPreferences>? openLiveWorldGen = requestClose == null
             ? null
             : value =>
@@ -2844,9 +2824,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         int value = LodThresholdScaleLayout.SnapVanillaDistance(blocks);
         ClientSettings.ViewDistance = value;
         ClientSettings.GraphicsPresetId = GraphicsPreset.Custom.PresetId;
-        return deferringTo == null
-            ? renderer.PreviewAutoThresholds()
-            : LodWorld.NormalizeLevelThresholds(config.LodThresholds, config.DetailDistance);
+        return renderer.PreviewAutoThresholds();
     }
 
     void RegisterCommands()
@@ -2860,7 +2838,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (hitches == null)
-                    return TextCommandResult.Success("[Landscapes] no hitch recorder: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] no hitch recorder: the distant-terrain renderer did not start.");
                 string word = args.Parsers[0].IsMissing ? "" : (string)args[0];
                 string reply = word.Equals("on", StringComparison.OrdinalIgnoreCase)
                     ? hitches.SetEnabled(true)
@@ -2894,13 +2872,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         capi.ChatCommands.Create("dlinfo")
             .WithDescription("Doden's Landscapes status. Also written to the client log, which is the only "
                 + "copy long enough to read.")
-            .HandleWith(_ => deferringTo != null
-                ? TextCommandResult.Success(
-                    $"[Landscapes] idle: '{deferringTo}' is installed and switched on, so it is "
-                    + "drawing the distant terrain. Switch it off in its own settings, or run "
-                    + "'.dldefer off' to draw beside it. Either way, restart the game afterwards: "
-                    + "this is decided once at startup.")
-                : TextCommandResult.Success(
+            .HandleWith(_ => TextCommandResult.Success(
                 LogAndReturn("status",
                 $"[Landscapes] sections: {pipeline.World.Sections.Count} [{pipeline.World.DescribeLevels()}] " +
                 $"({pipeline.CachedSectionsLoaded} from cache), meshes: {renderer.MeshCount}, " +
@@ -2934,36 +2906,6 @@ public partial class VintageHorizonsModSystem : ModSystem
                     : "") +
                 (serverSync.Active ? $", server sync: {serverSync.Describe()}" : ""))));
 
-        // Registered in both states on purpose: the player who most needs this one is the
-        // player we are currently idle for.
-        capi.ChatCommands.Create("dldefer")
-            .WithDescription("Stay idle when another LOD mod draws. Default on. Off draws anyway.")
-            .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
-            .HandleWith(args =>
-            {
-                if (args.Parsers[0].IsMissing)
-                {
-                    return TextCommandResult.Success(
-                        $"[Landscapes] defer to other LOD mods: {(config.IgnoreOtherLodMods ? "off" : "on")}"
-                        + (deferringTo != null ? $" - idle now, because '{deferringTo}' is drawing" : ""));
-                }
-
-                config.IgnoreOtherLodMods = !(bool)args[0];
-                SaveConfig();
-
-                // Saved, not applied. Starting the mod mid-session would have to register a
-                // network channel after the handshake, run a LevelFinalize that has already
-                // fired, and capture chunks whose ChunkDirty events are long past.
-                return TextCommandResult.Success(config.IgnoreOtherLodMods
-                    ? "[Landscapes] will draw even when another LOD mod is switched on (saved). "
-                      + "Restart the game to apply. Switch the other mod off as well, or the two "
-                      + "draw over the same ground."
-                    : "[Landscapes] will stay idle when another LOD mod is drawing (saved). "
-                      + "Restart the game to apply.");
-            });
-
-        // Available even while deferring, because these are persisted player settings;
-        // they will apply normally after the competing renderer is switched off.
         capi.ChatCommands.Create("dlconfig")
             .WithDescription("Open the Doden's Landscapes settings window: detail and draw distance, which optional visual features are drawn, and an Anti-Aliasing tab of tuning sliders")
             .HandleWith(_ =>
@@ -2983,30 +2925,16 @@ public partial class VintageHorizonsModSystem : ModSystem
             {
                 if (args.Parsers[0].IsMissing)
                 {
-                    return TextCommandResult.Success("[Landscapes] "
-                        + (deferringTo == null
-                            ? renderer.DescribeBlendPipeline()
-                            : config.BlendPipeline
-                                ? "blending on (saved; applies when Doden's Landscapes is active)."
-                                : "blending off (saved; applies when Doden's Landscapes is active)."));
+                    return TextCommandResult.Success("[Landscapes] " + renderer.DescribeBlendPipeline());
                 }
 
                 bool enabled = (bool)args[0];
                 config.BlendPipeline = enabled;
-                if (deferringTo == null) ApplyBlendPipeline(enabled);
+                ApplyBlendPipeline(enabled);
                 SaveConfig();
-                return TextCommandResult.Success("[Landscapes] "
-                    + (deferringTo == null
-                        ? renderer.DescribeBlendPipeline()
-                        : $"blending {(enabled ? "on" : "off")} (saved; applies when Doden's Landscapes is active).")
-                    + (!enabled && deferringTo == null
-                        ? " Live L0 terrain will finish changing over the next few seconds."
-                        : ""));
+                return TextCommandResult.Success("[Landscapes] " + renderer.DescribeBlendPipeline()
+                    + (!enabled ? " Live L0 terrain will finish changing over the next few seconds." : ""));
             });
-
-        // The remaining commands drive the renderer, which does not exist when we are
-        // deferring to another LOD mod.
-        if (deferringTo != null) return;
 
         RegisterSilhouetteCommand();
 
@@ -3041,7 +2969,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (renderer.ChunkMaskFailed)
                     return TextCommandResult.Success(
                         "[Landscapes] the chunk mask hit an error this session and stays off. " +
@@ -3065,7 +2993,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 // Searching the whole line of sight rather than one chosen distance: the
                 // hole a player is looking at is wherever it is, and a confident report
@@ -3110,7 +3038,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     if (renderer == null)
                         return TextCommandResult.Success(
-                            "[Landscapes] no renderer: another LOD mod is drawing.");
+                            "[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                     if (!args.Parsers[1].IsMissing)
                     {
                         renderer.ClimateFieldTint = (bool)args[1];
@@ -3133,7 +3061,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     if (renderer == null)
                         return TextCommandResult.Success(
-                            "[Landscapes] no renderer: another LOD mod is drawing.");
+                            "[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                     if (!args.Parsers[1].IsMissing)
                     {
                         renderer.LeafSeasonVariation = (bool)args[1] ? 1f : 0f;
@@ -3158,7 +3086,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     if (renderer == null)
                         return TextCommandResult.Success(
-                            "[Landscapes] no renderer: another LOD mod is drawing.");
+                            "[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                     if (!args.Parsers[1].IsMissing)
                     {
                         renderer.ClimateFadeBlocks = (bool)args[1]
@@ -3191,7 +3119,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     if (renderer == null)
                         return TextCommandResult.Success(
-                            "[Landscapes] no renderer: another LOD mod is drawing.");
+                            "[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                     if (!args.Parsers[1].IsMissing)
                         renderer.LeafSeasonFadeBlocks = (bool)args[1] ? 8f : 2f;
                     bool wide = renderer.LeafSeasonFadeBlocks > 2f;
@@ -3215,7 +3143,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 {
                     if (renderer == null)
                         return TextCommandResult.Success(
-                            "[Landscapes] no renderer: another LOD mod is drawing.");
+                            "[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                     if (!args.Parsers[1].IsMissing)
                         renderer.LeafSeasonCheapRow = (bool)args[1];
                     return TextCommandResult.Success(
@@ -3309,7 +3237,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
                         $"[Landscapes] paint mode {(renderer.MaskDebugPaint ? "on" : "off")}.");
@@ -3333,7 +3261,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 string part = args.Parsers[0].IsMissing ? "" : (string)args[0];
                 string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
@@ -3365,7 +3293,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 string part = args.Parsers[0].IsMissing ? "" : (string)args[0];
                 string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
@@ -3394,7 +3322,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 string value = args.Parsers[0].IsMissing ? "" : (string)args[0];
                 if (value.Equals("on", StringComparison.OrdinalIgnoreCase))
@@ -3418,7 +3346,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
                 string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
@@ -3579,7 +3507,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (args.Parsers[0].IsMissing
                     || !float.TryParse((string)args[0], out float blocks))
                     return TextCommandResult.Success(
@@ -3603,7 +3531,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
                         $"[Landscapes] stand-in fix {(renderer.StandInFix ? "on" : "off")}.");
@@ -3629,7 +3557,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
                 switch (part)
@@ -3691,7 +3619,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
                         $"[Landscapes] flat-top lighting {(renderer.FlatTopLight ? "on" : "off")}.");
@@ -3715,7 +3643,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 string DescribeLight() =>
                     $"sun {(renderer.LightSunLevel ? "on" : "off")}, " +
@@ -3800,7 +3728,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
                         "[Landscapes] GPU terrain renderer " + renderer.DescribeGpuShadow());
@@ -3827,7 +3755,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
                 switch (part)
@@ -3869,7 +3797,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
                         $"[Landscapes] opaque back-face culling {(renderer.OpaqueBackfaceCulling ? "on" : "off")} (on by default, not saved).");
@@ -3892,7 +3820,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (args.Parsers[0].IsMissing)
                 {
                     // Logged as well as shown. Game chat cannot be copied out, so a report
@@ -3941,7 +3869,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 if (args.Parsers[0].IsMissing)
                 {
@@ -4017,7 +3945,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
                 string value = args.Parsers[1].IsMissing ? "" : (string)args[1];
@@ -4338,7 +4266,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 if (args.Parsers[0].IsMissing)
                 {
@@ -4389,7 +4317,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
@@ -4422,7 +4350,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 if (args.Parsers[0].IsMissing)
                 {
@@ -4475,7 +4403,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
                         $"[Landscapes] opaque front-to-back submission {(renderer.OpaqueFrontToBack ? "on" : "off")} (on by default, not saved).");
@@ -4492,7 +4420,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
                         $"[Landscapes] post-vanilla depth culling {renderer.DescribeOcclusionCulling()}. " +
@@ -4510,7 +4438,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
                         $"[Landscapes] delayed exact-geometry occlusion {renderer.DescribeTemporalOcclusion()}. " +
@@ -4530,7 +4458,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
                         $"[Landscapes] delayed occlusion profile: {renderer.TemporalOcclusionProfileName}. " +
@@ -4551,7 +4479,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(_ =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 var at = capi.World.Player.Entity.Pos;
                 // Logged as well as shown, like .dlwhy (G72).
@@ -4566,7 +4494,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (args.Parsers[0].IsMissing)
                     return TextCommandResult.Success(
                         $"[Landscapes] geometry rule {(renderer.GeometryOwnershipRule ? "on" : "off")}. " +
@@ -4591,7 +4519,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 if (renderer == null)
-                    return TextCommandResult.Success("[Landscapes] no renderer: another LOD mod is drawing.");
+                    return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
 
                 string part = args.Parsers[0].IsMissing ? "" : ((string)args[0]).ToLowerInvariant();
                 switch (part)
@@ -4822,7 +4750,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.LoadWhilePaused = loadWhilePaused;
         WriteSilhouetteSettings(silhouetteSettings);
 
-        if (deferringTo == null)
+        if (renderer != null)
         {
             renderer.AutoLodThresholds = autoThresholds;
             if (!autoThresholds) LodWorld.SetLevelThresholds(normalized);
@@ -4835,7 +4763,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         else
         {
             // No renderer to set, so the file is the only place the choice can live until one
-            // exists. SaveConfig leaves every renderer-derived key alone while deferring, so
+            // exists. SaveConfig leaves every renderer-derived key alone without a renderer, so
             // writing them here is what makes the window work at all in that state.
             WriteVisualSettings(visuals);
             WriteTaaDials(taaDials);
@@ -4852,13 +4780,13 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// </summary>
     void PreviewTaaTuning(LodTaaDials dials, bool show)
     {
-        if (deferringTo != null) return;
+        if (renderer == null) return;
         renderer.TaaDials = dials;
         renderer.TaaShowWeight = show;
     }
 
     /// <summary>The renderer's current visual settings, as the window shows them.</summary>
-    LodVisualSettings CurrentVisualSettings() => deferringTo != null
+    LodVisualSettings CurrentVisualSettings() => renderer == null
         ? ConfiguredVisualSettings()
         : new LodVisualSettings(
             BlendPipeline: renderer.BlendPipelineEnabled,
@@ -4871,7 +4799,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             WaterEffects: renderer.WaterFresnel,
             DistantAntiAliasing: renderer.DistantAntiAliasing);
 
-    /// <summary>What the config file says, for the deferring case and for startup.</summary>
+    /// <summary>What the config file says, for startup and for when no renderer exists.</summary>
     LodVisualSettings ConfiguredVisualSettings() => new(
         BlendPipeline: config.BlendPipeline,
         SeamBand: config.SeamBand,
@@ -4883,7 +4811,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         WaterEffects: config.WaterEffects,
         DistantAntiAliasing: config.DistantAntiAliasing);
 
-    /// <summary>What the config file says for the anti-aliasing dials, for the deferring case.</summary>
+    /// <summary>What the config file says for the anti-aliasing dials, for when no renderer exists.</summary>
     LodTaaDials ConfiguredTaaDials() => new(config.TaaReachPixels, config.TaaNudge,
         config.TaaSharpen, config.TaaBlend, config.TaaStillBlend, config.TaaClip);
 
@@ -5012,9 +4940,9 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// <summary>Writes every setting: a partial write would silently reset the others.</summary>
     void SaveConfig()
     {
-        // The renderer and the LodWorld statics do not exist while we defer, and what was
+        // The renderer and the LodWorld statics may not exist yet, and what was
         // loaded from the file is still the right thing to write back.
-        if (deferringTo == null)
+        if (renderer != null)
         {
             config.FarViewDistanceCap = renderer.FarViewDistanceCap;
             // Automatic thresholds are re-derived from the screen every session. Writing them over
@@ -5072,10 +5000,11 @@ public partial class VintageHorizonsModSystem : ModSystem
             capi.Event.ChunkDirty -= OnChunkDirty;
             capi.Event.LevelFinalize -= OnLevelFinalize;
             capi.Event.LevelFinalize -= RegisterAutoCommand;
+            capi.Event.LevelFinalize -= ShowLodModNotice;
             capi.Event.LeaveWorld -= OnLeaveWorld;
 
-            // Nothing to unregister while deferring: that path registers no listener.
-            if (deferringTo == null) capi.Event.UnregisterGameTickListener(tickListenerId);
+            // Nothing to unregister if the renderer never started: no listener was registered.
+            if (renderer != null) capi.Event.UnregisterGameTickListener(tickListenerId);
         });
 
         // The sibling-cache reader owns a background connection and must stop before

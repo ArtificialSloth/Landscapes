@@ -68,8 +68,6 @@ public class LodServerCaptureSystem : ModSystem
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Server;
 
-    public override bool ShouldLoad(ICoreAPI api) => base.ShouldLoad(api) && !ModIdentity.OriginalModBlocks(api);
-
     public override void StartPre(ICoreAPI api) => ModIdentity.TakeOverLegacyData(api, Mod.Logger);
 
     /// <summary>Set once the cache is open; the assist handshake reports it.</summary>

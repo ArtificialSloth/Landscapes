@@ -4,9 +4,9 @@ namespace VintageHorizons.Checks;
 
 /// <summary>
 /// The 2026-10-07 rename to Doden's Landscapes. The earlier builds' caches and settings must be
-/// moved under the new id exactly once and never over newer files; every system must stand down
-/// when the original Vintage Horizons is switched on; and the formats that outlive the rename keep
-/// their old names, or the new build would refuse caches the old one wrote.
+/// moved under the new id exactly once, never over newer files, and never while the original
+/// Vintage Horizons is switched on and still using them; and the formats that outlive the rename
+/// keep their old names, or the new build would refuse caches the old one wrote.
 /// </summary>
 public static class ModIdentityChecks
 {
@@ -15,7 +15,7 @@ public static class ModIdentityChecks
         MovesTheWholeFolderWhenNothingIsThere(c);
         MergesWithoutReplacingNewerFiles(c);
         LeavesAFreshInstallAlone(c);
-        EverySystemStandsDownForTheOriginal(c);
+        EverySystemTakesOverTheOldDataSafely(c);
         OldFormatsKeepTheirNames(c);
     }
 
@@ -104,23 +104,25 @@ public static class ModIdentityChecks
         }
     }
 
-    static void EverySystemStandsDownForTheOriginal(Check c)
+    static void EverySystemTakesOverTheOldDataSafely(Check c)
     {
         string src = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src");
         foreach (string file in new[] { "VintageHorizonsModSystem.cs", Path.Combine("Net", "LodServerCaptureSystem.cs"),
                      Path.Combine("Net", "LodAssistServerSystem.cs") })
         {
             string text = File.ReadAllText(Path.Combine(src, file));
-            c.True(text.Contains("ShouldLoad(ICoreAPI api) => base.ShouldLoad(api) && !ModIdentity.OriginalModBlocks(api);",
-                    StringComparison.Ordinal),
-                $"{Path.GetFileName(file)} does not load while the original Vintage Horizons is switched on");
             c.True(text.Contains("StartPre(ICoreAPI api) => ModIdentity.TakeOverLegacyData(api, Mod.Logger);",
                     StringComparison.Ordinal),
                 $"{Path.GetFileName(file)} takes over the old data before anything opens it");
         }
         string all = string.Join("\n", Directory.GetFiles(src, "*.cs", SearchOption.AllDirectories).Select(File.ReadAllText));
-        c.Eq(4, Regex.Matches(all, @": ModSystem\b").Count,
-            "four mod systems: the three above and the notice that loads only when they do not");
+        c.Eq(3, Regex.Matches(all, @": ModSystem\b").Count,
+            "three mod systems, all of them loading whatever else is installed (owner, 2026-10-10)");
+        string identity = File.ReadAllText(Path.Combine(src, "ModIdentity.cs"));
+        int skip = identity.IndexOf("if (api.ModLoader.IsModEnabled(LegacyModId))", StringComparison.Ordinal);
+        int move = identity.IndexOf("MoveLegacyData(api.DataBasePath, log);", StringComparison.Ordinal);
+        c.True(skip >= 0 && move > skip,
+            "the old data is not moved while the original Vintage Horizons is switched on and still using it");
     }
 
     static void OldFormatsKeepTheirNames(Check c)

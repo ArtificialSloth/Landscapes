@@ -80,7 +80,7 @@ public partial class VintageHorizonsModSystem
             config.LodThresholds, config.DetailDistance);
 
         Heading(lines, "SAVED CLIENT MOD");
-        Entry(lines, ".dldefer", !config.IgnoreOtherLodMods);
+        Entry(lines, "login notice about LOD mods", !config.HideLodModNotice);
         Entry(lines, ".dlfar", DistanceOrUnlimited(config.FarViewDistanceCap));
         AddThresholds(lines, thresholds);
         Entry(lines, ".dldetail auto", config.AutoLodThresholds);
@@ -118,7 +118,7 @@ public partial class VintageHorizonsModSystem
         int[] thresholds = LodWorld.GetLevelThresholds();
 
         Heading(lines, "CLIENT CORE / SHAPE");
-        Entry(lines, ".dldefer", !config.IgnoreOtherLodMods);
+        Entry(lines, "other LOD mods switched on", otherLodMods.Length == 0 ? "none listed" : string.Join(", ", otherLodMods));
         Entry(lines, ".dlfar", DistanceOrUnlimited(renderer.FarViewDistanceCap));
         AddThresholds(lines, thresholds);
         Entry(lines, ".dldetail auto", renderer.AutoLodThresholds);

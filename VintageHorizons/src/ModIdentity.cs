@@ -10,12 +10,14 @@ namespace VintageHorizons;
 /// renamed Doden's Landscapes (<c>dodenslandscapes</c>) for its public release on 2026-10-07.
 /// Two consequences outlive the rename:
 /// <list type="bullet">
-/// <item>The original mod registers the same chat commands, Harmony patches and draw passes under
-/// the same code, so the two cannot run together. When it is switched on, every system here
-/// declines to load (<see cref="OriginalModBlocks"/>) and one notice says why.</item>
+/// <item>The original mod is another LOD mod as far as players are concerned. Its commands, code
+/// file, channel and Harmony ids no longer collide with ours, and this mod does not step aside for
+/// it (owner, 2026-10-10): it is on <see cref="OtherLodMods.Known"/>, so the login notice names
+/// it. Running the two together is untested.</item>
 /// <item>A player of the fork's earlier builds has caches and settings under the old id. They are
 /// moved once, before anything opens them (<see cref="TakeOverLegacyData"/>); the owner chose a
-/// move over a copy (7.8 GB on his machine).</item>
+/// move over a copy (7.8 GB on his machine). Not while the original is switched on: it would
+/// still be using those files.</item>
 /// </list>
 /// Internal formats keep their old names on purpose: the cache's database type code, the height
 /// sample file headers, the game start-up file's marker and its backup suffix. Renaming those
@@ -30,13 +32,11 @@ public static class ModIdentity
     static readonly object migrationGate = new();
     static bool migrated;
 
-    /// <summary>True when the original Vintage Horizons is switched on: this mod must not load.</summary>
-    public static bool OriginalModBlocks(ICoreAPI api) => api.ModLoader.IsModEnabled(LegacyModId);
-
     /// <summary>
     /// Moves the earlier builds' caches and settings to this id's names, once per process and
     /// before either side opens them. In singleplayer the client and the server both call this;
-    /// the gate makes the second wait for the first and then do nothing.
+    /// the gate makes the second wait for the first and then do nothing. Skipped while the
+    /// original mod is switched on, because it would still be reading and writing those files.
     /// </summary>
     public static void TakeOverLegacyData(ICoreAPI api, ILogger log)
     {
@@ -44,6 +44,13 @@ public static class ModIdentity
         {
             if (migrated) return;
             migrated = true;
+            if (api.ModLoader.IsModEnabled(LegacyModId))
+            {
+                log.Notification("Not taking over the caches and settings under '{0}': that mod is "
+                    + "switched on and still uses them. Switch it off and restart to move them to '{1}'.",
+                    LegacyModId, ModId);
+                return;
+            }
             MoveLegacyData(api.DataBasePath, log);
         }
     }
@@ -104,29 +111,5 @@ public static class ModIdentity
         if (!File.Exists(from) || File.Exists(to)) return;
         File.Move(from, to);
         log.Notification("Moved this mod's settings from {0} to {1}.", from, to);
-    }
-}
-
-/// <summary>
-/// Loads only when the original Vintage Horizons is switched on, and says once why nothing else
-/// from this mod is running.
-/// </summary>
-public sealed class OriginalModNotice : ModSystem
-{
-    public override bool ShouldLoad(ICoreAPI api) => ModIdentity.OriginalModBlocks(api);
-
-    public override void Start(ICoreAPI api)
-    {
-        api.Logger.Error("[Landscapes] {0} is not running: the original Vintage Horizons ('{1}') is "
-            + "switched on, and the two share commands and code. Switch one of them off and restart.",
-            ModIdentity.DisplayName, ModIdentity.LegacyModId);
-    }
-
-    public override void StartClientSide(Vintagestory.API.Client.ICoreClientAPI api)
-    {
-        api.Event.LevelFinalize += () => api.ShowChatMessage(
-            "[Landscapes] Doden's Landscapes is not running: the original Vintage Horizons is switched "
-            + "on, and the two cannot run together. Switch one of them off in the Mod Manager and "
-            + "restart the game.");
     }
 }

@@ -320,7 +320,7 @@ public static class ConfigChecks
         c.True(config.ChunkMask, "the chunk mask stays on by default");
         c.True(config.BlendPipeline,
             "seam blending and L0 textures stay on for a fresh install");
-        c.False(config.IgnoreOtherLodMods, "and deferring to another LOD mod stays the default");
+        c.False(config.HideLodModNotice, "and the login notice about other LOD mods shows until hidden");
     }
 
     static void ClientLoadingDefaults(Check c)

@@ -9,7 +9,7 @@ namespace VintageHorizons;
 /// </summary>
 public partial class VintageHorizonsModSystem
 {
-    /// <summary>Null while deferring to another LOD mod.</summary>
+    /// <summary>Null until the renderer starts, or if it failed to.</summary>
     LodSilhouetteClient? silhouettes;
 
     void CreateSilhouettes()
@@ -97,9 +97,9 @@ public partial class VintageHorizonsModSystem
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("action"))
             .HandleWith(args =>
             {
-                if (deferringTo != null || silhouettes == null)
+                if (renderer == null || silhouettes == null)
                     return TextCommandResult.Error(
-                        "[Landscapes] seam fog is unavailable while another LOD mod draws.");
+                        "[Landscapes] seam fog is unavailable: the distant-terrain renderer did not start.");
                 LodSilhouetteSettings current = CurrentSilhouetteSettings();
                 string action = args.Parsers[0].IsMissing
                     ? (current.FogEnabled ? "off" : "on")
@@ -201,7 +201,7 @@ public partial class VintageHorizonsModSystem
 
     LodSilhouetteSettings CurrentSilhouetteSettings()
     {
-        if (deferringTo != null || silhouettes == null) return ConfiguredSilhouetteSettings();
+        if (renderer == null || silhouettes == null) return ConfiguredSilhouetteSettings();
         return new LodSilhouetteSettings(
             silhouettes.Enabled,
             silhouettes.ReachBlocks,
@@ -234,13 +234,13 @@ public partial class VintageHorizonsModSystem
 
     void PreviewSilhouetteSettings(LodSilhouetteSettings value)
     {
-        if (deferringTo == null) ApplySilhouetteSettings(value);
+        if (renderer != null) ApplySilhouetteSettings(value);
     }
 
     void ApplySilhouetteSettings(LodSilhouetteSettings value)
     {
         value = value.Normalize();
-        if (deferringTo != null || silhouettes == null) return;
+        if (renderer == null || silhouettes == null) return;
         renderer.SilhouetteSkyTint = value.SkyTint;
         renderer.SilhouetteColorTint = new Vintagestory.API.MathTools.Vec4f(
             value.TintRed, value.TintGreen, value.TintBlue, value.TintStrength);

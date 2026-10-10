@@ -128,9 +128,10 @@ public static class StaticAssetChecks
         c.True(inventory.Contains("renderer.GpuShadowRequested", StringComparison.Ordinal)
             && inventory.Contains("renderer.BlendPipelineEnabled", StringComparison.Ordinal)
             && inventory.Contains("renderer.TemporalOcclusionProfileName", StringComparison.Ordinal)
-            && inventory.Contains("!config.IgnoreOtherLodMods", StringComparison.Ordinal)
+            && inventory.Contains("!config.HideLodModNotice", StringComparison.Ordinal)
+            && inventory.Contains("string.Join(\", \", otherLodMods)", StringComparison.Ordinal)
             && inventory.Contains("AddThresholds(lines, thresholds)", StringComparison.Ordinal),
-            "method-backed GPU, blend, profile, deferral and LOD settings are displayed too");
+            "method-backed GPU, blend, profile, LOD-mod notice and LOD settings are displayed too");
     }
 
     static void WaterGroundMurkWiring(Check c)
@@ -862,10 +863,12 @@ public static class StaticAssetChecks
         string policy = File.ReadAllText(Path.Combine(root, "VintageHorizons", "src",
             "Render", "VanillaHorizonPolicy.cs"));
 
-        int deferral = mod.IndexOf("if (deferringTo != null)", StringComparison.Ordinal);
+        // Until 0.4.139 this had to come after a return that kept it off while another LOD mod
+        // drew. This mod no longer steps aside, so it installs with every start.
+        int lodMods = mod.IndexOf("otherLodMods = FindOtherLodMods();", StringComparison.Ordinal);
         int install = mod.IndexOf("new VanillaHorizonEffects", StringComparison.Ordinal);
-        c.True(deferral >= 0 && install > deferral,
-            "horizon suppression installs only after the competing-LOD deferral return");
+        c.True(lodMods >= 0 && install > lodMods,
+            "horizon suppression installs on every start, after the other LOD mods are named");
         c.True(mod.Contains("horizonEffects?.Dispose()", StringComparison.Ordinal),
             "mod disposal disables and removes horizon suppression");
         c.True(effects.Contains("nameof(ShaderProgramBase.Use)", StringComparison.Ordinal),
