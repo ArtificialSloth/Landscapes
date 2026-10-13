@@ -1,22 +1,52 @@
-# Vintage Horizons - status
+# Doden's Landscapes - status
 
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-09-29`
-**Mod version:** `0.4.135` - current private test build: coarse stand-ins cover only the quarter that is waiting instead of their whole area, chunks the game has just announced are rechecked every frame until their mesh is up, new ground skips disk reads for placeholder ancestors, `.vhstandin on|off` switches the first two for an in-session comparison, and a temporary recorder logs a `stand-in check` line each minute. Verified, copy-installed and checkpointed; **not yet played**. Previous build 0.4.134 (the opt-in all-cores garbage collector, decision 54) is owner-played: the owner called the Server GC "much smoother"
+**Status date:** `2026-10-13`
+**Mod version:** `0.4.142` - current private test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception. 0.4.142 only trims a log line; 0.4.138-0.4.141 are owner-played: the legacy cache and settings moved in place, the login notice about other LOD mods shows, the startup shader errors are gone and the "?" walls are fixed. All checks pass
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.121 `a5f528d`, 0.4.122 `d46b776`, 0.4.123 `b46cf0a`, 0.4.124 `1fb10f5`, 0.4.125 `92eb9c3`, 0.4.126 `e668f81`, 0.4.127 `89509e9`, 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`; nothing pushed
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `147` C# files under `VintageHorizons/src`
+**Source files:** `148` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
 
-**Coarse terrain briefly drawn over the game's own ground: a fix is built and waits for the owner's
-exploring test (0.4.135).** Session 112.
+**Release preparation: renamed Doden's Landscapes, relicensed, and three long-standing faults fixed
+(0.4.136-0.4.142).** Session 113.
+
+- **Name (0.4.138, owner):** Doden's Landscapes, id `dodenslandscapes`; `.dl` commands; `[Landscapes]`;
+  the assembly, channel, asset domain, settings files and cache folder renamed with the id (G276).
+  The earlier builds' `ModData/vintagehorizons` and settings files move once at first start, never
+  over a newer file and not while the old id is enabled. Owner-played: his 7.8 GB moved in place and
+  the world drew 1,148 sections from it. Builds either side of the rename do not see each other's
+  assist (`dev/WIRE_HISTORY.md`).
+- **Other LOD mods (0.4.139, owner):** this mod always draws and keeps no switch to step aside. A
+  login window names a known LOD mod that is switched on (Farseer, ChunkLOD, TopoHorizon, Distant
+  Vistas, the original Vintage Horizons), OK only; otherwise a general reminder shows until "Don't
+  show again", which never hides a named conflict. The log names the same mods. Owner-played: the
+  general notice shown and dismissed. Beside the original Vintage Horizons: untested.
+- **Licence (0.4.140, owner):** GPL-3.0 only, (c) Doden, with a section 7 exception for Vintage Story
+  and its libraries (`NOTICE`); MIT notices for AliasFactory's Vintage Horizons and Farseer in
+  `THIRD-PARTY-NOTICES`; all three ship in the zip and a check pins them.
+- **Lost silhouette previews (0.4.137):** the engine discards a peek dequeued in the chunk thread's
+  first tick after a pause (G273); a silent preview is re-issued once while the thread visibly
+  works. Source-traced; the re-issue has not been seen in play.
+- **Startup shader errors (0.4.140):** six link errors in every log since at least 0.4.134, replayed
+  by the engine's startup summary, came from building shaders before the engine refilled its
+  include table (G274). Shaders now build on the engine's reload. Confirmed in his logs: "shaders
+  ready after 1 attempt(s)", no link errors.
+- **"?" walls (0.4.141-0.4.142):** ordinary cube blocks carry `all=game:unknown`, reached through
+  the walls' skip-the-top rule (G275); such a texture is refused and the wall copies the top.
+  Confirmed visually near the cliffs where he reported it; 0.4.142 logs one line and counts the rest.
+- **Evidence:** 26,214 assertions, 0 failures - the collector checks now read the start-up file as
+  shipped, so they pass with his collector on.
+
+**Coarse terrain briefly drawn over the game's own ground: fixed in 0.4.135, accepted by the owner on
+a fresh world on 2026-10-07; the temporary recorder was removed in 0.4.136.** Session 112.
 
 - **Report:** a screenshot from 0.4.129 while exploring showed rough coarse LOD terrain over the
   game's terrain for a moment; rare, but jarring. That session's log had rotated out.
@@ -33,12 +63,13 @@ exploring test (0.4.135).** Session 112.
   clusters for opaque ground, a per-section uniform for water, thin cover, depth and OIT); announced
   chunks are rechecked at the front of every frame, up to 64 a frame for up to 10 s, until the probe
   hands them over or the engine's upload state says no mesh is coming; placeholders skip the store.
-  The ownership rules are unchanged. `.vhstandin on|off` switches the first two, session only.
+  The ownership rules are unchanged. `.dlstandin on|off` switches the first two, session only.
 - **Held (owner):** letting air above ground the game draws hide cached terrain, which would close
   the chunk-edge walls; it is a terrain-ownership change.
-- **Evidence:** harness-tested; 26,156 assertions, whose 14 failures are the environmental
-  all-cores collector check. Not run in game. The recorder is temporary and goes once his log
-  confirms the fix.
+- **Evidence:** human-tested on a fresh world on 2026-10-07 ("seemed to work well"); the recorder's
+  log agreed: half of freshly announced chunks handed over within 94-219 ms and 95% within 281-578
+  ms after the first minute, every stand-in drawing only its waiting quarters. One 18.4 s stand-in
+  at the player ("not asked for yet") is unexplained. The recorder was removed in 0.4.136.
 
 **The stutter while exploring is solved for the owner by the all-cores garbage collector
 (0.4.128-0.4.134).** Sessions 110-111.
@@ -59,7 +90,7 @@ exploring test (0.4.135).** Session 112.
   "Felt MUCH smoother." It costs about 0.3-0.5 GB (whole game 9.3-9.5 GB against 8.8-9.2), and the
   first minute after joining has 56-139 ms collections (G267). The Performance tab's switch, off by
   default, edits `Vintagestory.runtimeconfig.json` with a backup and applies from the next start.
-- **Recorder:** `.vhhitch` names the collector at start, writes its minute report in the background,
+- **Recorder:** `.dlhitch` names the collector at start, writes its minute report in the background,
   and each minute gives the longest freeze in one frame, frames held 10 ms or more, memory, exact
   allocation (G264), allocation by thread and type, and this mod's jobs. The chunk thread rest adds
   idle passes and the thread's exact allocation to the server-work line.
@@ -288,7 +319,7 @@ audit into the same code path.
 - **Availability and switches.** The saved client choice defaults on. Integrated/LAN servers offer
   silhouettes automatically unless `EnableSilhouettes = false`; dedicated servers default off and
   require `EnableSilhouettes = true`. Their requested reach is clamped by
-  `SilhouetteReachBlocks` (8,192 by default). `.vhsilhouette` is a session-only override.
+  `SilhouetteReachBlocks` (8,192 by default). `.dlsilhouette` is a session-only override.
 - **Height sources, best first:** captured terrain, the engine's Terrain-pass preview, then an
   accepted optional accelerator. Watersheds is preferred when both supported samplers are present;
   Algernon's Terrain Sampler is accepted alone; neither is required. The accelerator supplies a
@@ -335,7 +366,7 @@ audit into the same code path.
   coverage, pruning, remesh and upload are bounded. The **Farseer** tab persists enable, reach,
   Outline detail, Hill softness, apron width/depth, classic-look dials, the Seam fog switch and twelve
   fog dials: Seam strip density and height, Fog density, coverage, spread, height, floor depth,
-  billow size, drift speed, Fog fade time, Fog quality and edge softness. `.vhfog` toggles the fog for the session. Cached draw and reach
+  billow size, drift speed, Fog fade time, Fog quality and edge softness. `.dlfog` toggles the fog for the session. Cached draw and reach
   remain scale handles.
   Performance turns it off;
   Balanced/Quality turn it on. Off sends one final demand and clears network, RAM, workers, GPU
@@ -395,13 +426,13 @@ audit into the same code path.
 - P8's documentation is Session 91. The remaining runtime matrix is explicit verification debt, not
   a gate for the silhouette plan.
 
-`/vhworldgen` is the deliberate, confirmed exception which writes real terrain to the savegame.
+`/dlworldgen` is the deliberate, confirmed exception which writes real terrain to the savegame.
 - **Tiles.** It works in persistence-friendly 16×16-chunk tiles. The default circle begins at the
   player's tile, moves through clockwise circular radial bands, and visits nearest columns first.
 - **Gates.** Engine-queue, capture, durability, load and disk gates bound the job.
 - **Resume.** A durable bitmap supports pause, resume, stop and an offered manual restart resume.
 - **Settings.** The Generate page shares the Settings editor. If normal integrated Settings has
-  paused the server, it hands off to standalone `.vhconfig` live controls.
+  paused the server, it hands off to standalone `.dlconfig` live controls.
 - **Fixes in 0.4.74–0.4.76:** the L0 2×2-chunk progress map, transient-cache skip provenance,
   force-loaded release, action/status races, and boundaries waiting on unrelated global dirtiness.
 
@@ -515,21 +546,21 @@ earlier frames, so the pixel settles on the average of what it covers.
 
 | Setting | Command | Default (owner's tuning) | Range | Before 0.4.61 |
 |---|---|---|---|---|
-| Reach | `.vhtaa reach` | 2.5 px | 1-32 | 2 |
-| Nudge | `.vhtaa nudge` | 0.5 | 0-1 | 1 |
-| Sharpen | `.vhtaa sharpen` | 1 | 0-1 | 0.5 |
-| Memory while turning | `.vhtaa blend` | 0.97 | 0-0.97 | 0.9 |
-| Memory when still | `.vhtaa still` | 0.99 | 0-0.99 | 0.97 |
-| Smear guard | `.vhtaa clip` | 2.25 | 0.5-4 | 1.25 |
+| Reach | `.dltaa reach` | 2.5 px | 1-32 | 2 |
+| Nudge | `.dltaa nudge` | 0.5 | 0-1 | 1 |
+| Sharpen | `.dltaa sharpen` | 1 | 0-1 | 0.5 |
+| Memory while turning | `.dltaa blend` | 0.97 | 0-0.97 | 0.9 |
+| Memory when still | `.dltaa still` | 0.99 | 0-0.99 | 0.97 |
+| Smear guard | `.dltaa clip` | 2.25 | 0.5-4 | 1.25 |
 
-- **Saved and on sliders.** All the dials are saved and have sliders on the `.vhconfig`
-  Anti-Aliasing tab. `.vhtaa reset` restores the defaults.
+- **Saved and on sliders.** All the dials are saved and have sliders on the `.dlconfig`
+  Anti-Aliasing tab. `.dltaa reset` restores the defaults.
 - **Ranges kept.** The owner kept these ranges on 2026-09-12, although sharpen and both memories
   sit at their tops.
-- **Reporting.** `.vhtaa` with no argument reports, in chat and the client log: the state, the reach
+- **Reporting.** `.dltaa` with no argument reports, in chat and the client log: the state, the reach
   in blocks, the dials, the share of frames with the camera fully still, history resets and GPU
   cost.
-- **Showing.** `.vhtaa show` tints what it touches.
+- **Showing.** `.dltaa show` tints what it touches.
 
 | Evidence | Result | Level |
 |---|---|---|
@@ -547,11 +578,11 @@ earlier frames, so the pixel settles on the average of what it covers.
 With **Automatic** on (the default), each level hands over at the same on-screen size (settled
 decision 35).
 - **Where levels start.** L1 is where a level-0 column reaches 1.5 px on screen
-  (`.vhdetail target`), and each later level doubles it.
+  (`.dldetail target`), and each later level doubles it.
 - **Level 0** is held past the vanilla view distance, the blend band and one section.
 - **At the owner's settings** (60 degrees, 1,080 rendered rows, view distance 128, band 128) that
   gives 624 / 1,248 / 2,496 / 4,992 / 9,984 / 19,968 blocks. His own list stays in the file for
-  `.vhdetail manual`.
+  `.dldetail manual`.
 - **Re-selection.** It re-selects at most once a second, only when the render height, FOV, floor or
   target changes, and logs what it applies.
 - **Evidence.** In use since 0.4.57 without complaint; not evaluated at other FOVs, render scales or
@@ -564,7 +595,7 @@ In an active world, the vanilla Settings header has a dedicated **Horizons** tab
   extends the private `GuiCompositeSettings.ComposerHeader` seam and the established Settings leave
   paths.
 - **Guarding.** It validates every reflected member before patching. If the seam moves, vanilla
-  Settings remains usable and the log directs the player to `.vhconfig`.
+  Settings remains usable and the log directs the player to `.dlconfig`.
 - **One editor.** Both entries compose one stateful editor (settled decision 37), so behaviour
   cannot drift between two implementations.
 
@@ -629,7 +660,7 @@ ownership at Before/0.994, before the player's physics step at Before/1.0 (G170)
 from 0.4.13.
 - **The fix.** 0.4.53's loss-only late range check at Before/1.001 fixed it, and the owner
   confirmed.
-- **Comparing.** `.vhlaterange off` restores the old timing for comparison.
+- **Comparing.** `.dllaterange off` restores the old timing for comparison.
 - **Records.** [Session 84](dev/sessions/SESSION_84.md) holds the evidence, and settled decision 33
   owns the rule.
 - **Not supported.** The owner's earlier build bisection to 0.4.40 is not supported by the code, and
@@ -646,7 +677,7 @@ from 0.4.13.
 | Frost | Frostable grass/foliage use local climate, altitude, season temperature and engine value noise, composed over seasonal tint | Shader/static checks and positive owner appearance report |
 | Loaded updates | Vanilla `ChunkDirty` queues exact recapture | Source/check evidence; movement-driven updates mostly matched vanilla |
 | Dormant updates | Every 30 seconds, vanilla regional snow snapshots may start a finite accumulation/melt campaign; one dormant region is woken as a canary per poll | Built and bounded; a complete real-time accumulation and melt were not clearly observed |
-| Manual update | `/vhrefresh [radius]`, default 32 chunks/max 128, recaptures only proven-existing safe columns; `status` and `stop` are available | Source/check evidence; human command matrix remains open |
+| Manual update | `/dlrefresh [radius]`, default 32 chunks/max 128, recaptures only proven-existing safe columns; `status` and `stop` are available | Source/check evidence; human command matrix remains open |
 | Live delivery | Durable changed L0 rows reach clients: integrated play through the sibling cache's rowids; dedicated play through versioned spans since 0.4.126, at join for changes made while away and every 30 s while online (older clients still read them as refresh manifests). A held section merges them column by column, the newer copy winning, never erasing client-only columns (0.4.68); clients rebuild parents | Source/check evidence; integrated merge human-tested in 0.4.68; dedicated delivery sandbox-integration-tested in Session 109; no second-player run |
 
 Snow accumulation and melt are rare transitions, so the scheduler does no column work between
@@ -724,21 +755,21 @@ The numbers stay `1 / 4 / 6`.
 Session-only unless stated; client commands write their findings to the client log, server commands
 to the server log.
 
-- `.vhtaa` reports distant anti-aliasing (above); `.vhtaa show` tints what it touches.
-- `.vhhitch` (on by default) writes a report a minute to the client log (Current result above); it
-  logs the collector in force when it starts. `/vhchunkrest on|off` (controlserver) switches the
+- `.dltaa` reports distant anti-aliasing (above); `.dltaa show` tints what it touches.
+- `.dlhitch` (on by default) writes a report a minute to the client log (Current result above); it
+  logs the collector in force when it starts. `/dlchunkrest on|off` (controlserver) switches the
   chunk thread rest for the session and logs who did; each server logs the rest's session totals on
   shutdown.
 - Each client start logs "All-cores garbage collection: ..." with the setting, whether this session
   runs it, and the state of the game's start-up file.
-- `.vhstandin on|off` (0.4.135, on by default, not saved) switches quarter-limited stand-ins and the
+- `.dlstandin on|off` (0.4.135, on by default, not saved) switches quarter-limited stand-ins and the
   fast hand-over of fresh chunks together and logs the change; with no argument it reports the
   state. **Temporary, until the fix is confirmed:** each minute with anything to report, a
   `stand-in check` line gives the stand-ins that covered ground the game draws (by level, longest,
   nearest, why the finer piece was missing) and the fresh-chunk hand-over wait (half, 95%, slowest,
   and any over 30 s); a stand-in over the game's ground lasting 0.5 s or more gets a `stand-in:` line
   with its position, at most 20 a minute. Both are written in the background and measure the old
-  delay with the switch off too. `.vhcoarse` names the quarters each stand-in covers.
+  delay with the switch off too. `.dlcoarse` names the quarters each stand-in covers.
 - `scripts/vs-collector-test.cmd` starts the game normally, with a 128 MB gen0 budget, or with the
   Server GC, changing nothing in the install. `scripts/worldgen-thread-gate.ps1 -ChunkThreadRest
   On|Off|Absent` compares the rest headless.
@@ -747,23 +778,23 @@ to the server log.
   - those with no material that can stand in;
   - failed reads;
   - stored placeholder colours repaired on load.
-- `.vhdiag on|off` (0.4.56) shows or hides the diagnostics side panel for the session; it is off by
-  default. The panel lists every `.vhtaa` dial, saved and live.
-- `.vhsky on|off` counts sky below the horizon after all opaque terrain is drawn, and logs each flash
-  with the captured mask. `.vhsky verify on|off` reads the mask texture back after every upload.
-- `.vhlaterange on|off` switches the 0.4.53 fix; on by default.
-- `.vhgap on|off` and `.vhgap release on|off` log, and optionally release, cells the mask gives to
+- `.dldiag on|off` (0.4.56) shows or hides the diagnostics side panel for the session; it is off by
+  default. The panel lists every `.dltaa` dial, saved and live.
+- `.dlsky on|off` counts sky below the horizon after all opaque terrain is drawn, and logs each flash
+  with the captured mask. `.dlsky verify on|off` reads the mask texture back after every upload.
+- `.dllaterange on|off` switches the 0.4.53 fix; on by default.
+- `.dlgap on|off` and `.dlgap release on|off` log, and optionally release, cells the mask gives to
   vanilla while vanilla is not drawing them. The scan still runs before the physics step.
-- `.vhwater capture` stores a frame's colour and depth stages with the projection. Session 86
+- `.dlwater capture` stores a frame's colour and depth stages with the projection. Session 86
   measured the shimmer from one.
-- `.vhsilhouette on|off|log|stats` switches silhouettes for the session. It reports tiles, cells
+- `.dlsilhouette on|off|log|stats` switches silhouettes for the session. It reports tiles, cells
   by source, offered/in-flight/refused transport, pending and resident meshes, per-resolution draws
   and the shader. It does not rewrite the saved Settings choice.
-- `/vhsilhouetteserver [status]` (controlserver) reports the builder, heights, previews, the store
+- `/dlsilhouetteserver [status]` (controlserver) reports the builder, heights, previews, the store
   and any stop, plus accelerator and delivery counters.
-- `/vhsilhouetteserver compare [radiusChunks]` compares every cell the server holds in a square
+- `/dlsilhouetteserver compare [radiusChunks]` compares every cell the server holds in a square
   around the caller (the world centre from the console), and writes a map for the side-by-side.
-- `/vhsilhouetteserver presample [radiusChunks]` asks the accelerators about that square before it
+- `/dlsilhouetteserver presample [radiusChunks]` asks the accelerators about that square before it
   is generated.
 - Each of those two logs "Accelerator comparison finished." or "Accelerator presample finished."
   after its last report (0.4.84).
@@ -841,10 +872,10 @@ Measured costs, and what is not measured:
     4,096-block reach (about 1,200 texels square, about 11 MB per upload), with a 2,048x2,048 cap.
     Off-screen tile coverage refreshes 8 tiles per frame.
   - Measured: 0.4.123 cost 400 against 550 FPS in one scene at 1440p (about 0.68 ms per frame), by
-    the owner's `.vhfog` switch. 0.4.124-0.4.125 are unmeasured. On 0.4.125 the owner reported
+    the owner's `.dlfog` switch. 0.4.124-0.4.125 are unmeasured. On 0.4.125 the owner reported
     hitches with low minimum FPS while exploring new terrain; whether the fog's rebuilds and
     residual, Farseer, the savegame sweep or something else causes them is unknown. The owner
-    judges fog cost with `.vhfog`, not a timing harness.
+    judges fog cost with `.dlfog`, not a timing harness.
   - Render upload is bounded to four tiles, 2 MiB and 2 ms per frame; live GPU time is unmeasured.
   - An accelerator height took 0.01–0.02 ms in freshly generated land (Session 94). On land nobody
     had generated it took under 0.01 ms, and under 1 ms for a new region's first sample (Session 95).
@@ -936,10 +967,10 @@ It covers:
   since it last caught up, settled only by a durable, new-enough merge. A client with no record
   re-checks everything it holds, newest winning (owner, 2026-09-22; settled decision 52).
 - **Writing real terrain.** Real saved terrain is generated only by an explicit, privileged,
-  confirmed `/vhworldgen` job. Sweep, `/vhgen`, automatic frontier work and silhouette previews keep
+  confirmed `/dlworldgen` job. Sweep, `/dlgen`, automatic frontier work and silhouette previews keep
   the generates-nothing promise (settled decision 38).
 - **Yielding.** Automatic producers never monopolize generation authority; the frontier and the
-  silhouette builder yield to explicit `/vhworldgen` and `/vhgen` work (settled decision 39).
+  silhouette builder yield to explicit `/dlworldgen` and `/dlgen` work (settled decision 39).
   Startup-sweep priority loads also yield for five seconds after any player joins or crosses a
   chunk boundary, and at the first visible engine generation request, without accumulating a
   catch-up burst (0.4.111; runtime-measured, not yet owner-human-tested).
@@ -961,19 +992,18 @@ It covers:
 
 ## Next work
 
-Begin with [Session 112](dev/sessions/SESSION_112.md) and the top of [TODO](dev/TODO.md).
+Begin with [Session 113](dev/sessions/SESSION_113.md) and the top of [TODO](dev/TODO.md).
 
-1. **The owner's exploring test of 0.4.135.** New mountain or cliff terrain in flight, a few minutes
-   with `.vhstandin off`, then his client log: judge by the `stand-in check` and `stand-in:` lines.
-   Once they confirm the fix, remove the temporary recorder in a new build. The held
-   air-above-owned-ground change comes back only if walls still show over confirmed ground.
-   Separately, he was asked whether the all-cores collector check should stop reading his installed
-   game file.
+1. **The public release, on the owner's calls:** promote the build he last played to a release
+   number, push (and perhaps rename the `DodenGruva/Horizons` repository), and create the ModDB page
+   at `mods.vintagestory.at/dodenslandscapes` with GNU GPL v3 as the licence. Open evidence worth
+   knowing before then: the 0.4.137 preview re-issue unseen in play, running beside the original
+   Vintage Horizons untested, and the notice's layout at other GUI scales unseen.
 2. **Ask the owner what comes next.** The stutter is solved for him; what it left:
    - **The bug report** to the game's developers is drafted; the owner sends it.
    - **The Server GC's first-minute collections** (56-139 ms while the world loads, G267).
    - **Before recommending it to players:** a longer paired memory look, a smaller machine, Linux and
-     macOS, and the README and mod description at release.
+     macOS; the README now describes the Performance tab, the ModDB description should at release.
    - **The next slowest frames:** entity ticking and this mod's `vh:prepare`, 2-4 ms spikes.
    - **This mod's remaining garbage:** 55-70 MB/s of large `UInt64[]` from the capture rebuild.
    - **The installed-off headless run was 20% faster**; repeat each mode before claiming speed.
@@ -985,7 +1015,7 @@ Begin with [Session 112](dev/sessions/SESSION_112.md) and the top of [TODO](dev/
 5. **Prove the audit catches a real fault.** Every dispute so far is ordinary change.
 6. **Close P3's deferred integration debt** when another player is available: a complete
    singleplayer disc and restart read-back, then dedicated opt-in, reach clamp, fairness,
-   disconnect/off cleanup and mixed versions. The P2 `/vhworldgen`-to-tile check also remains.
+   disconnect/off cleanup and mixed versions. The P2 `/dlworldgen`-to-tile check also remains.
 7. **Finish P4/P5 evidence:** complete camera-yaw, rapid replacement, excavation and weather
    observations beneath the veil; tune Outline detail, Hill softness and apron once the fog is
    accepted; record Farseer off/on and seam fog off/on FPS in one scene.

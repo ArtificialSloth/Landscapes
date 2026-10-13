@@ -1,4 +1,4 @@
-# Vintage Horizons — gotchas and reversals
+# Doden's Landscapes — gotchas and reversals
 
 > Tier 1: durable traps that already cost time or are directly proven by source. Read by trigger before changing the affected system.
 
@@ -571,7 +571,7 @@ vanilla draws nothing there, so the discard removes the only draw and shears the
 cached horizon. The two rules coexist: air owns its cell for the column aggregate, which is
 what 0.3.3 needed, and never reaches the atlas texel, which is what the picture needs.
 
-0.3.15 established this from `.vhpaint`, after this entry had claimed in 0.3.5 that
+0.3.15 established this from `.dlpaint`, after this entry had claimed in 0.3.5 that
 suppressing cached geometry above the real surface was correct because the real ground below
 is drawn by vanilla. That reasoning fails for geometry standing *above* the real surface:
 there is no lower cell drawing anything at that height, so nothing replaces what is
@@ -590,8 +590,8 @@ while the older registration is left in place.
 **Trap:** `ChatCommandApi.Create` throws on a name that already exists, and the throw
 propagates out of `StartClientSide`. The game logs "Failed to start system" and carries on:
 everything registered before the collision works, everything after it silently does not
-exist, and the mod keeps drawing, so a playtest looks normal. 0.3.4 shipped with `.vhwhy`
-registered twice, which cost `.vhdetail` entirely and left the coarse-draw report
+exist, and the mod keeps drawing, so a playtest looks normal. 0.3.4 shipped with `.dlwhy`
+registered twice, which cost `.dldetail` entirely and left the coarse-draw report
 unreachable. The names are strings, so the compiler sees nothing.
 
 **Do:** keep one name per command, and let
@@ -1016,7 +1016,7 @@ nothing, because at a true frontier the edge dissolves into the sky anyway.
 
 **Found:** 0.3.23, from a report of vertical seams between water chunks. The TODO had it
 recorded as a COLOUR fault with three candidates, all of them wrong, and the experiment it
-proposed (`.vhmask off`) could not have separated anything - the seams are geometry.
+proposed (`.dlmask off`) could not have separated anything - the seams are geometry.
 
 ### G52 — A GPU-side saving measured in a CPU-bound scene reports its cost and none of its benefit
 
@@ -1055,7 +1055,7 @@ report a subsystem healthy while the GPU carries the cost. They cannot see a fra
 either.
 
 **Know:** toggling the mask on disposes and rebuilds its texture, so an average that starts
-accumulating immediately after `.vhmask on` includes the rebuild and penalises the "on" side.
+accumulating immediately after `.dlmask on` includes the rebuild and penalises the "on" side.
 
 **Found:** 2026-08-20, from the owner measuring both render distances instead of one.
 
@@ -1088,7 +1088,7 @@ roughly 4,000 blocks of cached mountainous terrain still measured about 150 FPS 
 than 300 FPS when facing away, at least a 3.33 ms direction-dependent remainder and the case
 future conservative occlusion must address.
 
-**Found:** 2026-08-20, from separate owner-run `.vhbackface` and `.vhfront` comparisons.
+**Found:** 2026-08-20, from separate owner-run `.dlbackface` and `.dlfront` comparisons.
 
 ### G54 — A high occlusion-query rejection rate can save no time
 
@@ -1106,7 +1106,7 @@ the occluder did not exist in depth yet.
 **Do:** put the established occluder into depth first. Cached terrain now registers at 0.38,
 then ordinary depth testing rejects its fragments behind vanilla terrain without proxy
 geometry or query synchronization. Re-register when toggling because the engine sorts
-`IRenderer.RenderOrder` only during registration. Keep `.vhocclusion off` at 0.36 as the
+`IRenderer.RenderOrder` only during registration. Keep `.dlocclusion off` at 0.36 as the
 overlap/compatibility fallback, and keep visibility independent from residency.
 
 **Evidence:** post-vanilla order raised the owner's valley view from 148 to 179 FPS (+20.9%,
@@ -1538,7 +1538,7 @@ recorded "off" every time and the run could not be attributed afterwards. This i
 a new shape: the diagnostic existed, and still could not answer the question it was built for.
 
 **Do:** for anything a person switches on mid-session, log from the command handler itself -
-`.vhhzb` already did, `.vhcull` did not. Ask what the reporting cadence is before relying on a
+`.dlhzb` already did, `.vhcull` did not. Ask what the reporting cadence is before relying on a
 periodic line, and prefer event-driven evidence for state a human controls.
 
 ### G77 - An offline harness must reproduce the whole approval chain, not just the test
@@ -2610,7 +2610,7 @@ ExactRuleRefuses` holds it.
 `distanceSq < lod0BiasSq + 1024`, which with `LodBias` at 1 reaches **further** than level 1's
 `viewDistanceSq` - 71.6 blocks against 67.1 at a 64-block view distance.
 
-**Found:** 0.3.158, from `.vhexact audit` reporting seven uncovered chunks all in state `Pending`,
+**Found:** 0.3.158, from `.dlexact audit` reporting seven uncovered chunks all in state `Pending`,
 the nearest at 28 blocks. Shipped in 0.3.154; the bug was introduced by the fix for G43.
 
 ### G134 - A diagnostic that names a signal it does not print
@@ -2687,7 +2687,7 @@ exact 32-block boundary enters the next chunk" and the shader agrees with it; bo
 assumption about which cell a face on the boundary belongs to, which is G97 with the reference
 implementation on the CPU side.
 
-**Found:** 0.3.162, from a player report of missing vertical faces after `.vhband overlap 0`
+**Found:** 0.3.162, from a player report of missing vertical faces after `.dlband overlap 0`
 removed the margin that had been burying it since 0.3.139.
 
 ### G137 - Drawing a block as a cube does not entitle it to occlude like one
@@ -2719,7 +2719,7 @@ four samples, landing on walls (+2.9%) with tops nearly free (+0.6%), and **no c
 draw clusters** - which is the number that decides whether a geometry increase is affordable.
 
 **Do** expect the cost to be pure waste everywhere except the seam. That is not an argument
-against it; it is the argument for putting it behind a switch (`.vhcutout`) so the frame rate can
+against it; it is the argument for putting it behind a switch (`.dlcutout`) so the frame rate can
 be weighed against a picture the numbers cannot show.
 
 **Found:** 0.3.163, from a player standing at a seam through a flax field, after G136 had already
@@ -2778,7 +2778,7 @@ read them rather than assuming a level.
 
 **Found:** measured on a flat two-block test patch at the seam in Session 73, then confirmed by
 invoking `ColorUtil.LightUtil.ToRgba(22, 0)` offline through a reflection probe. Fixed in 0.3.169
-behind `.vhlight sun`.
+behind `.dllight sun`.
 
 ### G140 - Two tiles in one atlas rectangle, and only one of them is the top
 
@@ -2829,7 +2829,7 @@ G48 for the channel-order trap on the same two functions.
 
 **Trigger:** writing a diagnostic report to chat with `TextCommandResult.Success`.
 
-**Trap:** the client parses chat text as VTML. `.vhtint` wrote an arrow as `->`; a bare `>` is a
+**Trap:** the client parses chat text as VTML. `.dltint` wrote an arrow as `->`; a bare `>` is a
 closing tag with nothing open, so it errored, mis-nested the client's own `<font>` tag after it,
 and - because the scrollback is re-parsed on every redraw - kept erroring several times a second
 until the message scrolled away. The command itself had worked and its report was in the log
@@ -2889,7 +2889,7 @@ before either was found.
   called the match "nearly perfect".
 
 Both are invisible to any diagnostic that compares two quantities which both come from the CPU
-call, because the error cancels. `.vhtint`'s A and C lines did exactly that for four sessions.
+call, because the error cancels. `.dltint`'s A and C lines did exactly that for four sessions.
 
 **Do:** for any quantity the terrain shader uses, read `colormap.vsh` and transcribe it, and hold
 the transcription against the game's own file in a check rather than against a copy of it in this
@@ -2905,7 +2905,7 @@ diverge at all. See also G139: a check written from the same wrong reduction agr
 block, or writing an acceptance criterion that says the two should agree.
 
 **Trap:** the engine picks a season map ROW per position from a hash, so its answer for one block
-is one draw from a wide distribution - across the 64 lattice positions `.vhtint` samples, blue
+is one draw from a wide distribution - across the 64 lattice positions `.dltint` samples, blue
 spans 0.004 to 0.090. Distant terrain is a summary of many blocks and averages the rows on purpose
 (G47), so the two quantities are not the same kind of thing. A 37% gap between them is the spread,
 not an error, and chasing it costs whole rounds.
@@ -2980,7 +2980,7 @@ section; it is the same amount of geometry stretched over more ground. So the co
 level is roughly the cost of any other level, and what sets the bill is HOW MANY LEVELS the fade
 reaches - not how much of the world they cover, which is the intuition the word "distant" invites.
 
-The near levels are also not the small ones. `.vhtint leaves` faded to zero at 8 blocks per voxel,
+The near levels are also not the small ones. `.dltint leaves` faded to zero at 8 blocks per voxel,
 which reads as a tight near-field restriction and is not one: the owner's own log showed 110 drawn
 sections as `L0:31 L1:57 L2:9 L3:1 L4:5 L5:3 L6:4`. Level 1 alone had more sections in view than
 level 0, and the fade was charging 97 of 110 for a variation already down to 0.57 strength by the
@@ -3096,7 +3096,7 @@ usually measures as noise, not as nothing.
 **Trigger:** a setting whose setter invalidates a derived value and queues a rebuild, and a
 command that sets it and then describes the result in the same breath.
 
-**Trap:** `.vhwater clarity` cleared the absorption table and called `RemeshAll`, then printed
+**Trap:** `.dlwater clarity` cleared the absorption table and called `RemeshAll`, then printed
 `DescribeWaterAbsorption()`, which read the field it had just set to null and reported "no
 table resolved yet". Every call. In every case, working or broken. That line exists precisely
 to tell a real failure from a working one, and it sat in the owner's chat log through a whole
@@ -3355,14 +3355,14 @@ symptom. Stale mesh-result rejection had already failed the same acceptance test
 
 **Safer action:** instrument the exact chunk and frame of a reproducible transition. Distinguish
 mask ownership, GPU mask publication, vanilla pool geometry, LOD selection/residency,
-parent-child coverage and material revision before changing another rule. `.vhmask off`
+parent-child coverage and material revision before changing another rule. `.dlmask off`
 stopping the flash proves the mask-enabled composite is necessary; it does not prove which side
 of that composite failed.
 
 **Corrected (Session 84, 0.4.53):** the counters were not merely insufficient. The interval quoted
 above was the block written 30 seconds after joining; it contained no chunk crossing and so no
 handoff at all, and it says nothing about the flash. The flash was a readiness *loss* that arrived
-one frame late (G170). The safer action above is what found it: `.vhsky` measured the picture at
+one frame late (G170). The safer action above is what found it: `.dlsky` measured the picture at
 the exact frame.
 
 ### G170 - A Before-stage callback below order 1.0 sees the player before this frame's move
@@ -3385,7 +3385,7 @@ late range check runs at 1.001) or in the opaque stage. `LateRangeCheckChecks` r
 order from the installed engine, so a game update that moves it fails a check rather than
 bringing the flash back.
 
-**Found:** Session 84, from the `.vhsky` witness and decompiled 1.22.7 `ClientMain` and
+**Found:** Session 84, from the `.dlsky` witness and decompiled 1.22.7 `ClientMain` and
 `VSEssentials`. Fixed in 0.4.53.
 
 ### G171 - A CPU audit that runs where the decision runs shares its blind spot
@@ -3393,12 +3393,12 @@ bringing the flash back.
 **Trigger:** checking an ownership or visibility decision with a diagnostic scheduled in the same
 callback, from the same inputs.
 
-**Trap:** `.vhgap` asked the engine about every suppressing cell every frame, and `.vhgap release`
+**Trap:** `.dlgap` asked the engine about every suppressing cell every frame, and `.dlgap release`
 handed every gap it found to the cache in the frame it was found, yet the flash was unchanged. Both
 ran at Before/0.994 with the pre-physics player block (G170), so every signal they read agreed that
 vanilla was drawing chunks it was about to stop drawing for the coming frame.
 
-**Safer action:** measure the output. `.vhsky` counts sky below the horizon after all opaque terrain
+**Safer action:** measure the output. `.dlsky` counts sky below the horizon after all opaque terrain
 is drawn and reports, per flash, that frame's captured mask and the ground its ray should have hit.
 It located the cause in one run.
 
@@ -3412,7 +3412,7 @@ each build briefly.
 builds: identical preparation order, identical ownership code, and the same 235 fps in every
 archived session. Why 0.4.39 looked clean is not established.
 
-**Safer action:** give each build an objective count (the `.vhsky` summaries) before treating a
+**Safer action:** give each build an objective count (the `.dlsky` summaries) before treating a
 visual bisection as the regression window, and keep code-history evidence (decompiled `dist/`
 builds) beside it.
 
@@ -3503,7 +3503,7 @@ shimmer was aliasing.
 differs from a fresh start at the same FOV.
 
 **Safer action:** restart the game after an FOV test before taking depth or precision evidence at
-the original FOV, or record the projection with the evidence (`.vhwater capture` stores it).
+the original FOV, or record the projection with the evidence (`.dlwater capture` stores it).
 
 **Found:** 2026-09-11, Session 86 (source-traced, decompiled 1.22.7).
 
@@ -3518,7 +3518,7 @@ inside the handler disposes the composer whose element is still handling the cli
 the old composer again by hand afterwards would dispose it twice.
 
 **Safer action:** queue the re-compose with `capi.Event.EnqueueMainThreadTask`, so it runs once the
-click has finished, and let `CreateCompo` do the disposal. The `.vhconfig` tabs work this way; the
+click has finished, and let `CreateCompo` do the disposal. The `.dlconfig` tabs work this way; the
 owner confirmed tab switching in 0.4.60.
 
 **Found:** 2026-09-12, Session 86 (source-traced, decompiled 1.22.7; human-tested).
@@ -3652,7 +3652,7 @@ height while render scaling or another internal render-size choice is active.
 
 **Trap:** the API can report the window's nominal 2560x1440 frame while the concrete primary
 framebuffer, viewport and depth texture are all 1920x1080. A strict compatibility check then rejects
-a valid depth copy and `.vhgpu on` fails even though the source and destination resources agree.
+a valid depth copy and `.dlgpu on` fails even though the source and destination resources agree.
 
 **Safer action:** use the concrete primary `FrameBufferRef` dimensions as the authority for resources
 attached to that framebuffer. Keep nominal API dimensions only as a fallback and diagnostic, and log
@@ -3740,7 +3740,7 @@ other generation was already active and an absent sample grows, report `Inconclu
 
 **Trigger:** skipping real world generation because the LOD server cache already holds the column.
 
-**Trap:** `/vhgen` and future frontier peeks deliberately put transient seed-generated terrain in
+**Trap:** `/dlgen` and future frontier peeks deliberately put transient seed-generated terrain in
 that cache without writing a map chunk to the savegame. Treating the row as provenance leaves the
 real world permanently absent.
 
@@ -4987,7 +4987,7 @@ sleeps. A second generation thread makes the interval 0 and stops the spin, but 
 generated terrain (Session 91).
 
 **Safer action:** judge the chunk thread by passes that found work, not by CPU or allocation. The
-mod's `ChunkThreadRest` (0.4.132, `/vhchunkrest`) sleeps it for `ServerThread.SleepMs` after an idle
+mod's `ChunkThreadRest` (0.4.132, `/dlchunkrest`) sleeps it for `ServerThread.SleepMs` after an idle
 pass where the interval is negative, and counts idle passes either way.
 
 **Found:** 2026-09-28, Session 111.
@@ -5087,7 +5087,7 @@ cost of the setting, not as its steady state.
 uninstalled, so it reported no idle passes or allocation for vanilla at all.
 
 **Safer action:** keep the instrumentation installed and switch only the behaviour
-(`-ChunkThreadRest Off` sends `/vhchunkrest off`); keep a separate uninstalled run (`Absent`) to show
+(`-ChunkThreadRest Off` sends `/dlchunkrest off`); keep a separate uninstalled run (`Absent`) to show
 that the instrumentation itself costs nothing.
 
 **Found:** 2026-09-28, Session 111.
@@ -5171,3 +5171,80 @@ letting air above owned ground own its cell, a terrain-ownership change that nee
 authorization and a terrain-first hole test (settled decision 28).
 
 **Found:** 2026-09-29, Session 112 (measured on the owner's cache `950c5c5b` with scratch decoders).
+
+### G273 - The engine discards a peek dequeued in the chunk thread's first tick after a pause
+
+**Trigger:** issuing `PeekChunkColumn` (silhouette previews, player pregen, peek diffs) in
+singleplayer, or judging the world-generation thread stuck because a peek never answered.
+
+**Trap:** pausing (the Escape menu) makes `ChunkServerThread.TogglePause` take
+`PauseAllWorldgenThreads`. On resume `ServerThread.Process` runs `Update()` BEFORE
+`UpdatePausedStatus(false)` releases that hold, so a peek dequeued in that first tick fails the
+pause's CompareExchange and is dropped with no callback (decompiled 1.22.7). A
+`loadChunkAreaBlocking` earlier in the same tick resets the counter, so it happens only sometimes.
+Silence from one peek therefore does not mean the thread is stuck: suspends keep succeeding and the
+chunk thread keeps making passes.
+
+**Safer action:** judge silence against the chunk thread's own progress (`ChunkThreadRest` pass
+counts): silent while passes advance means lost, so re-issue once; silent with the thread standing
+still is a stall (the 0.4.77 case). Keep a request's identity so a late answer to the first copy
+lands harmlessly.
+
+**Found:** 2026-10-07, Session 113 (owner's log; timing-consistent, the mechanism source-traced).
+
+### G274 - Building mod shaders at mod start fails to link, and the engine prints it twice
+
+**Trigger:** registering or compiling a shader program from a ModSystem start or a renderer
+constructor, or reading "Link error ... Missing entry point" in a client log.
+
+**Trap:** `RegisterFileShaderProgram` reads the program's files at once and splices `#include`s
+against `ShaderRegistry`'s include table, which only a full shader load refills. Mod start runs
+inside `StartModsFully`, before `HandleServerReady`'s `ReloadShaders` ("Reloaded shaders now with mod
+assets"), so a mod-only include is "not found", the stage is empty and linking fails. The engine then
+prints every startup warning and error again under "(x_x) Captured N issues during startup", which
+reads as a second failure at world join. Every session from at least 0.4.134 to 0.4.139 logged twelve
+such lines while the shaders worked from the reload a second later.
+
+**Safer action:** build mod shaders from the `ReloadShader` event, not at start; keep a first-frame
+fallback for a session the reload never reached. Do not excuse a "provisional" first attempt: once no
+attempt is doomed, every failure must report at full volume. The engine skips reloads only while a
+graphics preset is being applied.
+
+**Found:** 2026-10-13, Session 113 (owner's log; decompiled 1.22.7 `ShaderRegistry`,
+`ClientSystemStartup.HandleServerReady`).
+
+### G275 - Ordinary cube blocks carry an "all" texture that is the missing-texture image
+
+**Trigger:** choosing a block's texture by face name (`up`, `east`, `sides`, `all` ...), or seeing the
+game's grey "?" on distant terrain the game itself draws correctly.
+
+**Trap:** vanilla cube blocks - rock, ores, crackedrock, soil, water - hold `Textures["all"]` =
+`game:unknown` at atlas slot 0 beside their real per-face textures; the engine never draws it. A
+name-based picker that reaches "all" draws the "?". The walls' skip-the-top rule, added because a
+redwood quarter-trunk's block file names the cut end for a face its shape covers with bark, skips
+every face of a block whose faces share one texture and so lands on "all". It drew "?" walls on near
+rock and soil for a long time before it was found. A missing image file, an unbaked name and an empty
+table rectangle were each ruled out first: the image is a real texture at a real slot.
+
+**Safer action:** refuse a face texture whose CONTENT is the "?" image (the unknown slot, or an exact
+match of its average colour) and fall back to the next name or the top. Keep accepting it on the
+block-colour path, where a block the game itself draws as the "?" box should look the same at
+distance.
+
+**Found:** 2026-10-13, Session 113 (owner's screenshot; the 0.4.141 log named the blocks).
+
+### G276 - A forked mod must rename its assembly with its mod id
+
+**Trigger:** renaming or forking a code mod, or a player installing a fork beside its original.
+
+**Trap:** the engine loads a mod's DLL with `LoadFrom`. Two mods whose assemblies share a simple name
+(both `VintageHorizons.dll`) can resolve to one loaded assembly, so the second mod may run the first
+one's code, or fail in ways that name neither. Renaming only the mod id leaves that, and the network
+channel, Harmony ids and chat commands collide as well.
+
+**Safer action:** rename the assembly (`DodensLandscapes.dll`), channel, Harmony ids, asset domain and
+command prefix together with the mod id. Keep the names inside stored formats (the cache's DB type
+code, height-sample headers, the start-up file marker) so existing files still open, and move legacy
+data once, never over newer files and never while the old mod is enabled.
+
+**Found:** 2026-10-07, Session 113 (decompiled 1.22.7 `ModContainer`).

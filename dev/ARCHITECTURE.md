@@ -1,4 +1,4 @@
-# Vintage Horizons — architecture
+# Doden's Landscapes — architecture
 
 > Tier 1: durable design and settled invariants. Change this document when the design changes, not when a task merely advances.
 
@@ -242,7 +242,7 @@ then submitted front-to-back from a reusable allocation-free ordering list so ne
 can reject farther fragments; the translucent water pass retains traversal order. The whole
 cached pass runs at opaque order 0.38, immediately after vanilla terrain at 0.37, so current
 chunks populate depth before cached fragments hidden behind them reach the shader. The
-renderer can be re-registered at its old 0.36 order with `.vhocclusion off`; re-registration
+renderer can be re-registered at its old 0.36 order with `.dlocclusion off`; re-registration
 is required because the engine sorts a renderer only when it is registered.
 
 Post-vanilla ordering supplies the depth used by delayed exact-geometry occlusion. Selected
@@ -293,8 +293,8 @@ vanilla/cache ownership always draws, protecting the handoff seam from a whole-s
 answer. While turning, a narrow normalized band at the horizontal frustum edges also draws,
 protecting newly revealed terrain without sacrificing central or stationary culling.
 `safe` invalidates on small camera changes; `extreme` retains results through all camera
-motion and deliberately removes the edge guard. `.vhtemporal` and
-`.vhtemporalprofile` change these session-only controls; `.vhinfo` exposes their counters.
+motion and deliberately removes the edge guard. `.dltemporal` and
+`.dltemporalprofile` change these session-only controls; `.dlinfo` exposes their counters.
 
 The earlier same-frame bounding-box experiment remains a recorded rejection, not a
 contradiction: 83% hidden proxy boxes produced no FPS gain because proxy raster, same-frame
@@ -307,7 +307,7 @@ keys. Additions expand it in constant time; removing an extreme marks it for one
 from the surviving keys. Ordinary frames derive the farthest required distance from the
 rectangle without scanning resident meshes. The camera far plane rounds upward in
 512-block steps, grows immediately, and shrinks only after a lower step remains stable for
-five seconds. The shader's effective far edge remains continuous, and `.vhfar` remains an
+five seconds. The shader's effective far edge remains continuous, and `.dlfar` remains an
 explicit culling/far-edge cap rather than a different residency policy.
 
 Render-dirty membership is exact owning-thread state, while scheduling uses a separate
@@ -380,7 +380,7 @@ Transient generation uses `PeekChunkColumn` and must not write generated terrain
 Runtime absence verification measures this promise, and reports inconclusive when another generator
 was already active.
 
-`/vhworldgen` is the sole deliberate terrain-writing exception. After a permitted player prepares
+`/dlworldgen` is the sole deliberate terrain-writing exception. After a permitted player prepares
 and confirms the permanent operation, it requests real chunk columns with `keepLoaded: true`, works
 in 16×16-chunk tiles, and records durable progress. A circle is the default: the player's tile is
 first, tiles advance through clockwise circular radial bands, and columns are nearest-first within
@@ -415,11 +415,11 @@ live until the exact replacement persistence revision is acknowledged.
 3. **Block codes are persisted; block ids are resolved live.** Numeric registry ids are not stable storage identity.
 4. **The block registry remains on the owning thread.** Some registry reads lazily mutate internal engine state.
 5. **OpenGL work remains on the render thread.** Workers produce arrays, not GPU objects.
-6. **A parent covers until children are ready.** Detail transitions may be temporarily coarse but must not open holes. Since 0.4.135 it covers only the quarters whose children are waiting and descends into the rest whenever the clustered path, which can draw a quarter exactly, is drawing; any other opaque path and `.vhstandin off` keep the whole-footprint cover (G269).
+6. **A parent covers until children are ready.** Detail transitions may be temporarily coarse but must not open holes. Since 0.4.135 it covers only the quarters whose children are waiting and descends into the rest whenever the clustered path, which can draw a quarter exactly, is drawing; any other opaque path and `.dlstandin off` keep the whole-footprint cover (G269).
 7. **Local observed data wins over remote offered data.** A remote source cannot overwrite newer client truth.
 8. **Sweeping must not generate terrain.** Frontier columns without a complete known neighborhood are skipped.
 9. **Transient generation must not persist world terrain.** The LOD cache is the only intended output.
-10. **Competing LOD mods cause this renderer to defer.** Two systems must not fight over the camera far plane or distant terrain.
+10. ~~**Competing LOD mods cause this renderer to defer.**~~ **Superseded by 55 (2026-10-10):** the mod never steps aside; it names the other mod and the player keeps one.
 11. **Performance work is evidence-driven.** Count budgets are not accepted as frame budgets without elapsed-time measurements.
 12. **Owning-thread install drains are FIFO, time/byte bounded, and progress-guaranteed.** One oversized oldest item may exceed a tick's ceiling; later work waits.
 13. **Foreign decode acceptance is not publication.** Request responsibility and source
@@ -537,20 +537,20 @@ live until the exact replacement persistence revision is acknowledged.
     grey, never the missing-texture image; a plain block whose own answer is that image (a removed
     mod's block) keeps it, matching what the game draws up close (G180-G182).
 37. **Settings has one editor and each setting keeps its real owner.** The guarded in-game
-    **Horizons** tab and `.vhconfig` compose the same editor; the command remains the fallback if
+    **Horizons** tab and `.dlconfig` compose the same editor; the command remains the fallback if
     Vintage Story's private Settings header seam moves. The Vanilla distance marker writes the
     actual game setting with the game's range, step, mouse-up commit and Custom-preset side effect,
     so mod Cancel never rolls it back. Its neutral visual band ends before the coloured L0 band.
     The saved pause-loading choice reuses the same bounded owner-thread LOD work from a render stage
     at 50 ms cadence; it never unpauses or advances simulation (G184-G186).
-38. **Real terrain generation is explicit and permanent.** Savegame sweeping, `/vhgen` and every
-    automatic frontier path retain the generates-nothing promise. `/vhworldgen` alone may write
+38. **Real terrain generation is explicit and permanent.** Savegame sweeping, `/dlgen` and every
+    automatic frontier path retain the generates-nothing promise. `/dlworldgen` alone may write
     new terrain, only after a player with `controlserver` privilege prepares and confirms the area.
     Its durable plan, kept leases and job-owned persistence obligations make pause, resume, stop and
     restart recovery bounded and visible; no interrupted job resumes silently (G193-G197).
 39. **The frontier yields; explicit jobs own generation authority.** A future travelling frontier
     may borrow otherwise idle generation capacity but never holds the exclusive authority merely
-    because it is enabled. It yields immediately to `/vhworldgen` and `/vhgen`; simultaneous
+    because it is enabled. It yields immediately to `/dlworldgen` and `/dlgen`; simultaneous
     producers cannot make each other's provenance, completion or absence diagnostics ambiguous.
 40. **Silhouette height truth is ordered, and accelerators are optional.** Captured terrain wins,
     then the engine's own Terrain-pass preview, then an accepted accelerator. Horizons prefers
@@ -673,7 +673,7 @@ live until the exact replacement persistence revision is acknowledged.
     sleeps the thread for the engine's own `ServerThread.SleepMs` after a pass that found nothing and
     only while the engine's interval is negative; a pass with work never rests, and generation order
     and output are untouched. It is on by default where this mod's server side runs, switchable per
-    session (`/vhchunkrest`) and removable by config (`RestIdleChunkThread`). Enabling a second
+    session (`/dlchunkrest`) and removable by config (`RestIdleChunkThread`). Enabling a second
     generation thread also stops the spin but changes terrain, and was rejected (Session 91). The
     hook sits on the scan, not on the interval getter, because the getter can be inlined (G262).
 54. **The all-cores garbage collector is offered by editing the game's own start-up file, opt-in**
@@ -686,6 +686,16 @@ live until the exact replacement persistence revision is acknowledged.
     file. A file that cannot be read or written leaves the setting unchanged and says why. Only the
     adaptive Server GC is offered: a larger gen0 budget and a fixed heap count both lengthen pauses
     (G265).
+55. **This mod never steps aside for another LOD mod, and keeps no switch to** (owner,
+    2026-10-10; supersedes 10). Two LOD mods drawing at once still fight over the far plane, but the
+    player manages the mod list: a known LOD mod that is switched on (`OtherLodMods.Known`) is named
+    in the log and in a login notice offering only OK; without one, a general reminder can be
+    dismissed (`HideLodModNotice`), which never hides a named conflict. A mod whose own switch reads
+    off does not count; "cannot tell" counts as on. Detection is the known list only: scanning other
+    mods' code was rejected by the owner.
+56. **Mod shaders are first built on the engine's shader reload, never at mod start** (2026-10-13,
+    G274). Every failure reports at full volume; nothing is excused as a provisional attempt. A
+    first-frame fallback covers a session the reload never reached.
 
 ## Concurrency invariants
 

@@ -1,47 +1,49 @@
-# Vintage Horizons — TODO and verification debt
+# Doden's Landscapes — TODO and verification debt
 
 > Tier 2 companion: open work only. Completed narrative moves to `dev/history/DONE.md`; current conclusions belong in `STATUS.md`.
 
 ## Start here
 
-Read [Session 112](sessions/SESSION_112.md), then [Session 111](sessions/SESSION_111.md).
-0.4.135 is installed and waits for the owner's exploring test: coarse stand-ins cover only the
-quarter that is waiting, and chunks the game has just announced are handed to it within a frame or
-two (G269-G272). Read the `stand-in check` and `stand-in:` lines in his client log first. The
-stutter while exploring is solved for him by the all-cores garbage collector, an opt-in switch on
-the settings editor's Performance tab (0.4.134, settled decision 54), and the game's chunk thread
-rests when it has nothing to do (0.4.132, settled decision 53).
+Read [Session 113](sessions/SESSION_113.md), then [Session 112](sessions/SESSION_112.md). The mod is
+now **Doden's Landscapes** (mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and
+log), licensed GPL-3.0 only with a Vintage Story exception. 0.4.142 is installed; 0.4.138-0.4.141
+are owner-played. All 26,214 assertions pass. The public release is next. The stutter while
+exploring is solved for him by the all-cores garbage collector, an opt-in switch on the settings
+editor's Performance tab (0.4.134, settled decision 54), and the game's chunk thread rests when it
+has nothing to do (0.4.132, settled decision 53).
 
-### Coarse stand-ins: what 0.4.135 left open (Session 112)
+### The public release (owner's calls)
 
-- **The owner's exploring test.** Ten to fifteen minutes over new mountain or cliff terrain, flying as
-  in his 2026-09-28 screenshot, a few of them with `.vhstandin off`, then the client log. Each minute
-  with anything to report, the `stand-in check` line gives the stand-ins that covered ground the game
-  draws (by level, the longest, the nearest, and why the finer piece was missing) and the fresh-chunk
-  hand-over wait (half, 95%, slowest). Every such stand-in lasting 0.5 s or more gets a `stand-in:`
-  line with its position. Compare on and off by those lines, not by eye.
-- **Remove the recorder once his log confirms the fix** (owner, 2026-09-29: temporary). Delete
-  `VintageHorizons/src/Render/LodTerrainRenderer.StandInRecorder.cs` and its three call sites
-  (`NoteStandIn`, `EndStandInFrame`, `RecordFreshChunkConfirmed`) in a new versioned build; no check
-  refers to them. Decide with him then whether `.vhstandin` stays as a named A/B path.
+- **Version:** promote the build he last played to a release number (CLAUDE.md: only he calls a
+  promotion, and the promoted build must be one somebody played).
+- **GitHub:** nothing is pushed; `origin` is still `DodenGruva/Horizons`, which he may rename.
+- **ModDB:** the page at `mods.vintagestory.at/dodenslandscapes` (modinfo already points there), with
+  GNU GPL v3 chosen as the licence. The README now tells players about the Performance tab and about
+  keeping one LOD mod on.
+
+### What Session 113 left open
+
+- **Lost silhouette previews (G273):** 0.4.137 has not been seen to re-issue one in play; look for
+  "previews went unanswered ... lost rather than stuck" in a server log after pauses while exploring.
+- **Beside the original Vintage Horizons:** running the two together is untested; both may patch the
+  same parts of the game (the settings screen).
+- **The login notice's layout** at other GUI scales is unseen; its text box is a fixed 230 px.
+- **Memory:** his 0.4.139 session reached 12.1 GB for the whole game while flying up to 5,200 blocks a
+  minute, the highest seen; part of the longer memory look below.
+
+### Coarse stand-ins: what is left (Sessions 112-113)
+
 - **Held: air above owned ground.** Chunk-edge walls rise into a neighbour's air cell on 0.3-1.0% of
   chunk faces, and L6 tops into an empty chunk in 1.0% of chunk columns (G272); the air rule never
   hides either. Closing them means letting air directly above ground the game draws own its cell, a
   terrain-ownership change that needs his explicit authorization and a terrain-first hole test
   (settled decision 28, G40). Propose it only if his log or sightings show walls over confirmed
   ground.
-- **If stand-ins over the game's ground remain with the fix on,** the recorder's reasons say which
-  wait is left: new ground not yet reached by mip propagation, a load, a mesh job or a mesh slot.
+- **One unexplained outlier:** in his 0.4.135 test a level-1 stand-in sat at the player for 18.4 s,
+  its finer piece "not asked for yet". Look only if lingering coarse ground is seen again; the
+  recorder that reported it is gone (0.4.136).
 - **Unmeasured:** the watch list's per-frame cost (estimated at a few tens of microseconds for 64
   rechecks), and its started, promoted, expired and refused counters, which are not logged.
-
-### The all-cores collector check fails while the collector is on
-
-`GameCollectorChecks` drives the editor against the installed game's `Vintagestory.runtimeconfig.json`
-and asserts that the file as shipped asks for the default collector. With the owner's collector on
-(since 2026-09-29 07:08), 14 of its 21 assertions fail with nothing wrong in the code. He was asked in
-Session 112 whether the check should use the saved backup or its built-in sample instead; not yet
-answered. Until then read those 14 failures as environmental.
 
 ### Stutter: what 0.4.134 left open (Session 111)
 
@@ -56,8 +58,8 @@ collector in force.
   candidates.
 - **Before recommending it to players:** a longer paired memory look (the 0.4.134 off session was
   about two minutes, its first stationary), and a look on a smaller machine; Linux, macOS and a
-  read-only game folder are untested. Tell players about the Performance tab in the README and mod
-  description at the next release.
+  read-only game folder are untested. The README now describes the Performance tab (Session 113);
+  the ModDB description should mention it at release.
 - **The next slowest frames** are 2-4 ms spikes in the game's entity ticking (`tick-gtentity`) and
   this mod's `vh:prepare`, with occasional 16-23 ms `vh:lod` frames. Not examined.
 - **This mod's remaining garbage:** 55-70 MB/s of large `UInt64[]` on the client and server main
@@ -105,7 +107,7 @@ collector in force.
   - whether the ribbon holds still while turning and travelling (0.4.124's fix);
   - halos or blocky edges around near objects from the half-resolution upsample;
   - whether 0.8 s is the right fade, and whether new fog should fade in as well (offered, not built).
-- **Cost.** The `.vhfog` on/off frame rate in one scene has not been taken since 0.4.123's 400 against
+- **Cost.** The `.dlfog` on/off frame rate in one scene has not been taken since 0.4.123's 400 against
   550 FPS. It belongs with the exploring-hitch work above.
 - **Defaults.** His tuning (spread 36, floor depth 20, edge softness 35%) is the source default after
   0.4.125 and reaches players with the next build.
@@ -175,7 +177,7 @@ Open, in the order they block further work:
     read-back, and store unopened/closed behavior while Farseer is off.
   - With other players available, exercise a dedicated server explicitly opted in, its reach clamp,
     per-player fairness, disconnect/off cleanup and a current/older peer combination.
-  - No `/vhworldgen` run has yet been checked for its captured columns appearing in silhouette
+  - No `/dlworldgen` run has yet been checked for its captured columns appearing in silhouette
     tiles (the P2 integration gate).
 - **Then P6:** Terrain Ahead remains a separate feature with its own switch; P7 canopy follows only
   after P6 acceptance.
@@ -312,7 +314,7 @@ Remaining:
   at specifically.
 - **Structures cached before 0.4.62 turn grey, not their real colours.** 1,105 stored placeholder
   colours were repaired on load in the owner's first 30 seconds. They gain their materials only
-  when the ground is captured again; whether `/vhrefresh` on the server delivers the refreshed rows
+  when the ground is captured again; whether `/dlrefresh` on the server delivers the refreshed rows
   to the client has not been checked.
 - **The server half is not counted in any log the owner sends.** In 30 seconds the client's own
   captures recorded 4,496 chisels as their material, 28 without one and no failed reads. Whether the
@@ -333,7 +335,7 @@ dial ranges on 2026-09-12. Remaining:
 - **Not specifically looked at:** a large reach across the vanilla edge, distant water's edges, and
   smear at low frame rates, where each frame of memory lasts longer on screen.
 - **The shaders are compiled only in game.** No GLSL validator is installed here; a compile failure
-  switches the feature off for the session with one log line, and `.vhtaa` reports it.
+  switches the feature off for the session with one log line, and `.dltaa` reports it.
 - **Automatic thresholds have been in use since 0.4.57 without complaint**, but not evaluated at
   other FOVs, render scales or larger vanilla view distances, where re-selection and the level-0
   floor move.
@@ -344,10 +346,10 @@ The vanilla-to-LOD handoff flash is fixed in 0.4.53 and confirmed by the owner. 
 change that introduced it (0.4.13) and the fix are in [Session 84](sessions/SESSION_84.md) and
 G170. Remaining:
 
-- **`.vhgap` scans before the physics step** (Before/0.994), so its range verdicts can be a frame
+- **`.dlgap` scans before the physics step** (Before/0.994), so its range verdicts can be a frame
   old. Move the scan after the late range check or retire it.
 - **Comparison switches for disproved hypotheses.** `.vhsnowline` was retired in 0.4.70. Retire
-  `.vhgap release` or keep it deliberately. `.vhsky` is worth keeping as a diagnostic.
+  `.dlgap release` or keep it deliberately. `.dlsky` is worth keeping as a diagnostic.
 - **Stale recorded spheres and eviction gaps.** When vanilla re-tessellates a buried chunk beside a
   newly unloaded neighbour, the recorded draw sphere disagrees for 1–7 frames (invisible in
   practice); the sandbox also found two eviction gaps of 4 and 7 frames. Refreshing the recorded
@@ -366,7 +368,7 @@ not yet received a clean acceptance run:
 - Verify permanently warm and fully snow-covered regions become idle between weather-band
   crossings, while a dormant seasonal region eventually wakes through the one-region-per-poll
   canary.
-- Exercise `/vhrefresh` at radius 0, the default radius and a frontier. Confirm no absent
+- Exercise `/dlrefresh` at radius 0, the default radius and a frontier. Confirm no absent
   vanilla column is generated and a connected client receives the durable replacement.
 - Compare authoritative snow at L0 and across mip boundaries, including mixed/tied coverage,
   frosted grass and frosted foliage. The owner has accepted the general look, not this matrix.
@@ -440,7 +442,7 @@ before touching this.
 - **The residue is closed as an aggregate, not item by item.** All-features-off on 0.3.195
   measures exactly 0.3.127, so the three named costs are gone between them. Their individual
   shares were never separated, and doing so would need a shader edit per hypothesis.
-- **`.vhcutout` is deliberately absent from the window.** It is a small win that reintroduces
+- **`.dlcutout` is deliberately absent from the window.** It is a small win that reintroduces
   the seam holes it was added to fix. If it is ever wanted there, it needs the hole fixed
   first, not a warning label.
 
@@ -456,14 +458,14 @@ the plan set out to fix are fixed and human-accepted; what follows is the remain
   The in-memory half worked, so coverage still grew within a session and the owner's acceptance of
   0.3.185 was about behaviour that was really there - just not the durable part. See G147; the
   same null was also masking a crash on world leave. **The tell is now testable: explore, quit,
-  rejoin, and `.vhclimate` should report remembered cells before you have gone anywhere.**
+  rejoin, and `.dlclimate` should report remembered cells before you have gone anywhere.**
 - **Distant leaves turn unevenly again, and the design question it raised is answered.** Built in
   0.3.187: the shader picks the game's own season map ROW per position using the engine's own
   `noise3d.ash`, and blends toward the averaged colour as one voxel grows, because G47's reasoning
   holds once a voxel is a neighbourhood. What the entry could not decide in advance was where that
   fade should sit; it is now settled by measurement rather than by eye. See G148.
 
-  The reach is `LeafSeasonFadeBlocks`, a uniform, defaulting to 2 - level 0 alone. `.vhtint
+  The reach is `LeafSeasonFadeBlocks`, a uniform, defaulting to 2 - level 0 alone. `.dltint
   leafwide on` restores the old fade to 8 blocks so the two can be compared in place at one scene.
   Owner-measured: **292 fps across three levels, 300 at one, 310 with the feature off**, against
   315 before the feature existed, with **no visible difference between one level and three**.
@@ -485,7 +487,7 @@ the plan set out to fix are fixed and human-accepted; what follows is the remain
 - **Five fps sit between "feature off" (310) and the pre-feature baseline (315), unexplained.**
   Small enough to be scene variance, and the owner's two readings were minutes apart rather than
   back to back. It is also where 0.3.186 through 0.3.191 sit. Worth isolating only if it grows or
-  if it bothers the owner; the way to do it is `.vhtint leaves off` on 0.3.185 against the same on
+  if it bothers the owner; the way to do it is `.dltint leaves off` on 0.3.185 against the same on
   0.3.194 at one scene.
 
 - **Slot sharing is fixed but unseen.** The key was the MEAN of the share's three channels
@@ -497,7 +499,7 @@ the plan set out to fix are fixed and human-accepted; what follows is the remain
   24 distinct shares at 1/64 per channel across 29 blocks, so this costs about two dozen slots of
   64 rather than six. Shipped in 0.3.186; the tell would be sparse-grass soil no longer reading
   too blue.
-- **`.vhtint`'s labels were corrected in 0.3.184.** A is now the flat fallback and says whether
+- **`.dltint`'s labels were corrected in 0.3.184.** A is now the flat fallback and says whether
   it is actually what draws; B is the lattice average; C is labelled as the single random season
   row it is, with a pointer to G145 saying not to hold it against an average. The C' line and the
   weight switch went with the height ramp. The D lines remain the report of what reaches the
@@ -543,16 +545,16 @@ the plan set out to fix are fixed and human-accepted; what follows is the remain
 ## Exact draw-range ownership: what 0.3.160 has not proven
 
 Ownership reads the engine's own bounding sphere and view distance instead of bounding them, and
-`.vhexact audit` measured 100% coverage with zero holes. That is one world, one view distance, one
+`.dlexact audit` measured 100% coverage with zero holes. That is one world, one view distance, one
 camera mode.
 
 - **The water footprint's dilation now derives to zero.** It follows the refused ring, which the
   exact rule took from 62 blocks to 16 and Session 70's overlap default takes to zero, so G132's
   arithmetic rounds the growth to nothing either way. That is the correct consequence and it has
   not been seen in play. 0.3.151's chunk-wide dry strip came from exactly this quantity;
-  `.vhwater edge <chunks>` overrides it live.
+  `.dlwater edge <chunks>` overrides it live.
 - **The band's inner offset moved with the ring**, 46 blocks to 16 and now to zero, and the band
-  was human-tuned against the first of those. `.vhband inner <blocks>` pins it, `auto` hands it
+  was human-tuned against the first of those. `.dlband inner <blocks>` pins it, `auto` hands it
   back. The owner has been running at a zero ring by hand since before Session 70 without
   reporting the band, so this is stale-looking rather than unobserved.
 - **Third person is untested** and is where it should matter most: the engine measures range from
@@ -568,14 +570,14 @@ camera mode.
 
 ## Seam holes: what Session 70 has not proven
 
-Both causes are fixed and `.vhband overlap` defaults to 0 on the strength of it. 0.3.162 is
+Both causes are fixed and `.dlband overlap` defaults to 0 on the strength of it. 0.3.162 is
 human-tested and was reported as excellent; 0.3.163 is not.
 
 - **0.3.163 is not human-tested.** The flax-field hole is the acceptance case: stand at a seam
   running through a crop field and look for sky through the plants.
 - **The crop coverage rule costs 2.2-4.4% geometry and has no frame-time measurement.** Draw
   clusters do not move in any of four offline samples, which is the number that usually decides,
-  but nothing has been benchmarked. `.vhcutout on` is the A/B and reports the live vertex total.
+  but nothing has been benchmarked. `.dlcutout on` is the A/B and reports the live vertex total.
   The +4.37% sample is roughly double the median with no cause established; four samples is a
   small n (G98).
 - **Leaves carry G137's defect and are excluded on cost. NOW PRICED - it is the owner's call.**
@@ -605,7 +607,7 @@ human-tested and was reported as excellent; 0.3.163 is not.
   as harmless in play. Fixing it means choosing what a distance field should answer at a boundary,
   which is a look decision, not arithmetic.
 - **`OverlapMarginBlocks = 0` is source-only.** The owner directed no new artifact for a default
-  change, so the installed 0.3.163 zip still starts at 16 and `.vhband overlap 0` is still needed
+  change, so the installed 0.3.163 zip still starts at 16 and `.dlband overlap 0` is still needed
   in that build. The next packaged artifact carries the new default.
 - **No shader this session was compile-verified offline.** There is no GLSL validator in the
   toolchain; 0.3.162 loading in game is the only proof, and 0.3.163 has not been run.
@@ -623,24 +625,24 @@ not draw the trunk; the mask reads both correctly and the cache fills in the res
 
 The only safe correction is to deny a column whose cells disagree, which reinstates most of the
 46-block sphere slack the exact rule exists to remove, concentrated on exactly the sparse-geometry
-columns that produce trees. `.vhexact off` already demonstrates that trade in one command, at the
+columns that produce trees. `.dlexact off` already demonstrates that trade in one command, at the
 cost of the full ring. Do not rebuild it as a new rule without a product decision first.
 
 ## Complete columns are unreachable, and two features wait on them
 
-Measured this session and unsolved. Both the whole-mesh skip (`.vhskip`) and the radial handoff
+Measured this session and unsolved. Both the whole-mesh skip (`.dlskip`) and the radial handoff
 need a column owned from bedrock to sky, and the underground cells cannot be owned: solid stone
 with no exposed face holds no mesh, and a chunk nobody has visited was never tesselated, so
 neither reports drawn.
 
 - `0 owned draws skipped` in **every log ever recorded**, and `handoff 0 blocks` with `nearest
-  incomplete 0 blocks`, so `.vhmask off` is not a working fallback either.
+  incomplete 0 blocks`, so `.dlmask off` is not a working fallback either.
 - Counting only the band each cached mesh occupies was proposed and **measured worthless before
-  being built**: `.vhskip why` reported 0 of 1248 sections would gain, because the cells the mesh
+  being built**: `.dlskip why` reported 0 of 1248 sections would gain, because the cells the mesh
   occupies were not owned either. Do not rebuild that without re-running it.
 - 0.3.159 produced the first fully-owned columns this world has recorded - five of eighty-one - by
   fixing the air/no-sphere threshold. Whether that is enough for an aligned 2x2 block at L0 is
-  unmeasured; `.vhskip why` answers it.
+  unmeasured; `.dlskip why` answers it.
 
 ## Terrain slabs: optional exact-mode verification debt
 
@@ -658,7 +660,7 @@ sink experiment and default decision are closed. Two non-blocking measurements r
 ## The blend band is circular by construction
 
 Not a defect introduced this session, and the owner accepts the band as it stands - recorded so it
-is not rediscovered a fourth time. Confirmed from a live `.vhband map`: concentric rings, full
+is not rediscovered a fourth time. Confirmed from a live `.dlband map`: concentric rings, full
 strength to about 190 blocks, fading to nothing at about 310.
 
 Two independent causes were recorded. **The first is closed as of 0.3.159**: ownership is no
@@ -705,14 +707,14 @@ source on 2026-09-04; the section duplicated one the top of this file already ma
   path carry no block slots and are unchanged; they have not been exercised against this work.
 - **Near-field suppression now defaults to zero.** The artefact it guarded against - coarse cached
   geometry at arm's length in cells vanilla never proves, typically underground - has not been
-  re-tested. `.vhnear 48` restores it. The owner's 2026-09-28 screenshot (Session 112) shows coarse
+  re-tested. `.dlnear 48` restores it. The owner's 2026-09-28 screenshot (Session 112) shows coarse
   strips close to the player that the 48-block floor would have hidden. By inspection of that one
   frame they are the stand-in route (G269, G270), not cells vanilla never proves.
 - ~~**The unload-hole fix is a mitigation.**~~ **Answered in Session 70 and closed.** It was
   never about unload timing. The 16-block margin was burying two seam defects - a wall charged to
   the wrong ownership cell (G136) and a crop cube claiming an occlusion vanilla does not provide
-  (G137) - and with both fixed the margin defaults to zero. `.vhholes` remains the diagnostic if a
-  hole recurs, but a hole that only `.vhband overlap` closes is now evidence of a third cause
+  (G137) - and with both fixed the margin defaults to zero. `.dlholes` remains the diagnostic if a
+  hole recurs, but a hole that only `.dlband overlap` closes is now evidence of a third cause
   rather than of loss latency.
 - **46 blocks resolve no texture and 241 keep per-position colour.** Neither figure has been checked
   against what ground it actually covers.
@@ -760,7 +762,7 @@ mechanism, the measurements and the disproved theory are in `dev/history/DONE.md
 session 40; G50 carries the durable rule.
 
 **Owed: one look at the far dissolve band**, the edge where cached terrain fades into sky, at
-dusk and at night, flipping `.vhlight sky`. Shipped in 0.3.52 and not yet seen. It is
+dusk and at night, flipping `.dllight sky`. Shipped in 0.3.52 and not yet seen. It is
 identical in full daylight, so midday shows nothing. Measured effect: about 20% too dim
 through dusk and about 60% too bright on a moonlit night before the correction.
 
@@ -779,7 +781,7 @@ it, which is the point of the arrangement.
 
 Phase 3 of `dev/plans/PLAN_GPU_DRIVEN_TERRAIN_RENDERER.md` is complete in source and, since
 0.3.69/0.3.70, has been played. Opaque cached terrain draws from the regional arenas with one
-multi-draw per page set instead of one call per section, behind `.vhgpu on` and
+multi-draw per page set instead of one call per section, behind `.dlgpu on` and
 `.vhindirect on`, saved per install since 0.3.71.
 
 **Established:** the indirect shader variant compiles on the owner's hardware (RX 9070 XT, GL
@@ -979,21 +981,21 @@ The accepted owner evidence is:
 | post-vanilla cached pass | 148 FPS | 179 FPS | about 1.17 ms | minute distant changes; entirely acceptable |
 | delayed exact-geometry occlusion, stationary | about 170 FPS | nearly 500 FPS | about 3.88 ms | accepted after motion/seam/edge guards |
 
-All four are default-on in 0.3.37, with `.vhbackface off`, `.vhfront off`, `.vhocclusion off`,
-and `.vhtemporal off` as session-only fallbacks. Delayed occlusion defaults to the aggressive
-profile; `.vhtemporalprofile safe|aggressive|extreme` exposes the safety and artifact limits.
+All four are default-on in 0.3.37, with `.dlbackface off`, `.dlfront off`, `.dlocclusion off`,
+and `.dltemporal off` as session-only fallbacks. Delayed occlusion defaults to the aggressive
+profile; `.dltemporalprofile safe|aggressive|extreme` exposes the safety and artifact limits.
 The first three rows are same-view A/Bs. The temporal row and its roughly 250-350 FPS motion
 range are sequential owner playtests across evolving builds and areas, not a controlled
 benchmark. The rejected same-frame proxy/query prototype remains rejected: delayed queries
 over real geometry after vanilla depth are a different design. Remaining work:
 
-- Run a controlled alternating 0.3.37 `.vhtemporal off/on` comparison in the same settled
+- Run a controlled alternating 0.3.37 `.dltemporal off/on` comparison in the same settled
   view, plus a second pair during sustained streaming. Quantify the final edge guard rather
   than inferring its cost from the earlier profile ranges.
 - Repeat on another driver/machine and cover multiplayer, caves/structures, vertical
   look transitions, long turns, teleports and long sessions. The accepted evidence is one
   owner, machine and world.
-- Watch `.vhinfo`: global invalidations should follow profile/view thresholds rather than
+- Watch `.dlinfo`: global invalidations should follow profile/view thresholds rather than
   mesh-upload cadence; stale results may occur but must never hide terrain; seam and
   turning-edge protection should rise only in their intended cases.
 - Measure remaining CPU draw-submission time before choosing regional combined buffers,
@@ -1111,7 +1113,7 @@ Human-reported and still open:
   capability evidence. After that gate, seek approval before Phase 2 creates real regional
   GL shadow buffers; no visible fast-path phase is approved.
 - Decide whether startup configuration should change from unlimited cached drawing. The
-  `.vhconfig` scale and its `Defaults` button now use 32,768 blocks, but that player-facing
+  `.dlconfig` scale and its `Defaults` button now use 32,768 blocks, but that player-facing
   choice is not a controlled far-cap benchmark. The mask's benefit scales with vanilla
   render distance (above), so the two interact: a larger cap makes the mask worth more,
   not less.
@@ -1121,7 +1123,7 @@ Human-reported and still open:
 - Keep the report of cached terrain becoming coarser during extreme fast flight. The owner
   has played extensively since and does not see it in normal gameplay; those speeds are not
   normally achievable, so this is deliberately demoted rather than removed. If it becomes
-  visible again, `.vhcoarse` already separates storage, mesh-worker, scheduling-slot and
+  visible again, `.dlcoarse` already separates storage, mesh-worker, scheduling-slot and
   unexplained waits. Read `coarse cover waits` before changing a budget.
 - The brief cached/vanilla fight is not limited to extremely fast approach: the owner met it while
   exploring new ground in ordinary flight (Session 112). It resolves toward safe overlap, not a
@@ -1138,7 +1140,7 @@ Human-reported and still open:
   accepted numbers were taken under it, and everything validates on the owner's machine, so
   changing it now would alter a validated path to fix a case nobody has hit. Revisit when
   Phase 4 splits the gates anyway, or if a second machine refuses.
-- Should new/startup configuration remain unlimited, or adopt the `.vhconfig` Defaults
+- Should new/startup configuration remain unlimited, or adopt the `.dlconfig` Defaults
   value of 32,768 blocks after a controlled benchmark and playtest?
 - Does visual quality permit more aggressive off-screen GPU eviction without noticeable turn-around stalls?
 - Is the hybrid's one-time chunk handoff pop preferable to any residual overlap? The

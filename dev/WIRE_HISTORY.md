@@ -1,4 +1,4 @@
-# Vintage Horizons — compatibility ledger
+# Doden's Landscapes — compatibility ledger
 
 > Tier 3: append-only history for externally persisted or transmitted meanings. Code constants are current authority; this ledger explains how and why they moved.
 
@@ -153,6 +153,19 @@ over the cache rather than from an in-memory set of persisted keys. Integrated p
 `SectionSync` and keeps using the sibling cache's rowids. Mixed peers each behave as their own
 version did, and the pairings are pinned by `WireFormatChecks` against the 0.4.125 shapes. The
 compatibility numbers therefore remain `1 / 4 / 6`.
+
+**The mod is renamed and its channel with it (0.4.138, Session 113).** The network channel name
+changed from `vintagehorizons` to `dodenslandscapes` (`LodAssistProtocol.ChannelName`), with the mod
+id. No message, field or sequence changed, so the protocol stays `1`, but peers on either side of the
+rename never meet: a 0.4.138+ client sees a 0.4.137- server as one without the assist, and the
+reverse. Other names that left the wire or the disk with the id: the code file
+(`DodensLandscapes.dll`), the asset domain, `ModData/dodenslandscapes`, and the
+`dodenslandscapes.json` and `dodenslandscapes-server.json` settings files, to which the earlier
+names are moved once at first start (never over a newer file, and not while the old mod id is
+enabled). Names inside stored formats were kept on purpose: the cache's database type code
+`vintagehorizons lod cache`, the height-sample file headers, and the game start-up file's
+`VintageHorizons.AllCoresCollector` marker and `.vintagehorizons-backup` suffix. Blob format and
+schema meaning are unchanged, so moved caches open as they were.
 
 ## Section blob-format ledger
 

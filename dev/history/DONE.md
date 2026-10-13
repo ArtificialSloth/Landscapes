@@ -1,6 +1,21 @@
-# Vintage Horizons — completed development work
+# Doden's Landscapes — completed development work
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
+
+## 2026-10-07..13 - Doden's Landscapes: rename, licence, release preparation (0.4.136-0.4.142)
+
+- **Stand-in fix accepted:** the owner played 0.4.135 on a fresh world on 2026-10-07 ("seemed to work
+  well"); the recorder's lines agreed (half of fresh chunks handed over within 94-219 ms, 95% within
+  281-578 ms after the first minute). 0.4.136 removed the recorder; `.dlstandin` stays.
+- **The all-cores collector check:** reads the start-up file as shipped (installed file, else the
+  switch's backup, else a sample), so all 21 assertions pass with the collector on. The question put
+  in Session 112 is settled by doing both in order.
+- **Lost silhouette previews** (G273), **startup shader errors** (G274) and **"?" walls** (G275)
+  found and fixed in 0.4.137, 0.4.140 and 0.4.141; the last two confirmed in play.
+- **Renamed Doden's Landscapes** (0.4.138, G276), with legacy data moved once and confirmed in play;
+  **never steps aside** for another LOD mod, with a login notice (0.4.139); **GPL-3.0 only** with a
+  Vintage Story exception and MIT notices for AliasFactory and Farseer (0.4.140).
+- Session 113 has the narrative.
 
 ## 2026-09-29 - Coarse stand-ins over the game's ground diagnosed, and a fix built (0.4.135)
 

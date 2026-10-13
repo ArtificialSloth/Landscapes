@@ -8,8 +8,25 @@ first.
 
 ## [Unreleased]
 
-**A fix for rough distant terrain briefly showing over the game's own ground while exploring,
-waiting for its first test in play (0.4.135).** Two long-standing behaviours combined. When a finer
+**Renamed Doden's Landscapes, under GPL-3.0.** The mod is now Doden's Landscapes (mod id
+`dodenslandscapes`), founded on AliasFactory's Vintage Horizons and crediting it. Chat commands start
+with `.dl` and chat and log lines with `[Landscapes]`. Existing caches and settings move over once,
+on first start, and the owner's 7.8 GB of caches moved in place without a rebuild. It is licensed
+under the GNU General Public License version 3 only, with an exception for combining it with Vintage
+Story; the MIT notices of Vintage Horizons and Farseer travel with it (0.4.138, 0.4.140).
+
+**It always draws, and tells players when another LOD mod is on.** It no longer goes idle for other
+LOD mods. A login window names a known LOD mod that is switched on and asks the player to keep only
+one; otherwise a general reminder shows until dismissed (0.4.139).
+
+**Three long-standing faults fixed.** Horizon silhouettes no longer stop for the session after a pause
+in singleplayer, where the game discards a waiting preview (0.4.137). The six shader errors every
+startup logged, and the game repeated at world join, are gone: the shaders are built once the game
+has loaded the mod's shared shader files (0.4.140). And walls of nearby rock and soil no longer show
+the game's "?" texture (0.4.141).
+
+**Rough distant terrain no longer shows over the game's own ground while exploring (0.4.135; tested
+and accepted on a fresh world on 2026-10-07).** Two long-standing behaviours combined. When a finer
 piece of distant terrain was not ready yet, the coarser piece drawn in its place covered its whole
 area, 1-2 km at the coarse levels, so one new piece of ground at the edge of what the game had loaded
 put blocky columns over the ground around the player. And a chunk the game had just generated was
@@ -118,6 +135,96 @@ read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.142] - 2026-10-13
+
+**One log line instead of twelve for blocks with a "?" texture entry.** 0.4.141 named every block
+whose face texture was the game's missing-texture image, which found the cause and then became noise
+at every start. The first block is now named once, and the texture status line counts the rest.
+
+## [0.4.141] - 2026-10-13
+
+**Distant walls no longer show the game's "?" missing-texture image.** Close to the seam, the walls of
+rock, ore and soil blocks were drawn with a grey "?" pattern, for a long time. Ordinary cube blocks
+carry a leftover texture entry, "all", that is the game's "?" image; the game never draws it, because
+each face has its own texture. The mod's wall picker skips a wall texture that matches the block's
+top (a rule added for redwood trunks), so on a block whose faces all share one texture it skipped
+every face and landed on that entry. A texture that is the "?" image is now refused, and such walls
+use the block's own texture, which for these blocks is exactly what the game draws. Confirmed in
+play near the cliffs where it was reported.
+
+## [0.4.140] - 2026-10-13
+
+**No more shader errors in the log at startup.** Every session logged six "Link error ... Missing
+entry point" errors for the distant terrain and water shaders, and the game's end-of-startup summary
+("Captured N issues during startup") printed them a second time when the world opened. Nothing was
+broken - the shaders compiled a second later - but the red lines looked like a fault in any bug
+report. The mod built its shaders a moment before the game had loaded the mod's shared shader files;
+it now builds them during the game's own shader reload, when those files are present, so the first
+build succeeds. If that reload ever failed to reach the mod, the first frame builds them instead. Any
+real shader failure is now reported as an error from the first attempt. Confirmed: the log says
+"shaders ready after 1 attempt(s)" and has no link errors.
+
+**Licence: GPL-3.0 only, with a Vintage Story exception.** Doden's Landscapes is now licensed under
+the GNU General Public License version 3 only (`LICENSE`), copyright Doden, with an additional
+permission that allows combining it with Vintage Story and the libraries the game ships with
+(`NOTICE`). Anyone may use, study, change and share it; publishing a modified version, or another
+work that includes this code, requires releasing it under the same licence with its source. The MIT
+notices of the work it adapts - AliasFactory's Vintage Horizons, which it began as, and Badgerson's
+Farseer - are reproduced in `THIRD-PARTY-NOTICES`. All three files ship in the zip.
+
+## [0.4.139] - 2026-10-10
+
+**This mod no longer steps aside for other LOD mods.** Until now it went idle when Farseer, ChunkLOD
+or TopoHorizon was switched on. It now always draws, and players choose which LOD mod to keep. The
+`.vhdefer` command and its setting are gone; an older settings file that still holds the setting is
+read as if it did not.
+
+**A login notice about other LOD mods.** When a known LOD mod is switched on - Farseer, ChunkLOD,
+TopoHorizon, Distant Vistas or the original Vintage Horizons - a window at every login names it,
+explains that the two draw over each other (a flickering horizon and the frame-rate cost twice) and
+asks the player to switch it off in the Mod Manager. It offers only OK and returns at every login
+while that mod is on. Otherwise a general reminder that this mod does not step aside appears at
+login until the player chooses "Don't show again"; that choice never hides a named conflict. A
+Farseer switched off in its own settings does not count. The log names the same mods, which is the
+only notice a dedicated-server admin gets.
+
+**The original Vintage Horizons no longer stops this mod.** 0.4.138 stood down while it was switched
+on; it is now one of the LOD mods the notice names. While it is switched on, the earlier builds'
+caches are not moved, because it would still be using them. Running the two together is untested.
+
+## [0.4.138] - 2026-10-07
+
+**Renamed Doden's Landscapes.** The mod is now Doden's Landscapes, mod id `dodenslandscapes`, built
+from - and still crediting - AliasFactory's Vintage Horizons. Chat and log lines start with
+`[Landscapes]`, and every chat command starts with `.dl` instead of `.vh` (`.dlconfig`, `.dlhitch`,
+`.dlinfo` and so on). The code file is `DodensLandscapes.dll`, and the network channel, asset domain,
+settings files (`dodenslandscapes.json`, `dodenslandscapes-server.json`) and cache folder
+(`ModData/dodenslandscapes`) carry the new id. A server running the old build and a client running
+this one, or the other way round, do not see each other's assist.
+
+**Caches and settings move over once, on first start.** The earlier builds' `ModData/vintagehorizons`
+folder and settings files are renamed in place - instant, with no extra disk space - and never over a
+newer file of the same name. A rollback to an earlier build therefore starts with empty caches. The
+internal names of the cache format and of the all-cores collector's line in the game's start-up file
+keep their old spelling, so existing files still open and the switch still recognises its own edit.
+
+## [0.4.137] - 2026-10-07
+
+**Horizon silhouettes no longer stop for the session after a pause.** The game throws away a
+world-generation preview that is waiting when it resumes from a pause (the Escape menu in
+singleplayer): its chunk thread runs one round before it releases the hold it took when pausing, and
+a preview picked up in that round is discarded unanswered. The mod read the silence as a frozen world
+generator, stopped previews for the session and warned that leaving the world might hang. It now
+checks whether the game's chunk thread is still working: if it is, an unanswered preview was lost and
+is asked for once more; a preview lost twice is given up. A generator that has genuinely stopped is
+still caught as before.
+
+## [0.4.136] - 2026-10-07
+
+**The temporary stand-in recorder is removed.** The owner played 0.4.135 on a fresh world and
+accepted its fix for coarse terrain over the game's own ground; the per-minute `stand-in check` lines
+are gone. `.dlstandin` remains as a session switch.
 
 ## [0.4.135] - 2026-09-29
 
