@@ -13,6 +13,7 @@ public static class PackedQuadChecks
         TableColourMatchesTheVertexByteOrder(c);
         TopSoilOverlayUsesTheRightHalf(c);
         WallsUseTheirOwnTextureRows(c);
+        WallsTakeTheirOwnColor(c);
         LogSidesResolveToBark(c);
         MaterialPayloadsAndDegenerates(c);
         Rejections(c);
@@ -277,8 +278,8 @@ public static class PackedQuadChecks
         });
 
         const int f = LodBlockTextureRegistry.FloatsPerSlot;
-        c.Eq(8, LodBlockTextureRegistry.RowsPerSlot,
-            "a slot is the top, colour, mean and overlay rows plus a rectangle and mean per wall axis");
+        c.Eq(10, LodBlockTextureRegistry.RowsPerSlot,
+            "a slot is the top, colour, mean and overlay rows plus a rectangle, mean and colour per wall axis");
         int log = registry.SlotFor(new Vintagestory.API.Common.Block { BlockId = 1 }, 0x00AABBCC);
         int plain = registry.SlotFor(new Vintagestory.API.Common.Block { BlockId = 2 }, 0x00AABBCC);
         int otherPage = registry.SlotFor(new Vintagestory.API.Common.Block { BlockId = 3 }, 0x00AABBCC);
@@ -303,6 +304,98 @@ public static class PackedQuadChecks
         }
         c.Eq(2, registry.WallsAccepted, "both wall axes of the log are taken");
         c.Eq(1, registry.WallsOtherPage, "the wall on another page is counted as refused");
+
+        // The wall colour rows. A block's colour is its top's, which on a standing log is the
+        // cut end; its walls must draw at the bark's own colour, or a redwood's sides wear the
+        // brightness of its rings. Low byte is red: 0x00405060 is red 0x60, blue 0x40.
+        c.Eq(0x60 / 255f, t[log * f + 32], "a log's X walls draw at their own texture's colour");
+        c.Eq(0x40 / 255f, t[log * f + 34], "in every channel");
+        c.Eq(0x90 / 255f, t[log * f + 36], "and its Z walls at theirs");
+        c.Eq(1f, t[log * f + 35], "a wall colour is opaque");
+        for (int i = 0; i < 3; i++)
+        {
+            c.Eq(t[plain * f + 4 + i], t[plain * f + 32 + i],
+                "a block with no wall texture draws its X walls at the block's colour");
+            c.Eq(t[plain * f + 4 + i], t[plain * f + 36 + i], "and its Z walls too");
+        }
+        c.Eq(0x60 / 255f, t[otherPage * f + 32],
+            "a wall texture on another page still gives its colour, though it keeps the top's pattern");
+
+        // The same answer for quads that carry a colour instead of a slot, without asking the
+        // resolver a second time.
+        c.Eq((0x00405060, 0x00708090),
+            registry.WallColorsFor(new Vintagestory.API.Common.Block { BlockId = 1 }),
+            "colour quads take the log's wall colours along each axis");
+        c.Eq((0, 0), registry.WallColorsFor(new Vintagestory.API.Common.Block { BlockId = 2 }),
+            "and none for a block whose walls are its top");
+    }
+
+    /// <summary>
+    /// The mesher draws a wall at the colour <see cref="SectionSnapshot.WallColor"/> answers,
+    /// which is the block's own colour unless the snapshot carries a wall colour for it.
+    /// </summary>
+    static void WallsTakeTheirOwnColor(Check c)
+    {
+        var snapshot = new SectionSnapshot
+        {
+            Runs = Array.Empty<ulong>(),
+            ColumnStart = Array.Empty<int>(),
+            Captured = Array.Empty<bool>(),
+            PaletteColors = new[] { 0, 0x00112233, 0x00445566 },
+            PaletteFlags = new byte[3],
+            PaletteTintSlots = new byte[3],
+            PaletteTextureSlots = new ushort[3],
+            PaletteWallXColors = new[] { 0, 0x00AA0000, 0 },
+            PaletteWallZColors = new[] { 0, 0x0000BB00, 0 },
+        };
+        c.Eq(0x00AA0000, snapshot.WallColor(1, xWall: true), "a log's X walls take their own colour");
+        c.Eq(0x0000BB00, snapshot.WallColor(1, xWall: false), "and its Z walls theirs");
+        c.Eq(0x00445566, snapshot.WallColor(2, xWall: true), "a zero keeps the block's colour");
+
+        var plain = new SectionSnapshot
+        {
+            Runs = Array.Empty<ulong>(),
+            ColumnStart = Array.Empty<int>(),
+            Captured = Array.Empty<bool>(),
+            PaletteColors = new[] { 0, 0x00112233 },
+            PaletteFlags = new byte[2],
+            PaletteTintSlots = new byte[2],
+            PaletteTextureSlots = new ushort[2],
+        };
+        c.Eq(0x00112233, plain.WallColor(1, xWall: false),
+            "a snapshot taken without wall colours draws every wall at its block's colour");
+
+        var section = new LodSection();
+        section.FindOrAddPaletteEntry(7, 0x00112233, 0);
+        SectionSnapshot taken = SectionSnapshot.Of(section, wallColors: id => id == 7 ? (0x00AA0000, 0) : (0, 0));
+        c.Eq(0x00AA0000, taken.WallColor(0, xWall: true), "a snapshot carries the wall colours it is given");
+        c.Eq(0x00112233, taken.WallColor(0, xWall: false), "and keeps the block's colour where there is none");
+        c.Eq(taken.EstimatedRetainedBytes,
+            SectionSnapshot.EstimateRetainedBytes(section, includeWallColors: true),
+            "the mesh budget counts the wall colours a snapshot retains");
+
+        // Through the mesher: an isolated block draws its top and bottom at the block's colour
+        // and each wall axis at its own.
+        LodSection run = IsolatedRun(10, 4);
+        MeshJob job = Fixtures.Job(run, LodWorld.SectionKey(1, 0, 0));
+        job.Self = SectionSnapshot.Of(run, includeTextureSlots: false,
+            wallColors: _ => (0x00AA0000, 0x0000BB00));
+        MeshResult mesh = LodMesher.BuildMesh(job);
+        c.Eq(6, mesh.PackedOpaqueQuadCount, "the isolated block still has six faces");
+        for (int quad = 0; quad < mesh.PackedOpaqueQuadCount; quad++)
+        {
+            LodPackedFace face = LodPackedQuadFormat.FaceOf(mesh.PackedOpaqueQuads, quad);
+            var words = mesh.PackedOpaqueQuads.AsSpan(
+                quad * LodPackedQuadFormat.WordsPerQuad, LodPackedQuadFormat.WordsPerQuad).ToArray();
+            LodPackedQuadFormat.DecodeVertex(words, 0, 0, 2, out _, out _, out _, out uint color);
+            uint expected = face switch
+            {
+                LodPackedFace.West or LodPackedFace.East => 0x00AA0000u,
+                LodPackedFace.North or LodPackedFace.South => 0x0000BB00u,
+                _ => 0x00332211u,
+            };
+            c.Eq(expected, color & 0x00FFFFFFu, $"the {face} face draws at its own colour");
+        }
     }
 
     /// <summary>

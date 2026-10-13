@@ -692,14 +692,16 @@ public static class LodMesher
                 j++;
             }
 
+            // W/E walls run along Z at fixed X; N/S walls run along X at fixed Z.
+            bool xWall = seg.Dir is W or E;
+
+            // The wall's own colour, not the block's: a block's colour is its top, and a
+            // standing log's top is the cut end, so its bark drew at the colour of its rings.
             Buffers buf = seg.Water ? water : opaque;
-            int color = SubmergedColor(self.PaletteColors[seg.Pid], seg.Submerged, absorption);
+            int color = SubmergedColor(self.WallColor(seg.Pid, xWall), seg.Submerged, absorption);
             byte alpha = AlphaFor(self.PaletteFlags[seg.Pid], self.PaletteTintSlots[seg.Pid]);
             int textureSlot = TextureSlotFor(self, seg.Pid, step, emitTextureSlots,
                 seg.Submerged);
-
-            // W/E walls run along Z at fixed X; N/S walls run along X at fixed Z.
-            bool xWall = seg.Dir is W or E;
             float fixedCoord = seg.Dir switch
             {
                 W => seg.Fixed * step,

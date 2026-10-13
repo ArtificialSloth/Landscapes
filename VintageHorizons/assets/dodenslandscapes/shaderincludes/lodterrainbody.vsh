@@ -81,11 +81,16 @@ void main()
     if ((vhGeometry & 0x80000000u) != 0u)
     {
         vhBlockSlot = int(vhColor & 0x00FFFFFFu);
-        // Row 1 alone. This is the quad's albedo - the averaged colour it carries INSTEAD of
-        // its own, which every fragment needs whether or not the band asks for a texture - so
-        // it is the one row that belongs at this stage. The atlas rectangle, the mean and the
-        // overlay are read by the band, in the band.
-        vec4 vhAverage = texelFetch(blockTable, ivec2(vhBlockSlot, 1), 0);
+        // One colour row alone. This is the quad's albedo - the averaged colour it carries
+        // INSTEAD of its own, which every fragment needs whether or not the band asks for a
+        // texture - so it is the one row that belongs at this stage. The atlas rectangle, the
+        // mean and the overlay are read by the band, in the band.
+        //
+        // Row 1 for tops and bottoms, rows 8 and 9 for walls along X (West, East) and along Z
+        // (North, South). A block's colour is its top's, and a standing log's top is the cut
+        // end: its bark drew at the colour of its rings.
+        int vhColorRow = vhFace < 2u ? 1 : (vhFace < 4u ? 8 : 9);
+        vec4 vhAverage = texelFetch(blockTable, ivec2(vhBlockSlot, vhColorRow), 0);
         vertexColorIn = vec4(vhAverage.rgb, float(vhColor >> 24u) / 255.0);
     }
     else

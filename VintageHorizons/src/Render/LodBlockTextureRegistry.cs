@@ -51,18 +51,24 @@ public sealed class LodBlockTextureRegistry
     /// read as dirt. Vanilla draws it as soil under a grass texture composited by the grass's
     /// per-pixel alpha, and sampling both is the only way to get the real thing.
     /// </summary>
-    public const int FloatsPerSlot = 32;
+    public const int FloatsPerSlot = 40;
 
     /// <summary>
     /// Rows of four floats per slot: the top's rectangle, the averaged colour, the top's mean,
     /// the overlay's rectangle, then a rectangle and a mean for each wall axis - faces along X
-    /// (east and west) in rows 4 and 5, faces along Z (north and south) in rows 6 and 7.
+    /// (east and west) in rows 4 and 5, faces along Z (north and south) in rows 6 and 7 - and
+    /// last each wall axis's own colour, X in row 8 and Z in row 9.
     ///
     /// Walls have rows of their own because the engine draws a cube's sides from the textures
     /// named for those faces. A standing log names bark for its sides and the cut end for its
     /// top and bottom, and one texture per block put rings up the side of every distant trunk.
     /// A wall row with nothing different to say is a copy of the top's, so those walls draw
     /// exactly what they did before.
+    ///
+    /// The wall colour rows exist because the pattern alone was not enough. The averaged colour
+    /// is the engine's block colour, which is the TOP's texture, so a log's sides wore bark's
+    /// pattern at the cut end's colour - a redwood's rings average about twice as bright as its
+    /// bark, and owner screenshots measured cached trunks 2.5 times as bright as vanilla's.
     /// </summary>
     public const int RowsPerSlot = FloatsPerSlot / 4;
 
@@ -101,6 +107,8 @@ public sealed class LodBlockTextureRegistry
 
     readonly TextureResolver resolve;
     readonly Dictionary<int, int> slotByBlockId = new();
+    readonly Dictionary<int, BlockTexture> resolvedByBlockId = new();
+    readonly Dictionary<int, (int X, int Z)> wallColorsByBlockId = new();
     readonly float[] table = new float[MaxSlots * FloatsPerSlot];
 
     int nextSlot = 1;
@@ -167,7 +175,7 @@ public sealed class LodBlockTextureRegistry
             return NoSlot;
         }
 
-        BlockTexture resolved = resolve(block);
+        BlockTexture resolved = Resolve(block);
         TextureAtlasPosition? position = resolved.Position;
         if (position == null)
         {
@@ -236,6 +244,8 @@ public sealed class LodBlockTextureRegistry
 
         WriteWall(at + 16, at, resolved.WallX);
         WriteWall(at + 24, at, resolved.WallZ);
+        WriteWallColor(at + 32, resolved.WallX, stableColor);
+        WriteWallColor(at + 36, resolved.WallZ, stableColor);
 
         slotByBlockId[block.BlockId] = slot;
         Version++;
@@ -269,6 +279,60 @@ public sealed class LodBlockTextureRegistry
         table[wallAt + 5] = Math.Max(green, 0.02f);
         table[wallAt + 6] = Math.Max(blue, 0.02f);
         table[wallAt + 7] = 0f;
+    }
+
+    /// <summary>
+    /// One wall axis's colour: its own texture's mean, or the block's colour when it names
+    /// nothing different. Taken even when that texture sits on another atlas page and the
+    /// wall keeps the top's pattern, because the colour is right whichever pattern it wears.
+    /// </summary>
+    void WriteWallColor(int colorAt, FaceTexture? wall, int stableColor)
+    {
+        (float red, float green, float blue) = Channels(WallColor(wall, stableColor));
+        table[colorAt + 0] = red;
+        table[colorAt + 1] = green;
+        table[colorAt + 2] = blue;
+        table[colorAt + 3] = 1f;
+    }
+
+    static int WallColor(FaceTexture? wall, int blockColor) =>
+        wall is { } face ? face.MeanColor : blockColor;
+
+    /// <summary>
+    /// The colours a block's walls draw at, along X and along Z, for quads that carry a colour
+    /// rather than a slot - every level past the first, and level 0 with textures off. Zero for
+    /// an axis means "the block's own colour"; nothing is resolved twice, because the answer
+    /// is the same one a slot's rows are written from. Main thread only, like
+    /// <see cref="SlotFor"/>.
+    /// </summary>
+    public (int X, int Z) WallColorsFor(Block? block)
+    {
+        if (block == null || block.BlockId <= 0) return default;
+        if (wallColorsByBlockId.TryGetValue(block.BlockId, out (int X, int Z) known)) return known;
+
+        // A chiselled block's colour is per position (G46): no table keyed by block id can
+        // hold a wall colour for it either.
+        (int X, int Z) colors = default;
+        if (block.EntityClass == null)
+        {
+            BlockTexture resolved = Resolve(block);
+            colors = (WallColor(resolved.WallX, 0), WallColor(resolved.WallZ, 0));
+        }
+        wallColorsByBlockId[block.BlockId] = colors;
+        return colors;
+    }
+
+    /// <summary>
+    /// The resolver's answer, asked once per block. The slot and the wall colours both read
+    /// it, and resolving counts and logs faces it passes over, so asking twice would count
+    /// every one of them twice.
+    /// </summary>
+    BlockTexture Resolve(Block block)
+    {
+        if (resolvedByBlockId.TryGetValue(block.BlockId, out BlockTexture known)) return known;
+        BlockTexture resolved = resolve(block);
+        resolvedByBlockId[block.BlockId] = resolved;
+        return resolved;
     }
 
     /// <summary>
@@ -316,6 +380,8 @@ public sealed class LodBlockTextureRegistry
     public void Clear()
     {
         slotByBlockId.Clear();
+        resolvedByBlockId.Clear();
+        wallColorsByBlockId.Clear();
         Array.Clear(table);
         nextSlot = 1;
         atlasTextureId = 0;

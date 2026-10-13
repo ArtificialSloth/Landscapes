@@ -1598,6 +1598,13 @@ public static class StaticAssetChecks
         c.True(vertex.Contains("texelFetch(blockTable, ivec2(vhBlockSlot, 1), 0)",
                 StringComparison.Ordinal),
             "while the averaged colour is still read per vertex, where the albedo is needed");
+        // And a packed wall reads its own axis's colour row. A block's colour is its top's, so
+        // without this a standing log's bark drew at the colour of its cut end's rings.
+        c.True(vertex.Contains("int vhColorRow = vhFace < 2u ? 1 : (vhFace < 4u ? 8 : 9);",
+                StringComparison.Ordinal)
+            && vertex.Contains("texelFetch(blockTable, ivec2(vhBlockSlot, vhColorRow), 0)",
+                StringComparison.Ordinal),
+            "a packed wall takes its colour from its own axis's row");
 
         // Walls have rows of their own. The engine draws a cube's sides from the textures
         // named for them, so a standing log is bark on its sides and the cut end on its top;
@@ -1682,9 +1689,9 @@ public static class StaticAssetChecks
         c.True(pipeline.Contains("tintSlot, ResolveTextureSlot(block)", StringComparison.Ordinal)
             && pipeline.Contains("TextureSlotsEnabled && block != null", StringComparison.Ordinal),
             "live palette registration resolves slots only while the pipeline is enabled");
-        c.True(renderer.Contains("SectionSnapshot.Of(section, includeTextureSlots)",
+        c.True(renderer.Contains("SectionSnapshot.Of(section, includeTextureSlots, wallColors)",
                 StringComparison.Ordinal)
-            && renderer.Contains("EstimateRetainedBytes(section, includeTextureSlots)",
+            && renderer.Contains("section, includeTextureSlots, includeWallColors: wallColors != null)",
                 StringComparison.Ordinal),
             "the renderer omits the texture-slot snapshot array while the pipeline is off");
         c.True(modSystem.Contains("textureSlotsEnabled: config.BlendPipeline", StringComparison.Ordinal)

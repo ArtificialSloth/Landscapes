@@ -18,6 +18,24 @@ public class SectionSnapshot
     public required ushort[] PaletteTextureSlots;
 
     /// <summary>
+    /// The colour each palette entry's walls draw at, along X and along Z, where it differs
+    /// from <see cref="PaletteColors"/>; zero, or an empty array, means the block's own colour.
+    /// A block's colour is its TOP's texture, which for a standing log is the cut end, so
+    /// without these every distant trunk wore the colour of its rings. Read through
+    /// <see cref="WallColor"/>.
+    /// </summary>
+    public int[] PaletteWallXColors = Array.Empty<int>();
+    public int[] PaletteWallZColors = Array.Empty<int>();
+
+    /// <summary>The colour a wall of this palette entry draws at, along X or along Z.</summary>
+    public int WallColor(int pid, bool xWall)
+    {
+        int[] walls = xWall ? PaletteWallXColors : PaletteWallZColors;
+        int wall = (uint)pid < (uint)walls.Length ? walls[pid] : 0;
+        return wall != 0 ? wall : PaletteColors[pid];
+    }
+
+    /// <summary>
     /// Array payload retained by a mesh job. Runs and column offsets are immutable shared
     /// arrays, but they still count: replacing either live array cannot release the old
     /// one while a queued snapshot references it.
@@ -25,13 +43,20 @@ public class SectionSnapshot
     public long EstimatedRetainedBytes => EstimateRetainedBytes(
         Runs.LongLength, ColumnStart.LongLength, Captured.LongLength,
         SnowStateObservedBits.LongLength, SnowCoveredBits.LongLength,
-        PaletteColors.LongLength, PaletteFlags.LongLength, PaletteTintSlots.LongLength,
+        PaletteColors.LongLength + PaletteWallXColors.LongLength + PaletteWallZColors.LongLength,
+        PaletteFlags.LongLength, PaletteTintSlots.LongLength,
         PaletteTextureSlots.LongLength);
 
     public Span<ulong> ColumnRuns(int col) =>
         Runs.AsSpan(ColumnStart[col], ColumnStart[col + 1] - ColumnStart[col]);
 
-    public static SectionSnapshot Of(LodSection s, bool includeTextureSlots = true)
+    /// <param name="wallColors">
+    /// A block id's wall colours (see <see cref="PaletteWallXColors"/>), or null to leave every
+    /// wall at its block's colour. Only the section being meshed needs them: neighbours are
+    /// asked what covers what, never what colour anything is.
+    /// </param>
+    public static SectionSnapshot Of(LodSection s, bool includeTextureSlots = true,
+        System.Func<int, (int X, int Z)>? wallColors = null)
     {
         var colors = new int[s.Palette.Count];
         var flags = new byte[s.Palette.Count];
@@ -39,12 +64,15 @@ public class SectionSnapshot
         var textureSlots = includeTextureSlots
             ? new ushort[s.Palette.Count]
             : Array.Empty<ushort>();
+        int[] wallX = wallColors != null ? new int[s.Palette.Count] : Array.Empty<int>();
+        int[] wallZ = wallColors != null ? new int[s.Palette.Count] : Array.Empty<int>();
         for (int i = 0; i < s.Palette.Count; i++)
         {
             colors[i] = s.Palette[i].Color;
             flags[i] = s.Palette[i].Flags;
             slots[i] = s.Palette[i].TintSlot;
             if (includeTextureSlots) textureSlots[i] = s.Palette[i].TextureSlot;
+            if (wallColors != null) (wallX[i], wallZ[i]) = wallColors(s.Palette[i].BlockId);
         }
         return new SectionSnapshot
         {
@@ -57,13 +85,16 @@ public class SectionSnapshot
             PaletteFlags = flags,
             PaletteTintSlots = slots,
             PaletteTextureSlots = textureSlots,
+            PaletteWallXColors = wallX,
+            PaletteWallZColors = wallZ,
         };
     }
 
-    public static long EstimateRetainedBytes(LodSection s, bool includeTextureSlots = true) => EstimateRetainedBytes(
+    public static long EstimateRetainedBytes(LodSection s, bool includeTextureSlots = true,
+        bool includeWallColors = false) => EstimateRetainedBytes(
         s.Runs.LongLength, s.ColumnStart.LongLength, s.Captured.LongLength,
         s.SnowStateObservedBits.LongLength, s.SnowCoveredBits.LongLength,
-        s.Palette.Count, s.Palette.Count, s.Palette.Count,
+        includeWallColors ? 3L * s.Palette.Count : s.Palette.Count, s.Palette.Count, s.Palette.Count,
         includeTextureSlots ? s.Palette.Count : 0);
 
     static long EstimateRetainedBytes(long runs, long columnStarts, long captured,

@@ -1503,6 +1503,7 @@ public partial class LodTerrainRenderer : IRenderer
     // block's texture sits inside that atlas plus the averaged colour to fall back to, so a
     // quad can carry a block slot instead of a colour and lose nothing.
     readonly LodBlockTextureRegistry? blockTextures;
+    System.Func<int, (int X, int Z)>? wallColorsOf;
     int blockTableTexture;
     int blockTableVersion = -1;
     bool blockTableFailed;
@@ -2839,6 +2840,12 @@ public partial class LodTerrainRenderer : IRenderer
 
         bool includeTextureSlots = textureSlotsReady;
 
+        // Walls draw at their own texture's colour - bark on a standing log, not the cut end
+        // its block colour comes from. Resolved here because the registry is main-thread only.
+        System.Func<int, (int X, int Z)>? wallColors = blockTextures == null
+            ? null
+            : wallColorsOf ??= blockId => blockTextures.WallColorsFor(capi.World.GetBlock(blockId));
+
         // Two budgets. Starting a background reload costs this thread almost nothing
         // (enqueue a key), whereas building a mesh snapshot is real work, so charging a
         // reload against the mesh budget throttled join fill-in badly: every section
@@ -2886,7 +2893,8 @@ public partial class LodTerrainRenderer : IRenderer
             // measured at roughly half the saving. The corners are read for light only and
             // are never asked whether a side is covered.
             var neighborSections = new LodSection?[8];
-            long estimatedBytes = SectionSnapshot.EstimateRetainedBytes(section, includeTextureSlots);
+            long estimatedBytes = SectionSnapshot.EstimateRetainedBytes(
+                section, includeTextureSlots, includeWallColors: wallColors != null);
 
             // A neighbour that is absent from RAM is NOT automatically the edge of
             // explored space. HasDataSet is the question the mesher actually wants
@@ -2945,7 +2953,7 @@ public partial class LodTerrainRenderer : IRenderer
                     neighbors[d] = SectionSnapshot.Of(neighborSections[d]!, includeTextureSlots);
             }
 
-            SectionSnapshot self = SectionSnapshot.Of(section, includeTextureSlots);
+            SectionSnapshot self = SectionSnapshot.Of(section, includeTextureSlots, wallColors);
 
             // Same-world publication needs a finer identity than WorldEpoch. If a mesh-visible
             // capture or neighbour-edge invalidation landed while these immutable inputs were
@@ -4385,9 +4393,10 @@ public partial class LodTerrainRenderer : IRenderer
         int replacementTexture = 0;
         try
         {
-            // Eight rows per slot: the top's atlas rectangle, the averaged colour the quad no
+            // Ten rows per slot: the top's atlas rectangle, the averaged colour the quad no
             // longer carries, the mean to normalise by, the grass-style overlay's rectangle,
-            // then a rectangle and a mean for each wall axis (see RowsPerSlot).
+            // a rectangle and a mean for each wall axis, then each wall axis's colour (see
+            // RowsPerSlot).
             // Float, because an atlas rectangle in eight bits would land a fragment on the
             // wrong block's texture.
             var pixels = new float[LodBlockTextureRegistry.MaxSlots

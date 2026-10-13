@@ -2,7 +2,7 @@
   "type": "code",
   "modid": "dodenslandscapes",
   "name": "Doden's Landscapes",
-  "version": "0.4.142",
+  "version": "0.4.143",
   "side": "Universal",
   "requiredOnClient": false,
   "requiredOnServer": false,
