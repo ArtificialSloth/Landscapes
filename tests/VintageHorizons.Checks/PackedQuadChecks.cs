@@ -375,6 +375,31 @@ public static class PackedQuadChecks
         c.Eq(-1, VintageHorizonsModSystem.PickFaceTexture(offAtlas,
                 VintageHorizonsModSystem.XWallTextureNames, Usable, out _),
             "a texture that is not on the atlas is not taken");
+
+        // 2026-10-13: walls of nearby cached terrain wore the game's "?" missing-texture image.
+        // A face whose texture holds that image is refused, so the next name is taken.
+        const int Missing = 99;
+        static bool NotMissing(int id) => id > 0 && id != Missing;
+        var namedMissing = new Dictionary<string, Vintagestory.API.Client.CompositeTexture>
+        {
+            ["east"] = Tex(Missing), ["all"] = Tex(Bark),
+        };
+        c.Eq(Bark, VintageHorizonsModSystem.PickFaceTexture(namedMissing,
+                VintageHorizonsModSystem.XWallTextureNames, NotMissing, out _),
+            "a wall whose named texture is the missing-texture image takes the next name instead");
+
+        string mod = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src",
+            "VintageHorizonsModSystem.cs"));
+        c.True(mod.Contains("PickFaceTexture(textures, names, IsUsableFaceTexture,", StringComparison.Ordinal),
+            "walls refuse a texture holding the missing-texture image");
+        c.True(mod.Contains("if (!IsUsableFaceTexture(candidateId)) continue;", StringComparison.Ordinal)
+                && mod.Contains("if (IsUsableFaceTexture(overlayId))", StringComparison.Ordinal),
+            "and so do the named top face and the grass overlay");
+        c.True(mod.Contains("subId = block.TextureSubIdForBlockColor;\n            if (!IsUsableAtlasTexture(subId)) return default;",
+                    StringComparison.Ordinal)
+                || System.Text.RegularExpressions.Regex.IsMatch(mod,
+                    @"subId = block\.TextureSubIdForBlockColor;\s*if \(!IsUsableAtlasTexture\(subId\)\) return default;"),
+            "while a block the game itself draws as the \"?\" box keeps that look at distance");
     }
 
     static void MaterialPayloadsAndDegenerates(Check c)

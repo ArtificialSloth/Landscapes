@@ -1325,6 +1325,19 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// </summary>
     LodBlockTextureRegistry.BlockTexture ResolveBlockTexture(Block block)
     {
+        resolvingTextureFor = block;
+        try
+        {
+            return ResolveBlockTextureFor(block);
+        }
+        finally
+        {
+            resolvingTextureFor = null;
+        }
+    }
+
+    LodBlockTextureRegistry.BlockTexture ResolveBlockTextureFor(Block block)
+    {
         // The UP face, explicitly. `TextureSubIdForBlockColor` is the engine's generic "what
         // colour is this block" texture and for grass-covered soil that is the SIDE - which is
         // grass across its top half and bare dirt across its bottom half. Tiled onto a top
@@ -1340,7 +1353,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             {
                 if (!block.Textures.TryGetValue(name, out CompositeTexture? candidate)) continue;
                 int candidateId = candidate?.Baked?.TextureSubId ?? -1;
-                if (!IsUsableAtlasTexture(candidateId)) continue;
+                if (!IsUsableFaceTexture(candidateId)) continue;
                 face = candidate;
                 subId = candidateId;
                 break;
@@ -1373,7 +1386,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             && TryTopSoilOverlay(block, out CompositeTexture? overlay, out bool rightHalf))
         {
             int overlayId = overlay?.Baked?.TextureSubId ?? -1;
-            if (IsUsableAtlasTexture(overlayId))
+            if (IsUsableFaceTexture(overlayId))
             {
                 // One decision drives both the rectangle the shader samples and the mean it
                 // normalises by. Deriving it twice is how the colour path and this one came
@@ -1425,7 +1438,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     LodBlockTextureRegistry.FaceTexture? WallTexture(
         IDictionary<string, CompositeTexture> textures, string[] names, int topSubId)
     {
-        int wallId = PickFaceTexture(textures, names, IsUsableAtlasTexture,
+        int wallId = PickFaceTexture(textures, names, IsUsableFaceTexture,
             out CompositeTexture? wall, skipId: topSubId);
         if (wallId < 0 || wallId == topSubId) return null;
         return new LodBlockTextureRegistry.FaceTexture(
@@ -1779,6 +1792,64 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         TextureAtlasPosition[] positions = capi.BlockTextureAtlas.Positions;
         return subId < positions.Length && positions[subId] != null;
+    }
+
+    /// <summary>
+    /// A texture asked for BY FACE NAME, usable only if what it holds is not the game's
+    /// missing-texture image ("?" on grey).
+    ///
+    /// The owner reported that image on the walls of nearby cached terrain on 2026-10-13, and
+    /// had seen it for a long time; vanilla draws the same blocks correctly. How such a face
+    /// comes to hold the image is not established: the engine's atlas sub-id 0 is that image,
+    /// and the engine also copies it into a texture's own slot when the file is missing, but
+    /// his log carried no "Texture asset not found" warning. So this tests the CONTENT, not
+    /// the route: a slot whose average colour is exactly the "?" image's is that image
+    /// wherever it sits. Such a face is passed over, so the next name, or the block's top, is
+    /// used instead, and the block is named once in the log so the cause can be traced.
+    ///
+    /// Kept apart from <see cref="IsUsableAtlasTexture"/> on purpose: the block-colour path
+    /// still accepts that image, because a block the engine itself draws as the "?" box (from
+    /// a mod since removed) keeps that look at distance too.
+    /// </summary>
+    bool IsUsableFaceTexture(int subId)
+    {
+        if (!IsUsableAtlasTexture(subId)) return false;
+        if (!IsMissingTextureImage(subId)) return true;
+        NoteUnloadedFaceTexture(subId);
+        return false;
+    }
+
+    int? missingTextureImageColor;
+
+    bool IsMissingTextureImage(int subId)
+    {
+        ITextureAtlasAPI atlas = capi.BlockTextureAtlas;
+        if (ReferenceEquals(atlas.Positions[subId], atlas.UnknownTexturePosition)) return true;
+        missingTextureImageColor ??= atlas.GetAverageColor(0);
+        return atlas.GetAverageColor(subId) == missingTextureImageColor.Value;
+    }
+
+    /// <summary>The block whose face textures are being resolved, for the log line below.</summary>
+    Block? resolvingTextureFor;
+    readonly HashSet<int> unloadedFaceTextureBlocks = new();
+    const int UnloadedFaceTextureLogLimit = 12;
+
+    void NoteUnloadedFaceTexture(int subId)
+    {
+        Block? block = resolvingTextureFor;
+        if (block == null || !unloadedFaceTextureBlocks.Add(block.BlockId)) return;
+        if (unloadedFaceTextureBlocks.Count > UnloadedFaceTextureLogLimit) return;
+        // Every face name pointing at that slot, and what the block file says it is, so the
+        // next session's log says which content and which face carry the image.
+        string faces = block.Textures == null ? "?" : string.Join(", ", block.Textures
+            .Where(entry => entry.Value?.Baked?.TextureSubId == subId)
+            .Select(entry => $"{entry.Key}={entry.Value.Base}"));
+        Mod.Logger.Notification(
+            "[Landscapes] Block '{0}' (draw type {1}, render pass {2}): its face texture at atlas "
+            + "slot {3} holds the missing-texture image ({4}); distant terrain uses its next "
+            + "texture there instead.{5}", block.Code, block.DrawType, block.RenderPass, subId, faces,
+            unloadedFaceTextureBlocks.Count == UnloadedFaceTextureLogLimit
+                ? " Further blocks like this are not logged." : "");
     }
 
     readonly Dictionary<int, int> missingTextureColorFallback = new();
