@@ -6,8 +6,11 @@ reference/
 # local because of where it was put.
 notes/
 
-# Local assistant instructions.
+# Local assistant instructions. The owner keeps these private; they are not part of the
+# published repository.
 CLAUDE.local.md
+CLAUDE.md
+AGENTS.md
 
 # Python bytecode from the repository's own tools
 __pycache__/

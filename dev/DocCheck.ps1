@@ -57,8 +57,6 @@ Write-Host "root: $repoRoot"
 Write-Host ''
 
 $required = @(
-    'AGENTS.md',
-    'CLAUDE.md',
     'STATUS.md',
     'CHANGELOG.md',
     'dev/ARCHITECTURE.md',
