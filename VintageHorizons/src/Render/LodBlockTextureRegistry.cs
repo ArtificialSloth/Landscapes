@@ -138,6 +138,12 @@ public sealed class LodBlockTextureRegistry
     public int WallsOtherPage { get; private set; }
 
     /// <summary>
+    /// Blocks with a face texture refused because it is the game's missing-texture image. The
+    /// resolver finds those, so it keeps the count; this only reports it.
+    /// </summary>
+    public int RefusedMissingImageBlocks { get; set; }
+
+    /// <summary>
     /// The slot for this block, assigning one on first sight. Main thread only: it reads the
     /// block registry and the texture atlas, neither of which a worker may touch.
     ///
@@ -300,7 +306,8 @@ public sealed class LodBlockTextureRegistry
         + $"{OverlaysAccepted} grass overlays ({OverlaysOtherPage} on another page), refused "
         + $"{RefusedNoTexture} no-texture/{RefusedOtherAtlasPage} other-page/"
         + $"{RefusedPerPositionColour} per-position/{RefusedTableFull} table-full, "
-        + $"{WallsAccepted} wall textures ({WallsOtherPage} on another page)";
+        + $"{WallsAccepted} wall textures ({WallsOtherPage} on another page), "
+        + $"{RefusedMissingImageBlocks} blocks with a missing-texture face passed over";
 
     /// <summary>
     /// Drops every slot. A world change invalidates block ids and atlas positions together,

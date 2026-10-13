@@ -1799,13 +1799,15 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// missing-texture image ("?" on grey).
     ///
     /// The owner reported that image on the walls of nearby cached terrain on 2026-10-13, and
-    /// had seen it for a long time; vanilla draws the same blocks correctly. How such a face
-    /// comes to hold the image is not established: the engine's atlas sub-id 0 is that image,
-    /// and the engine also copies it into a texture's own slot when the file is missing, but
-    /// his log carried no "Texture asset not found" warning. So this tests the CONTENT, not
-    /// the route: a slot whose average colour is exactly the "?" image's is that image
-    /// wherever it sits. Such a face is passed over, so the next name, or the block's top, is
-    /// used instead, and the block is named once in the log so the cause can be traced.
+    /// had seen it for a long time; vanilla draws the same blocks correctly. The 0.4.141 log
+    /// named the route: ordinary cube blocks - granite, basalt, peridotite, ores, soil, water -
+    /// carry an "all" entry whose texture is game:unknown, at atlas slot 0. The engine never
+    /// draws it, because every face has its own entry. But a wall passes over the top's own
+    /// texture (the redwood rule in <see cref="PickFaceTexture"/>), and on a block whose faces
+    /// all share one texture that skips every face name and lands on "all". Such a face is
+    /// passed over, so the wall copies the top - which for these blocks is their side texture.
+    /// The test is on the CONTENT (slot 0, or an exact match of its average colour), so a
+    /// missing file copied into its own slot is caught too. The first is logged, the rest counted.
     ///
     /// Kept apart from <see cref="IsUsableAtlasTexture"/> on purpose: the block-colour path
     /// still accepts that image, because a block the engine itself draws as the "?" box (from
@@ -1832,24 +1834,25 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// <summary>The block whose face textures are being resolved, for the log line below.</summary>
     Block? resolvingTextureFor;
     readonly HashSet<int> unloadedFaceTextureBlocks = new();
-    const int UnloadedFaceTextureLogLimit = 12;
 
+    /// <summary>
+    /// One log line, on the first block found, then only a count in the texture status line.
+    /// The 0.4.141 build named every block (twelve at every start, all ordinary rock and soil),
+    /// which answered the question and then became noise for every player (owner, 2026-10-13).
+    /// </summary>
     void NoteUnloadedFaceTexture(int subId)
     {
         Block? block = resolvingTextureFor;
         if (block == null || !unloadedFaceTextureBlocks.Add(block.BlockId)) return;
-        if (unloadedFaceTextureBlocks.Count > UnloadedFaceTextureLogLimit) return;
-        // Every face name pointing at that slot, and what the block file says it is, so the
-        // next session's log says which content and which face carry the image.
+        blockTextures.RefusedMissingImageBlocks = unloadedFaceTextureBlocks.Count;
+        if (unloadedFaceTextureBlocks.Count > 1) return;
         string faces = block.Textures == null ? "?" : string.Join(", ", block.Textures
             .Where(entry => entry.Value?.Baked?.TextureSubId == subId)
             .Select(entry => $"{entry.Key}={entry.Value.Base}"));
         Mod.Logger.Notification(
-            "[Landscapes] Block '{0}' (draw type {1}, render pass {2}): its face texture at atlas "
-            + "slot {3} holds the missing-texture image ({4}); distant terrain uses its next "
-            + "texture there instead.{5}", block.Code, block.DrawType, block.RenderPass, subId, faces,
-            unloadedFaceTextureBlocks.Count == UnloadedFaceTextureLogLimit
-                ? " Further blocks like this are not logged." : "");
+            "[Landscapes] Some blocks carry a face texture that is the game's missing-texture image "
+            + "(first: '{0}', {1}); the game never draws it, and distant terrain uses the block's own "
+            + "texture there instead. The texture status line counts them.", block.Code, faces);
     }
 
     readonly Dictionary<int, int> missingTextureColorFallback = new();
