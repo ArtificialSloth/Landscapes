@@ -94,7 +94,9 @@ scripts/package.sh
 Produces `dist/vintagehorizons_X.Y.Z.zip` from a Release build. Spot-check the zip before
 trusting it - `unzip -l dist/vintagehorizons_X.Y.Z.zip`:
 
-- `LICENSE` is present (0.1.0 shipped without it - this is the regression check for that).
+- `LICENSE`, `NOTICE` and `THIRD-PARTY-NOTICES` are present (0.1.0 shipped without its
+  licence - this is the regression check for that; the MIT notices of the work this mod
+  adapts must travel with every copy).
 - No `.pdb` file.
 - `modinfo.json` inside the zip reports the new version.
 

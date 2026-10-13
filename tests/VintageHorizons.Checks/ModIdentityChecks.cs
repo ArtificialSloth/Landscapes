@@ -17,6 +17,35 @@ public static class ModIdentityChecks
         LeavesAFreshInstallAlone(c);
         EverySystemTakesOverTheOldDataSafely(c);
         OldFormatsKeepTheirNames(c);
+        LicenceFilesShipWithEveryCopy(c);
+    }
+
+    /// <summary>
+    /// The owner's licence (2026-10-11): GPL-3 only, with a Vintage Story exception, plus the MIT
+    /// notices of AliasFactory's Vintage Horizons and Badgerson's Farseer, which those licences
+    /// require in every copy. 0.1.0 once shipped without its licence at all.
+    /// </summary>
+    static void LicenceFilesShipWithEveryCopy(Check c)
+    {
+        string root = GameAssemblies.RepoRoot;
+        string licence = File.ReadAllText(Path.Combine(root, "LICENSE"));
+        c.True(licence.Contains("GNU GENERAL PUBLIC LICENSE", StringComparison.Ordinal)
+                && licence.Contains("Version 3, 29 June 2007", StringComparison.Ordinal),
+            "LICENSE is the GPL version 3 text");
+        string notice = File.ReadAllText(Path.Combine(root, "NOTICE"));
+        c.True(notice.Contains("Copyright (C) 2026 Doden", StringComparison.Ordinal), "NOTICE names the copyright holder");
+        c.True(notice.Contains("version 3 only, not any later", StringComparison.Ordinal), "the licence is GPL-3 only");
+        c.True(notice.Contains("Additional permission under GNU GPL version 3 section 7", StringComparison.Ordinal)
+                && notice.Contains("Vintage Story", StringComparison.Ordinal),
+            "and carries the Vintage Story exception");
+        string thirdParty = File.ReadAllText(Path.Combine(root, "THIRD-PARTY-NOTICES"));
+        c.True(thirdParty.Contains("Copyright (c) 2026 AliasFactory", StringComparison.Ordinal)
+                && thirdParty.Contains("Copyright 2026 Badgerson", StringComparison.Ordinal)
+                && Regex.Matches(thirdParty, "shall be included in all").Count == 2,
+            "both MIT notices are reproduced in full");
+        string project = File.ReadAllText(Path.Combine(root, "VintageHorizons", "VintageHorizons.csproj"));
+        c.True(project.Contains("../LICENSE;../NOTICE;../THIRD-PARTY-NOTICES", StringComparison.Ordinal),
+            "all three are copied into the mod folder that becomes the zip");
     }
 
     static string NewFolder()

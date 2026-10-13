@@ -1822,19 +1822,28 @@ public static class StaticAssetChecks
 
         // Re-armed on a real failure: a driver that breaks on one reload and recovers on the
         // next has to say so, or the log's last word on shaders is a stale success.
-        c.True(body.Contains("if (!shaderOk && !ShaderLoadIsProvisional) reportedShadersOk = false;",
-            StringComparison.Ordinal),
+        c.True(body.Contains("if (!shaderOk) reportedShadersOk = false;", StringComparison.Ordinal),
             "a genuine failure re-arms the report so a later recovery is announced");
 
-        // The other half of G68, which was built and must stay: the first attempt runs before
-        // the engine has filled its include table, always fails, and must not shout about it.
-        c.True(renderer.Contains("bool ShaderLoadIsProvisional => shaderLoadAttempts <= 1",
-            StringComparison.Ordinal),
-            "the first shader attempt is still treated as provisional");
-        c.True(body.Contains("if (!shaderOk && !ShaderLoadIsProvisional)\n            capi.Logger.Error",
-                StringComparison.Ordinal)
-            || Regex.IsMatch(body, @"if \(!shaderOk && !ShaderLoadIsProvisional\)\s*capi\.Logger\.Error"),
-            "and the failure is reported at full volume only from the second attempt on");
+        // 2026-10-13: the first build used to run from the constructor, before the engine had
+        // refilled its include table from mod assets. It always failed, was treated as
+        // provisional, and still left twelve engine errors in every log (the engine's startup
+        // summary repeats them). Now the first build is the engine's own reload, so no attempt
+        // is doomed and none is excused.
+        int constructorHook = renderer.IndexOf("capi.Event.ReloadShader += LoadShader;", StringComparison.Ordinal);
+        int registerRenderer = renderer.IndexOf("RegisterRenderer();", constructorHook + 1, StringComparison.Ordinal);
+        c.True(constructorHook > 0 && registerRenderer > constructorHook
+                && !renderer.Substring(constructorHook, registerRenderer - constructorHook)
+                    .Contains("LoadShader();", StringComparison.Ordinal),
+            "the renderer does not build its shaders before the engine's reload with mod assets");
+        c.False(renderer.Contains("ShaderLoadIsProvisional", StringComparison.Ordinal),
+            "no shader attempt is treated as provisional any more");
+        c.True(Regex.IsMatch(body, @"if \(!shaderOk\)\s*capi\.Logger\.Error"),
+            "so a failure is reported at full volume from the first attempt");
+        string waterDepth = File.ReadAllText(Path.Combine(
+            GameAssemblies.RepoRoot, "VintageHorizons", "src", "Render", "LodTerrainRenderer.WaterDepth.cs"));
+        c.True(Regex.IsMatch(waterDepth, @"void PrepareBeforeFrame\(float dt\)\s*\{\s*EnsureShadersLoaded\(\);"),
+            "and a first frame that the reload never reached builds the shaders itself");
 
         // `scripts/check-log.py` treats the failure sentence as fatal by its mere presence, so
         // the wording of THAT one is load-bearing and is pinned here rather than left to luck.

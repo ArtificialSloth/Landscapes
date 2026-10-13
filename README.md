@@ -525,6 +525,8 @@ record. See [CHANGELOG.md](CHANGELOG.md) for released changes and
 
 ## Credits
 
+- Vintage Horizons (MIT, © AliasFactory) - the mod this one began as a fork of, and the
+  original base it was founded on.
 - [Distant Horizons](https://gitlab.com/distant-horizons-team/distant-horizons) and
   Voxy (Minecraft) - architectural inspiration. No code is used from either.
 - [Farseer](https://github.com/ViciousBadger/VSMod-Farseer) (MIT, © Badgerson) -
@@ -535,4 +537,14 @@ record. See [CHANGELOG.md](CHANGELOG.md) for released changes and
 
 ## License
 
-[MIT](LICENSE)
+Copyright © 2026 Doden. Doden's Landscapes is licensed under the
+[GNU General Public License version 3](LICENSE) only, with an additional permission that
+allows combining it with Vintage Story and the libraries the game ships with; see
+[NOTICE](NOTICE).
+
+You may use, study, change and share it. If you publish a modified version, or another
+work that includes this code, it must be released under the same licence with its full
+source code.
+
+It contains work by AliasFactory (Vintage Horizons) and Badgerson (Farseer) released under
+the MIT licence; their notices are reproduced in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES).

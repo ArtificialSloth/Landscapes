@@ -1,0 +1,25 @@
+Doden's Landscapes - a distant-terrain (LOD) mod for Vintage Story
+Copyright (C) 2026 Doden
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License version 3 as published by the Free
+Software Foundation. It is licensed under version 3 only, not any later
+version. The full licence text is in the file LICENSE.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+Additional permission under GNU GPL version 3 section 7
+
+If you modify this Program, or any covered work, by linking or combining it
+with Vintage Story (or a modified version of that program), including the
+libraries distributed with it, such as VintagestoryAPI, VintagestoryLib,
+VSEssentials, VSSurvivalMod and VSCreativeMod, containing parts covered by the
+terms of the Vintage Story licence, the licensors of this Program grant you
+additional permission to convey the resulting work.
+
+Doden's Landscapes began as a fork of Vintage Horizons by AliasFactory, which
+was released under the MIT licence, and it adapts parts of Farseer by
+Badgerson, also under the MIT licence. Those notices are reproduced in full in
+the file THIRD-PARTY-NOTICES, as their licences require.

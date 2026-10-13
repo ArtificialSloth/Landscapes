@@ -172,7 +172,7 @@ public partial class LodTerrainRenderer
         capi.Shader.RegisterFileShaderProgram("lodsky", skyProg);
         skyShaderOk = skyProg.Compile();
         skyFailed = false;
-        if (!ShaderLoadIsProvisional && !skyShaderOk)
+        if (!skyShaderOk)
             capi.Logger.Warning(
                 "[Landscapes] the sky witness shader did not compile; .dlsky is unavailable "
                 + "and nothing else changes.");

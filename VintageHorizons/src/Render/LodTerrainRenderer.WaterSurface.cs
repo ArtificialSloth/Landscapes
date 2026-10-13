@@ -29,16 +29,13 @@ public partial class LodTerrainRenderer
         waterSurfaceShaderOk = waterSurfaceProg.Compile();
         if (waterSurfaceShaderOk) LodTerrainSamplerLayout.Configure(waterSurfaceProg);
         waterSurfaceFailed = false;
-        if (!ShaderLoadIsProvisional)
-        {
-            if (waterSurfaceShaderOk)
-                capi.Logger.Notification(
-                    "[Landscapes] dedicated water surface shader ready; legacy shader retired.");
-            else
-                capi.Logger.Error(
-                    "[Landscapes] dedicated opaque water shader failed to compile; "
-                    + "selecting the opaque pipeline will suppress cached water.");
-        }
+        if (waterSurfaceShaderOk)
+            capi.Logger.Notification(
+                "[Landscapes] dedicated water surface shader ready; legacy shader retired.");
+        else
+            capi.Logger.Error(
+                "[Landscapes] dedicated opaque water shader failed to compile; "
+                + "selecting the opaque pipeline will suppress cached water.");
     }
 
     void DrawWaterSurface()

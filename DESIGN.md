@@ -200,7 +200,10 @@ alternatives for this direction live in
 
 ## 9. Licensing
 
-VintageHorizons is **MIT**. DH (LGPL), Voxy (ARR) and Algernon's Terrain Sampler (no
+Doden's Landscapes is **GPL-3.0 only, with a Vintage Story linking exception** (owner,
+2026-10-11; see `NOTICE`). The code it began from, AliasFactory's Vintage Horizons, and the
+code adapted from Farseer are MIT, and both notices ship in `THIRD-PARTY-NOTICES`. The rest
+of this section is AliasFactory's original record, when the project was MIT: DH (LGPL), Voxy (ARR) and Algernon's Terrain Sampler (no
 LICENSE shipped, so ARR) inform concepts only - no code is copied from any of them;
 `reference/` clones are gitignored and never redistributed. Farseer (MIT) code may be
 adapted with attribution (will be credited in README and source headers where used).

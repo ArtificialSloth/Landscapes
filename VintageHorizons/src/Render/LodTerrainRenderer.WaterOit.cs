@@ -38,16 +38,13 @@ public partial class LodTerrainRenderer
         if (waterOitShaderOk) LodTerrainSamplerLayout.Configure(waterOitProg);
         waterOitFailed = false;
         waterJunctionSurfaceFailed = false;
-        if (!ShaderLoadIsProvisional)
-        {
-            if (waterOitShaderOk)
-                capi.Logger.Notification(
-                    "[Landscapes] dedicated water OIT shader ready; fallback disabled.");
-            else
-                capi.Logger.Error(
-                    "[Landscapes] dedicated water OIT shader failed to compile; an OIT "
-                    + "request will suppress cached water instead of selecting opaque rendering.");
-        }
+        if (waterOitShaderOk)
+            capi.Logger.Notification(
+                "[Landscapes] dedicated water OIT shader ready; fallback disabled.");
+        else
+            capi.Logger.Error(
+                "[Landscapes] dedicated water OIT shader failed to compile; an OIT "
+                + "request will suppress cached water instead of selecting opaque rendering.");
     }
 
     void PrepareWaterSurfaceStage()

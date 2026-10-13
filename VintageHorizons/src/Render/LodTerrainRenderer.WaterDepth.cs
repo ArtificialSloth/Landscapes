@@ -108,6 +108,7 @@ public partial class LodTerrainRenderer
 
     void PrepareBeforeFrame(float dt)
     {
+        EnsureShadersLoaded();
         EndWaterFrameTiming();
         beforeStageStart = frameTimeline.Begin();
         frameTimingOpen = true;
@@ -141,15 +142,12 @@ public partial class LodTerrainRenderer
         LoadWaterRepairShader();
         waterDepthFailed = false;
         waterJunctionFailed = false;
-        if (!ShaderLoadIsProvisional)
-        {
-            if (waterDepthShaderOk)
-                capi.Logger.Notification("[Landscapes] cached water-depth shader ready.");
-            else
-                capi.Logger.Error(
-                    "[Landscapes] cached water-depth shader unavailable; when murk/coverage "
-                    + "is requested cached water will be suppressed instead of using vanilla-only depth.");
-        }
+        if (waterDepthShaderOk)
+            capi.Logger.Notification("[Landscapes] cached water-depth shader ready.");
+        else
+            capi.Logger.Error(
+                "[Landscapes] cached water-depth shader unavailable; when murk/coverage "
+                + "is requested cached water will be suppressed instead of using vanilla-only depth.");
     }
 
     void DrawWaterDepthBefore(float dt)

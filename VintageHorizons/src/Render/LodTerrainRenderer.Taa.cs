@@ -282,7 +282,7 @@ public partial class LodTerrainRenderer
         taaFailure = "";
         taaHistoryValid = false;
         taaErrorChecksLeft = TaaErrorCheckFrames;
-        if (!ShaderLoadIsProvisional && !taaShaderOk)
+        if (!taaShaderOk)
             capi.Logger.Warning(
                 "[Landscapes] the distant anti-aliasing shaders did not compile; distant "
                 + "terrain draws without it and nothing else changes.");

@@ -28,7 +28,7 @@ public partial class LodTerrainRenderer
         capi.Shader.RegisterFileShaderProgram("lodwaterrepair", waterRepairProg);
         waterRepairShaderOk = waterRepairProg.Compile();
         waterRepairFailed = false;
-        if (!ShaderLoadIsProvisional && !waterRepairShaderOk)
+        if (!waterRepairShaderOk)
             capi.Logger.Error(
                 "[Landscapes] requested water-depth repair shader unavailable; cached "
                 + "water will be suppressed while repair is enabled.");

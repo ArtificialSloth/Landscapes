@@ -26,10 +26,23 @@ public static class GameCollectorChecks
         RefusesAFileItCannotRead(c);
     }
 
+    /// <summary>
+    /// The game's own file as it shipped. On a machine where a player has switched the collector
+    /// on, the installed file is no longer that, and every check below would fail with nothing
+    /// wrong in the code: 14 of 21 did from 2026-09-29, when the owner switched it on, until
+    /// 2026-10-11. The backup the switch keeps is the shipped file, so it stands in; the sample is
+    /// the last resort, for a machine without the game.
+    /// </summary>
     static string GameFileOrSample()
     {
         string path = Path.Combine(GameAssemblies.GamePath, "Vintagestory.runtimeconfig.json");
-        return File.Exists(path) ? File.ReadAllText(path) : Sample;
+        foreach (string candidate in new[] { path, path + GameCollectorSetting.BackupSuffix })
+        {
+            if (!File.Exists(candidate)) continue;
+            string text = File.ReadAllText(candidate);
+            if (GameCollectorSetting.ReadState(text) == GameCollectorSetting.FileState.Off) return text;
+        }
+        return Sample;
     }
 
     static void EditsOnlyItsOwnProperties(Check c, string original)

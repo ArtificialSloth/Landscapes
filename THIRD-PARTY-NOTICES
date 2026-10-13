@@ -1,0 +1,78 @@
+Third-party notices for Doden's Landscapes
+
+Doden's Landscapes is licensed under the GNU General Public License version 3
+only, with an additional permission for Vintage Story (see NOTICE and
+LICENSE). It contains work by others that was released under the MIT licence.
+That licence requires its copyright and permission notice to be included with
+every copy, so both are reproduced below exactly as their authors published
+them.
+
+========================================================================
+Vintage Horizons, by AliasFactory
+========================================================================
+
+Doden's Landscapes began as a fork of Vintage Horizons. Its code up to the
+fork, and the parts of it that remain in this mod, were released by
+AliasFactory under the following licence:
+
+MIT License
+
+Copyright (c) 2026 AliasFactory
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+========================================================================
+Farseer 1.4.0, by Badgerson
+https://github.com/ViciousBadger/VSMod-Farseer
+========================================================================
+
+Adapted from Farseer: the camera far-limit and projection setup of the
+distant-terrain renderer; the way the game's own distance haze and sky-colour
+fade are applied to distant terrain (the terrain shader includes); and the
+horizon silhouette shaders (classic colour, distance fade, near sink and globe
+curve). The seam fog that hides the join between the game's terrain and this
+mod's terrain is this project's own design and is not taken from Farseer.
+
+Copyright 2026 Badgerson
+
+Permission is hereby granted, free of charge, to
+any person obtaining a copy of this software and
+associated documentation files (the “Software”),
+to deal in the Software without restriction,
+including without limitation the rights to use,
+copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software,
+and to permit persons to whom the Software is
+furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission
+notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY
+OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
+OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.

@@ -2068,9 +2068,15 @@ public partial class LodTerrainRenderer : IRenderer
         maxWorkerMeshBacklog = worker.MeshThreads * MeshBacklogPerThread;
         world.SectionBecameResident += OnSectionBecameResident;
 
+        // Shaders are first built by the engine's reload, never here. This constructor runs
+        // inside the engine's StartModsFully, which is followed at once by its ReloadShaders
+        // ("Reloaded shaders now with mod assets"). Registering a program makes the engine read
+        // its files at that moment against an include table it rebuilds only on a full load, so
+        // a load from here could not find lodterrainbody/lodwaterbody: six programs failed to
+        // link every session, and the engine's "Captured N issues during startup" summary
+        // printed the failures a second time at world join (2026-10-13; see LoadShader).
         capi.Event.ReloadShader += LoadShader;
         capi.Event.ChunkDirty += OnReadinessChunkDirty;
-        LoadShader();
         RegisterRenderer();
         RegisterWaterDepthStages();
         RegisterSilhouetteFogStage();
@@ -2097,21 +2103,27 @@ public partial class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
-    /// How many times shaders have been asked for. The first ask is ours, from mod start,
-    /// and it happens BEFORE the engine has filled its shader-include table from mod
-    /// assets - so it always fails to splice, always fails to compile, and used to log two
-    /// errors saying cached terrain would not draw. The engine then fires ReloadShader
-    /// ("Reloaded shaders now with mod assets") and the second attempt succeeds.
-    ///
-    /// That noise is worse than useless: it is indistinguishable from the genuine failure
-    /// it was written to report, and a session that read it concluded the indirect variant
-    /// does not compile on hardware when in fact it does. The first attempt is therefore
-    /// provisional - it says what it is waiting for, at notification level - and every
-    /// later attempt reports at full volume.
+    /// How many times shaders have been built. Until 0.4.140 the first build ran from the
+    /// constructor, before the engine had refilled its shader-include table from mod assets,
+    /// so it always failed and was treated as provisional (quiet), while the engine's own
+    /// link errors and its end-of-startup summary still put twelve red lines in every log.
+    /// Now the first build is the engine's ReloadShader event, the include table is current,
+    /// and every attempt reports at full volume. <see cref="EnsureShadersLoaded"/> covers a
+    /// session where that event never came.
     /// </summary>
     int shaderLoadAttempts;
 
-    bool ShaderLoadIsProvisional => shaderLoadAttempts <= 1;
+    /// <summary>
+    /// Safety net for the first frame: if the engine's reload never reached this renderer,
+    /// build the shaders now rather than draw with none.
+    /// </summary>
+    void EnsureShadersLoaded()
+    {
+        if (shaderLoadAttempts > 0) return;
+        capi.Logger.Warning("[Landscapes] the engine's shader reload had not reached this mod by the "
+            + "first frame; building its shaders now.");
+        LoadShader();
+    }
 
     public bool LoadShader()
     {
@@ -2141,7 +2153,7 @@ public partial class LodTerrainRenderer : IRenderer
         WarnIfIncludeMissing(prog, "lodterrain");
         shaderOk = prog.Compile();
         if (shaderOk) LodTerrainSamplerLayout.Configure(prog);
-        if (!shaderOk && !ShaderLoadIsProvisional)
+        if (!shaderOk)
             capi.Logger.Error("[Landscapes] lodterrain shader failed to compile; LOD rendering disabled");
 
         // The expanded indirect variant remains a diagnostic while its old representation
@@ -2172,14 +2184,14 @@ public partial class LodTerrainRenderer : IRenderer
         hzbProg.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
         capi.Shader.RegisterFileShaderProgram("hzbreduce", hzbProg);
         hzbShaderOk = hzbProg.Compile();
-        if (!hzbShaderOk && !ShaderLoadIsProvisional)
+        if (!hzbShaderOk)
             capi.Logger.Warning(
                 "[Landscapes] the hzbreduce shader failed to compile; depth-pyramid "
                 + "occlusion is unavailable and nothing else changes");
 
         indirectShaderOk = indirectProg.Compile();
         if (indirectShaderOk) LodTerrainSamplerLayout.Configure(indirectProg);
-        if (!indirectShaderOk && !ShaderLoadIsProvisional)
+        if (!indirectShaderOk)
             capi.Logger.Warning(
                 "[Landscapes] the indirect lodterrain variant failed to compile; "
                 + "the retired expanded diagnostic is unavailable");
@@ -2192,8 +2204,7 @@ public partial class LodTerrainRenderer : IRenderer
         LoadSkyWitnessShader();
         LoadTaaShaders();
         LoadSilhouetteShader();
-        if (!ShaderLoadIsProvisional
-            && gpuFailureInjection.Take(LodGpuFailureStage.FastShaders))
+        if (gpuFailureInjection.Take(LodGpuFailureStage.FastShaders))
         {
             indirectShaderOk = false;
             packedShaderOk = false;
@@ -2201,7 +2212,7 @@ public partial class LodTerrainRenderer : IRenderer
                 "[Landscapes] REQUIRED PACKED TERRAIN PATH FAILED: Phase 9 injected "
                 + "a shader failure; cached opaque terrain will be suppressed until reload.");
         }
-        if (!packedShaderOk && !ShaderLoadIsProvisional)
+        if (!packedShaderOk)
             capi.Logger.Error(
                 "[Landscapes] REQUIRED PACKED TERRAIN PATH FAILED: the packed shader "
                 + "did not compile; cached opaque terrain will be suppressed.");
@@ -2212,34 +2223,24 @@ public partial class LodTerrainRenderer : IRenderer
         // G68 asked for this and only half of it was ever built: the indirect variant
         // reported its success while the MAIN program - the one whose failure means no
         // distant terrain at all - reported nothing but its failure. A log that can only
-        // complain cannot answer "did this work", and the engine's own startup summary
-        // replays the expected first-attempt link errors seconds later, so a reader sees
-        // three shader errors and no statement that anything compiled. That has now cost
-        // reading time twice, once in session 42 and once today.
+        // complain cannot answer "did this work". That cost reading time in session 42 and
+        // again in session 112, back when a doomed first attempt filled the log with errors.
         //
         // Re-armed on a real failure, so a driver that breaks on one reload and recovers on
         // the next says so instead of going quiet after its first success.
-        if (!shaderOk && !ShaderLoadIsProvisional) reportedShadersOk = false;
+        if (!shaderOk) reportedShadersOk = false;
 
         if (shaderOk && !reportedShadersOk)
         {
             reportedShadersOk = true;
             capi.Logger.Notification(
                 "[Landscapes] shaders ready after {0} attempt(s): distant terrain {1}, "
-                + "packed path {2}, indirect path {3}, depth pyramid {4}.{5}",
+                + "packed path {2}, indirect path {3}, depth pyramid {4}.",
                 shaderLoadAttempts,
                 shaderOk ? "ok" : "FAILED",
                 packedShaderOk ? "ok" : "unavailable",
                 indirectShaderOk ? "ok" : "unavailable",
-                hzbShaderOk ? "ok" : "unavailable",
-                shaderLoadAttempts > 1
-                    // Named here rather than left to be inferred, because the errors it
-                    // explains are logged by the ENGINE, above this line, and look identical
-                    // to a genuine compile failure.
-                    ? " The earlier link errors for lodterrain are expected: the first attempt"
-                        + " runs before the engine has filled its shader include table from mod"
-                        + " assets, and the reload after it is the one that counts."
-                    : string.Empty);
+                hzbShaderOk ? "ok" : "unavailable");
         }
 
         return shaderOk;
@@ -2247,10 +2248,10 @@ public partial class LodTerrainRenderer : IRenderer
 
     /// <summary>
     /// Both programs are three-line files whose real content arrives through one #include,
-    /// and the engine resolves those against a table it fills once, at startup, from every
-    /// loaded asset. If our body were ever missing from that table the engine would log a
-    /// bare "Include file not found. Ignoring." and hand the compiler an empty shader -
-    /// which then fails for a reason that names nothing.
+    /// and the engine resolves those against a table it refills only on a full shader load
+    /// (ShaderRegistry, decompiled 1.22.7). If our body were ever missing from that table the
+    /// engine would log a bare "Include file not found. Ignoring." and hand the compiler an
+    /// empty shader - which then fails for a reason that names nothing.
     ///
     /// Naming it here costs one substring search per shader load and turns that into a
     /// sentence someone can act on.
@@ -2262,18 +2263,6 @@ public partial class LodTerrainRenderer : IRenderer
         bool spliced = vertex != null && vertex.Contains("TINT_SLOTS", StringComparison.Ordinal)
             && fragment != null && fragment.Contains("TINT_SLOTS", StringComparison.Ordinal);
         if (spliced) return;
-
-        // The first ask runs before the engine has read mod assets, so a missing body
-        // there is the expected order of events rather than a fault. Saying so is still
-        // worth one line: if the reload never arrives, this is the only trace of why.
-        if (ShaderLoadIsProvisional)
-        {
-            capi.Logger.Notification(
-                "[Landscapes] {0}: the engine has not registered mod shader includes "
-                + "yet. The reload that follows mod asset loading is the one that matters.",
-                name);
-            return;
-        }
 
         capi.Logger.Error(
             "[Landscapes] the {0} shader body was not spliced in: the engine did not "
@@ -5767,7 +5756,7 @@ public partial class LodTerrainRenderer : IRenderer
             reportedPackedShaderOk = true;
             capi.Logger.Notification(
                 "[Landscapes] the packed lodterrain variant compiled after {0} "
-                + "attempt(s); 12-byte quad drawing is available behind .vhpacked on",
+                + "attempt(s); 12-byte quad drawing is available",
                 shaderLoadAttempts);
         }
         indirectDrawingThisFrame = indirectWanted;
@@ -7330,7 +7319,7 @@ public partial class LodTerrainRenderer : IRenderer
                 ? "off"
                 : "off: unselected clustered geometry is not retained";
         if (!PackedDrawEnabled || !IndirectDrawEnabled)
-            return "on, but idle: turn on .vhindirect and .vhpacked first";
+            return "on, but idle: the indirect and packed draw paths are off";
         if (mirror == null || clusterBuilder == null)
             return "unavailable: the regional arenas are not attached. Turn them on with .dlgpu on";
         return $"on: each section is up to {LodPackedClusterBuilder.CellCount} exact draw clusters. "
