@@ -16,7 +16,9 @@ has nothing to do (0.4.132, settled decision 53).
 
 - **Version:** promote the build he last played to a release number (CLAUDE.md: only he calls a
   promotion, and the promoted build must be one somebody played).
-- **GitHub:** nothing is pushed; `origin` is still `DodenGruva/Horizons`, which he may rename.
+- **GitHub:** the full history is on `main` at `DodenGruva/Landscapes`, still private; he makes it
+  public. The old fork `DodenGruva/Horizons` still shows his personal email in 91 commits; he deletes
+  it (a public fork cannot be made private).
 - **ModDB:** the page at `mods.vintagestory.at/dodenslandscapes` (modinfo already points there), with
   GNU GPL v3 chosen as the licence. The README now tells players about the Performance tab and about
   keeping one LOD mod on.

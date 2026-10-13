@@ -6,7 +6,7 @@
 **Status date:** `2026-10-13`
 **Mod version:** `0.4.142` - current private test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception. 0.4.142 only trims a log line; 0.4.138-0.4.141 are owner-played: the legacy cache and settings moved in place, the login notice about other LOD mods shows, the startup shader errors are gone and the "?" walls are fixed. All checks pass
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`; nothing pushed
+**Active branch:** `codex/water-depth-light`; recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`; pushed to `main` on `DodenGruva/Landscapes` (private) on 2026-10-13, after the history was rewritten to his GitHub no-reply address
 **Target:** Vintage Story 1.22.5+, .NET 10
 **Source files:** `148` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
@@ -995,7 +995,8 @@ It covers:
 Begin with [Session 113](dev/sessions/SESSION_113.md) and the top of [TODO](dev/TODO.md).
 
 1. **The public release, on the owner's calls:** promote the build he last played to a release
-   number, push (and perhaps rename the `DodenGruva/Horizons` repository), and create the ModDB page
+   number, make `DodenGruva/Landscapes` public (the history is there; the old `DodenGruva/Horizons`
+   fork still exposes his personal email and is his to delete), and create the ModDB page
    at `mods.vintagestory.at/dodenslandscapes` with GNU GPL v3 as the licence. Open evidence worth
    knowing before then: the 0.4.137 preview re-issue unseen in play, running beside the original
    Vintage Horizons untested, and the notice's layout at other GUI scales unseen.
