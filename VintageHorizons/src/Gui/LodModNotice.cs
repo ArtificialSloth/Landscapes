@@ -14,19 +14,22 @@ namespace VintageHorizons;
 internal sealed class LodModNotice : GuiDialog
 {
     const double Width = 600;
-    const double TextHeight = 230;
+    const double TextHeight = 290;
     const double TitleBar = 30;
     const double Margin = 20;
 
     readonly string[] conflicts;
     readonly bool offerHide;
     readonly Action onHide;
+    readonly Action openSettings;
 
-    public LodModNotice(ICoreClientAPI capi, string[] conflicts, bool offerHide, Action onHide) : base(capi)
+    public LodModNotice(ICoreClientAPI capi, string[] conflicts, bool offerHide, Action onHide,
+        Action openSettings) : base(capi)
     {
         this.conflicts = conflicts;
         this.offerHide = offerHide && conflicts.Length == 0;
         this.onHide = onHide;
+        this.openSettings = openSettings;
         Compose();
     }
 
@@ -58,6 +61,14 @@ internal sealed class LodModNotice : GuiDialog
             + "Manager and restart the game.";
     }
 
+    /// <summary>
+    /// Where the settings are, under either form. Most players never find a mod's settings, and
+    /// this notice is the one thing every player sees (owner, 2026-10-13).
+    /// </summary>
+    internal const string SettingsPointer =
+        "Distances and visual features are in the game's Settings, on the Landscapes page, or "
+        + "type .dlconfig in chat. The Open settings button below opens them now.";
+
     internal static string JoinNames(string[] names) => names.Length switch
     {
         0 => "",
@@ -79,8 +90,12 @@ internal sealed class LodModNotice : GuiDialog
             .AddShadedDialogBG(ElementBounds.Fill, true)
             .AddDialogTitleBar(Title(conflicts), () => TryClose())
             .BeginChildElements()
-            .AddStaticText(conflicts.Length == 0 ? GeneralText : ConflictText(conflicts),
+            .AddStaticText((conflicts.Length == 0 ? GeneralText : ConflictText(conflicts))
+                    + "\n\n" + SettingsPointer,
                 CairoFont.WhiteSmallText(), text);
+
+        composer.AddButton("Open settings", OnOpenSettings,
+            ElementBounds.Fixed(Margin, buttonY, 170, 34), EnumButtonStyle.Normal, "settings");
 
         if (offerHide)
         {
@@ -98,5 +113,12 @@ internal sealed class LodModNotice : GuiDialog
     {
         onHide();
         return TryClose();
+    }
+
+    bool OnOpenSettings()
+    {
+        TryClose();
+        openSettings();
+        return true;
     }
 }

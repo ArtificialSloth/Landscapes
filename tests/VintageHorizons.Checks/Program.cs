@@ -67,6 +67,7 @@ public static class Program
         ("pure", "mesher", MesherChecks.Run),
         ("pure", "server config", ConfigChecks.Run),
         ("pure", "lod mod deferral", DeferralChecks.Run),
+        ("pure", "settings window", SettingsWindowChecks.Run),
         ("fixture", "blob format", StoreChecks.Run),
         ("fixture", "frustum", FrustumChecks.Run),
         ("fixture", "visibility traversal", TraversalChecks.Run),

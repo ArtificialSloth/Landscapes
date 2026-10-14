@@ -2609,9 +2609,9 @@ public static class StaticAssetChecks
         // In 0.4.60 the owner asked for a second tab, to tune anti-aliasing with sliders: a tab
         // is as wide as its label, and the strip sits above the window with room for both.
         c.True(dialog.Contains("AddHorizontalTabs(", StringComparison.Ordinal)
-                && dialog.Contains("Name = \"General\"", StringComparison.Ordinal)
-                && dialog.Contains("Name = \"Anti-Aliasing\"", StringComparison.Ordinal)
-                && dialog.Contains("Name = \"Generate\"", StringComparison.Ordinal),
+                && dialog.Contains("_ => \"General\"", StringComparison.Ordinal)
+                && dialog.Contains("AntiAliasingTab => \"Anti-Aliasing\"", StringComparison.Ordinal)
+                && dialog.Contains("GenerateTab => \"Generate\"", StringComparison.Ordinal),
             "the settings window has General, Anti-Aliasing and Generate tabs");
         c.True(dialog.Contains("OnWorldGenPrepare", StringComparison.Ordinal)
                 && dialog.Contains("OnWorldGenConfirm", StringComparison.Ordinal)
@@ -2667,8 +2667,8 @@ public static class StaticAssetChecks
             && settings.Contains(
                 "internal const string PageCode = \"dodenslandscapes\"",
                 StringComparison.Ordinal)
-            && settings.Contains("AddToggleButton(\"Horizons\"", StringComparison.Ordinal),
-            "the in-world vanilla Settings header carries a dedicated Horizons tab");
+            && settings.Contains("AddToggleButton(\"Landscapes\"", StringComparison.Ordinal),
+            "the in-world vanilla Settings header carries a dedicated Landscapes tab");
         c.True(settings.Contains("onMainscreen", StringComparison.Ordinal)
             && settings.Contains("if ((bool)(mainScreenField?.GetValue(settings) ?? true)) return;",
                 StringComparison.Ordinal),
@@ -2682,8 +2682,8 @@ public static class StaticAssetChecks
         c.True(settings.Contains("BeforeLeavingSettings", StringComparison.Ordinal)
             && settings.Contains("oldEditor?.CloseEmbedded();", StringComparison.Ordinal),
             "leaving Settings cancels an unsaved live anti-aliasing preview");
-        c.True(settings.Contains("const double HorizonsButtonWidth = 116", StringComparison.Ordinal),
-            "the full Horizons label fits its vanilla Settings header button");
+        c.True(settings.Contains("const double HorizonsButtonWidth = 150", StringComparison.Ordinal),
+            "the full Landscapes label fits its vanilla Settings header button");
         c.True(VintageHorizonsConfigLayout.EmbeddedTabsY >= 80
                 && VintageHorizonsConfigLayout.EmbeddedTabsY + 28
                     < VintageHorizonsConfigLayout.EmbeddedContentY + 42,

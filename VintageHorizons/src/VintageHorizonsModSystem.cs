@@ -110,6 +110,14 @@ public class VintageHorizonsConfig
     public bool HideLodModNotice = false;
 
     /// <summary>
+    /// The settings window shows its tuning dials: the Anti-Aliasing tab and Farseer's
+    /// appearance and fog sliders. Off by default (owner, 2026-10-13): a player sees the
+    /// distances, the feature switches and Farseer's on/off switches, and the tuned values
+    /// stay in force whether or not they are shown.
+    /// </summary>
+    public bool ShowAdvancedSettings = false;
+
+    /// <summary>
     /// The GPU render path switches, remembered per install.
     ///
     /// **Default ON since 0.3.103**, which is the owner's product decision after the Phase 8
@@ -581,7 +589,13 @@ public partial class VintageHorizonsModSystem : ModSystem
             SaveConfig();
             Mod.Logger.Notification("The login notice about other LOD mods will not show again "
                 + "unless one of them is switched on.");
-        });
+        },
+            // After the notice has finished with the click that asked for it.
+            () => capi.Event.EnqueueMainThreadTask(() =>
+            {
+                if (!OpenStandaloneConfigDialog())
+                    capi.ShowChatMessage("[Landscapes] The settings window could not open; use .dlconfig.");
+            }, "dodenslandscapes-notice-settings"));
         if (!notice.TryOpen())
         {
             Mod.Logger.Warning("The login notice about other LOD mods could not open.");
@@ -2811,16 +2825,21 @@ public partial class VintageHorizonsModSystem : ModSystem
         var collector = new CollectorTuning(
             config.AllCoresGarbageCollection, () => GameCollectorSetting.InEffect,
             SaveAllCoresGarbageCollection);
+        var advanced = new AdvancedTuning(config.ShowAdvancedSettings, on =>
+        {
+            config.ShowAdvancedSettings = on;
+            SaveConfig();
+        });
 
         return requestRecompose != null && requestClose != null
             ? new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
                 loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, silhouetteTuning, worldGen,
-                collector, requestRecompose, requestClose, ApplyGuiConfig)
+                collector, advanced, requestRecompose, requestClose, ApplyGuiConfig)
             : new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
                 loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, silhouetteTuning, worldGen,
-                collector, ApplyGuiConfig);
+                collector, advanced, ApplyGuiConfig);
     }
 
     LodWorldGenPreferences ConfiguredWorldGenPreferences()

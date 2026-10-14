@@ -17,7 +17,7 @@ internal sealed class VintageHorizonsSettingsIntegration : IDisposable
     internal const string HarmonyId = "dodenslandscapes.settingstab";
     internal const string PageCode = "dodenslandscapes";
     const string ComposerName = "gamesettings-dodenslandscapes";
-    const double HorizonsButtonWidth = 116;
+    const double HorizonsButtonWidth = 150;
     const double HeaderGap = 15;
 
     static VintageHorizonsSettingsIntegration? active;
@@ -163,7 +163,7 @@ internal sealed class VintageHorizonsSettingsIntegration : IDisposable
                     neededWidth + 2 * GuiStyle.ElementToDialogPadding;
             }
 
-            composer.AddToggleButton("Horizons", CairoFont.ButtonText(), on =>
+            composer.AddToggleButton("Landscapes", CairoFont.ButtonText(), on =>
             {
                 if (on) QueueOpen(settings);
             }, horizonsBounds, PageCode);

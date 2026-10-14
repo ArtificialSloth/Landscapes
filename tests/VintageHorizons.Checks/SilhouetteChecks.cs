@@ -2231,7 +2231,7 @@ public static class SilhouetteChecks
                 < pass.IndexOf("silhouetteShaderWanted = true;", StringComparison.Ordinal),
             "an unavailable server never causes even the lazy silhouette shader compile");
 
-        c.True(dialog.Contains("Name = \"Farseer\"", StringComparison.Ordinal)
+        c.True(dialog.Contains("SilhouettesTab => \"Farseer\"", StringComparison.Ordinal)
                 && dialog.Contains("ComposeSilhouettes", StringComparison.Ordinal)
                 && dialog.Contains("SilhouetteRows", StringComparison.Ordinal)
                 && dialog.Contains("LOD edge depth", StringComparison.Ordinal)

@@ -26,6 +26,12 @@ internal sealed record VanillaDistanceTuning(int Initial, Func<int, int[]> Apply
 internal sealed record CollectorTuning(bool Initial, Func<bool> InEffect, Func<bool, string> Save);
 
 /// <summary>
+/// Whether the window shows its tuning dials, and how it remembers the choice. Remembered as soon
+/// as it is switched, not on Save: it is how the window looks, not a setting of the mod.
+/// </summary>
+internal sealed record AdvancedTuning(bool Initial, Action<bool> Remember);
+
+/// <summary>
 /// One set of coordinates for both the standalone command window and the page embedded in
 /// vanilla Settings. Keeping the row edges here makes clipping a testable rule instead of a
 /// collection of unrelated literals.
@@ -43,8 +49,11 @@ internal static class VintageHorizonsConfigLayout
     internal const double ScaleY = 96;
     internal const double ScaleHeight = 210;
     internal const double DrawHeadingY = 326;
-    internal const double VisualHeadingY = 394;
-    internal const double VisualRowsY = 432;
+    // A row of its own. Beside the heading it shared the right edge with the draw distance's
+    // value, and the two were drawn over each other (owner screenshot, 2026-10-13).
+    internal const double PausedRowY = 364;
+    internal const double VisualHeadingY = 410;
+    internal const double VisualRowsY = 448;
     internal const double VisualRowHeight = 36;
     internal const int VisualRowCount = 7;
 
@@ -140,6 +149,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         + "file, so it applies from the next start; switch it off here before removing Vintage "
         + "Horizons, or the game keeps it until its next update.";
 
+    /// <summary>The advanced switch, just left of Cancel in the action row.</summary>
+    const double AdvancedSwitchX = Width - Margin - 275 - 52;
+
+    const string AdvancedTip =
+        "Shows the tuning dials: the Anti-Aliasing tab, and Farseer's reach, appearance and fog "
+        + "sliders. Hiding them keeps their values; \"(changed)\" means one differs from its default.";
+
     const string ShowTip =
         "Tints anti-aliased terrain magenta, stronger where it is fully applied, to show what the "
         + "sliders reach. For this session only; it is never saved. (.dltaa show)";
@@ -151,6 +167,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     readonly WorldGenTuning worldGen;
     readonly SilhouetteTuning silhouettes;
     readonly CollectorTuning collector;
+    readonly AdvancedTuning advanced;
     readonly bool embedded;
     readonly Action? requestEmbeddedRecompose;
     readonly Action? requestEmbeddedClose;
@@ -166,6 +183,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     bool pendingShowTaa;
     LodWorldGenPreferences pendingWorldGen;
     bool pendingAllCores;
+    bool showAdvanced;
+
+    /// <summary>Whether the Generate page was last composed with its progress rows.</summary>
+    bool composedWithProgress;
     LodThresholdScaleElement? scale;
     GuiComposer? activeComposer;
     bool sessionClosed;
@@ -187,11 +208,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
         TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
-        CollectorTuning collector,
+        CollectorTuning collector, AdvancedTuning advanced,
         Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
             LodSilhouetteSettings> save)
         : this(capi, thresholds, automaticThresholds, automatic, farCap, loadWhilePaused,
-            visuals, vanilla, taa, silhouettes, worldGen, collector, false, null, null, save)
+            visuals, vanilla, taa, silhouettes, worldGen, collector, advanced, false, null, null,
+            save)
     {
         ComposeDialog();
     }
@@ -204,12 +226,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
         TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
-        CollectorTuning collector, Action requestRecompose, Action requestClose,
+        CollectorTuning collector, AdvancedTuning advanced, Action requestRecompose,
+        Action requestClose,
         Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
             LodSilhouetteSettings> save)
         : this(capi, thresholds, automaticThresholds, automatic, farCap, loadWhilePaused,
-            visuals, vanilla, taa, silhouettes, worldGen, collector, true, requestRecompose,
-            requestClose, save)
+            visuals, vanilla, taa, silhouettes, worldGen, collector, advanced, true,
+            requestRecompose, requestClose, save)
     {
     }
 
@@ -217,7 +240,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
         TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
-        CollectorTuning collector, bool embedded, Action? requestRecompose, Action? requestClose,
+        CollectorTuning collector, AdvancedTuning advanced, bool embedded,
+        Action? requestRecompose, Action? requestClose,
         Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
             LodSilhouetteSettings> save) : base(capi)
     {
@@ -227,6 +251,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         this.vanilla = vanilla;
         this.worldGen = worldGen;
         this.collector = collector;
+        this.advanced = advanced;
+        showAdvanced = advanced.Initial;
         pendingAllCores = collector.Initial;
         vanillaViewDistance = Math.Clamp(vanilla.Initial,
             LodThresholdScaleLayout.MinVanillaDistance,
@@ -511,6 +537,22 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         else if (shownTab == PerformanceTab) ComposePerformance(composer);
         else ComposeGeneral(composer);
 
+        // Generate works through its own buttons. Save, Cancel and Defaults there invited the
+        // question whether a generation had been saved, and the tab has nothing advanced.
+        if (shownTab == GenerateTab) return;
+
+        // The advanced switch sits in the action row so it is the same on every tab.
+        composer.AddDynamicText(AdvancedLabel(),
+            CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Right),
+            ElementBounds.Fixed(AdvancedSwitchX - 330, Y(VintageHorizonsConfigLayout.ButtonY + 9),
+                320, 22), "advanced-label");
+        composer.AddSwitch(OnAdvancedChanged,
+            ElementBounds.Fixed(AdvancedSwitchX, Y(VintageHorizonsConfigLayout.ButtonY + 3), 32, 32),
+            "show-advanced");
+        composer.AddHoverText(AdvancedTip, CairoFont.WhiteSmallText(), 380,
+            ElementBounds.Fixed(AdvancedSwitchX - 330, Y(VintageHorizonsConfigLayout.ButtonY), 362, 38),
+            "tip-show-advanced");
+
         composer.AddButton("Defaults", OnDefaults,
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY), 140, 38),
             EnumButtonStyle.Normal, "defaults");
@@ -522,17 +564,29 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             EnumButtonStyle.Normal, "save");
     }
 
+    /// <summary>
+    /// The tabs on show, in order. Anti-Aliasing holds nothing but tuning dials, so it is there
+    /// only with advanced settings shown; its on/off switch is on General either way.
+    /// </summary>
+    internal static int[] VisibleTabs(bool showAdvanced) => showAdvanced
+        ? new[] { GeneralTab, AntiAliasingTab, SilhouettesTab, GenerateTab, PerformanceTab }
+        : new[] { GeneralTab, SilhouettesTab, GenerateTab, PerformanceTab };
+
+    static string TabName(int tab) => tab switch
+    {
+        AntiAliasingTab => "Anti-Aliasing",
+        SilhouettesTab => "Farseer",
+        GenerateTab => "Generate",
+        PerformanceTab => "Performance",
+        _ => "General",
+    };
+
     void AddTabs(GuiComposer composer, ElementBounds bounds)
     {
         composer.AddHorizontalTabs(
-            new[]
-            {
-                new GuiTab { Name = "General", DataInt = GeneralTab },
-                new GuiTab { Name = "Anti-Aliasing", DataInt = AntiAliasingTab },
-                new GuiTab { Name = "Farseer", DataInt = SilhouettesTab },
-                new GuiTab { Name = "Generate", DataInt = GenerateTab },
-                new GuiTab { Name = "Performance", DataInt = PerformanceTab },
-            },
+            VisibleTabs(showAdvanced)
+                .Select(tab => new GuiTab { Name = TabName(tab), DataInt = tab })
+                .ToArray(),
             bounds, OnTabClicked,
             CairoFont.WhiteSmallText(), CairoFont.WhiteSmallText().WithColor(GuiStyle.ActiveButtonTextColor),
             "tabs");
@@ -541,7 +595,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     void CompleteComposition()
     {
         if (activeComposer?.Composed != true) return;
-        activeComposer.GetHorizontalTabs("tabs").activeElement = shownTab;
+        // The highlight is a position in the strip, the click handler's value a tab id, and
+        // the two part when a tab is hidden.
+        activeComposer.GetHorizontalTabs("tabs").activeElement =
+            Math.Max(0, Array.IndexOf(VisibleTabs(showAdvanced), shownTab));
+        if (shownTab != GenerateTab)
+            activeComposer.GetSwitch("show-advanced").On = showAdvanced;
 
         if (shownTab == AntiAliasingTab) SetAntiAliasingValues();
         else if (shownTab == SilhouettesTab) SetSilhouetteValues();
@@ -581,14 +640,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddStaticText("Cached terrain draw distance", CairoFont.WhiteMediumText(),
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.DrawHeadingY), 500, 30));
         composer.AddStaticText("Load terrain while paused", CairoFont.WhiteSmallishText(),
-            EnumTextOrientation.Right,
-            ElementBounds.Fixed(552, Y(VintageHorizonsConfigLayout.DrawHeadingY + 5), 262, 26));
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.PausedRowY + 5), 650, 26));
         composer.AddSwitch(OnPausedLoadingChanged,
-            ElementBounds.Fixed(SwitchX, Y(VintageHorizonsConfigLayout.DrawHeadingY), 32, 32),
+            ElementBounds.Fixed(SwitchX, Y(VintageHorizonsConfigLayout.PausedRowY), 32, 32),
             "load-while-paused");
         composer.AddHoverText(PausedLoadingTip, CairoFont.WhiteSmallText(), 380,
-            ElementBounds.Fixed(552, Y(VintageHorizonsConfigLayout.DrawHeadingY),
-                SwitchX + 32 - 552, 34), "tip-load-while-paused");
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.PausedRowY),
+                SwitchX + 32 - Margin, RowHeight - 2), "tip-load-while-paused");
         composer.AddDynamicText(DrawDistanceLabel(),
             CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Right),
             ElementBounds.Fixed(Width - Margin - 120,
@@ -654,12 +712,15 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         composer.AddStaticText("Performance", CairoFont.WhiteMediumText(),
             ElementBounds.Fixed(Margin, Y(42), 480, 30));
-        composer.AddStaticText("Changes here apply from the next time you start the game.",
-            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(74), Width - 2 * Margin, 22));
 
-        const double rowY = 116;
+        // The restart is said beside the switch it applies to, not in a line over the page:
+        // most of this window applies at once, so a switch that does not looks like one that
+        // did nothing.
+        const double rowY = 90;
         composer.AddStaticText("All-Cores Garbage Collection", CairoFont.WhiteSmallishText(),
-            ElementBounds.Fixed(Margin, Y(rowY + 5), 650, 26));
+            ElementBounds.Fixed(Margin, Y(rowY + 5), 290, 26));
+        composer.AddStaticText("(after restart)", CairoFont.WhiteDetailText(),
+            ElementBounds.Fixed(Margin + 295, Y(rowY + 8), 200, 22));
         composer.AddStaticText("More RAM", CairoFont.WhiteDetailText(),
             EnumTextOrientation.Right,
             ElementBounds.Fixed(SwitchX - 110, Y(rowY + 8), 100, 22));
@@ -768,8 +829,22 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 150, Y(48), 140, 24));
         composer.AddSwitch(OnSilhouetteEnabledChanged,
             ElementBounds.Fixed(SwitchX, Y(42), 32, 32), "silhouette-enabled");
-        composer.AddDynamicText(silhouettes.Status(), CairoFont.WhiteSmallText(),
-            ElementBounds.Fixed(Margin, Y(78), Width - 2 * Margin, 36), "silhouette-status");
+
+        // Without advanced settings the page is its two switches. The tuned look is the default
+        // and stays in force; reach is still on the General tab's distance bar (owner,
+        // 2026-10-13).
+        if (!showAdvanced)
+        {
+            composer.AddStaticText(SilhouetteFooter, CairoFont.WhiteSmallText(),
+                ElementBounds.Fixed(Margin, Y(90), Width - 2 * Margin, 28));
+            return;
+        }
+
+        // The status report is the one `.dlsilhouette stats` prints - a diagnostic, several
+        // lines long, which ran into the Reach row and was cut off mid-sentence when printed
+        // on the page. Hovering the title shows it in full.
+        composer.AddHoverText(SilhouetteStatusTip(), CairoFont.WhiteSmallText(), 500,
+            ElementBounds.Fixed(Margin, Y(40), 400, 34), "silhouette-status");
 
         composer.AddStaticText("Reach", CairoFont.WhiteSmallishText(),
             ElementBounds.Fixed(Margin, Y(122), 100, 26));
@@ -800,16 +875,21 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 ElementBounds.Fixed(x + sliderWidth + 12, Y(y + 35), 92, 22), $"{row.Key}-label");
         }
 
-        composer.AddStaticText(
-            "Changes on this tab show immediately. Off releases received tiles and all Farseer GPU meshes.",
+        composer.AddStaticText(SilhouetteFooter,
             CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(724), Width - 2 * Margin, 28));
     }
+
+    const string SilhouetteFooter =
+        "Changes on this tab show immediately. Off releases received tiles and all Farseer GPU meshes.";
+
+    string SilhouetteStatusTip() => silhouettes.Status() + " (.dlsilhouette stats)";
 
     void SetSilhouetteValues()
     {
         if (activeComposer?.Composed != true) return;
         activeComposer.GetSwitch("silhouette-enabled").On = pendingSilhouettes.Enabled;
         activeComposer.GetSwitch("silhouette-fog").On = pendingSilhouettes.FogEnabled;
+        if (!showAdvanced) return;
         GuiElementSlider reach = activeComposer.GetSlider("silhouette-reach");
         reach.SetValues(pendingSilhouettes.ReachBlocks, LodSilhouetteSettings.MinReachBlocks,
             LodSilhouetteSettings.MaxReachBlocks, LodSilhouetteSettings.ReachStepBlocks, " blocks");
@@ -863,10 +943,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddDropDown(WorldGenShapeCodes, WorldGenShapeNames,
             pendingWorldGen.Shape == EnumWorldGenShape.Circle ? 0 : 1,
             OnWorldGenShapeChanged, ElementBounds.Fixed(135, Y(214), 220, 32), "wg-shape");
-        composer.AddStaticText("Preset", CairoFont.WhiteSmallishText(),
-            ElementBounds.Fixed(410, Y(220), 90, 28));
-        composer.AddStaticText("Balanced (engine default)", CairoFont.WhiteSmallText(),
-            ElementBounds.Fixed(505, Y(222), 260, 24));
+        // No preset line: it named the engine's default in a place that looked like a choice,
+        // and there is nothing to choose.
 
         composer.AddDynamicText(LodWorldGenPageMath.Estimate(pendingWorldGen),
             CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(266), Width - 2 * Margin, 28),
@@ -876,19 +954,28 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             + "and disk estimate; Confirm is a separate click. Back up important worlds first.",
             CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(304), Width - 2 * Margin, 52));
 
-        composer.AddStaticText("Progress", CairoFont.WhiteSmallishText(),
-            ElementBounds.Fixed(Margin, Y(374), 100, 28));
-        composer.AddSlider(_ => false,
-            ElementBounds.Fixed(135, Y(368), 545, 30), "wg-progress");
-        composer.AddDynamicText(WorldGenPercentLabel(),
-            CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Right),
-            ElementBounds.Fixed(695, Y(374), 170, 24),
-            "wg-progress-label");
-        composer.AddDynamicText(LodWorldGenPageMath.Progress(worldGen.Client?.WorldGenStatus),
-            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(414), Width - 2 * Margin, 76),
-            "wg-progress-text");
+        // Progress only while there is a job to report on. At rest the bar sat at 0% over two
+        // copies of the server's idle message, which told the player to type a command for what
+        // the buttons below already do (owner screenshot, 2026-10-13).
+        composedWithProgress = ShowsWorldGenProgress(worldGen.Client?.WorldGenStatus);
+        double messageY = 374;
+        if (composedWithProgress)
+        {
+            composer.AddStaticText("Progress", CairoFont.WhiteSmallishText(),
+                ElementBounds.Fixed(Margin, Y(374), 100, 28));
+            composer.AddSlider(_ => false,
+                ElementBounds.Fixed(135, Y(368), 545, 30), "wg-progress");
+            composer.AddDynamicText(WorldGenPercentLabel(),
+                CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Right),
+                ElementBounds.Fixed(695, Y(374), 170, 24),
+                "wg-progress-label");
+            composer.AddDynamicText(LodWorldGenPageMath.Progress(worldGen.Client?.WorldGenStatus),
+                CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(414), Width - 2 * Margin, 76),
+                "wg-progress-text");
+            messageY = 494;
+        }
         composer.AddDynamicText(WorldGenLastMessage(), CairoFont.WhiteSmallText(),
-            ElementBounds.Fixed(Margin, Y(494), Width - 2 * Margin, 66), "wg-message");
+            ElementBounds.Fixed(Margin, Y(messageY), Width - 2 * Margin, 66), "wg-message");
 
         composer.AddButton(NeedsLiveWorldGenWindow() ? "Open live controls" : "Prepare",
             OnWorldGenPrepare,
@@ -913,10 +1000,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         GuiElementSlider radius = activeComposer.GetSlider("wg-radius");
         radius.SetValues(pendingWorldGen.RadiusChunks, 1, maxRadius, 1, " chunks");
         radius.ShowTextWhenResting = false;
-        GuiElementSlider progress = activeComposer.GetSlider("wg-progress");
-        progress.SetValues(LodWorldGenPageMath.Percent(worldGen.Client?.WorldGenStatus), 0, 100, 1, "%");
-        progress.ShowTextWhenResting = false;
-        progress.Enabled = false;
+        if (composedWithProgress)
+        {
+            GuiElementSlider progress = activeComposer.GetSlider("wg-progress");
+            progress.SetValues(LodWorldGenPageMath.Percent(worldGen.Client?.WorldGenStatus), 0, 100, 1, "%");
+            progress.ShowTextWhenResting = false;
+            progress.Enabled = false;
+        }
 
         GuiElementNumberInput x = activeComposer.GetNumberInput("wg-x");
         GuiElementNumberInput z = activeComposer.GetNumberInput("wg-z");
@@ -964,22 +1054,56 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             return client.LastWorldGenControlError;
         if (NeedsLiveWorldGenWindow())
             return "Opening the live window leaves Settings so the integrated server can run; the mod does not force-unpause it.";
-        return client?.WorldGenStatus?.Message
-            ?? "Open this tab after joining a world to request server status.";
+        AssistWorldGenStatus? status = client?.WorldGenStatus;
+        if (status == null) return "Open this tab after joining a world to request server status.";
+        return WorldGenPageMessage(status.State, status.Message);
     }
+
+    internal const string WorldGenIdleHint =
+        "Choose the centre, radius and shape, then Prepare to see exactly what it will do.";
+
+    /// <summary>
+    /// The page's message line for a server status. At rest it is a hint about the buttons, not
+    /// the server's own idle text, which is written for the chat command. While progress shows,
+    /// the progress text already ends with the server's message, so it is not repeated.
+    /// </summary>
+    internal static string WorldGenPageMessage(EnumWorldGenRemoteState state, string? message) =>
+        state == EnumWorldGenRemoteState.Idle ? WorldGenIdleHint
+        : ShowsWorldGenProgress(state) ? ""
+        : LodWorldGenPageMath.PageText(message);
+
+    /// <summary>Whether the page shows its progress rows: from the start of a run until the next Prepare.</summary>
+    internal static bool ShowsWorldGenProgress(EnumWorldGenRemoteState state) =>
+        state is EnumWorldGenRemoteState.Running or EnumWorldGenRemoteState.Paused
+            or EnumWorldGenRemoteState.Interrupted or EnumWorldGenRemoteState.Faulted
+            or EnumWorldGenRemoteState.Complete;
+
+    static bool ShowsWorldGenProgress(AssistWorldGenStatus? status) =>
+        status != null && ShowsWorldGenProgress(status.State);
 
     void OnWorldGenStatus(AssistWorldGenStatus status)
     {
         if (sessionClosed || activeComposer?.Composed != true || shownTab != GenerateTab) return;
+
+        // A job starting, or a new Prepare replacing a finished one, changes which rows exist.
+        if (ShowsWorldGenProgress(status) != composedWithProgress)
+        {
+            RequestRecompose();
+            return;
+        }
+
         activeComposer.GetDynamicText("wg-availability")
             .SetNewText(WorldGenAvailability(), false, true, false);
-        activeComposer.GetDynamicText("wg-progress-text")
-            .SetNewText(LodWorldGenPageMath.Progress(status), false, true, false);
         activeComposer.GetDynamicText("wg-message")
             .SetNewText(WorldGenLastMessage(), false, true, false);
-        activeComposer.GetDynamicText("wg-progress-label")
-            .SetNewText(WorldGenPercentLabel(), false, true, false);
-        activeComposer.GetSlider("wg-progress").SetValue(LodWorldGenPageMath.Percent(status));
+        if (composedWithProgress)
+        {
+            activeComposer.GetDynamicText("wg-progress-text")
+                .SetNewText(LodWorldGenPageMath.Progress(status), false, true, false);
+            activeComposer.GetDynamicText("wg-progress-label")
+                .SetNewText(WorldGenPercentLabel(), false, true, false);
+            activeComposer.GetSlider("wg-progress").SetValue(LodWorldGenPageMath.Percent(status));
+        }
         RefreshWorldGenControls();
     }
 
@@ -1087,6 +1211,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             return true;
         }
 
+        // The tab has no Save button, so the area is remembered when it is used.
+        worldGen.Save(pendingWorldGen.Normalize(ServerWorldGenMaxRadius()));
+
         int x = pendingWorldGen.CentreMode == EnumWorldGenCentreMode.Coordinates
             ? pendingWorldGen.X : -1;
         int z = pendingWorldGen.CentreMode == EnumWorldGenCentreMode.Coordinates
@@ -1108,14 +1235,70 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         worldGen.Client?.SetWorldGenPageOpen(
             tab == GenerateTab && !NeedsLiveWorldGenWindow());
         shownTab = tab;
-        // Once this click has finished with the composer it came from, not in the middle of it:
-        // the re-compose disposes that composer.
+        RequestRecompose();
+    }
+
+    /// <summary>
+    /// Compose the page again once the click or status update that asked for it has finished
+    /// with the composer it came from, not in the middle of it: the re-compose disposes that
+    /// composer.
+    /// </summary>
+    void RequestRecompose()
+    {
         capi.Event.EnqueueMainThreadTask(() =>
         {
             if (sessionClosed) return;
             if (embedded) requestEmbeddedRecompose?.Invoke();
             else if (IsOpened()) ComposeDialog();
         }, "dodenslandscapes-config-tab");
+    }
+
+    void OnAdvancedChanged(bool on)
+    {
+        if (on == showAdvanced) return;
+        showAdvanced = on;
+        advanced.Remember(on);
+
+        // Hiding the dials hides the Anti-Aliasing tab, and with it the only switch for its
+        // session-only magenta tint, so the tint goes too.
+        if (!on)
+        {
+            if (shownTab == AntiAliasingTab) shownTab = GeneralTab;
+            if (pendingShowTaa)
+            {
+                pendingShowTaa = false;
+                taa.Preview(pendingTaa, pendingShowTaa);
+            }
+        }
+        RequestRecompose();
+    }
+
+    string AdvancedLabel() => !showAdvanced && HiddenValuesChanged(pendingTaa, pendingSilhouettes)
+        ? "Advanced settings (changed)"
+        : "Advanced settings";
+
+    /// <summary>
+    /// Whether any value the simple view hides differs from its default: an anti-aliasing dial,
+    /// or one of Farseer's appearance and fog sliders. Farseer's two switches are on show, and
+    /// its reach is on the General tab's distance bar, so neither counts.
+    /// </summary>
+    internal static bool HiddenValuesChanged(LodTaaDials taaDials, LodSilhouetteSettings silhouette)
+    {
+        if (taaDials != LodTaaDials.Default) return true;
+        LodSilhouetteSettings defaults = LodSilhouetteSettings.Default.Normalize();
+        return silhouette.Normalize() with
+        {
+            Enabled = defaults.Enabled,
+            FogEnabled = defaults.FogEnabled,
+            ReachBlocks = defaults.ReachBlocks,
+        } != defaults;
+    }
+
+    void RefreshAdvancedLabel()
+    {
+        if (activeComposer?.Composed != true || shownTab == GenerateTab) return;
+        activeComposer.GetDynamicText("advanced-label")
+            .SetNewText(AdvancedLabel(), false, true, false);
     }
 
     bool OnDialChanged(LodTaaSliders.Row row, int value)
@@ -1169,7 +1352,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         pendingSilhouettes = pendingSilhouettes with { ReachBlocks = reach };
         scale?.SetSilhouette(reach, pendingSilhouettes.Enabled);
         silhouettes.Preview(pendingSilhouettes);
-        if (activeComposer?.Composed == true && shownTab == SilhouettesTab)
+        if (activeComposer?.Composed == true && shownTab == SilhouettesTab && showAdvanced)
             activeComposer.GetDynamicText("silhouette-reach-label")
                 .SetNewText(SilhouetteReachLabel(), false, true, false);
         RefreshSilhouetteStatus();
@@ -1187,9 +1370,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void RefreshSilhouetteStatus()
     {
-        if (activeComposer?.Composed != true || shownTab != SilhouettesTab) return;
-        activeComposer.GetDynamicText("silhouette-status")
-            .SetNewText(silhouettes.Status(), false, true, false);
+        if (activeComposer?.Composed != true || shownTab != SilhouettesTab || !showAdvanced) return;
+        ((GuiElementHoverText)activeComposer.GetElement("silhouette-status"))
+            .SetNewText(SilhouetteStatusTip());
     }
 
     /// <summary>Every slider and label on the Anti-Aliasing tab rewritten from the pending dials.</summary>
@@ -1277,9 +1460,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// <summary>What the scale shows: automatic's live values, or the player's own.</summary>
     int[] DisplayedThresholds() => pendingAutomatic ? automaticThresholds : pendingThresholds;
 
+    // One line at this width. The automatic text ran on past the window's edge and was cut off
+    // at "Cache" (owner screenshot, 2026-10-13).
     string ThresholdHelp() => pendingAutomatic
-        ? "Drag Vanilla in 32-block steps (applies immediately). Grey is vanilla; colour starts at L0. "
-            + "L1-L6 are automatic; Cache and Farseer set the two far edges."
+        ? "Drag Vanilla (applies immediately), Cache or Farseer. Grey is vanilla; L1-L6 are automatic."
         : "Drag Vanilla (applies immediately), L1-L6, Cache or Farseer. Blue is Farseer reach.";
 
     void OnAutomaticChanged(bool on)
@@ -1391,6 +1575,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             silhouettes.Preview(pendingSilhouettes);
             if (activeComposer?.Composed != true) return true;
             SetSilhouetteValues();
+            RefreshAdvancedLabel();
+            if (!showAdvanced) return true;
             activeComposer.GetDynamicText("silhouette-reach-label")
                 .SetNewText(SilhouetteReachLabel(), false, true, false);
             foreach (SilhouetteRow row in SilhouetteRows)

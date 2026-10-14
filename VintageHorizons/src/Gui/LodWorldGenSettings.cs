@@ -60,10 +60,22 @@ internal static class LodWorldGenPageMath
             + $"and {FormatDuration(seconds)} at the measured one-thread baseline.";
     }
 
+    /// <summary>
+    /// A server status message as the page shows it. The server writes for the chat command,
+    /// so its text can end in "Use /dlworldgen resume or stop." - instructions for buttons the
+    /// page already has. That tail is dropped; the server's message itself is not changed.
+    /// </summary>
+    internal static string PageText(string? message)
+    {
+        if (string.IsNullOrEmpty(message)) return "";
+        int command = message.IndexOf(" Use /dlworldgen", StringComparison.Ordinal);
+        return command >= 0 ? message[..command] : message;
+    }
+
     internal static string Progress(AssistWorldGenStatus? status)
     {
         if (status == null) return "Waiting for server status.";
-        if (status.TotalColumns <= 0) return status.Message;
+        if (status.TotalColumns <= 0) return PageText(status.Message);
 
         int percent = status.DoneColumns * 100 / Math.Max(1, status.TotalColumns);
         string eta = status.EtaSeconds >= 0 ? FormatDuration(status.EtaSeconds) : "measuring";
@@ -75,7 +87,7 @@ internal static class LodWorldGenPageMath
             FormatBytes(status.SavegameBytes), FormatBytes(status.CacheBytes),
             status.EngineQueue, status.QueueTarget, status.InFlight, status.MaxInFlight,
             status.Retries, status.Failures,
-            string.IsNullOrWhiteSpace(status.Gate) ? status.Message : status.Gate + ".");
+            string.IsNullOrWhiteSpace(status.Gate) ? PageText(status.Message) : status.Gate + ".");
     }
 
     internal static int Percent(AssistWorldGenStatus? status) => status?.TotalColumns > 0
