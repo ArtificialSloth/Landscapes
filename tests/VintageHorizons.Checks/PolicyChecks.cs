@@ -17,6 +17,24 @@ public static class PolicyChecks
         FernTree(c);
         HalfBlocks(c);
         Degenerate(c);
+        BranchyLeavesLookLikeLeaves(c);
+    }
+
+    /// <summary>
+    /// Branchy leaves carry no colour map of their own - vanilla tints them inside their shape -
+    /// so at distance they are drawn as the plain leaves of the same tree and variant.
+    /// </summary>
+    static void BranchyLeavesLookLikeLeaves(Check c)
+    {
+        c.Eq("leaves-grown3-redwood", LodBlockPolicy.PlainLeavesCodeFor("leavesbranchy-grown3-redwood"),
+            "a branchy redwood leaf is drawn as the plain redwood leaf of the same variant");
+        c.Eq("leaves-grown-birch", LodBlockPolicy.PlainLeavesCodeFor("leavesbranchystatic-grown-birch"),
+            "the static birch variant too, not misread as branchy with a 'static' prefix");
+        c.Eq(null, LodBlockPolicy.PlainLeavesCodeFor("leaves-grown-oak"), "plain leaves keep their own look");
+        c.Eq(null, LodBlockPolicy.PlainLeavesCodeFor("leavesnarrow-grown-cypress-1"),
+            "narrow leaves have a colour map of their own and keep it");
+        c.Eq(null, LodBlockPolicy.PlainLeavesCodeFor("leavesbranchy-"), "a bare prefix names no twin");
+        c.Eq(null, LodBlockPolicy.PlainLeavesCodeFor(null), "nor does a block with no code");
     }
 
     static void Materials(Check c)

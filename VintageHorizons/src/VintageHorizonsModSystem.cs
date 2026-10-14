@@ -1161,6 +1161,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// </summary>
     int StableColorOf(Block block)
     {
+        block = AppearanceOf(block);
         if (stableColorByBlockId.TryGetValue(block.BlockId, out int cached)) return cached;
 
         // Grass-covered ground is composited, not painted, and the engine's own answer for
@@ -1285,10 +1286,42 @@ public partial class VintageHorizonsModSystem : ModSystem
     readonly BlockPos colorProbePos = new(0, 0, 0);
 
     /// <summary>Tint slot for a block, with the untinted share its colour carries.</summary>
-    int TintSlotOf(Block block) =>
-        tints.SlotFor(block, TryTopSoilColor(block, out _, out LodUntintedShare share)
+    int TintSlotOf(Block block)
+    {
+        block = AppearanceOf(block);
+        return tints.SlotFor(block, TryTopSoilColor(block, out _, out LodUntintedShare share)
             ? share
             : LodUntintedShare.None);
+    }
+
+    readonly Dictionary<int, Block> appearanceByBlockId = new();
+
+    /// <summary>
+    /// The block whose colour, tint and texture this one is drawn with at distance - itself,
+    /// except for branchy leaves, which are drawn as the plain leaves of the same tree.
+    ///
+    /// Branchy leaves name no colour map on the block: vanilla tints them per element inside
+    /// their shape, which a cube cannot follow, and their textures are grey until tinted. So
+    /// at distance they drew as dark grey-brown cubes scattered through every redwood and
+    /// pine crown, where vanilla shows ordinary green foliage (owner screenshots, 2026-10-13).
+    /// The owner's call was to draw them as normal leaves. Both blocks share their variant
+    /// names, so the twin is the same code with "leaves" in place of the branchy part; a
+    /// block without one - a mod's tree, say - keeps its own look.
+    /// </summary>
+    Block AppearanceOf(Block block)
+    {
+        if (appearanceByBlockId.TryGetValue(block.BlockId, out Block? known)) return known;
+
+        Block appearance = block;
+        string? twin = LodBlockPolicy.PlainLeavesCodeFor(block.Code?.Path);
+        if (twin != null)
+        {
+            Block? plain = capi.World.GetBlock(new AssetLocation(block.Code!.Domain, twin));
+            if (plain != null && plain.BlockId > 0) appearance = plain;
+        }
+        appearanceByBlockId[block.BlockId] = appearance;
+        return appearance;
+    }
 
     /// <summary>
     /// Reproduce vanilla's top-soil compositing for a block that has one, from the atlas.
@@ -1325,6 +1358,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// </summary>
     LodBlockTextureRegistry.BlockTexture ResolveBlockTexture(Block block)
     {
+        block = AppearanceOf(block);
         resolvingTextureFor = block;
         try
         {

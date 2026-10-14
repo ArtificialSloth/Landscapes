@@ -127,6 +127,25 @@ public static class LodBlockPolicy
         return box.Y1 <= Slack && box.Y2 <= 0.5f + Slack;
     }
 
+    static readonly string[] BranchyLeavesPrefixes = { "leavesbranchystatic-", "leavesbranchy-" };
+
+    /// <summary>
+    /// The plain-leaves code a branchy-leaves block is drawn as at distance, or null for any
+    /// other block. Vanilla's branchy and plain leaves share their variant names
+    /// (<c>leavesbranchy-grown3-redwood</c> and <c>leaves-grown3-redwood</c>), so the twin is
+    /// the same code with "leaves" in front. Whether that block exists is the caller's to ask.
+    /// </summary>
+    public static string? PlainLeavesCodeFor(string? path)
+    {
+        if (path == null) return null;
+        foreach (string prefix in BranchyLeavesPrefixes)
+        {
+            if (path.StartsWith(prefix, StringComparison.Ordinal) && path.Length > prefix.Length)
+                return "leaves-" + path.Substring(prefix.Length);
+        }
+        return null;
+    }
+
     static readonly string[] ThinGroundCoverPrefixes = { "flower", "fern", "tallfern" };
 
     static bool IsThinGroundCover(Block block)
