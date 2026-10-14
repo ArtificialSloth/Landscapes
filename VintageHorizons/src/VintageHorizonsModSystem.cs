@@ -153,14 +153,14 @@ public class VintageHorizonsConfig
     /// a server may refuse to supply tiles, but cannot silently turn the saved preference off.
     /// </summary>
     public bool HorizonSilhouettes = true;
-    public int SilhouetteReachBlocks = 8192;
-    public float SilhouetteSkyTint = 5f;
+    public int SilhouetteReachBlocks = 4096;
+    public float SilhouetteSkyTint = 2f;
     public float SilhouetteTintRed = 0.26f;
     public float SilhouetteTintGreen = 0.29f;
     public float SilhouetteTintBlue = 0.45f;
     public float SilhouetteTintStrength = 0.40f;
-    public float SilhouetteLightLevelBias = 0.70f;
-    public float SilhouetteFadeBias = 0.40f;
+    public float SilhouetteLightLevelBias = 0.75f;
+    public float SilhouetteFadeBias = 0.70f;
     public float SilhouetteGlobeEffect = 0.05f;
     public float SilhouetteUnderlayDepthBlocks =
         Silhouette.LodSilhouetteField.DefaultUnderlayDepthBlocks;

@@ -124,7 +124,9 @@ public partial class VintageHorizonsModSystem
 
     string DescribeSeamFog() => !renderer.SilhouetteFogEnabled
         ? "seam fog off: no fog pass is drawn and no fog field is built"
-        : $"seam fog on: a {renderer.SilhouetteFogStripHeightBlocks:0}-block strip at "
+        : $"seam fog on, over {(renderer.SilhouetteFogFollowsTerrain
+                ? $"the cached terrain's edge ({renderer.TerrainFogTileCount} tiles)"
+                : "the Farseer seam")}: a {renderer.SilhouetteFogStripHeightBlocks:0}-block strip at "
             + $"{renderer.SilhouetteFogSeamStrength * 100f:0}% density, "
             + $"{renderer.SilhouetteFogStripHalfBlocks:0} blocks each side of the seam; the bank "
             + $"at {renderer.SilhouetteFogStrength * 100f:0}%, "
@@ -258,7 +260,9 @@ public partial class VintageHorizonsModSystem
         silhouettes.SetReachBlocks(value.ReachBlocks);
         silhouettes.SetHillSoftness(value.HillSoftness);
         silhouettes.SetEnabled(value.Enabled);
-        if (!value.Enabled) renderer.ReleaseSilhouetteMeshes();
+        // The seam fog does not need Farseer (owner, 2026-10-13): off, only Farseer's own tiles
+        // and meshes go, and the fog carries on from the cached terrain's edge.
+        if (!value.Enabled) renderer.ReleaseSilhouetteTerrainMeshes();
     }
 
     void WriteSilhouetteSettings(LodSilhouetteSettings value)

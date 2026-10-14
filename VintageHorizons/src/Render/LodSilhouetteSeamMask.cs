@@ -97,8 +97,14 @@ internal sealed class LodSilhouetteSeamMask
         return true;
     }
 
-    /// <summary>Adds one complete 512-block tile after <see cref="BeginBuild"/>.</summary>
-    public void SetTile(int tileX, int tileZ, LodSilhouetteCoverage replacements)
+    /// <summary>
+    /// Adds one 512-block tile after <see cref="BeginBuild"/>. <paramref name="available"/>
+    /// limits it to the cells inside the fog's reach - the cached-terrain fog's disc ends partway
+    /// through a tile - and a cell outside it is no owner at all, so no edge forms against it.
+    /// A Farseer tile is available everywhere it describes.
+    /// </summary>
+    public void SetTile(int tileX, int tileZ, LodSilhouetteCoverage replacements,
+        LodSilhouetteCoverage? available = null)
     {
         if (!Active) throw new InvalidOperationException("The Farseer seam mask has no active build.");
         int cellsPerTile = LodSilhouetteField.CoverageCellsPerEdge;
@@ -110,6 +116,7 @@ internal sealed class LodSilhouetteSeamMask
         {
             for (int x = 0; x < cellsPerTile; x++)
             {
+                if (available is { } within && !within.Covered(x, z)) continue;
                 byte state = (byte)(Available
                     | (replacements.Covered(x, z) ? Replaced : 0));
                 WriteState(tileCellX + x, tileCellZ + z, state);
@@ -134,6 +141,7 @@ internal sealed class LodSilhouetteSeamMask
                     int cellX = tileCellX + x;
                     int cellZ = tileCellZ + z;
                     byte state = StateAt(cellX, cellZ);
+                    if ((state & Available) == 0) continue;
                     bool replaced = (state & Replaced) != 0;
                     if (OppositeOwner(cellX - 1, cellZ, replaced)) state |= WestEdge;
                     if (OppositeOwner(cellX + 1, cellZ, replaced)) state |= EastEdge;

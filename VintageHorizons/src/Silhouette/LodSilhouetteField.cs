@@ -132,24 +132,26 @@ public static class LodSilhouetteField
     public const int DefaultQuadsPerEdge = MediumQuadsPerEdge;
     public const float MinOutlineDetail = 0f;
     public const float MaxOutlineDetail = 1f;
-    public const float DefaultOutlineDetail = 0.35f;
+    public const float DefaultOutlineDetail = 0.5f;
     public const float SoftTargetPixels = 24f;
     public const float SharpTargetPixels = 2f;
     public const int CoverageCellBlocks = LodSilhouetteTile.ChunkBlocks;
     public const int CoverageCellsPerEdge = LodSilhouetteTile.TileBlocks / CoverageCellBlocks;
     public const float MinHillSoftness = 0f;
     public const float MaxHillSoftness = 1f;
-    public const float DefaultHillSoftness = 0.75f;
+    public const float DefaultHillSoftness = 0.25f;
     public const int MaxFeatherRadiusCells = 32;
-    // Near partial tiles are only a hole-filling underlay. The player can trade gap coverage for
-    // a less sunken transition without rebuilding a mesh; the vertex shader removes the chosen
-    // depth before the distant fade begins.
+    // Near partial tiles are only a hole-filling underlay; the vertex shader removes its depth
+    // before the distant fade begins. Fixed at the owner's settled values since 0.4.146 (no
+    // apron sink, the narrowest climb): the two were player dials and are no longer offered,
+    // and LodSilhouetteSettings.Normalize holds every stored value to these. The ranges remain
+    // because the field reports distances clamped to the widest one.
     public const float MinUnderlayDepthBlocks = 0f;
     public const float MaxUnderlayDepthBlocks = 128f;
-    public const float DefaultUnderlayDepthBlocks = 64f;
+    public const float DefaultUnderlayDepthBlocks = 0f;
     public const float MinUnderlayWidthBlocks = 32f;
     public const float MaxUnderlayWidthBlocks = 1024f;
-    public const float DefaultUnderlayWidthBlocks = 384f;
+    public const float DefaultUnderlayWidthBlocks = 32f;
 
     public static bool IsLatticeChunk(int cx, int cz) =>
         Mod(cx, LatticeChunks) == LatticeOffsetChunks && Mod(cz, LatticeChunks) == LatticeOffsetChunks;

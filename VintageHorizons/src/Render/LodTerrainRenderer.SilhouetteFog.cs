@@ -63,6 +63,11 @@ public partial class LodTerrainRenderer
     float silhouetteFogCoreBlocks = LodSilhouetteFogVolume.MinCoreBlocks;
     float silhouetteFogStaircaseDeviation;
 
+    // What the queued field was built for: how far it reaches, and whether it follows Farseer's
+    // globe curve. Without Farseer the fog follows the cached terrain's edge, which is not lowered.
+    float silhouetteFogReachBlocks = 1f;
+    bool silhouetteFogGlobe = true;
+
     // The dissolving previous fog (0.4.125). The shown layer is the published field's texels,
     // which the next build carries on; the residual is on the published field's lattice, and
     // its weights wear down from silhouetteFogResidualStarted at one per fade duration.
@@ -136,7 +141,13 @@ public partial class LodTerrainRenderer
         silhouetteFogStageRenderer = null;
     }
 
-    void QueueSilhouetteFogVolume(LodSilhouetteClient silhouettes)
+    /// <param name="reachBlocks">How far the fog's field reaches: Farseer's reach, or the cached
+    /// terrain's far distance when the fog follows the cached terrain's own edge.</param>
+    /// <param name="heightAtGrid">The ground height at a 32-block grid point.</param>
+    /// <param name="globe">Whether the fog sinks with Farseer's globe curve. Only Farseer's
+    /// terrain is lowered by it; the cached terrain's edge is not.</param>
+    void QueueSilhouetteFogVolume(float reachBlocks, Func<int, int, float> heightAtGrid,
+        bool globe = true)
     {
         if (!SilhouetteFogEnabled || !silhouetteSeamMask.HasEdges)
         {
@@ -148,9 +159,11 @@ public partial class LodTerrainRenderer
         try
         {
             LodSilhouetteFogVolume.Prepared prepared = LodSilhouetteFogVolume.Prepare(
-                silhouetteSeamMask, SilhouetteFogHeightAtGrid, SilhouetteFogSpillBlocks,
+                silhouetteSeamMask, heightAtGrid, SilhouetteFogSpillBlocks,
                 LodSilhouetteFogVolume.TexelBlocksForReach(
-                    silhouettes.ReachBlocks, SilhouetteFogSpillBlocks));
+                    reachBlocks, SilhouetteFogSpillBlocks));
+            silhouetteFogReachBlocks = reachBlocks;
+            silhouetteFogGlobe = globe;
             silhouetteFogPendingBuild = prepared;
             silhouetteFogPendingRevision = ++silhouetteFogBuildRevision;
             silhouetteFogGeometryDirty = false;
@@ -161,7 +174,7 @@ public partial class LodTerrainRenderer
         }
         catch (Exception e)
         {
-            StopSilhouetteFog(silhouettes, e.Message);
+            StopSilhouetteFog(e.Message);
         }
     }
 
@@ -225,7 +238,7 @@ public partial class LodTerrainRenderer
     }
 
     /// <summary>Main/render thread. Publishes only the newest completed immutable field.</summary>
-    bool PublishSilhouetteFogVolume(LodSilhouetteClient silhouettes)
+    bool PublishSilhouetteFogVolume()
     {
         Task<SilhouetteFogBuildOutcome>? task = silhouetteFogBuildTask;
         if (task == null)
@@ -233,7 +246,7 @@ public partial class LodTerrainRenderer
             try { StartPendingSilhouetteFogBuild(); }
             catch (Exception e)
             {
-                StopSilhouetteFog(silhouettes, e.Message);
+                StopSilhouetteFog(e.Message);
                 return false;
             }
             return true;
@@ -249,7 +262,7 @@ public partial class LodTerrainRenderer
             && silhouetteFogPendingBuild == null;
         if (newest && !outcome.Cancelled && outcome.Field == null)
         {
-            StopSilhouetteFog(silhouettes, outcome.Failure);
+            StopSilhouetteFog(outcome.Failure);
             return false;
         }
         if (newest && outcome.Field != null)
@@ -260,7 +273,7 @@ public partial class LodTerrainRenderer
             }
             catch (Exception e)
             {
-                StopSilhouetteFog(silhouettes, e.Message);
+                StopSilhouetteFog(e.Message);
                 return false;
             }
         }
@@ -271,7 +284,7 @@ public partial class LodTerrainRenderer
         try { StartPendingSilhouetteFogBuild(); }
         catch (Exception e)
         {
-            StopSilhouetteFog(silhouettes, e.Message);
+            StopSilhouetteFog(e.Message);
             return false;
         }
         return true;
@@ -543,8 +556,8 @@ public partial class LodTerrainRenderer
     void DrawSilhouetteFogVolume(float deltaSeconds)
     {
         AdvanceSilhouetteFogDrift(deltaSeconds);
-        LodSilhouetteClient? silhouettes = Silhouettes;
-        if (silhouettes == null || !silhouettes.Enabled || silhouetteFogVolumeFailed
+        // Farseer need not be on: without it the fog follows the cached terrain's own edge.
+        if (silhouetteFogVolumeFailed
             || !SilhouetteFogEnabled || silhouetteFogFieldTexture == 0
             || silhouetteFogNoiseTexture == 0 || silhouetteFogBoundaryEdges == 0
             || silhouetteFogVolumeProg == null || silhouetteFogVolumeProg.LoadError
@@ -571,7 +584,7 @@ public partial class LodTerrainRenderer
         if (checkErrors && !LodGlErrorIsolation.TryEstablishBaseline(
                 () => (int)GL.GetError(), out advisory, out string baselineFailure))
         {
-            StopSilhouetteFog(silhouettes, baselineFailure);
+            StopSilhouetteFog(baselineFailure);
             return;
         }
         if (checkErrors && advisory.Length > 0 && !silhouetteFogReportedPendingError)
@@ -641,11 +654,13 @@ public partial class LodTerrainRenderer
             p.Uniform("fieldWidth", (float)silhouetteFogFieldWidth);
             p.Uniform("fieldHeight", (float)silhouetteFogFieldHeight);
             p.Uniform("fieldTexelBlocks", silhouetteFogFieldTexelBlocks);
-            p.Uniform("farViewDistance", (float)silhouettes.ReachBlocks);
+            float reach = MathF.Max(1f, silhouetteFogReachBlocks);
+            float globeEffect = silhouetteFogGlobe ? SilhouetteGlobeEffect : 0f;
+            p.Uniform("farViewDistance", reach);
             p.Uniform("globeStart", EffectiveFarDistance);
-            p.Uniform("globeEffect", SilhouetteGlobeEffect);
-            float globeDrop = MathF.Max(0f, SilhouetteGlobeEffect) * silhouettes.ReachBlocks;
-            float globeRise = MathF.Max(0f, -SilhouetteGlobeEffect) * silhouettes.ReachBlocks;
+            p.Uniform("globeEffect", globeEffect);
+            float globeDrop = MathF.Max(0f, globeEffect) * reach;
+            float globeRise = MathF.Max(0f, -globeEffect) * reach;
             float minGround = silhouetteFogMinGroundY, maxGround = silhouetteFogMaxGroundY;
             if (residualActive)
             {
@@ -782,16 +797,24 @@ public partial class LodTerrainRenderer
         }
 
         if (failure == null) return;
-        StopSilhouetteFog(silhouettes, failure.Message);
+        StopSilhouetteFog(failure.Message);
     }
 
-    void StopSilhouetteFog(LodSilhouetteClient silhouettes, string reason)
+    /// <summary>
+    /// A fog failure is a session failure, never a plausible no-fog fallback (settled decision
+    /// 48). With Farseer on it takes Farseer with it, as before; without it, only the fog goes.
+    /// </summary>
+    void StopSilhouetteFog(string reason)
     {
         silhouetteFogVolumeFailed = true;
-        capi.Logger.Error(
-            "[Landscapes] volumetric Farseer seam fog stopped; Farseer is off for this "
-            + "session instead of corrupting later render stages: {0}", reason);
-        silhouettes.SetEnabled(false);
+        LodSilhouetteClient? silhouettes = Silhouettes;
+        bool farseer = silhouettes is { Enabled: true };
+        capi.Logger.Error(farseer
+            ? "[Landscapes] volumetric Farseer seam fog stopped; Farseer is off for this "
+                + "session instead of corrupting later render stages: {0}"
+            : "[Landscapes] volumetric seam fog stopped; it is off for this session instead of "
+                + "corrupting later render stages: {0}", reason);
+        silhouettes?.SetEnabled(false);
         ReleaseSilhouetteMeshes();
     }
 

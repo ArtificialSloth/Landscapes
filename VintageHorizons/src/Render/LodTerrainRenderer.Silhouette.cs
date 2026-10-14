@@ -86,11 +86,12 @@ public partial class LodTerrainRenderer
     const int SilhouetteUploadsPerFrame = 4;
     const long SilhouetteUploadBytesPerFrame = 2 * 1024 * 1024;
     const double SilhouetteUploadMillisecondsPerFrame = 2.0;
-    // Farseer 1.4.0's client defaults: the classic look (owner decision D11) until they are tuned.
-    internal float SilhouetteSkyTint = 5.0f;
+    // The same defaults as LodSilhouetteSettings.Default: the owner's tuned look since 0.4.146,
+    // keeping Farseer 1.4.0's classic colour tint (owner decision D11).
+    internal float SilhouetteSkyTint = 2.0f;
     internal Vec4f SilhouetteColorTint = new(0.26f, 0.29f, 0.45f, 0.40f);
-    internal float SilhouetteLightLevelBias = 0.70f;
-    internal float SilhouetteFadeBias = 0.4f;
+    internal float SilhouetteLightLevelBias = 0.75f;
+    internal float SilhouetteFadeBias = 0.70f;
     internal float SilhouetteGlobeEffect = 0.05f;
     internal float SilhouetteUnderlayDepthBlocks = LodSilhouetteField.DefaultUnderlayDepthBlocks;
     internal float SilhouetteUnderlayWidthBlocks = LodSilhouetteField.DefaultUnderlayWidthBlocks;
@@ -176,9 +177,8 @@ public partial class LodTerrainRenderer
         LodSilhouetteClient? silhouettes = Silhouettes;
         if (silhouettes == null || !silhouettes.Enabled)
         {
-            if (silhouetteMeshes.Count > 0 || silhouetteFogFieldTexture != 0
-                || silhouetteFogFramebuffer != 0)
-                ReleaseSilhouetteMeshes();
+            if (silhouetteMeshes.Count > 0) ReleaseSilhouetteTerrainMeshes();
+            PrepareTerrainFogFrame();
             return;
         }
         if (silhouetteMeshEpoch != silhouettes.Epoch)
@@ -187,12 +187,18 @@ public partial class LodTerrainRenderer
             silhouetteMeshEpoch = silhouettes.Epoch;
         }
         UploadSilhouetteMeshes(silhouettes);
-        // No offered/decoded tile means no compile either. This keeps a server that does not
-        // offer silhouettes at the exact old render cost even when the saved client switch is on.
+        if (silhouetteMeshes.Count > 0 && terrainFogTiles.Count > 0)
+        {
+            // Farseer's seam takes over from the cached terrain's edge.
+            terrainFogTiles.Clear();
+            terrainFogFrameTiles.Clear();
+        }
+        // No offered/decoded tile means no Farseer compile either. The seam fog does not wait
+        // for one: it follows the cached terrain's edge until Farseer's tiles arrive, and on a
+        // server that offers none.
         if (silhouetteMeshes.Count == 0)
         {
-            silhouetteSeamMask.Deactivate();
-            ClearSilhouetteFogField();
+            PrepareTerrainFogFrame();
             return;
         }
         if (!silhouetteShaderWanted)
@@ -223,7 +229,7 @@ public partial class LodTerrainRenderer
         if (!SilhouetteFogEnabled && (silhouetteFogFieldTexture != 0
                 || silhouetteFogBuildTask != null || silhouetteFogPendingBuild != null))
             ClearSilhouetteFogField();
-        if (!PublishSilhouetteFogVolume(silhouettes)) return;
+        if (!PublishSilhouetteFogVolume()) return;
 
         Vec3d cam = capi.World.Player.Entity.CameraPos;
         silhouetteFrustum.Update(rapi.CurrentProjectionMatrix, rapi.CameraMatrixOriginf);
@@ -300,13 +306,14 @@ public partial class LodTerrainRenderer
             foreach (SilhouetteGpuMesh mesh in silhouetteFogTiles)
                 silhouetteSeamMask.SetTile(mesh.TileX, mesh.TileZ, mesh.FogReplacements);
             silhouetteSeamMask.CompleteBuild();
-            QueueSilhouetteFogVolume(silhouettes);
+            SilhouetteFogFollowsTerrain = false;
+            QueueSilhouetteFogVolume(silhouettes.ReachBlocks, SilhouetteFogHeightAtGrid);
         }
         else if (SilhouetteFogEnabled && silhouetteSeamMask.HasEdges
             && (silhouetteFogGeometryDirty
                 || silhouetteFogFieldTexture == 0
                     && silhouetteFogBuildTask == null && silhouetteFogPendingBuild == null))
-            QueueSilhouetteFogVolume(silhouettes);
+            QueueSilhouetteFogVolume(silhouettes.ReachBlocks, SilhouetteFogHeightAtGrid);
     }
 
     void DrawSilhouettes()
@@ -544,7 +551,14 @@ public partial class LodTerrainRenderer
     /// overruled by another level.
     /// Every unknown or partial state remains fail-open to Farseer.
     /// </summary>
-    LodSilhouetteCoverage SilhouetteStableReplacementCoverage(SilhouetteGpuMesh mesh)
+    LodSilhouetteCoverage SilhouetteStableReplacementCoverage(SilhouetteGpuMesh mesh) =>
+        SilhouetteStableReplacementCoverage(mesh.TileX, mesh.TileZ);
+
+    /// <summary>
+    /// The same answer for any 512-block tile, Farseer's or not: the seam fog traces the cached
+    /// terrain's edge from it with Farseer switched off.
+    /// </summary>
+    LodSilhouetteCoverage SilhouetteStableReplacementCoverage(int tileX, int tileZ)
     {
         Span<LodSilhouetteCoverage> residentByLevel =
             stackalloc LodSilhouetteCoverage[LodWorld.MaxLevel + 1];
@@ -552,8 +566,8 @@ public partial class LodTerrainRenderer
             stackalloc LodSilhouetteCoverage[LodWorld.MaxLevel + 1];
         residentByLevel.Clear();
         coveredByLevel.Clear();
-        int tileBlockX = mesh.TileX * LodSilhouetteTile.TileBlocks;
-        int tileBlockZ = mesh.TileZ * LodSilhouetteTile.TileBlocks;
+        int tileBlockX = tileX * LodSilhouetteTile.TileBlocks;
+        int tileBlockZ = tileZ * LodSilhouetteTile.TileBlocks;
         int tileMaxBlockX = tileBlockX + LodSilhouetteTile.TileBlocks;
         int tileMaxBlockZ = tileBlockZ + LodSilhouetteTile.TileBlocks;
         for (int level = 0; level <= LodWorld.MaxLevel; level++)
@@ -628,8 +642,8 @@ public partial class LodTerrainRenderer
         }
         if (!readinessMaskActive || readiness == null || readinessMask == null) return result;
 
-        int tileChunkX = mesh.TileX * LodSilhouetteField.CoverageCellsPerEdge;
-        int tileChunkZ = mesh.TileZ * LodSilhouetteField.CoverageCellsPerEdge;
+        int tileChunkX = tileX * LodSilhouetteField.CoverageCellsPerEdge;
+        int tileChunkZ = tileZ * LodSilhouetteField.CoverageCellsPerEdge;
         int minX = Math.Max(tileChunkX, readiness.ActiveMinChunkX);
         int minZ = Math.Max(tileChunkZ, readiness.ActiveMinChunkZ);
         int maxX = Math.Min(tileChunkX + LodSilhouetteField.CoverageCellsPerEdge,
@@ -643,9 +657,26 @@ public partial class LodTerrainRenderer
         return result;
     }
 
-    /// <summary>Main thread. Frees every silhouette mesh on the GPU.</summary>
+    /// <summary>
+    /// Main thread. Frees Farseer's own tile meshes and leaves the seam fog alone: with Farseer
+    /// switched off the fog carries on from the cached terrain's edge.
+    /// </summary>
+    internal void ReleaseSilhouetteTerrainMeshes()
+    {
+        foreach (SilhouetteGpuMesh mesh in silhouetteMeshes.Values) mesh.Dispose();
+        silhouetteMeshes.Clear();
+        silhouetteFrameDraws.Clear();
+        silhouetteFogTiles.Clear();
+    }
+
+    /// <summary>Main thread. Frees every silhouette mesh on the GPU, and the seam fog with them.</summary>
     internal void ReleaseSilhouetteMeshes()
     {
+        // A world change comes through here: the cached-terrain fog's tiles describe the old one.
+        terrainFogTiles.Clear();
+        terrainFogFrameTiles.Clear();
+        terrainFogHeights.Clear();
+        SilhouetteFogFollowsTerrain = false;
         foreach (SilhouetteGpuMesh mesh in silhouetteMeshes.Values) mesh.Dispose();
         silhouetteMeshes.Clear();
         silhouetteFrameDraws.Clear();

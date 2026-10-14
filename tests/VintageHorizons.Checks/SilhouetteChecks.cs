@@ -1676,16 +1676,18 @@ public static class SilhouetteChecks
             c.True(mesh.EdgeDistanceUv[^2] > LodSilhouetteField.DefaultUnderlayWidthBlocks,
                 $"the {mesh.QuadsPerEdge}-quad mesh records the far corner outside the default apron");
         }
-        c.Eq(64f, LodSilhouetteField.DefaultUnderlayDepthBlocks,
-            "the default underlay is less sunken than the original 96-block trial");
-        c.True(LodSilhouetteField.MinUnderlayDepthBlocks == 0f
-                && LodSilhouetteField.MaxUnderlayDepthBlocks >= 96f,
-            "the underlay dial spans raw Farseer height through the original trial depth");
-        c.Eq(384f, LodSilhouetteField.DefaultUnderlayWidthBlocks,
-            "the accepted apron width remains the width dial's default");
-        c.True(LodSilhouetteField.MinUnderlayWidthBlocks <= 32f
-                && LodSilhouetteField.MaxUnderlayWidthBlocks >= 512f,
-            "the width dial can make the apron much shorter or longer");
+        // The owner's settled edge (2026-10-13): no sink, the narrowest climb. Both are fixed,
+        // so a config saved with the old 64/384 defaults draws the same edge as a fresh one.
+        c.Eq(0f, LodSilhouetteField.DefaultUnderlayDepthBlocks,
+            "the Farseer edge is not sunk below the cached terrain");
+        c.Eq(32f, LodSilhouetteField.DefaultUnderlayWidthBlocks,
+            "and climbs back over the narrowest width");
+        LodSilhouetteSettings oldSave = LodSilhouetteSettings.Default with
+        {
+            UnderlayDepthBlocks = 64f, UnderlayWidthBlocks = 384f,
+        };
+        c.Eq((0f, 32f), (oldSave.Normalize().UnderlayDepthBlocks, oldSave.Normalize().UnderlayWidthBlocks),
+            "a value stored by an older build is held to the fixed edge");
 
         var neighbourCoverage = new LodSilhouetteCoverage[3, 3];
         neighbourCoverage[1, 0] = LodSilhouetteCoverage.Full;
@@ -1736,8 +1738,17 @@ public static class SilhouetteChecks
     static void ClientSettingsArithmetic(Check c)
     {
         LodSilhouetteSettings defaults = LodSilhouetteSettings.Default;
-        c.True(defaults.Enabled && defaults.ReachBlocks == 8192,
-            "a fresh client asks for the accepted 8,192-block silhouette reach");
+        c.True(defaults.Enabled && defaults.ReachBlocks == 4096,
+            "a fresh client asks for the owner's 4,096-block silhouette reach");
+        c.Eq((2f, 0.75f, 0.70f, 0.5f, 0.25f),
+            (defaults.SkyTint, defaults.LightLevelBias, defaults.FadeBias, defaults.OutlineDetail,
+                defaults.HillSoftness),
+            "and draws the owner's tuned look (2026-10-13)");
+        var fresh = new VintageHorizonsConfig();
+        c.Eq((4096, 2f, 0.75f, 0.70f),
+            (fresh.SilhouetteReachBlocks, fresh.SilhouetteSkyTint, fresh.SilhouetteLightLevelBias,
+                fresh.SilhouetteFadeBias),
+            "a fresh config file starts from the same values");
         c.Eq(1024, LodSilhouetteSettings.ClampReach(-1),
             "silhouette reach clamps to the 1,024-block floor");
         c.Eq(32768, LodSilhouetteSettings.ClampReach(int.MaxValue),
@@ -1969,11 +1980,11 @@ public static class SilhouetteChecks
             "Farseer separates overlapping ridges with camera-independent slope and depth contrast");
         c.True(waterDepth.Contains("PrepareSilhouetteFrame();", StringComparison.Ordinal)
                 && pass.Contains("silhouetteSeamMask.SetTile(", StringComparison.Ordinal)
-                && pass.Contains("QueueSilhouetteFogVolume(silhouettes);", StringComparison.Ordinal)
+                && pass.Contains("QueueSilhouetteFogVolume(silhouettes.ReachBlocks, SilhouetteFogHeightAtGrid);", StringComparison.Ordinal)
                 && !renderer.Contains("DrawSilhouetteFogVolume();", StringComparison.Ordinal)
                 && fogPass.Contains("LodSilhouetteFogVolume.Build(", StringComparison.Ordinal)
                 && fogPass.Contains("silhouetteFogBuildTask = Task.Run", StringComparison.Ordinal)
-                && pass.Contains("PublishSilhouetteFogVolume(silhouettes)",
+                && pass.Contains("PublishSilhouetteFogVolume()",
                     StringComparison.Ordinal)
                 && fogPass.Contains("SilhouetteFogAfterOitOrder = 1.0", StringComparison.Ordinal)
                 && fogPass.Contains("EnumRenderStage.AfterOIT", StringComparison.Ordinal)
@@ -1987,7 +1998,7 @@ public static class SilhouetteChecks
                 && !fogPass.Contains("GlToggleBlend(true);", StringComparison.Ordinal)
                 && fogPass.Contains("GL.ColorMask(true, true, true, false);", StringComparison.Ordinal)
                 && fogPass.Contains(
-                    "p.Uniform(\"farViewDistance\", (float)silhouettes.ReachBlocks);",
+                    "p.Uniform(\"farViewDistance\", reach);",
                     StringComparison.Ordinal)
                 && fogPass.Contains("p.BindTexture2D(\"sceneDepth\"", StringComparison.Ordinal)
                 && fogPass.Contains("p.BindTexture2D(\"fogField\"", StringComparison.Ordinal)
@@ -2189,8 +2200,8 @@ public static class SilhouetteChecks
                     StringComparison.Ordinal)
                 && LodSilhouetteFogVolume.FogModel == 4,
             "moving to the strip-and-bank fog resets only the densities, keeping the player's other fog dials");
-        c.True(field.Contains("DefaultUnderlayDepthBlocks = 64f", StringComparison.Ordinal)
-                && field.Contains("DefaultUnderlayWidthBlocks = 384f", StringComparison.Ordinal)
+        c.True(field.Contains("DefaultUnderlayDepthBlocks = 0f", StringComparison.Ordinal)
+                && field.Contains("DefaultUnderlayWidthBlocks = 32f", StringComparison.Ordinal)
                 && field.Contains("EdgeDistance(", StringComparison.Ordinal)
                 && vertex.Contains("uniform float underlaySinkBlocks", StringComparison.Ordinal)
                 && vertex.Contains("uniform float underlayWidthBlocks", StringComparison.Ordinal)
@@ -2213,12 +2224,14 @@ public static class SilhouetteChecks
                 && pass.IndexOf("silhouetteMeshes[result.Key] = next;", StringComparison.Ordinal)
                     < pass.IndexOf("old?.Dispose();", StringComparison.Ordinal),
             "silhouette uploads have count, byte and time bounds, cull hidden back faces, and publish before disposal");
-        c.True(pass.Contains("silhouetteMeshes.Count > 0 || silhouetteFogFieldTexture != 0",
+        // Since 0.4.146 the seam fog does not need Farseer (owner, 2026-10-13): switched off,
+        // Farseer's own meshes go and the fog carries on over the cached terrain's edge.
+        c.True(pass.Contains("if (silhouetteMeshes.Count > 0) ReleaseSilhouetteTerrainMeshes();",
                     StringComparison.Ordinal)
-                && pass.Contains("silhouetteFogFramebuffer != 0", StringComparison.Ordinal)
+                && pass.Contains("PrepareTerrainFogFrame();", StringComparison.Ordinal)
                 && pass.Contains("ReleaseSilhouetteMeshes();", StringComparison.Ordinal)
                 && client.Contains("Clear();", StringComparison.Ordinal),
-            "switching silhouettes off releases GPU meshes and seam fog, then drops client tile state");
+            "switching silhouettes off releases Farseer's GPU meshes and drops client tile state, keeping the fog");
 
         c.True(color.Contains("vhSilhouetteTerrainColor", StringComparison.Ordinal)
                 && fragment.Contains("#include lodsilhouettecolor.fsh", StringComparison.Ordinal)
@@ -2234,8 +2247,8 @@ public static class SilhouetteChecks
         c.True(dialog.Contains("SilhouettesTab => \"Farseer\"", StringComparison.Ordinal)
                 && dialog.Contains("ComposeSilhouettes", StringComparison.Ordinal)
                 && dialog.Contains("SilhouetteRows", StringComparison.Ordinal)
-                && dialog.Contains("LOD edge depth", StringComparison.Ordinal)
-                && dialog.Contains("LOD edge width", StringComparison.Ordinal)
+                && !dialog.Contains("\"LOD edge depth\"", StringComparison.Ordinal)
+                && !dialog.Contains("\"LOD edge width\"", StringComparison.Ordinal)
                 && dialog.Contains("Geometry detail", StringComparison.Ordinal)
                 && dialog.Contains("Hill softness", StringComparison.Ordinal)
                 && dialog.Contains("Seam strip density", StringComparison.Ordinal)

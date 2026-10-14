@@ -57,7 +57,7 @@ public static class SettingsWindowChecks
                 defaults with { Enabled = false, FogEnabled = false, ReachBlocks = 4096 }),
             "Farseer's switches and reach are on show, so they do not count");
         c.True(VintageHorizonsConfigDialog.HiddenValuesChanged(LodTaaDials.Default,
-                defaults with { SkyTint = 2f }),
+                defaults with { SkyTint = 7f }),
             "a changed Farseer appearance dial counts");
         c.True(VintageHorizonsConfigDialog.HiddenValuesChanged(LodTaaDials.Default,
                 defaults with { FogStrength = 1.5f }),

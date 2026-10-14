@@ -68,6 +68,7 @@ public static class Program
         ("pure", "server config", ConfigChecks.Run),
         ("pure", "lod mod deferral", DeferralChecks.Run),
         ("pure", "settings window", SettingsWindowChecks.Run),
+        ("pure", "fog without farseer", TerrainFogChecks.Run),
         ("fixture", "blob format", StoreChecks.Run),
         ("fixture", "frustum", FrustumChecks.Run),
         ("fixture", "visibility traversal", TraversalChecks.Run),

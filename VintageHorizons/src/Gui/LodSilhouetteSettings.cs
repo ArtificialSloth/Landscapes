@@ -1,8 +1,10 @@
 namespace VintageHorizons;
 
 /// <summary>
-/// Client-owned horizon appearance and reach. Defaults are Farseer 1.4.0's classic values;
-/// every value is persisted, and normalization keeps old or hand-edited config files finite.
+/// Client-owned horizon appearance and reach. The defaults began as Farseer 1.4.0's classic
+/// values; since 0.4.146 they are the owner's own tuned look (2026-10-13), the colour tint and
+/// globe curve unchanged. Every value is persisted, and normalization keeps old or hand-edited
+/// config files finite.
 /// </summary>
 internal readonly record struct LodSilhouetteSettings(
     bool Enabled,
@@ -39,14 +41,14 @@ internal readonly record struct LodSilhouetteSettings(
 
     public static LodSilhouetteSettings Default => new(
         Enabled: true,
-        ReachBlocks: 8192,
-        SkyTint: 5f,
+        ReachBlocks: 4096,
+        SkyTint: 2f,
         TintRed: 0.26f,
         TintGreen: 0.29f,
         TintBlue: 0.45f,
         TintStrength: 0.40f,
-        LightLevelBias: 0.70f,
-        FadeBias: 0.40f,
+        LightLevelBias: 0.75f,
+        FadeBias: 0.70f,
         GlobeEffect: 0.05f,
         UnderlayDepthBlocks: Silhouette.LodSilhouetteField.DefaultUnderlayDepthBlocks,
         UnderlayWidthBlocks: Silhouette.LodSilhouetteField.DefaultUnderlayWidthBlocks,
@@ -84,12 +86,11 @@ internal readonly record struct LodSilhouetteSettings(
         Dial(LightLevelBias, Default.LightLevelBias, 0.51f, 0.99f),
         Dial(FadeBias, Default.FadeBias, 0.05f, 0.95f),
         Dial(GlobeEffect, Default.GlobeEffect, 0f, 0.2f),
-        Dial(UnderlayDepthBlocks, Default.UnderlayDepthBlocks,
-            Silhouette.LodSilhouetteField.MinUnderlayDepthBlocks,
-            Silhouette.LodSilhouetteField.MaxUnderlayDepthBlocks),
-        Dial(UnderlayWidthBlocks, Default.UnderlayWidthBlocks,
-            Silhouette.LodSilhouetteField.MinUnderlayWidthBlocks,
-            Silhouette.LodSilhouetteField.MaxUnderlayWidthBlocks),
+        // Fixed, whatever a config file holds (owner, 2026-10-13): the edge depth and width
+        // left the settings window, and a value saved by an older build would otherwise stay
+        // in force with no way left to change it.
+        Default.UnderlayDepthBlocks,
+        Default.UnderlayWidthBlocks,
         Silhouette.LodSilhouetteField.NormalizeOutlineDetail(OutlineDetail),
         Silhouette.LodSilhouetteField.NormalizeHillSoftness(HillSoftness),
         FogEnabled,

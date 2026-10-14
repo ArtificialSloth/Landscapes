@@ -391,16 +391,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("sil-globe", "Globe curve", "Gently lowers only far Farseer terrain to hide the finite horizon edge.",
             0, 200, 1, s => (int)MathF.Round(s.GlobeEffect * 1000),
             (s, v) => s with { GlobeEffect = v / 1000f }, v => (v / 1000f).ToString("0.000")),
-        new("sil-underlay", "LOD edge depth", "How far the short Farseer apron slopes below the cached-terrain edge. Zero keeps only Farseer's small original transition; higher hides larger sky gaps.",
-            (int)Silhouette.LodSilhouetteField.MinUnderlayDepthBlocks,
-            (int)Silhouette.LodSilhouetteField.MaxUnderlayDepthBlocks, 4,
-            s => (int)MathF.Round(s.UnderlayDepthBlocks),
-            (s, v) => s with { UnderlayDepthBlocks = v }, v => $"{v} blocks"),
-        new("sil-underlay-width", "LOD edge width", "How far the Farseer edge takes to climb from its lowered apron back to the real sampled terrain height.",
-            (int)Silhouette.LodSilhouetteField.MinUnderlayWidthBlocks,
-            (int)Silhouette.LodSilhouetteField.MaxUnderlayWidthBlocks, 32,
-            s => (int)MathF.Round(s.UnderlayWidthBlocks),
-            (s, v) => s with { UnderlayWidthBlocks = v }, v => $"{v} blocks"),
+        // No LOD edge depth or width: fixed at the owner's values since 0.4.146 (see
+        // LodSilhouetteField.DefaultUnderlayDepthBlocks).
         new("sil-detail", "Geometry detail", "Controls only how dense the drawn Farseer mesh is. Lower is lighter; hill softness controls the outline shape.",
             0, 100, 1, s => (int)MathF.Round(s.OutlineDetail * 100),
             (s, v) => s with { OutlineDetail = v / 100f }, OutlineDetailLabel),
@@ -1329,9 +1321,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         RefreshSilhouetteStatus();
     }
 
-    const string SeamFogTip = "Fog over the seam between Farseer and real terrain. Off draws "
-        + "no fog and builds nothing for it, so switching it shows its whole cost; the seam "
-        + "is visible while it is off. .dlfog toggles it without saving.";
+    const string SeamFogTip = "Fog over the seam between Farseer and real terrain, or with Farseer "
+        + "off, over the edge of the cached terrain. Off draws no fog and builds nothing for it, so "
+        + "switching it shows its whole cost. .dlfog toggles it without saving.";
 
     void OnSilhouetteFogChanged(bool on)
     {
@@ -1405,7 +1397,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// <summary>Which preset the current combination is, or the trailing "Custom" entry.</summary>
     int PresetIndex() => (pendingVisuals.PresetName, pendingSilhouettes.Enabled) switch
     {
-        ("Performance", false) => 0,
+        ("Performance", false) when !pendingSilhouettes.FogEnabled => 0,
         ("Balanced", true) => 1,
         ("Quality", true) => 2,
         _ => 3,
@@ -1417,8 +1409,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         switch (code)
         {
             case "performance":
+                // The fog too: it no longer needs Farseer, and Performance has always meant
+                // none of Farseer's cost, the fog's included.
                 pendingVisuals = LodVisualSettings.Performance;
-                pendingSilhouettes = pendingSilhouettes with { Enabled = false };
+                pendingSilhouettes = pendingSilhouettes with { Enabled = false, FogEnabled = false };
                 break;
             case "balanced":
                 pendingVisuals = LodVisualSettings.Balanced;
