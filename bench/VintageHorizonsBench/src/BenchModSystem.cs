@@ -320,6 +320,8 @@ public class BenchModSystem : ModSystem, IRenderer
         {
             GuiDialog dlg = open[i];
             if (dlg.DialogType == EnumDialogType.HUD) continue; // hotbar, health: harmless
+            // The mod's own windows are what a settings-window route opens to photograph.
+            if (dlg.DebugName?.StartsWith("dodenslandscapes", StringComparison.Ordinal) == true) continue;
             dlg.TryClose();
         }
     }

@@ -3034,15 +3034,27 @@ public partial class VintageHorizonsModSystem : ModSystem
                 (serverSync.Active ? $", server sync: {serverSync.Describe()}" : ""))));
 
         capi.ChatCommands.Create("dlconfig")
-            .WithDescription("Open the Doden's Landscapes settings window: detail and draw distance, which optional visual features are drawn, and an Anti-Aliasing tab of tuning sliders")
-            .HandleWith(_ =>
+            .WithDescription("Open the Doden's Landscapes settings window, optionally on one tab: "
+                + "general, farseer, generate, performance, or antialiasing (with Advanced settings on)")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("tab"))
+            .HandleWith(args =>
             {
                 bool alreadyOpen = configDialog?.IsOpened() == true;
-                return OpenStandaloneConfigDialog()
-                    ? TextCommandResult.Success(alreadyOpen
-                        ? "[Landscapes] configuration window focused."
-                        : "[Landscapes] configuration window opened.")
-                    : TextCommandResult.Success("[Landscapes] configuration window could not open right now.");
+                if (!OpenStandaloneConfigDialog())
+                    return TextCommandResult.Success("[Landscapes] configuration window could not open right now.");
+                if (!args.Parsers[0].IsMissing)
+                {
+                    string name = (string)args[0];
+                    if (VintageHorizonsConfigDialog.TabNamed(name) is not int tab)
+                        return TextCommandResult.Error("[Landscapes] no tab called '" + name
+                            + "': use general, farseer, generate, performance or antialiasing.");
+                    if (!configDialog!.ShowTab(tab))
+                        return TextCommandResult.Error(
+                            "[Landscapes] the Anti-Aliasing tab shows with Advanced settings on.");
+                }
+                return TextCommandResult.Success(alreadyOpen
+                    ? "[Landscapes] configuration window focused."
+                    : "[Landscapes] configuration window opened.");
             });
 
         capi.ChatCommands.Create("dlblend")

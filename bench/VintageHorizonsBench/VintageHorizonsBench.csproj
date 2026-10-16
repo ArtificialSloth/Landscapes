@@ -32,7 +32,7 @@
 
   <Target Name="PackageModFolder" AfterTargets="Build">
     <PropertyGroup>
-      <ModFolder>$(OutputPath)Mods/vintagehorizonsbench/</ModFolder>
+      <ModFolder>$(OutputPath)Mods/dodenslandscapesbench/</ModFolder>
     </PropertyGroup>
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModFolder)" />
     <Copy SourceFiles="modinfo.json" DestinationFolder="$(ModFolder)" />

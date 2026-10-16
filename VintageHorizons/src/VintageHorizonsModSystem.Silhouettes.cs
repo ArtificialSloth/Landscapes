@@ -134,7 +134,31 @@ public partial class VintageHorizonsModSystem
             + $"{renderer.SilhouetteFogHeightBlocks:0} blocks high, core "
             + $"{renderer.SilhouetteFogCoreBlocks:0} blocks each side "
             + $"(staircase strays {renderer.SilhouetteFogStaircaseDeviation:0.0}); moved fog "
-            + $"dissolves over {renderer.SilhouetteFogFadeSeconds:0.0} s";
+            + $"dissolves over {renderer.SilhouetteFogFadeSeconds:0.0} s; "
+            + renderer.SilhouetteFogFieldSummary
+            + $"; game fog colour {capi.Ambient.BlendedFogColor.R:0.00},"
+            + $"{capi.Ambient.BlendedFogColor.G:0.00},{capi.Ambient.BlendedFogColor.B:0.00} "
+            + $"(fog brightness {capi.Ambient.BlendedFogBrightness:0.00}, "
+            + $"scene brightness {capi.Ambient.BlendedSceneBrightness:0.00}); fog colour sources: "
+            + DescribeFogColourSources();
+
+    /// <summary>
+    /// Every ambient modifier's fog colour and weight, base first, in the order the game blends
+    /// them. The seam fog takes its colour from the blend, so a modifier pulling it dark shows here.
+    /// </summary>
+    string DescribeFogColourSources()
+    {
+        static string One(string name, Vintagestory.API.Common.AmbientModifier? modifier)
+        {
+            float[]? value = modifier?.FogColor?.Value;
+            return value == null || value.Length < 3
+                ? name + " none"
+                : $"{name} {value[0]:0.00},{value[1]:0.00},{value[2]:0.00} x{modifier!.FogColor.Weight:0.00}";
+        }
+        var parts = new List<string> { One("base", capi.Ambient.Base) };
+        foreach (var pair in capi.Ambient.CurrentModifiers) parts.Add(One(pair.Key, pair.Value));
+        return string.Join("; ", parts);
+    }
 
     string DescribeSilhouettes()
     {

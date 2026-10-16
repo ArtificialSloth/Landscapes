@@ -564,6 +564,25 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         ? new[] { GeneralTab, AntiAliasingTab, SilhouettesTab, GenerateTab, PerformanceTab }
         : new[] { GeneralTab, SilhouettesTab, GenerateTab, PerformanceTab };
 
+    /// <summary>The tab a `.dlconfig` argument names, or null.</summary>
+    internal static int? TabNamed(string name) => name.Trim().ToLowerInvariant() switch
+    {
+        "general" => GeneralTab,
+        "antialiasing" or "anti-aliasing" or "aa" => AntiAliasingTab,
+        "farseer" => SilhouettesTab,
+        "generate" => GenerateTab,
+        "performance" => PerformanceTab,
+        _ => null,
+    };
+
+    /// <summary>Shows a tab, as a click on it would; false when it is hidden.</summary>
+    internal bool ShowTab(int tab)
+    {
+        if (Array.IndexOf(VisibleTabs(showAdvanced), tab) < 0) return false;
+        if (tab != shownTab) OnTabClicked(tab);
+        return true;
+    }
+
     static string TabName(int tab) => tab switch
     {
         AntiAliasingTab => "Anti-Aliasing",
@@ -847,7 +866,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         const double columnWidth = 250;
         const double columnGap = 29;
-        const double sliderWidth = 160;
+        // The readout beside each slider carries a word as well as a number ("50% Balanced"); at
+        // GUI scale 1.25 and above a 92-wide box wrapped the word onto a hidden second line.
+        const double sliderWidth = 140;
+        const double readoutWidth = 120;
         const double rowHeight = 70;
         for (int i = 0; i < SilhouetteRows.Length; i++)
         {
@@ -864,7 +886,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 ElementBounds.Fixed(x, Y(y + 30), sliderWidth, 30), row.Key);
             int shown = row.Read(pendingSilhouettes);
             composer.AddDynamicText(row.Label(shown), CairoFont.WhiteSmallText(),
-                ElementBounds.Fixed(x + sliderWidth + 12, Y(y + 35), 92, 22), $"{row.Key}-label");
+                ElementBounds.Fixed(x + sliderWidth + 12, Y(y + 35), readoutWidth, 22), $"{row.Key}-label");
         }
 
         composer.AddStaticText(SilhouetteFooter,
@@ -923,11 +945,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         composer.AddStaticText("Radius", CairoFont.WhiteSmallishText(),
             ElementBounds.Fixed(Margin, Y(174), 100, 28));
+        // "32 chunks / 1,024 blocks" needs about 200 wide: at GUI scale 1.25 a 170-wide box
+        // dropped "blocks" onto a hidden second line.
         composer.AddSlider(OnWorldGenRadiusChanged,
-            ElementBounds.Fixed(135, Y(168), 545, 30), "wg-radius");
+            ElementBounds.Fixed(135, Y(168), 505, 30), "wg-radius");
         composer.AddDynamicText(WorldGenRadiusLabel(),
             CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Right),
-            ElementBounds.Fixed(695, Y(174), 170, 24),
+            ElementBounds.Fixed(650, Y(174), Width - Margin - 650, 24),
             "wg-radius-label");
 
         composer.AddStaticText("Shape", CairoFont.WhiteSmallishText(),

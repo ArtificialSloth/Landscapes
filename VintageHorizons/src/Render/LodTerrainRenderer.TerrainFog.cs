@@ -64,6 +64,13 @@ public partial class LodTerrainRenderer
 
     internal int TerrainFogTileCount => terrainFogTiles.Count;
 
+    /// <summary>The published field's ground range and grid, for `.dlfog stats`.</summary>
+    internal string SilhouetteFogFieldSummary => silhouetteFogFieldTexture == 0
+        ? "no field published"
+        : $"field {silhouetteFogFieldWidth}x{silhouetteFogFieldHeight} at "
+            + $"{silhouetteFogFieldTexelBlocks:0} blocks per texel, ground {silhouetteFogMinGroundY:0} to "
+            + $"{silhouetteFogMaxGroundY:0}, {silhouetteFogBoundaryEdges} edges, reach {silhouetteFogReachBlocks:0}";
+
     /// <summary>
     /// Render thread, in the same place as Farseer's own preparation: once per frame while
     /// Farseer draws nothing - switched off, or with no tile yet.

@@ -41,6 +41,11 @@ public static class SettingsWindowChecks
         string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
         c.True(dialog.Contains("Array.IndexOf(VisibleTabs(showAdvanced), shownTab)", StringComparison.Ordinal),
             "the highlighted tab is found by position, since a click reports the tab's id");
+        c.True(VintageHorizonsConfigDialog.TabNamed("Farseer") == advanced[2]
+                && VintageHorizonsConfigDialog.TabNamed("aa") == advanced[1]
+                && VintageHorizonsConfigDialog.TabNamed("general") == advanced[0]
+                && VintageHorizonsConfigDialog.TabNamed("nonsense") == null,
+            ".dlconfig opens on a tab named in any case, and names no other");
         c.True(dialog.Contains("if (shownTab == AntiAliasingTab) shownTab = GeneralTab;", StringComparison.Ordinal),
             "hiding the dials while on Anti-Aliasing moves to General");
         c.True(dialog.Contains("if (!showAdvanced)", StringComparison.Ordinal)
