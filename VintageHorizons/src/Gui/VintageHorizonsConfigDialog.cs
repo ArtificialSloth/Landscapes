@@ -39,22 +39,33 @@ internal sealed record AdvancedTuning(bool Initial, Action<bool> Remember);
 internal static class VintageHorizonsConfigLayout
 {
     internal const double Width = 900;
-    internal const double Height = 820;
+
+    /// <summary>
+    /// 640 tall so the window fits a 1080-pixel screen at GUI scale 1.5 with the tab strip above
+    /// it, and inside vanilla Settings below its 78-unit header (718 x 1.5 = 1077), and a
+    /// 768-pixel laptop screen at 1.0. It was 820: at 1.5 on 1080p the title, tabs and the
+    /// Save row were off-screen (sandbox screen check, 2026-10-16; owner chose the tighter
+    /// layout over scrolling).
+    /// </summary>
+    internal const double Height = 640;
     internal const double Margin = 32;
     internal const double SwitchX = 824;
-    internal const double ButtonY = Height - 58;
+    internal const double ButtonY = Height - 48;
     internal const double TabsWidth = 760;
     internal const int PlannedTabCount = 5;
 
-    internal const double ScaleY = 96;
-    internal const double ScaleHeight = 210;
-    internal const double DrawHeadingY = 326;
+    internal const double ScaleY = 84;
+    internal const double ScaleHeight = 200;
+    internal const double DrawHeadingY = 288;
     // A row of its own. Beside the heading it shared the right edge with the draw distance's
     // value, and the two were drawn over each other (owner screenshot, 2026-10-13).
-    internal const double PausedRowY = 364;
-    internal const double VisualHeadingY = 410;
-    internal const double VisualRowsY = 448;
-    internal const double VisualRowHeight = 36;
+    internal const double PausedRowY = 322;
+    internal const double VisualHeadingY = 358;
+    internal const double VisualRowsY = 390;
+    internal const double VisualRowHeight = 28;
+
+    /// <summary>The feature rows' switches, sized to their 28-unit pitch.</summary>
+    internal const double RowSwitchSize = 26;
     internal const int VisualRowCount = 7;
 
     internal const double DialSliderX = 330;
@@ -625,17 +636,17 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     void ComposeGeneral(GuiComposer composer)
     {
         composer.AddStaticText("LOD transition distances",
-            CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, Y(42), 480, 30));
+            CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, Y(36), 480, 30));
         composer.AddStaticText("Automatic", CairoFont.WhiteSmallText(),
-            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 190, Y(48), 180, 22));
+            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 190, Y(42), 180, 22));
         composer.AddSwitch(OnAutomaticChanged,
-            ElementBounds.Fixed(SwitchX, Y(42), 32, 32), "auto-thresholds");
+            ElementBounds.Fixed(SwitchX, Y(36), 32, 32), "auto-thresholds");
         // Over the label and the switch alike. GuiElementHoverText handles no mouse-down, so it
         // cannot swallow the click on the switch underneath it.
         composer.AddHoverText(AutomaticTip, CairoFont.WhiteSmallText(), 380,
-            ElementBounds.Fixed(SwitchX - 190, Y(40), 222, 36), "tip-auto-thresholds");
+            ElementBounds.Fixed(SwitchX - 190, Y(34), 222, 36), "tip-auto-thresholds");
         composer.AddDynamicText(ThresholdHelp(), CairoFont.WhiteSmallText(),
-            ElementBounds.Fixed(Margin, Y(72), Width - 2 * Margin, 22), "threshold-help");
+            ElementBounds.Fixed(Margin, Y(62), Width - 2 * Margin, 22), "threshold-help");
 
         scale = new LodThresholdScaleElement(capi, DisplayedThresholds(),
             vanillaViewDistance, pendingFarCap, pendingSilhouettes.ReachBlocks,
@@ -651,10 +662,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddStaticText("Cached terrain draw distance", CairoFont.WhiteMediumText(),
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.DrawHeadingY), 500, 30));
         composer.AddStaticText("Load terrain while paused", CairoFont.WhiteSmallishText(),
-            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.PausedRowY + 5), 650, 26));
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.PausedRowY + 2), 650, 26));
         composer.AddSwitch(OnPausedLoadingChanged,
-            ElementBounds.Fixed(SwitchX, Y(VintageHorizonsConfigLayout.PausedRowY), 32, 32),
-            "load-while-paused");
+            ElementBounds.Fixed(SwitchX + 3, Y(VintageHorizonsConfigLayout.PausedRowY + 1),
+                VintageHorizonsConfigLayout.RowSwitchSize, VintageHorizonsConfigLayout.RowSwitchSize),
+            "load-while-paused", VintageHorizonsConfigLayout.RowSwitchSize);
         composer.AddHoverText(PausedLoadingTip, CairoFont.WhiteSmallText(), 380,
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.PausedRowY),
                 SwitchX + 32 - Margin, RowHeight - 2), "tip-load-while-paused");
@@ -685,12 +697,14 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         foreach (VisualRow row in Rows)
         {
             composer.AddStaticText(row.Title, CairoFont.WhiteSmallishText(),
-                ElementBounds.Fixed(Margin, Y(y + 5), 650, 26));
+                ElementBounds.Fixed(Margin, Y(y + 2), 650, 26));
             composer.AddStaticText(row.Cost, CairoFont.WhiteDetailText(),
                 EnumTextOrientation.Right,
-                ElementBounds.Fixed(SwitchX - 110, Y(y + 8), 100, 22));
+                ElementBounds.Fixed(SwitchX - 110, Y(y + 5), 100, 22));
             composer.AddSwitch(on => OnVisualChanged(row, on),
-                ElementBounds.Fixed(SwitchX, Y(y), 32, 32), row.Key);
+                ElementBounds.Fixed(SwitchX + 3, Y(y + 1),
+                    VintageHorizonsConfigLayout.RowSwitchSize, VintageHorizonsConfigLayout.RowSwitchSize),
+                row.Key, VintageHorizonsConfigLayout.RowSwitchSize);
 
             // One hover region over the whole row, so the tip appears from the title, the cost
             // word or the switch alike. GuiElementHoverText handles no mouse-down, so this
@@ -858,11 +872,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             ElementBounds.Fixed(Margin, Y(40), 400, 34), "silhouette-status");
 
         composer.AddStaticText("Reach", CairoFont.WhiteSmallishText(),
-            ElementBounds.Fixed(Margin, Y(122), 100, 26));
+            ElementBounds.Fixed(Margin, Y(84), 100, 26));
         composer.AddSlider(OnSilhouetteReachSlider,
-            ElementBounds.Fixed(135, Y(116), 545, 30), "silhouette-reach");
+            ElementBounds.Fixed(135, Y(80), 545, 28), "silhouette-reach");
         composer.AddDynamicText(SilhouetteReachLabel(), CairoFont.WhiteSmallText(),
-            ElementBounds.Fixed(700, Y(122), 160, 24), "silhouette-reach-label");
+            ElementBounds.Fixed(700, Y(84), 160, 24), "silhouette-reach-label");
 
         const double columnWidth = 250;
         const double columnGap = 29;
@@ -870,27 +884,30 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         // GUI scale 1.25 and above a 92-wide box wrapped the word onto a hidden second line.
         const double sliderWidth = 140;
         const double readoutWidth = 120;
-        const double rowHeight = 70;
+        // Title over slider, 54 a row: eight rows of three end above the footer in the
+        // 640-tall window.
+        const double rowHeight = 54;
         for (int i = 0; i < SilhouetteRows.Length; i++)
         {
             SilhouetteRow row = SilhouetteRows[i];
             int column = i % 3;
             int line = i / 3;
             double x = Margin + column * (columnWidth + columnGap);
-            double y = 172 + line * rowHeight;
+            double y = 118 + line * rowHeight;
             composer.AddStaticText(row.Title, CairoFont.WhiteSmallishText(),
                 ElementBounds.Fixed(x, Y(y), columnWidth, 26));
             composer.AddHoverText(row.Tip, CairoFont.WhiteSmallText(), 330,
                 ElementBounds.Fixed(x, Y(y - 2), columnWidth, 28), $"tip-{row.Key}");
             composer.AddSlider(value => OnSilhouetteDialChanged(row, value),
-                ElementBounds.Fixed(x, Y(y + 30), sliderWidth, 30), row.Key);
+                ElementBounds.Fixed(x, Y(y + 25), sliderWidth, 26), row.Key);
             int shown = row.Read(pendingSilhouettes);
             composer.AddDynamicText(row.Label(shown), CairoFont.WhiteSmallText(),
-                ElementBounds.Fixed(x + sliderWidth + 12, Y(y + 35), readoutWidth, 22), $"{row.Key}-label");
+                ElementBounds.Fixed(x + sliderWidth + 12, Y(y + 28), readoutWidth, 22), $"{row.Key}-label");
         }
 
         composer.AddStaticText(SilhouetteFooter,
-            CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(724), Width - 2 * Margin, 28));
+            CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY - 34), Width - 2 * Margin, 28));
     }
 
     const string SilhouetteFooter =
@@ -995,15 +1012,15 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         composer.AddButton(NeedsLiveWorldGenWindow() ? "Open live controls" : "Prepare",
             OnWorldGenPrepare,
-            ElementBounds.Fixed(Margin, Y(574), 170, 38), EnumButtonStyle.Normal, "wg-prepare");
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY), 170, 38), EnumButtonStyle.Normal, "wg-prepare");
         composer.AddButton("Confirm", OnWorldGenConfirm,
-            ElementBounds.Fixed(Margin + 180, Y(574), 170, 38), EnumButtonStyle.Normal, "wg-confirm");
+            ElementBounds.Fixed(Margin + 180, Y(VintageHorizonsConfigLayout.ButtonY), 170, 38), EnumButtonStyle.Normal, "wg-confirm");
         composer.AddButton("Pause", OnWorldGenPause,
-            ElementBounds.Fixed(Margin + 360, Y(574), 135, 38), EnumButtonStyle.Normal, "wg-pause");
+            ElementBounds.Fixed(Margin + 360, Y(VintageHorizonsConfigLayout.ButtonY), 135, 38), EnumButtonStyle.Normal, "wg-pause");
         composer.AddButton("Resume", OnWorldGenResume,
-            ElementBounds.Fixed(Margin + 505, Y(574), 135, 38), EnumButtonStyle.Normal, "wg-resume");
+            ElementBounds.Fixed(Margin + 505, Y(VintageHorizonsConfigLayout.ButtonY), 135, 38), EnumButtonStyle.Normal, "wg-resume");
         composer.AddButton("Stop", OnWorldGenStop,
-            ElementBounds.Fixed(Margin + 650, Y(574), 135, 38), EnumButtonStyle.Normal, "wg-stop");
+            ElementBounds.Fixed(Margin + 650, Y(VintageHorizonsConfigLayout.ButtonY), 135, 38), EnumButtonStyle.Normal, "wg-stop");
 
         worldGen.Client?.SetWorldGenPageOpen(!NeedsLiveWorldGenWindow());
     }
