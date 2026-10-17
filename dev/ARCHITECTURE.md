@@ -637,7 +637,8 @@ live until the exact replacement persistence revision is acknowledged.
     (G249). `Fog quality` controls march precision; the old persisted `FogLayerDetail` name remains
     only for settings compatibility.
 50. **The seam fog's outline is a function of the terrain, not of the view.** It is built from every
-    Farseer tile within reach, whichever way the camera faces; each tile caches its replacement
+    Farseer tile within reach (or, without Farseer, every tile of decision 57's disc), whichever way
+    the camera faces; each tile caches its replacement
     coverage, refreshed as it draws or a few off-screen tiles per frame. Every point of the
     centreline depends only on the staircase near it, and the field's texel size is fixed by the
     reach. The frustum, camera yaw and the momentary extent of the tile window may not move it; the
@@ -696,6 +697,14 @@ live until the exact replacement persistence revision is acknowledged.
 56. **Mod shaders are first built on the engine's shader reload, never at mod start** (2026-10-13,
     G274). Every failure reports at full volume; nothing is excused as a provisional attempt. A
     first-frame fallback covers a session the reload never reached.
+57. **The seam fog does not need Farseer** (owner, 2026-10-14; 0.4.146). Its outline is the cached
+    terrain's ownership edge, which Farseer's tiles only framed. With Farseer off, or on with no tile,
+    the fog traces that edge over every 512-block tile in a disc to 0.75 of the cached far distance
+    (where cached terrain fades into the sky); a cell outside the disc is no owner, so the rim never
+    draws fog; heights are the highest cached surface at each 32-block corner, with no globe drop.
+    Farseer's tiles take over the moment they arrive. Farseer off frees only Farseer's meshes; the fog
+    switch off frees the fog. Its colour is always the game's natural fog colour (owner, 2026-10-16).
+    Loading Farseer's tiles only to shape the fog was written and rejected for this.
 
 ## Concurrency invariants
 

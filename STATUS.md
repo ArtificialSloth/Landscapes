@@ -3,17 +3,37 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-10-13`
-**Mod version:** `0.4.142` - current private test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception. 0.4.142 only trims a log line; 0.4.138-0.4.141 are owner-played: the legacy cache and settings moved in place, the login notice about other LOD mods shows, the startup shader errors are gone and the "?" walls are fixed. All checks pass
+**Status date:** `2026-10-16`
+**Mod version:** `0.4.148` - current private test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception. 0.4.143, 0.4.144 and 0.4.148 are owner-confirmed; 0.4.145-0.4.147 were owner-checked in the window he plays. All checks pass
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`; pushed to `main` on `DodenGruva/Landscapes` (private) on 2026-10-13, after the history was rewritten to his GitHub no-reply address
+**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca` (these six not pushed); pushed to `main` on `DodenGruva/Landscapes` (private) on 2026-10-13, after the history was rewritten to his GitHub no-reply address
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `148` C# files under `VintageHorizons/src`
+**Source files:** `149` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
+
+**Release polish: tree colours, a settings window for players, and seam fog without Farseer
+(0.4.143-0.4.148).** Session 114.
+
+- **Log sides (0.4.143, owner-confirmed):** the engine's block colour is the "up" texture, a log's cut
+  end, so distant redwood sides drew 2.5 times vanilla's brightness (G277). Walls carry their own
+  colour: block table rows 8-9 and snapshot wall colours.
+- **Branchy leaves (0.4.144, owner-confirmed):** tinted inside their shape, not on the block, they drew
+  untinted; they are drawn as the plain leaves of the same tree.
+- **Settings window (0.4.145-0.4.148, owner: "It looks good"):** a remembered **Advanced settings**
+  switch (default off) hides the Anti-Aliasing tab and every Farseer slider, whose values stay in
+  force; Generate works through its own buttons; the login notice has **Open settings**;
+  `.dlconfig <tab>`; the window is 640 units tall so it fits 1080p at GUI 1.5 (it was 820).
+- **Farseer defaults (0.4.146):** the owner's look (reach 4,096, sky tint 2.0, light bias 0.75, far
+  fade 0.70, geometry 50%, hill softness 25%); LOD edge depth/width fixed at 0/32 and removed.
+- **Seam fog without Farseer (0.4.146, decision 57):** with Farseer off or offering no tiles, the fog
+  traces the cached terrain's own edge in a disc to 0.75 of the far distance. Seen correct only in the
+  bench sandbox, after its world's black server ambient was cleared (G278); the fog always uses the
+  natural fog colour (owner).
+- **Evidence:** 26,211-26,296 assertions, 0 failures. The bench harness works again (G280).
 
 **Release preparation: renamed Doden's Landscapes, relicensed, and three long-standing faults fixed
 (0.4.136-0.4.142).** Session 113.
@@ -590,7 +610,8 @@ decision 35).
 
 ## Settings integration and editor
 
-In an active world, the vanilla Settings header has a dedicated **Horizons** tab.
+In an active world, the vanilla Settings header has a dedicated **Landscapes** tab (0.4.145; it
+read "Horizons" until then).
 - **The seam.** Vintage Story 1.22 exposes no public page registry. One guarded adapter therefore
   extends the private `GuiCompositeSettings.ComposerHeader` seam and the established Settings leave
   paths.
@@ -606,6 +627,11 @@ In an active world, the vanilla Settings header has a dedicated **Horizons** tab
   world-generation controls; **Performance** holds the opt-in **All-Cores Garbage Collection**
   switch (0.4.134, decision 54), which applies from the next start and says what the current
   session runs. The tab strip is 760 px for five tabs.
+  - **Simple and advanced views (0.4.145, owner).** By default Anti-Aliasing is hidden and Farseer
+    shows only its two switches; the remembered **Advanced settings** switch in the action row shows
+    every dial, and reads "(changed)" when a hidden value differs from its default. Generate has no
+    Save/Cancel/Defaults. The window is 640 units tall (0.4.148; 718 inside vanilla Settings).
+    `.dlconfig <tab>` opens it on a tab (0.4.147).
   - Descriptions appear on hover.
   - Secondary tabs sit below the vanilla header.
   - Compact rows and independently placed actions keep text and controls inside the page.
@@ -992,10 +1018,11 @@ It covers:
 
 ## Next work
 
-Begin with [Session 113](dev/sessions/SESSION_113.md) and the top of [TODO](dev/TODO.md).
+Begin with [Session 114](dev/sessions/SESSION_114.md) and the top of [TODO](dev/TODO.md).
 
-1. **The public release, on the owner's calls:** promote the build he last played to a release
-   number, make `DodenGruva/Landscapes` public (the history is there; the old `DodenGruva/Horizons`
+1. **The public release, on the owner's calls:** run the game-launching check tiers first (not run
+   since the rename; ask before launching), push the six local commits with his OK, promote the
+   build he last played (0.4.148) to a release number, make `DodenGruva/Landscapes` public (the history is there; the old `DodenGruva/Horizons`
    fork still exposes his personal email and is his to delete), and create the ModDB page
    at `mods.vintagestory.at/dodenslandscapes` with GNU GPL v3 as the licence. Open evidence worth
    knowing before then: the 0.4.137 preview re-issue unseen in play, running beside the original

@@ -4,10 +4,12 @@
 
 ## Start here
 
-Read [Session 113](sessions/SESSION_113.md), then [Session 112](sessions/SESSION_112.md). The mod is
-now **Doden's Landscapes** (mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and
-log), licensed GPL-3.0 only with a Vintage Story exception. 0.4.142 is installed; 0.4.138-0.4.141
-are owner-played. All 26,214 assertions pass. The public release is next. The stutter while
+Read [Session 114](sessions/SESSION_114.md), then [Session 113](sessions/SESSION_113.md). The mod is
+**Doden's Landscapes** (mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log),
+licensed GPL-3.0 only with a Vintage Story exception. 0.4.148 is installed and owner-checked; its
+settings window has a simple view and an Advanced switch, and the seam fog works without Farseer.
+All assertions pass (26,211-26,296; the savegame change detection fixture's count varies). The public
+release is next. The stutter while
 exploring is solved for him by the all-cores garbage collector, an opt-in switch on the settings
 editor's Performance tab (0.4.134, settled decision 54), and the game's chunk thread rests when it
 has nothing to do (0.4.132, settled decision 53).
@@ -15,13 +17,18 @@ has nothing to do (0.4.132, settled decision 53).
 ### The public release (owner's calls)
 
 - **Version:** promote the build he last played to a release number (CLAUDE.md: only he calls a
-  promotion, and the promoted build must be one somebody played).
+  promotion, and the promoted build must be one somebody played). 0.4.148 is the candidate.
+- **The game-launching check tiers** (`scripts/check.sh smoke` and `matrix`, about 25 minutes) have
+  not run since the rename; the `lod-conflict` and `farseer-off` scenarios have never run. Ask first.
+- **Push:** six local commits since `1bea2c1` (0.4.143-0.4.148 and this documentation) are not on
+  `origin`; push only with his OK.
 - **GitHub:** the full history is on `main` at `DodenGruva/Landscapes`, still private; he makes it
   public. The old fork `DodenGruva/Horizons` still shows his personal email in 91 commits; he deletes
   it (a public fork cannot be made private).
 - **ModDB:** the page at `mods.vintagestory.at/dodenslandscapes` (modinfo already points there), with
   GNU GPL v3 chosen as the licence. The README now tells players about the Performance tab and about
-  keeping one LOD mod on.
+  keeping one LOD mod on. Its description should also mention the Advanced settings switch,
+  `.dlconfig <tab>`, and that the seam fog works without Farseer.
 
 ### What Session 113 left open
 
@@ -29,9 +36,22 @@ has nothing to do (0.4.132, settled decision 53).
   "previews went unanswered ... lost rather than stuck" in a server log after pauses while exploring.
 - **Beside the original Vintage Horizons:** running the two together is untested; both may patch the
   same parts of the game (the settings screen).
-- **The login notice's layout** at other GUI scales is unseen; its text box is a fixed 230 px.
+- **The login notice's layout** was seen at 1920x1080 and GUI 1.25 in the sandbox (Session 114,
+  text box now 290); other scales are unseen.
 - **Memory:** his 0.4.139 session reached 12.1 GB for the whole game while flying up to 5,200 blocks a
   minute, the highest seen; part of the longer memory look below.
+
+### What Session 114 left open
+
+- **Fog without Farseer** (0.4.146, decision 57) has been seen only in the bench sandbox, after its
+  test world's black server ambient was cleared (G278). Look at it in his own world with Farseer off,
+  from the ground and from above, and check the cost with `.dlfog`.
+- **Its disc at the largest far distances:** 16 tiles' coverage are refreshed a frame; at 32,768
+  blocks the disc is about 2,100 tiles and the field 32 blocks per texel. Untested on a slower machine.
+- **Translation:** every settings and notice string is written in the code; the owner deferred
+  moving them to language files until after release.
+- **The bench sandbox world** now has its server ambient cleared (`/setambient {}`); earlier fog
+  screenshots from it were taken with a black fog colour.
 
 ### Coarse stand-ins: what is left (Sessions 112-113)
 

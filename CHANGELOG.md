@@ -8,6 +8,19 @@ first.
 
 ## [Unreleased]
 
+**Distant trees match the game's colours.** Log sides drew at the colour of the cut end's rings, not
+the bark - redwood trunks were about 2.5 times as bright as the game's (0.4.143) - and branchy leaves
+drew as dark grey-brown cubes, where the game shows ordinary green foliage (0.4.144).
+
+**A settings window for players.** Distances, the feature switches and Farseer's two switches show by
+default; an Advanced settings switch reveals the tuning dials, whose values stay in force when hidden.
+The window fits a 1080p screen at GUI scale 1.5, the login notice opens it, and `.dlconfig <tab>` opens
+it on a tab (0.4.145-0.4.148).
+
+**Seam fog without Farseer.** The fog over the edge of the cached terrain no longer needs Farseer: with
+Farseer off, or on a server that offers no Farseer terrain, it follows the cached terrain's own edge
+(0.4.146). Farseer's defaults are now the tuned look the owner plays with (0.4.146).
+
 **Renamed Doden's Landscapes, under GPL-3.0.** The mod is now Doden's Landscapes (mod id
 `dodenslandscapes`), founded on AliasFactory's Vintage Horizons and crediting it. Chat commands start
 with `.dl` and chat and log lines with `[Landscapes]`. Existing caches and settings move over once,
@@ -135,6 +148,54 @@ read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.148] - 2026-10-16
+
+**The settings window fits smaller screens.** It was 820 units tall: at GUI scale 1.5 on a 1080p
+screen its title, tabs and Save button were off-screen, and a 768p laptop could not fit it at 1.0. It is
+now 640, with the rows set closer together and nothing removed. Checked by the owner.
+
+## [0.4.147] - 2026-10-16
+
+**`.dlconfig <tab>`** opens the settings window on general, farseer, generate, performance or (with
+Advanced settings on) antialiasing. Readouts that lost their last word at GUI scale 1.25 - Farseer's
+"50% Balanced" and Generate's "32 chunks / 1,024 blocks" - have room. `.dlfog stats` now reports the fog
+field and where the game's fog colour comes from.
+
+## [0.4.146] - 2026-10-14
+
+**Seam fog without Farseer.** The fog's outline was always the cached terrain's own edge; Farseer only
+framed where it was looked for and how high the ground stood. With Farseer off, or on a server that
+offers none of its terrain, the fog now follows that edge in a disc reaching to where cached terrain
+starts fading into the sky, resting on the cached terrain's surface. Switched off, it builds nothing.
+The Performance preset turns the fog off too.
+
+**Farseer's defaults are the owner's look:** reach 4,096 blocks, sky-height tint 2.0, light bias 0.75,
+far fade bias 0.70, geometry detail 50%, hill softness 25%. LOD edge depth and width are no longer
+settings; they are fixed at 0 and 32 blocks, whatever an older settings file holds.
+
+## [0.4.145] - 2026-10-13
+
+**A simpler settings window.** An Advanced settings switch, off by default and remembered, hides the
+Anti-Aliasing tab and Farseer's sliders; their values stay in force, and the switch says "(changed)"
+when one differs from its default. The Generate tab works through its own buttons, shows progress only
+while a job runs, and no longer tells players to type a command for what its buttons do. Performance
+marks its switch "(after restart)". "Load terrain while paused" no longer overlaps the draw distance.
+The login notice has an Open settings button and says where the settings are; the button the mod adds
+to the game's Settings page reads "Landscapes", not "Horizons".
+
+## [0.4.144] - 2026-10-13
+
+**Branchy leaves look like leaves.** The game tints branchy leaves inside their 3D shape rather than on
+the block, so distant ones drew untinted, dark grey-brown, through every redwood and pine crown. They
+are now drawn as the plain leaves of the same tree. Confirmed by the owner.
+
+## [0.4.143] - 2026-10-13
+
+**Distant log sides draw at their bark's colour.** The game's colour for a block is its top texture,
+which for a standing log is the cut end, so distant trunks wore bark's pattern at the brightness of the
+rings: a redwood's sides were about 2.5 times as bright as the game's. Sides now carry their own
+colour, at every distance. Confirmed by the owner.
 
 ## [0.4.142] - 2026-10-13
 

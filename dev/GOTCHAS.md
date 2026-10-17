@@ -5248,3 +5248,64 @@ code, height-sample headers, the start-up file marker) so existing files still o
 data once, never over newer files and never while the old mod is enabled.
 
 **Found:** 2026-10-07, Session 113 (decompiled 1.22.7 `ModContainer`).
+
+### G277 - The engine's block colour is the "up" texture, so a log's colour is its cut end
+
+**Trigger:** colouring any face of a distant block from the block's single palette colour, or
+diagnosing a distant surface whose hue matches vanilla's but whose brightness does not.
+
+**Trap:** `Block.LoadTextureSubIdForBlockColor` takes `textureCodeForBlockColor`, else the "up"
+texture, else the first. A standing log's "up" is its cut end: for a redwood the rings average
+153,85,42 and the bark 75,39,20. Sampling bark's pattern on the walls as variation around that colour
+still drew them at the rings' brightness - measured 2.5 times vanilla's. Canopy shade was blamed first
+and was wrong: redwoods look like that with no leaves above.
+
+**Safer action:** give each wall axis its own colour, the wall texture's own mean (block table rows
+8-9; `SectionSnapshot.WallColor` for colour quads). Before any lighting theory, compare the measured
+hue and ratio with the mean of every texture the block names.
+
+**Found:** 2026-10-13, Session 114 (owner's screenshot; fixed in 0.4.143).
+
+### G278 - A world's saved server ambient can make the game's fog colour black
+
+**Trigger:** the seam fog, or anything lit from `capi.Ambient.BlendedFogColor`, looks black or dark.
+
+**Trap:** the game blends its fog colour from ambient modifiers; "serverambient" is the world's saved
+`/setambient`, sent at join and stored in the savegame. The bench sandbox world held fog colour 0,0,0
+at weight 1, so the fog drew black with or without Farseer while the A/B and split-screen tests pointed
+everywhere else first. Vanilla's own fog is too thin to show it. A fresh world saves it at weight 0.
+
+**Safer action:** read `.dlfog stats`: it prints the game's fog colour and every ambient source with
+its weight. In a test world, `/setambient {}` clears it. The owner's rule is that the fog uses the
+natural fog colour only, with no fallback for other colours.
+
+**Found:** 2026-10-16, Session 114 (sandbox screen check).
+
+### G279 - A horizontal tab strip's highlight is a position; its click handler gets the tab's id
+
+**Trigger:** hiding a tab from `AddHorizontalTabs`, or adding one in the middle.
+
+**Trap:** `GuiElementHorizontalTabs` calls the handler with `tabs[i].DataInt`, but `activeElement` is
+an index into the array. With every tab shown they coincide, so code that writes the tab id into
+`activeElement` works until a tab is hidden, then highlights the wrong one.
+
+**Safer action:** keep ids and positions apart: `activeElement = Array.IndexOf(VisibleTabs(...), id)`.
+
+**Found:** 2026-10-13, Session 114 (decompiled 1.22.7; the Advanced switch hides Anti-Aliasing).
+
+### G280 - The bench harness and a settings screenshot
+
+**Trigger:** photographing a dialog, a window size or a Farseer scene with `scripts/bench-windows.ps1`.
+
+**Trap:** the bench mod closes every non-HUD dialog each frame to dismiss the unattended pause menu,
+so a window opened by a route command never reached a screenshot (since 0.4.147 it spares this mod's
+own). The sandbox `clientsettings.json` has `gameWindowMode` 1, fullscreen, so `screenWidth/Height`
+are ignored and shots come out at the monitor's size; windowed needs 0. A dedicated sandbox server
+offers Farseer tiles only with `EnableSilhouettes: true` in its server config (`-ServerConfig`).
+The 0.4.138 rename had left the bench mod's id and output folder on the old name, so no run could
+start until 0.4.147.
+
+**Safer action:** for a UI shot, set `gameWindowMode` 0 and the size in the sandbox settings (back up
+and restore), open the window with `.dlconfig <tab>` in a route command, and ask before every launch.
+
+**Found:** 2026-10-16, Session 114.
