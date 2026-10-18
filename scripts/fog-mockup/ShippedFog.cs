@@ -35,6 +35,11 @@ sealed class ShippedFog
     // fogCurtainActive: the cached terrain's own edge with empty sky beyond (Scene.Cliff).
     readonly bool curtain;
 
+    // A cost proxy, since the mock-up cannot time a GPU: march steps, full samples, and the
+    // curtain's extra lookups (its tendrils, and the outward direction's four field reads),
+    // summed over every ray this marcher has drawn.
+    public long Rays, Steps, Samples, StreakLookups, OutwardLookups;
+
     public ShippedFog(string shaderSource, FogDials dials, NoiseTexture noise, float coreBlocks,
         float stripHalfBlocks, bool curtain = false)
     {
@@ -146,7 +151,8 @@ sealed class ShippedFog
             n.Tongue = Noise(fogWorld * new Vector3(cellsPerBlock * 0.55f, cellsPerBlock * 0.15f,
                 cellsPerBlock * 0.55f) + new Vector3(5.9f, 2.3f, 8.1f),
                 NoiseLod(pixelBlocks, cellsPerBlock * 0.55f)).X;
-            n.Drip = SmoothStep(0.25f, 0.75f, Noise(new Vector3(fogWorld.X / K("CurtainDripBlocks"),
+            if (fogWorld.Y < Scene.WallFootY)
+                n.Drip = SmoothStep(0.25f, 0.75f, Noise(new Vector3(fogWorld.X / K("CurtainDripBlocks"),
                 d.FallBlocks * K("CurtainDripDrift"), fogWorld.Z / K("CurtainDripBlocks")) + new Vector3(2.7f, 9.1f, 4.4f),
                 NoiseLod(pixelBlocks, 1f / K("CurtainDripBlocks"))).W);
         }
@@ -296,8 +302,10 @@ sealed class ShippedFog
         Vector3 litColour = Scene.FogColour * 0.85f;
         int maxSteps = (int)K("MaxFogSteps");
 
+        long steps = 0, samples = 0, streaks = 0, outwards = 0;
         for (int stepIndex = 0; stepIndex < maxSteps; stepIndex++)
         {
+            steps++;
             if (rayDistance >= marchEnd || transmittance < 0.01f) break;
             Vector3 fieldPosition = cam + rayDirection * rayDistance;
             float signedDistance = fields.Current(fieldPosition.X, fieldPosition.Z);
@@ -321,10 +329,11 @@ sealed class ShippedFog
             if (curtainGap > 0f) verticalSkip = MathF.Min(verticalSkip, curtainGap);
             float outside = MathF.Max(horizontalOutside, verticalSkip);
             float farStep = MathF.Max(baseStep, rayDistance * K("FarStepFraction"));
+            float stepDepth = curtain && transmittance < 0.5f ? K("CurtainHiddenStepDepth") : 0.35f;
             float stepBlocks = outside > 0f
                 ? Math.Clamp(outside * 0.72f, baseStep, 512f)
                 : previousExtinction > 0f
-                    ? Math.Clamp(0.35f / previousExtinction, 0.75f, farStep) : farStep;
+                    ? Math.Clamp(stepDepth / previousExtinction, 0.75f, farStep) : farStep;
             float toLandingNow = new Vector2(fieldPosition.X - landing.X, fieldPosition.Z - landing.Z).Length();
             float landingNow = lands
                 ? 1f - SmoothStep(K("StripAnchorNearBlocks"), K("StripAnchorFarBlocks"), toLandingNow) : 0f;
@@ -336,11 +345,16 @@ sealed class ShippedFog
                 float stripRoom = MathF.Max(0f, stripHeightNow - stripDepth * 1.95f);
                 stepBlocks = MathF.Min(stepBlocks, MathF.Max(0.3f, (stripRoom + 0.35f * stripDepth) / descent));
             }
-            if (curtain && outside <= 0f && curtainGap <= 0f
-                && heightAboveGround < K("CurtainLipRiseBlocks") + K("CurtainTopBillowBlocks"))
+            if (curtain && outside <= 0f && curtainGap <= 0f)
+            {
+                float coreGap = MathF.Max(signedDistance - (stripHalfBlocks + K("CurtainLipBlocks")
+                        + 2f * K("CurtainWanderBlocks")),
+                    MathF.Max(heightAboveGround - (K("CurtainLipRiseBlocks") + 0.5f * K("CurtainTopBillowBlocks")),
+                        -(Scene.GroundY - Scene.WallFootY) - K("CurtainBottomFadeBlocks") - heightAboveGround));
                 // The game marches at half resolution: its pixel is two of these.
-                stepBlocks = MathF.Min(stepBlocks, MathF.Max(K("CurtainMinStepBlocks"),
-                    rayDistance * pixelScale * 2f * K("CurtainStepPixels")));
+                stepBlocks = MathF.Min(stepBlocks, MathF.Max(MathF.Max(K("CurtainMinStepBlocks"),
+                    rayDistance * pixelScale * 2f * K("CurtainStepPixels")), 0.8f * coreGap));
+            }
             stepBlocks = MathF.Min(stepBlocks, marchEnd - rayDistance);
             previousExtinction = 0f;
 
@@ -358,15 +372,19 @@ sealed class ShippedFog
                     - Mix(ground, StripGround(ground, landing.Y), landingWeight);
                 float pixelBlocks = MathF.Max(0.001f, middle * pixelScale);
                 bool wantStreak = curtain
-                    && heightAboveGround < K("CurtainLipRiseBlocks") + K("StripAnchorReachBlocks");
+                    && heightAboveGround < K("CurtainLipRiseBlocks") + K("StripAnchorReachBlocks")
+                    && (residualActive || CurtainGap(signedDistance, curtainReach) <= 0f);
                 Vector2 outward = Vector2.Zero;
-                if (wantStreak)
+                if (wantStreak && signedDistance - stripHalfBlocks < K("CurtainOutwardReachBlocks"))
                 {
+                    outwards++;
                     outward = new Vector2(
                         fields.Current(fieldPosition.X + 8f, fieldPosition.Z) - fields.Current(fieldPosition.X - 8f, fieldPosition.Z),
                         fields.Current(fieldPosition.X, fieldPosition.Z + 8f) - fields.Current(fieldPosition.X, fieldPosition.Z - 8f));
                     outward = outward.Length() > 0.00001f ? Vector2.Normalize(outward) : Vector2.Zero;
                 }
+                samples++;
+                if (wantStreak) streaks++;
                 FogNoise n = SampleNoise(fieldPosition, pixelBlocks, false, wantStreak, outward,
                     signedDistance, heightAboveGround);
                 Shape(signedDistance, 1f, heightAboveGround, stripHeight, wallDepth, n,
@@ -436,6 +454,11 @@ sealed class ShippedFog
             }
             rayDistance += MathF.Max(0.25f, stepBlocks);
         }
+        Interlocked.Increment(ref Rays);
+        Interlocked.Add(ref Steps, steps);
+        Interlocked.Add(ref Samples, samples);
+        Interlocked.Add(ref StreakLookups, streaks);
+        Interlocked.Add(ref OutwardLookups, outwards);
         float opacity = 1f - transmittance;
         float alpha = MathF.Min(opacity, 0.99f);
         if (alpha < 0.002f) return default;

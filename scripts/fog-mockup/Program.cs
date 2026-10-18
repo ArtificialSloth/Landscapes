@@ -198,7 +198,7 @@ void RenderCliff()
     {
         ("no fog", (c, d, e, l, x, y, p) => default),
         ("0.4.148, no curtain", (c, d, e, l, x, y, p) => without.March(c, d, e, l, x, y, p, current)),
-        ("0.4.153, curtain", (c, d, e, l, x, y, p) => with.March(c, d, e, l, x, y, p, current)),
+        ("0.4.154, curtain", (c, d, e, l, x, y, p) => with.March(c, d, e, l, x, y, p, current)),
     };
     var page = new Image(cliffColumns.Count * tileWidth + (cliffColumns.Count + 1) * gap,
         headerHeight + cliffViews.Length * (tileHeight + labelHeight + gap) + gap, fill: 28);
@@ -220,6 +220,14 @@ void RenderCliff()
             Console.WriteLine($"{cliffViews[row].Name,-30} {cliffColumns[column].Name,-22} wall {tile.SeamCount,6} px, "
                 + $"shows avg {tile.SeamMean * 100f,5:0.0}%, worst {tile.SeamWorst * 100f,5:0.0}%{tile.Where}");
         }
+    }
+    // The cost proxy over the whole sheet, per ray: what each marcher did across every view.
+    foreach ((string name, ShippedFog marcher) in new[] { ("0.4.148, no curtain", without), ("curtain", with) })
+    {
+        double rays = Math.Max(1, marcher.Rays);
+        Console.WriteLine($"cost, {name}: {marcher.Steps / rays:0.0} steps, {marcher.Samples / rays:0.0} samples, "
+            + $"{marcher.StreakLookups / rays:0.0} tendril lookups and {marcher.OutwardLookups / rays:0.0} outward "
+            + "reads per ray");
     }
     string cliffPath = Path.Combine(outDir, "fog-cliff.png");
     page.WritePng(cliffPath);

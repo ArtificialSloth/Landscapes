@@ -179,6 +179,18 @@ internal static class LodSilhouetteFogVolume
     public const float CurtainMinStepBlocks = 1f;
 
     /// <summary>
+    /// Past the band by more than this, the outward direction would shift the tendrils by under
+    /// a twentieth of a block, so its four field reads are skipped (0.4.154).
+    /// </summary>
+    public const float CurtainOutwardReachBlocks = 18f;
+
+    /// <summary>
+    /// Beside empty sky, once a ray is half hidden each march step may cross this much optical
+    /// depth instead of 0.35 (0.4.154).
+    /// </summary>
+    public const float CurtainHiddenStepDepth = 1f;
+
+    /// <summary>
     /// Below the foot each column hangs on as a tendril of its own length, a quarter to the
     /// whole of the dissolve: columns this many blocks across, their lengths drifting this much
     /// of a cell per block fallen.

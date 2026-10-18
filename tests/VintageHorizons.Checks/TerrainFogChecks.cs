@@ -180,9 +180,15 @@ public static class TerrainFogChecks
             "beside empty sky the bank rolls over the lip, its floor curving down past the band ever "
                 + "more steeply, and the dense strip ends there rather than bending into a sheet");
         c.True(shader.Contains("vec2 along = fogWorld.xz - outward * acrossTop;", StringComparison.Ordinal)
-                && shader.Contains("rayDistance * fogPixelScale * CurtainStepPixels", StringComparison.Ordinal),
+                && shader.Contains("rayDistance * fogPixelScale * CurtainStepPixels), 0.8 * coreGap));",
+                    StringComparison.Ordinal)
+                && shader.Contains("&& (residualActive || vhFogCurtainGap(field.r, curtainReach) <= 0.0);",
+                    StringComparison.Ordinal)
+                && shader.Contains("if (wantStreak && field.r - fogStripHalfBlocks < CurtainOutwardReachBlocks)",
+                    StringComparison.Ordinal),
             "the tendrils keep their place along the edge only where they travel outward, so they do "
-                + "not fan out below corners, and the march strides through the curtain a pixel deep");
+                + "not fan out below corners; the march strides a pixel deep only near the dense "
+                + "curtain, and the tendrils and outward direction are looked up only where they count");
         const float tendrilWall = 100f, tendrilBand = 20f;
         float halfway = -tendrilWall - 0.5f * LodSilhouetteFogVolume.CurtainBottomFadeBlocks;
         c.True(LodSilhouetteFogVolume.CurtainExtinctionAt(tendrilBand, halfway, tendrilBand, tendrilWall, 0.5f, drip: 1f) > 0.05f

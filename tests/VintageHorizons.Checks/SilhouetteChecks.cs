@@ -2124,6 +2124,8 @@ public static class SilhouetteChecks
             ("CurtainTopBillowBlocks", LodSilhouetteFogVolume.CurtainTopBillowBlocks),
             ("CurtainStepPixels", LodSilhouetteFogVolume.CurtainStepPixels),
             ("CurtainMinStepBlocks", LodSilhouetteFogVolume.CurtainMinStepBlocks),
+            ("CurtainOutwardReachBlocks", LodSilhouetteFogVolume.CurtainOutwardReachBlocks),
+            ("CurtainHiddenStepDepth", LodSilhouetteFogVolume.CurtainHiddenStepDepth),
             ("CurtainDripBlocks", LodSilhouetteFogVolume.CurtainDripBlocks),
             ("CurtainDripDrift", LodSilhouetteFogVolume.CurtainDripDrift),
             ("CurtainStreakLow", LodSilhouetteFogVolume.CurtainStreakLow),
@@ -2204,7 +2206,10 @@ public static class SilhouetteChecks
             "sub-pixel octaves are skipped, faint steps reuse the last lighting, and the field uploads as half floats");
         c.True(fogFragment.Contains("float farStep = max(baseStep, rayDistance * FarStepFraction);",
                     StringComparison.Ordinal)
-                && fogFragment.Contains("clamp(0.35 / previousExtinction, 0.75, farStep)",
+                && fogFragment.Contains("clamp(stepDepth / previousExtinction, 0.75, farStep)",
+                    StringComparison.Ordinal)
+                && fogFragment.Contains("? CurtainHiddenStepDepth : 0.35;", StringComparison.Ordinal)
+                && fogFragment.Contains("float stepDepth = fogCurtainActive != 0 && transmittance < 0.5",
                     StringComparison.Ordinal)
                 && fogFragment.Contains("float middle = rayDistance + stepBlocks * 0.5;",
                     StringComparison.Ordinal),

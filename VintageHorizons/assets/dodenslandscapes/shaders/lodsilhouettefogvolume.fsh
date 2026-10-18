@@ -163,11 +163,20 @@ const float CurtainTurnBlocks = 4.0;
 const float CurtainStripFadeBlocks = 6.0;
 // The curtain's top undulates by this much with its tendrils, so it is not a smooth dome.
 const float CurtainTopBillowBlocks = 3.0;
-// Within the curtain a step is at most this many half-resolution pixels deep, and never less
-// than the minimum: a longer stride lands inside the dense curtain at a jittered depth, which
-// drew it as fine dashes.
+// Near the dense curtain a step is at most this many half-resolution pixels deep, and never
+// less than the minimum: a longer stride lands inside it at a jittered depth, which drew it as
+// fine dashes. Further off a step may reach most of the way to it, but no further (0.4.154:
+// short strides through the whole thin fringe cost more than Farseer).
 const float CurtainStepPixels = 2.0;
 const float CurtainMinStepBlocks = 1.0;
+// The outward direction only moves the tendrils over the band and a little past it; beyond
+// this many blocks past the band it would shift them by under a twentieth of a block, and its
+// four field reads are skipped.
+const float CurtainOutwardReachBlocks = 18.0;
+// Beside empty sky, once a ray is half hidden each step may cross this much optical depth
+// instead of 0.35: what lies behind adds little, and inside the dense curtain the short steps
+// were most of a ray's samples.
+const float CurtainHiddenStepDepth = 1.0;
 // Below the foot each column of the curtain hangs on as a tendril of its own length, a quarter
 // to the whole of the dissolve; the columns are this many blocks across, and their lengths
 // drift as the fall goes on, this much of a cell per block fallen.
@@ -351,9 +360,11 @@ FogNoise vhFogSampleNoise(vec3 fogWorld, float pixelBlocks, bool cheap, bool str
         n.tongue = vhFogNoise(fogWorld * vec3(cellsPerBlock * 0.55, cellsPerBlock * 0.15,
             cellsPerBlock * 0.55) + vec3(5.9, 2.3, 8.1),
             vhFogNoiseLod(pixelBlocks, cellsPerBlock * 0.55)).r;
-        n.drip = smoothstep(0.25, 0.75, vhFogNoise(vec3(fogWorld.x / CurtainDripBlocks,
-            fogFallBlocks * CurtainDripDrift, fogWorld.z / CurtainDripBlocks) + vec3(2.7, 9.1, 4.4),
-            vhFogNoiseLod(pixelBlocks, 1.0 / CurtainDripBlocks)).a);
+        // Only below the wall's foot does a column's length count.
+        if (fogWorld.y < fogCurtainFloorY)
+            n.drip = smoothstep(0.25, 0.75, vhFogNoise(vec3(fogWorld.x / CurtainDripBlocks,
+                fogFallBlocks * CurtainDripDrift, fogWorld.z / CurtainDripBlocks)
+                + vec3(2.7, 9.1, 4.4), vhFogNoiseLod(pixelBlocks, 1.0 / CurtainDripBlocks)).a);
     }
     return n;
 }
@@ -654,10 +665,12 @@ void main()
         float farStep = max(baseStep, rayDistance * FarStepFraction);
         // Inside the fog each segment stays optically thin, so a dense strip cannot become a
         // stepped surface, while thin fog far away is crossed in longer strides.
+        float stepDepth = fogCurtainActive != 0 && transmittance < 0.5
+            ? CurtainHiddenStepDepth : 0.35;
         float stepBlocks = outside > 0.0
             ? clamp(outside * 0.72, baseStep, 512.0)
             : previousExtinction > 0.0
-                ? clamp(0.35 / previousExtinction, 0.75, farStep) : farStep;
+                ? clamp(stepDepth / previousExtinction, 0.75, farStep) : farStep;
         // The strip is only a few blocks deep: a ray dropping onto it from the thin bank above
         // would step clean over it. Over its band, a step may descend at most to just inside
         // its highest top, and within it only a fraction of its depth.
@@ -672,12 +685,20 @@ void main()
             float stripRoom = max(0.0, stripHeightNow - stripDepth * 1.95);
             stepBlocks = min(stepBlocks, max(0.3, (stripRoom + 0.35 * stripDepth) / descent));
         }
-        // Within the curtain's reach a stride stays near a pixel's depth, so the ray finds the
-        // dense curtain where it starts rather than somewhere inside it.
-        if (fogCurtainActive != 0 && outside <= 0.0 && curtainGap <= 0.0
-            && heightAboveGround < CurtainLipRiseBlocks + CurtainTopBillowBlocks)
-            stepBlocks = min(stepBlocks, max(CurtainMinStepBlocks,
-                rayDistance * fogPixelScale * CurtainStepPixels));
+        // Near the dense curtain a stride stays near a pixel's depth, so the ray finds it where
+        // it starts rather than somewhere inside it; further off, a stride may cover most of the
+        // way to it. The way is measured to the box the dense part can fill: its outer edge
+        // sideways, its highest top above, its tendrils' end below. A step that long cannot
+        // reach inside it, whichever way the ray runs.
+        if (fogCurtainActive != 0 && outside <= 0.0 && curtainGap <= 0.0)
+        {
+            float coreGap = max(field.r - (fogStripHalfBlocks + CurtainLipBlocks
+                    + 2.0 * CurtainWanderBlocks),
+                max(heightAboveGround - (CurtainLipRiseBlocks + 0.5 * CurtainTopBillowBlocks),
+                    -(ground - fogCurtainFloorY) - CurtainBottomFadeBlocks - heightAboveGround));
+            stepBlocks = min(stepBlocks, max(max(CurtainMinStepBlocks,
+                rayDistance * fogPixelScale * CurtainStepPixels), 0.8 * coreGap));
+        }
         stepBlocks = min(stepBlocks, marchEnd - rayDistance);
         previousExtinction = 0.0;
 
@@ -710,13 +731,16 @@ void main()
             float pixelBlocks = max(0.001, middle * fogPixelScale);
             // The tendrils are looked up only where a curtain can be: below its top, which a
             // dissolving field's ground differs from by no more than the strip's anchor reach.
+            // Nor anywhere sideways but beside the wall, where a curtain can be (0.4.154: looked
+            // up over the whole bank near the ground, they were most of the curtain's cost).
             bool wantStreak = fogCurtainActive != 0
-                && heightAboveGround < CurtainLipRiseBlocks + StripAnchorReachBlocks;
+                && heightAboveGround < CurtainLipRiseBlocks + StripAnchorReachBlocks
+                && (residualActive || vhFogCurtainGap(field.r, curtainReach) <= 0.0);
             // Out from the edge: up the field's signed distance. Central differences a texel
             // either side, so the direction turns smoothly instead of jumping at each texel of
             // the bilinear field, which would tear the tendrils along the texel lines.
             vec2 outward = vec2(0.0);
-            if (wantStreak)
+            if (wantStreak && field.r - fogStripHalfBlocks < CurtainOutwardReachBlocks)
             {
                 vec2 fieldTexel = 1.0 / vec2(fieldWidth, fieldHeight);
                 outward = vec2(
