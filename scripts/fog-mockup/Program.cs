@@ -196,7 +196,7 @@ void RenderCliff()
     {
         ("no fog", (c, d, e, l, x, y, p) => default),
         ("0.4.148, no curtain", (c, d, e, l, x, y, p) => without.March(c, d, e, l, x, y, p, current)),
-        ("0.4.149, curtain", (c, d, e, l, x, y, p) => with.March(c, d, e, l, x, y, p, current)),
+        ("0.4.150, curtain", (c, d, e, l, x, y, p) => with.March(c, d, e, l, x, y, p, current)),
     };
     var page = new Image(cliffColumns.Count * tileWidth + (cliffColumns.Count + 1) * gap,
         headerHeight + cliffViews.Length * (tileHeight + labelHeight + gap) + gap, fill: 28);
@@ -223,23 +223,78 @@ void RenderCliff()
     page.WritePng(cliffPath);
     Console.WriteLine(cliffPath);
 
-    // One second apart at drift speed one: 5 blocks of fall, 6 of drift.
+    // The game's rates at drift speed one, read from the draw so a retune reaches the mock-up.
+    string draw = File.ReadAllText(Path.Combine(repo,
+        "VintageHorizons", "src", "Render", "LodTerrainRenderer.SilhouetteFog.cs"));
+    float Rate(string name) => float.Parse(Regex.Match(draw,
+            @"internal const float SilhouetteFog" + name + @"BlocksPerSecond = ([\d.]+)f;").Groups[1].Value,
+        CultureInfo.InvariantCulture);
+    float fallRate = Rate("Fall"), driftRate = Rate("Drift");
+    ShippedFog At(float seconds) => new(shader, shipped with
+    {
+        FallBlocks = seconds * fallRate,
+        DriftBlocks = shipped.DriftBlocks + seconds * driftRate,
+    }, noise, core, stripHalf, curtain: true);
+
+    // Which way the curtain's pattern travels on screen: one Lucas-Kanade velocity over the middle
+    // of the view, from two frames a twentieth of a second apart, so it moves under a pixel and
+    // the flow map's slow cross-fade barely counts. The wall and sky behind it hold still, so
+    // any motion is the fog's own.
+    foreach (View view in new[] { cliffViews[1], cliffViews[0] })
+    {
+        const float dt = 0.05f;
+        const int w = 960, h = 540;
+        ShippedFog first = At(0f), second = At(dt);
+        Image a = Render(view, w, h, (c, d, e, l, x, y, px) => first.March(c, d, e, l, x, y, px, current), core).Picture;
+        Image b = Render(view, w, h, (c, d, e, l, x, y, px) => second.March(c, d, e, l, x, y, px, current), core).Picture;
+        float Luma(Image image, int x, int y)
+        {
+            int at = (y * w + x) * 3;
+            return 0.3f * image.Rgb[at] + 0.59f * image.Rgb[at + 1] + 0.11f * image.Rgb[at + 2];
+        }
+        float Mean(int x, int y) => 0.5f * (Luma(a, x, y) + Luma(b, x, y));
+        double xx = 0, xy = 0, yy = 0, xt = 0, yt = 0, change = 0;
+        int count = 0;
+        for (int y = h / 3; y < h * 4 / 5; y++)
+        for (int x = w / 5; x < w * 4 / 5; x++)
+        {
+            double ix = 0.5 * (Mean(x + 1, y) - Mean(x - 1, y));
+            double iy = 0.5 * (Mean(x, y + 1) - Mean(x, y - 1));
+            double it = Luma(b, x, y) - Luma(a, x, y);
+            xx += ix * ix; xy += ix * iy; yy += iy * iy; xt += ix * it; yt += iy * it;
+            change += Math.Abs(it);
+            count++;
+        }
+        double sum = 0, sumSq = 0;
+        for (int y = h / 3; y < h * 4 / 5; y++)
+        for (int x = w / 5; x < w * 4 / 5; x++)
+        {
+            double l = Luma(a, x, y);
+            sum += l;
+            sumSq += l * l;
+        }
+        double contrast = Math.Sqrt(Math.Max(0, sumSq / count - (sum / count) * (sum / count)));
+        double det = xx * yy - xy * xy;
+        double u = det > 0 ? (-yy * xt + xy * yt) / det : 0;
+        double v = det > 0 ? (xy * xt - xx * yt) / det : 0;
+        Console.WriteLine($"motion, {view.Name}: the curtain's pattern moves {u / dt:0.0} px right and "
+            + $"{v / dt:0.0} px down a second on a {w}x{h} view (pattern contrast {contrast:0.0} of 255, "
+            + $"mean change {change / count:0.00} a frame)");
+    }
+
+    // One second apart at drift speed one.
     View[] fallViews = { cliffViews[0], cliffViews[1] };
     const int frames = 5;
     int small = Math.Max(240, tileWidth / 2), smallHeight = small * 9 / 16;
     var fall = new Image(frames * small + (frames + 1) * gap,
         headerHeight + fallViews.Length * (smallHeight + 32 + gap) + gap, fill: 28);
     fall.Text(gap, 10, "the curtain's tendrils, one second apart at drift speed 1.", 3, 235);
-    fall.Text(gap, 38, "they slide down the wall at 5 blocks a second and drift with the bank.", 2, 200);
+    fall.Text(gap, 38, $"they flow over the lip and down the wall at {fallRate:0} blocks a second.", 2, 200);
     for (int row = 0; row < fallViews.Length; row++)
     {
         for (int frame = 0; frame < frames; frame++)
         {
-            var moving = new ShippedFog(shader, shipped with
-            {
-                FallBlocks = frame * 5f,
-                DriftBlocks = shipped.DriftBlocks + frame * 6f,
-            }, noise, core, stripHalf, curtain: true);
+            ShippedFog moving = At(frame);
             Tile tile = Render(fallViews[row], small, smallHeight,
                 (c, d, e, l, x, y, px) => moving.March(c, d, e, l, x, y, px, current), core);
             int ox = gap + frame * (small + gap);

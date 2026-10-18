@@ -2116,6 +2116,11 @@ public static class SilhouetteChecks
             ("CurtainBottomFadeBlocks", LodSilhouetteFogVolume.CurtainBottomFadeBlocks),
             ("CurtainInnerFadeBlocks", LodSilhouetteFogVolume.CurtainInnerFadeBlocks),
             ("CurtainStreakStretch", LodSilhouetteFogVolume.CurtainStreakStretch),
+            ("CurtainFlowCycleBlocks", LodSilhouetteFogVolume.CurtainFlowCycleBlocks),
+            ("CurtainFlowTurnBlocks", LodSilhouetteFogVolume.CurtainFlowTurnBlocks),
+            ("CurtainStreakLow", LodSilhouetteFogVolume.CurtainStreakLow),
+            ("CurtainStreakHigh", LodSilhouetteFogVolume.CurtainStreakHigh),
+            ("CurtainGapShade", LodSilhouetteFogVolume.CurtainGapShade),
             ("NoisePeriod", (float)LodSilhouetteFogNoise.PeriodCells),
             ("NoiseTexelsPerCell", (float)LodSilhouetteFogNoise.TexelsPerCell),
         })

@@ -164,8 +164,29 @@ internal static class LodSilhouetteFogVolume
     /// <summary>Inside the cached terrain it ends this far past the band, in the rock.</summary>
     public const float CurtainInnerFadeBlocks = 4f;
 
-    /// <summary>Its tendrils are this many times taller than they are wide.</summary>
-    public const float CurtainStreakStretch = 4f;
+    /// <summary>
+    /// Its tendrils are this many times taller than wide. Much taller and they hide their own
+    /// motion: a streak sliding down its length barely changes (0.4.150).
+    /// </summary>
+    public const float CurtainStreakStretch = 3f;
+
+    /// <summary>
+    /// The tendrils flow as two copies, each travelling this far before it fades out and starts
+    /// again while the other is at its strongest (a flow map).
+    /// </summary>
+    public const float CurtainFlowCycleBlocks = 24f;
+
+    /// <summary>Over the lip they flow outward; this far below it they fall straight down.</summary>
+    public const float CurtainFlowTurnBlocks = 10f;
+
+    /// <summary>
+    /// The tendrils' remap, tighter than the body's so wisps and gaps are distinct enough for
+    /// their flow to show on a curtain too dense to see through; and how much the gaps are
+    /// shaded, as optical depth toward the sun.
+    /// </summary>
+    public const float CurtainStreakLow = 0.3f;
+    public const float CurtainStreakHigh = 0.7f;
+    public const float CurtainGapShade = 1.5f;
 
     /// <summary>
     /// Mean optical depth of a level crossing through the bank's ground layer, square to the

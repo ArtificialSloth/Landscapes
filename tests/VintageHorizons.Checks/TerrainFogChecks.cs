@@ -150,9 +150,19 @@ public static class TerrainFogChecks
                 && draw.Contains("+ seconds * SilhouetteFogFallBlocksPerSecond)", StringComparison.Ordinal)
                 && draw.Contains("p.Uniform(\"fogFallBlocks\", silhouetteFogFallBlocks);",
                     StringComparison.Ordinal)
-                && shader.Contains("(world.y + fogFallBlocks) / CurtainStreakStretch",
+                && shader.Contains("float cycle = fogFallBlocks / CurtainFlowCycleBlocks;",
                     StringComparison.Ordinal),
-            "the tendrils fall by an integrated distance the drift dial scales, so drift 0 holds them");
+            "the tendrils flow by an integrated distance the drift dial scales, so drift 0 holds them");
+        // 0.4.149's tendrils rode the wind as well as falling, and were stretched four times
+        // along their fall: on screen they moved only sideways (owner, 2026-10-18).
+        c.True(shader.Contains("float a = vhFogStreakNoise(fogWorld - flow * (phaseA * CurtainFlowCycleBlocks)",
+                    StringComparison.Ordinal)
+                && !shader.Contains("vec3 s = vec3(world.x", StringComparison.Ordinal)
+                && shader.Contains("float tongue = n.tongue * 2.0 * CurtainWanderBlocks;",
+                    StringComparison.Ordinal)
+                && LodSilhouetteFogVolume.CurtainStreakStretch <= 3f,
+            "the curtain's tendrils and outline are anchored to the world, not the wind, and flow "
+                + "out over the lip and down, stretched little enough along the flow to show it");
         c.True(shader.Contains("float extinction = bank + strip + curtain;", StringComparison.Ordinal)
                 && shader.Contains("curtain = max(curtain, oldCurtain);", StringComparison.Ordinal)
                 && shader.Contains("-vhFogFloorBelow(curtainGap, ground, bankFloor)",

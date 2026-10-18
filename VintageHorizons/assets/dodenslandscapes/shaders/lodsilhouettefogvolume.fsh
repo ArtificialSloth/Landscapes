@@ -22,7 +22,8 @@
 //
 // Without Farseer (0.4.149) nothing lies beyond the edge, and the cached terrain's wall drops
 // from the lip to the foot of its columns in open sky. A curtain hangs over that wall: mist
-// pouring over the lip and down the whole face, its long tendrils sliding downward.
+// pouring over the lip and down the whole face. Its tendrils flow along that path - out over the
+// lip, then down - and take no part in the wind, which would carry them sideways (0.4.150).
 
 uniform sampler2D sceneDepth;
 uniform sampler2D fogField;
@@ -82,7 +83,7 @@ uniform int fogResidualActive;
 uniform int fogCurtainActive;
 // Where the wall ends: the foot of the cached columns.
 uniform float fogCurtainFloorY;
-// Distance the curtain's tendrils have already fallen, in blocks, integrated on the CPU.
+// Distance the curtain's tendrils have already flowed, in blocks, integrated on the CPU.
 uniform float fogFallBlocks;
 
 layout(location = 0) out vec4 outFog;
@@ -139,8 +140,21 @@ const float CurtainLipRiseBlocks = 4.0;
 const float CurtainBottomFadeBlocks = 16.0;
 // Inside the cached terrain it ends this far past the band: there it is in the rock.
 const float CurtainInnerFadeBlocks = 4.0;
-// The tendrils are this many times taller than they are wide.
-const float CurtainStreakStretch = 4.0;
+// The tendrils are this many times taller than they are wide. A streak much longer than this
+// hides its own motion: sliding down its length, it barely changes.
+const float CurtainStreakStretch = 3.0;
+// Each of the two flowing copies of the tendrils travels this far before it fades out and
+// starts again, while the other is at its strongest.
+const float CurtainFlowCycleBlocks = 24.0;
+// Over the lip the flow runs outward; it has turned straight down this far below it.
+const float CurtainFlowTurnBlocks = 10.0;
+// The tendrils' remap: tighter than the body's, so wisps and gaps are distinct enough for
+// their flow to show on a curtain too dense to see through.
+const float CurtainStreakLow = 0.3;
+const float CurtainStreakHigh = 0.7;
+// The gaps between wisps are shaded by this much optical depth toward the sun, as denser
+// mist around them would shade them.
+const float CurtainGapShade = 1.5;
 
 // Every noise lookup at one point. They depend on the position only, so the current field and
 // a dissolving one share them.
@@ -152,8 +166,11 @@ struct FogNoise
     float thread;
     float detailWeight;
     float baseLod;
-    // The curtain's falling tendrils, remapped like the body; 0.5 where none was looked up.
+    // The curtain's flowing tendrils, remapped like the body; 0.5 where none was looked up.
     float streak;
+    // How far the curtain's tongues reach out, in [0, 1]: anchored to the world where the
+    // tendrils were looked up, so its outline holds still; the drifting broad noise elsewhere.
+    float tongue;
 };
 
 float vhFogHash(vec3 p)
@@ -219,9 +236,20 @@ float vhFogPhase(float cosine, float g)
     return (1.0 - g2) / pow(1.0 + g2 - 2.0 * g * cosine, 1.5);
 }
 
+// The curtain's tendrils at a world point, stretched upright: two octaves, before the remap.
+// The stretch keeps a fixed axis; along a turning flow it would swing with the whole world
+// coordinate and smear the lip.
+float vhFogStreakNoise(vec3 p, float streakBlocks, float lod)
+{
+    vec3 q = vec3(p.x, p.y / CurtainStreakStretch, p.z) / streakBlocks;
+    float fine = lod + 1.0 < NoiseFlatLod
+        ? vhFogNoise(q * 2.07 + vec3(13.3, 6.1, 2.9), lod + 1.0).b : 0.5;
+    return 0.65 * vhFogNoise(q + vec3(7.1, 3.3, 1.9), lod).g + 0.35 * fine;
+}
+
 // `cheap` is the sun probe's cut-down form: one octave and no threads. `streak` looks up the
-// curtain's tendrils, only where a curtain can be.
-FogNoise vhFogSampleNoise(vec3 fogWorld, float pixelBlocks, bool cheap, bool streak)
+// curtain's tendrils, only where a curtain can be, flowing along the unit vector `flow`.
+FogNoise vhFogSampleNoise(vec3 fogWorld, float pixelBlocks, bool cheap, bool streak, vec3 flow)
 {
     float billowBlocks = max(1.0, fogBillowSizeBlocks);
     float cellsPerBlock = 1.0 / billowBlocks;
@@ -257,18 +285,31 @@ FogNoise vhFogSampleNoise(vec3 fogWorld, float pixelBlocks, bool cheap, bool str
     }
 
     n.streak = 0.5;
+    n.tongue = n.broad.r;
     if (streak)
     {
-        // Tall, narrow tendrils that drift with the billows. The lookup climbs as the fall
-        // grows, so the pattern slides down the wall.
+        // A flow map: two copies of the tendrils, anchored to the world rather than the wind,
+        // each sliding along the flow for one cycle and starting again half a cycle apart. Each
+        // weighs nothing at its own restart, so the jump never shows, and their blend is
+        // rescaled so it keeps one copy's contrast.
         float streakBlocks = max(4.0, billowBlocks * 0.6);
-        vec3 s = vec3(world.x, (world.y + fogFallBlocks) / CurtainStreakStretch, world.z)
-            / streakBlocks;
         float streakLod = vhFogNoiseLod(pixelBlocks, 1.0 / streakBlocks);
-        float fine = streakLod + 1.0 < NoiseFlatLod
-            ? vhFogNoise(s * 2.07 + vec3(13.3, 6.1, 2.9), streakLod + 1.0).b : 0.5;
-        n.streak = smoothstep(0.2, 0.8,
-            0.65 * vhFogNoise(s + vec3(7.1, 3.3, 1.9), streakLod).g + 0.35 * fine);
+        float cycle = fogFallBlocks / CurtainFlowCycleBlocks;
+        float phaseA = fract(cycle);
+        float phaseB = fract(cycle + 0.5);
+        float a = vhFogStreakNoise(fogWorld - flow * (phaseA * CurtainFlowCycleBlocks),
+            streakBlocks, streakLod);
+        float b = vhFogStreakNoise(fogWorld - flow * (phaseB * CurtainFlowCycleBlocks)
+            + vec3(31.7, 11.3, 23.9), streakBlocks, streakLod);
+        float weightA = 1.0 - abs(2.0 * phaseA - 1.0);
+        float weightB = 1.0 - weightA;
+        float blended = 0.5 + (weightA * (a - 0.5) + weightB * (b - 0.5))
+            * inversesqrt(max(0.0001, weightA * weightA + weightB * weightB));
+        n.streak = smoothstep(CurtainStreakLow, CurtainStreakHigh, blended);
+        float cellsPerBlock = 1.0 / billowBlocks;
+        n.tongue = vhFogNoise(fogWorld * vec3(cellsPerBlock * 0.55, cellsPerBlock * 0.15,
+            cellsPerBlock * 0.55) + vec3(5.9, 2.3, 8.1),
+            vhFogNoiseLod(pixelBlocks, cellsPerBlock * 0.55)).r;
     }
     return n;
 }
@@ -367,7 +408,7 @@ void vhFogShape(vec4 field, float weight, float height, float stripHeight, float
     if (fogCurtainActive != 0 && height < CurtainLipRiseBlocks)
     {
         float lip = CurtainLipBlocks * exp(-max(0.0, -height) / CurtainLipDepthBlocks);
-        float tongue = n.broad.r * 2.0 * CurtainWanderBlocks;
+        float tongue = n.tongue * 2.0 * CurtainWanderBlocks;
         float curtainRim = max(0.0, signedDistance - fogStripHalfBlocks - lip - tongue);
         float lateral = exp(-curtainRim / CurtainFalloffBlocks)
             * mix(1.0, n.streak, smoothstep(0.0, CurtainFalloffBlocks, curtainRim))
@@ -595,8 +636,25 @@ void main()
             // dissolving field's ground differs from by no more than the strip's anchor reach.
             bool wantStreak = fogCurtainActive != 0
                 && heightAboveGround < CurtainLipRiseBlocks + StripAnchorReachBlocks;
+            // The curtain's flow: out from the edge where it pours over the lip, curling down
+            // until, a little below the lip, it falls straight down the wall. Outward is up the
+            // field's signed distance.
+            vec3 flow = vec3(0.0, -1.0, 0.0);
+            if (wantStreak)
+            {
+                vec2 fieldTexel = 1.0 / vec2(fieldWidth, fieldHeight);
+                vec2 outward = vec2(
+                    texture(fogField, middleUv + vec2(fieldTexel.x, 0.0)).r - field.r,
+                    texture(fogField, middleUv + vec2(0.0, fieldTexel.y)).r - field.r);
+                float outwardLength = length(outward);
+                outward = outwardLength > 0.00001 ? outward / outwardLength : vec2(0.0);
+                float over = 1.0 - smoothstep(-CurtainFlowTurnBlocks, CurtainLipRiseBlocks,
+                    heightAboveGround);
+                flow = normalize(vec3(outward.x * (1.0 - over), -max(over, 0.2),
+                    outward.y * (1.0 - over)));
+            }
             FogNoise pointNoise = vhFogSampleNoise(fogWorldPosition, pixelBlocks, false,
-                wantStreak);
+                wantStreak, flow);
             float bank;
             float strip;
             float stripAbove;
@@ -649,7 +707,7 @@ void main()
                     // beside empty sky, the strip is no longer lying on ground under a bank: it
                     // is lit as the curtain is, or it draws a dark band under the lip.
                     float sunk = fogCurtainActive != 0
-                        ? smoothstep(0.0, -4.0, heightAboveGround) : 0.0;
+                        ? 1.0 - smoothstep(-4.0, 0.0, heightAboveGround) : 0.0;
                     float stripShade = stripAbove * 0.5 / sunHeight * (1.0 - sunk);
                     float towardSun = bank * max(1.0, ScaleHeightFraction * top) / sunHeight
                         + stripShade;
@@ -661,7 +719,7 @@ void main()
                         vec4 probeField = texture(fogField, probeUv);
                         FogNoise probeNoise = vhFogSampleNoise(
                             fogWorldPosition + sunDirection * SunProbeBlocks, pixelBlocks, true,
-                            false);
+                            false, vec3(0.0, -1.0, 0.0));
                         float probeGround = probeField.g - globeDrop;
                         float probeHeight = probePosition.y - probeGround;
                         float probeBank;
@@ -698,7 +756,8 @@ void main()
                                 * smoothstep(0.0, 4.0, -probeHeight) : 0.0;
                         towardSun = (bank * 0.35 + probeBank
                                 + probeStrip * mix(1.0, 0.15, curtainShare) + 0.15 * probeCurtain)
-                            * SunProbeBlocks * 1.6 + stripShade + 4.0 * rock;
+                            * SunProbeBlocks * 1.6 + stripShade + 4.0 * rock
+                            + CurtainGapShade * (curtain / extinction) * (1.0 - pointNoise.streak);
                     }
                     // Beer's law plus a softer lobe standing in for light scattered many times.
                     float direct = (exp(-towardSun) + 0.6 * exp(-towardSun * 0.25)) / 1.6;
@@ -710,7 +769,7 @@ void main()
                         * (0.8 + 0.4 * pointNoise.body);
                     // The curtain hangs in open sky. Its tendrils catch more of it than the
                     // gaps between them, so even where it is whole the fall shows.
-                    float curtainLift = mix(0.3, 0.9, pointNoise.streak);
+                    float curtainLift = mix(0.05, 1.0, pointNoise.streak);
                     float stripLift = mix(mix(0.25, 0.75, clamp((stripRise - 0.64) / 0.8, 0.0, 1.0)),
                         curtainLift, sunk);
                     float lift = (bank * bankLift + strip * stripLift + curtain * curtainLift)

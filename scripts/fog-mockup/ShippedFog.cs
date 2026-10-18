@@ -84,11 +84,20 @@ sealed class ShippedFog
     struct FogNoise
     {
         public Vector4 Broad;
-        public float Body, Thread, DetailWeight, BaseLod, Streak;
+        public float Body, Thread, DetailWeight, BaseLod, Streak, Tongue;
     }
 
     /// <summary>vhFogSampleNoise.</summary>
-    FogNoise SampleNoise(Vector3 fogWorld, float pixelBlocks, bool cheap, bool streak = false)
+    float StreakNoise(Vector3 p, float streakBlocks, float lod)
+    {
+        var q = new Vector3(p.X, p.Y / K("CurtainStreakStretch"), p.Z) / streakBlocks;
+        float fine = lod + 1f < K("NoiseFlatLod")
+            ? Noise(q * 2.07f + new Vector3(13.3f, 6.1f, 2.9f), lod + 1f).Z : 0.5f;
+        return 0.65f * Noise(q + new Vector3(7.1f, 3.3f, 1.9f), lod).Y + 0.35f * fine;
+    }
+
+    FogNoise SampleNoise(Vector3 fogWorld, float pixelBlocks, bool cheap, bool streak = false,
+        Vector3 flow = default)
     {
         float billowBlocks = MathF.Max(1f, d.Billow);
         float cellsPerBlock = 1f / billowBlocks;
@@ -116,16 +125,26 @@ sealed class ShippedFog
                     detailLod).W;
         }
         n.Streak = 0.5f;
+        n.Tongue = n.Broad.X;
         if (streak)
         {
             float streakBlocks = MathF.Max(4f, billowBlocks * 0.6f);
-            var s = new Vector3(world.X, (world.Y + d.FallBlocks) / K("CurtainStreakStretch"), world.Z)
-                / streakBlocks;
             float streakLod = NoiseLod(pixelBlocks, 1f / streakBlocks);
-            float fine = streakLod + 1f < K("NoiseFlatLod")
-                ? Noise(s * 2.07f + new Vector3(13.3f, 6.1f, 2.9f), streakLod + 1f).Z : 0.5f;
-            n.Streak = SmoothStep(0.2f, 0.8f,
-                0.65f * Noise(s + new Vector3(7.1f, 3.3f, 1.9f), streakLod).Y + 0.35f * fine);
+            float cycleBlocks = K("CurtainFlowCycleBlocks");
+            float cycle = d.FallBlocks / cycleBlocks;
+            float phaseA = cycle - MathF.Floor(cycle);
+            float phaseB = (cycle + 0.5f) - MathF.Floor(cycle + 0.5f);
+            float a = StreakNoise(fogWorld - flow * (phaseA * cycleBlocks), streakBlocks, streakLod);
+            float b = StreakNoise(fogWorld - flow * (phaseB * cycleBlocks) + new Vector3(31.7f, 11.3f, 23.9f),
+                streakBlocks, streakLod);
+            float weightA = 1f - MathF.Abs(2f * phaseA - 1f);
+            float weightB = 1f - weightA;
+            float blended = 0.5f + (weightA * (a - 0.5f) + weightB * (b - 0.5f))
+                / MathF.Sqrt(MathF.Max(0.0001f, weightA * weightA + weightB * weightB));
+            n.Streak = SmoothStep(K("CurtainStreakLow"), K("CurtainStreakHigh"), blended);
+            n.Tongue = Noise(fogWorld * new Vector3(cellsPerBlock * 0.55f, cellsPerBlock * 0.15f,
+                cellsPerBlock * 0.55f) + new Vector3(5.9f, 2.3f, 8.1f),
+                NoiseLod(pixelBlocks, cellsPerBlock * 0.55f)).X;
         }
         return n;
     }
@@ -192,7 +211,7 @@ sealed class ShippedFog
         {
             float cf = K("CurtainFalloffBlocks");
             float lip = K("CurtainLipBlocks") * MathF.Exp(-MathF.Max(0f, -height) / K("CurtainLipDepthBlocks"));
-            float tongue = n.Broad.X * 2f * K("CurtainWanderBlocks");
+            float tongue = n.Tongue * 2f * K("CurtainWanderBlocks");
             float curtainRim = MathF.Max(0f, signedDistance - stripHalfBlocks - lip - tongue);
             float lateral = MathF.Exp(-curtainRim / cf)
                 * Mix(1f, n.Streak, SmoothStep(0f, cf, curtainRim))
@@ -321,7 +340,17 @@ sealed class ShippedFog
                 float pixelBlocks = MathF.Max(0.001f, middle * pixelScale);
                 bool wantStreak = curtain
                     && heightAboveGround < K("CurtainLipRiseBlocks") + K("StripAnchorReachBlocks");
-                FogNoise n = SampleNoise(fieldPosition, pixelBlocks, false, wantStreak);
+                Vector3 flow = -Vector3.UnitY;
+                if (wantStreak)
+                {
+                    var outward = new Vector2(fields.Current(fieldPosition.X + 1f, fieldPosition.Z) - signedDistance,
+                        fields.Current(fieldPosition.X, fieldPosition.Z + 1f) - signedDistance);
+                    outward = outward.Length() > 0.00001f ? Vector2.Normalize(outward) : Vector2.Zero;
+                    float over = 1f - SmoothStep(-K("CurtainFlowTurnBlocks"), K("CurtainLipRiseBlocks"), heightAboveGround);
+                    flow = Vector3.Normalize(new Vector3(outward.X * (1f - over), -MathF.Max(over, 0.2f),
+                        outward.Y * (1f - over)));
+                }
+                FogNoise n = SampleNoise(fieldPosition, pixelBlocks, false, wantStreak, flow);
                 Shape(signedDistance, 1f, heightAboveGround, stripHeight, wallDepth, n,
                     out float bank, out float strip, out float stripAbove, out float top,
                     out float curtainHere);
@@ -345,7 +374,7 @@ sealed class ShippedFog
                     transmittance *= 1f - segmentAlpha;
                     if (contribution >= 0.0005f)
                     {
-                        float sunk = curtain ? SmoothStep(0f, -4f, heightAboveGround) : 0f;
+                        float sunk = curtain ? 1f - SmoothStep(-4f, 0f, heightAboveGround) : 0f;
                         float stripShade = stripAbove * 0.5f / sunHeight * (1f - sunk);
                         float sunProbe = K("SunProbeBlocks");
                         Vector3 probe = fieldPosition + sunDirection * sunProbe;
@@ -368,11 +397,12 @@ sealed class ShippedFog
                         float curtainShare = MathF.Max(curtainHere / extinction, sunk);
                         float towardSun = (bank * 0.35f + probeBank
                                 + probeStrip * Mix(1f, 0.15f, curtainShare) + 0.15f * probeCurtain)
-                            * sunProbe * 1.6f + stripShade + 4f * rock;
+                            * sunProbe * 1.6f + stripShade + 4f * rock
+                            + K("CurtainGapShade") * (curtainHere / extinction) * (1f - n.Streak);
                         float direct = (MathF.Exp(-towardSun) + 0.6f * MathF.Exp(-towardSun * 0.25f)) / 1.6f;
                         float bankLift = Clamp01(MathF.Max(0f, heightAboveGround) / MathF.Max(1f, top));
                         float stripRise = (0.8f + 0.4f * n.Broad.W) * (0.8f + 0.4f * n.Body);
-                        float curtainLift = Mix(0.3f, 0.9f, n.Streak);
+                        float curtainLift = Mix(0.05f, 1f, n.Streak);
                         float stripLift = Mix(Mix(0.25f, 0.75f, Clamp01((stripRise - 0.64f) / 0.8f)),
                             curtainLift, sunk);
                         float lift = (bank * bankLift + strip * stripLift + curtainHere * curtainLift)

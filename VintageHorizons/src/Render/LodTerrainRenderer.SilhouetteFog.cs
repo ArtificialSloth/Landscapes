@@ -34,10 +34,11 @@ public partial class LodTerrainRenderer
     internal const float SilhouetteFogDriftWrapBlocks = 1 << 20;
 
     /// <summary>
-    /// How fast the curtain's tendrils slide down the wall at drift speed one (0.4.149), in
-    /// blocks per second. The drift dial sets both, so drift 0 still holds the fog still.
+    /// How fast the curtain's tendrils flow over the lip and down the wall at drift speed one
+    /// (0.4.149; 8 since 0.4.150, when 5 read as standing still), in blocks per second. The
+    /// drift dial sets both, so drift 0 still holds the fog still.
     /// </summary>
-    internal const float SilhouetteFogFallBlocksPerSecond = 5f;
+    internal const float SilhouetteFogFallBlocksPerSecond = 8f;
     BeforeStageRenderer? silhouetteFogStageRenderer;
     IShaderProgram? silhouetteFogVolumeProg;
     IShaderProgram? silhouetteFogUpsampleProg;
