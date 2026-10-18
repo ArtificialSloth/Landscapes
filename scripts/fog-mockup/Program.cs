@@ -189,6 +189,7 @@ void RenderCliff()
         new View("along the edge", new Vector3(-700f, g + 30f, Scene.CentreZ(-700f) + 140f), 90f, -14f, 55f),
         new View("from the ground, looking out", new Vector3(0f, g + 12f, edge - 140f), 0f, -12f, 60f),
         new View("straight down over the lip", new Vector3(0f, g + 240f, edge + 40f), 0f, -89.5f, 60f),
+        new View("the lip side-on", new Vector3(-260f, g + 6f, Scene.CentreZ(-260f) + 70f), 105f, -6f, 45f),
     };
     var without = new ShippedFog(shader, shipped, noise, core, stripHalf);
     var with = new ShippedFog(shader, shipped, noise, core, stripHalf, curtain: true);
@@ -196,7 +197,7 @@ void RenderCliff()
     {
         ("no fog", (c, d, e, l, x, y, p) => default),
         ("0.4.148, no curtain", (c, d, e, l, x, y, p) => without.March(c, d, e, l, x, y, p, current)),
-        ("0.4.150, curtain", (c, d, e, l, x, y, p) => with.March(c, d, e, l, x, y, p, current)),
+        ("0.4.151, curtain", (c, d, e, l, x, y, p) => with.March(c, d, e, l, x, y, p, current)),
     };
     var page = new Image(cliffColumns.Count * tileWidth + (cliffColumns.Count + 1) * gap,
         headerHeight + cliffViews.Length * (tileHeight + labelHeight + gap) + gap, fill: 28);
@@ -280,6 +281,33 @@ void RenderCliff()
         Console.WriteLine($"motion, {view.Name}: the curtain's pattern moves {u / dt:0.0} px right and "
             + $"{v / dt:0.0} px down a second on a {w}x{h} view (pattern contrast {contrast:0.0} of 255, "
             + $"mean change {change / count:0.00} a frame)");
+    }
+
+    // Pulsing: the curtain's contrast over three seconds, a quarter second apart. A pattern that
+    // only scrolls keeps its contrast; cross-faded copies dip at every hand-over.
+    {
+        const int w = 480, h = 270;
+        var contrasts = new List<double>();
+        for (int step = 0; step <= 12; step++)
+        {
+            ShippedFog frame = At(step * 0.25f);
+            Image image = Render(cliffViews[1], w, h,
+                (c, d, e, l, x, y, px) => frame.March(c, d, e, l, x, y, px, current), core).Picture;
+            double sum = 0, sumSq = 0;
+            int count = 0;
+            for (int y = h / 3; y < h * 4 / 5; y++)
+            for (int x = w / 5; x < w * 4 / 5; x++)
+            {
+                int at = (y * w + x) * 3;
+                double l = 0.3 * image.Rgb[at] + 0.59 * image.Rgb[at + 1] + 0.11 * image.Rgb[at + 2];
+                sum += l;
+                sumSq += l * l;
+                count++;
+            }
+            contrasts.Add(Math.Sqrt(Math.Max(0, sumSq / count - (sum / count) * (sum / count))));
+        }
+        Console.WriteLine($"pulsing, {cliffViews[1].Name}: contrast {contrasts.Min():0.0} to {contrasts.Max():0.0} "
+            + $"of 255 over 3 s ({(contrasts.Max() - contrasts.Min()) / contrasts.Average() * 100:0}% swing)");
     }
 
     // One second apart at drift speed one.

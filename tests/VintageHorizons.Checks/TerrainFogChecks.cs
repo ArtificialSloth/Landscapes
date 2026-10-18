@@ -150,19 +150,32 @@ public static class TerrainFogChecks
                 && draw.Contains("+ seconds * SilhouetteFogFallBlocksPerSecond)", StringComparison.Ordinal)
                 && draw.Contains("p.Uniform(\"fogFallBlocks\", silhouetteFogFallBlocks);",
                     StringComparison.Ordinal)
-                && shader.Contains("float cycle = fogFallBlocks / CurtainFlowCycleBlocks;",
+                && shader.Contains("(path - fogFallBlocks) / CurtainStreakStretch",
                     StringComparison.Ordinal),
             "the tendrils flow by an integrated distance the drift dial scales, so drift 0 holds them");
         // 0.4.149's tendrils rode the wind as well as falling, and were stretched four times
-        // along their fall: on screen they moved only sideways (owner, 2026-10-18).
-        c.True(shader.Contains("float a = vhFogStreakNoise(fogWorld - flow * (phaseA * CurtainFlowCycleBlocks)",
+        // along their fall: on screen they moved only sideways. 0.4.150's two cross-faded copies
+        // pulsed, tore in a line where the flow turned, and crossed the top as fast as they fell
+        // (owner, 2026-10-18).
+        c.True(shader.Contains("vec2 along = fogWorld.xz - outward * signedDistance;",
                     StringComparison.Ordinal)
+                && shader.Contains("float path = CurtainTopSlowdown * acrossTop - height;",
+                    StringComparison.Ordinal)
+                && !shader.Contains("phaseA", StringComparison.Ordinal)
                 && !shader.Contains("vec3 s = vec3(world.x", StringComparison.Ordinal)
                 && shader.Contains("float tongue = n.tongue * 2.0 * CurtainWanderBlocks;",
                     StringComparison.Ordinal)
-                && LodSilhouetteFogVolume.CurtainStreakStretch <= 3f,
-            "the curtain's tendrils and outline are anchored to the world, not the wind, and flow "
-                + "out over the lip and down, stretched little enough along the flow to show it");
+                && LodSilhouetteFogVolume.CurtainStreakStretch <= 3f
+                && LodSilhouetteFogVolume.CurtainTopSlowdown > 1f,
+            "the curtain's tendrils and outline are anchored to the world, not the wind; they scroll "
+                + "without restarting along the edge's own path, slower across the top than down");
+        c.True(LodSilhouetteFogVolume.SpillDroop(20f, 20f) == 0f
+                && LodSilhouetteFogVolume.SpillDroop(32f, 20f) > 5f
+                && LodSilhouetteFogVolume.SpillDroop(44f, 20f) > 4f * LodSilhouetteFogVolume.SpillDroop(32f, 20f) - 0.01f
+                && shader.Contains("height += droop;", StringComparison.Ordinal)
+                && shader.Contains("stripHeight += droop;", StringComparison.Ordinal),
+            "beside empty sky the fog rolls over the lip: its floor curves down past the band, "
+                + "ever more steeply, instead of standing out level as a shelf");
         c.True(shader.Contains("float extinction = bank + strip + curtain;", StringComparison.Ordinal)
                 && shader.Contains("curtain = max(curtain, oldCurtain);", StringComparison.Ordinal)
                 && shader.Contains("-vhFogFloorBelow(curtainGap, ground, bankFloor)",

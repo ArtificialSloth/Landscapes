@@ -165,19 +165,32 @@ internal static class LodSilhouetteFogVolume
     public const float CurtainInnerFadeBlocks = 4f;
 
     /// <summary>
-    /// Its tendrils are this many times taller than wide. Much taller and they hide their own
-    /// motion: a streak sliding down its length barely changes (0.4.150).
+    /// Its tendrils are this many times longer along their path than wide. Much longer and they
+    /// hide their own motion: a streak sliding along its length barely changes (0.4.150).
     /// </summary>
     public const float CurtainStreakStretch = 3f;
 
     /// <summary>
-    /// The tendrils flow as two copies, each travelling this far before it fades out and starts
-    /// again while the other is at its strongest (a flow map).
+    /// Across the top the tendrils travel outward this many times slower than they fall
+    /// (0.4.151; 0.4.150's were as fast and read as too quick).
     /// </summary>
-    public const float CurtainFlowCycleBlocks = 24f;
+    public const float CurtainTopSlowdown = 3f;
 
-    /// <summary>Over the lip they flow outward; this far below it they fall straight down.</summary>
-    public const float CurtainFlowTurnBlocks = 10f;
+    /// <summary>
+    /// Beside empty sky the fog's floor curves down past the band as a parabola of this radius,
+    /// so the strip and bank roll over the lip instead of standing out as a shelf (0.4.151).
+    /// </summary>
+    public const float CurtainSpillRadiusBlocks = 12f;
+
+    /// <summary>The tendrils' path turns from outward to down over about this many blocks.</summary>
+    public const float CurtainTurnBlocks = 4f;
+
+    /// <summary>How far the fog's floor has curved down at a signed distance, beside empty sky.</summary>
+    internal static float SpillDroop(float signedDistance, float stripHalfBlocks)
+    {
+        float outward = MathF.Max(0f, signedDistance - stripHalfBlocks);
+        return outward * outward / (2f * CurtainSpillRadiusBlocks);
+    }
 
     /// <summary>
     /// The tendrils' remap, tighter than the body's so wisps and gaps are distinct enough for
@@ -1097,14 +1110,15 @@ internal static class LodSilhouetteFogVolume
         float stripHalfBlocks, float wallDepthBlocks, float streak, float tongueBlocks = 0f,
         float weight = 1f)
     {
-        if (heightAboveGround >= CurtainLipRiseBlocks) return 0f;
+        float dropped = heightAboveGround + SpillDroop(signedDistance, stripHalfBlocks);
+        if (dropped >= CurtainLipRiseBlocks) return 0f;
         float lip = CurtainLipBlocks * MathF.Exp(-MathF.Max(0f, -heightAboveGround) / CurtainLipDepthBlocks);
         float rim = MathF.Max(0f, signedDistance - stripHalfBlocks - lip - MathF.Max(0f, tongueBlocks));
         float lateral = MathF.Exp(-rim / CurtainFalloffBlocks)
             * Lerp(1f, streak, SmoothStep(0f, CurtainFalloffBlocks, rim))
             * (1f - SmoothStep(2f * CurtainFalloffBlocks, 3.5f * CurtainFalloffBlocks, rim))
             * SmoothStep(-stripHalfBlocks - CurtainInnerFadeBlocks, -stripHalfBlocks, signedDistance);
-        float vertical = (1f - SmoothStep(0f, CurtainLipRiseBlocks, heightAboveGround))
+        float vertical = (1f - SmoothStep(0f, CurtainLipRiseBlocks, dropped))
             * SmoothStep(-wallDepthBlocks - CurtainBottomFadeBlocks, -wallDepthBlocks, heightAboveGround);
         float w = Math.Clamp(weight, 0f, 1f);
         return CurtainExtinction * lateral * vertical * (0.75f + 0.5f * streak) * w * w;
