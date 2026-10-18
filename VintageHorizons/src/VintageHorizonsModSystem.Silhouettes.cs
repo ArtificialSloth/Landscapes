@@ -139,7 +139,10 @@ public partial class VintageHorizonsModSystem
             + $"; game fog colour {capi.Ambient.BlendedFogColor.R:0.00},"
             + $"{capi.Ambient.BlendedFogColor.G:0.00},{capi.Ambient.BlendedFogColor.B:0.00} "
             + $"(fog brightness {capi.Ambient.BlendedFogBrightness:0.00}, "
-            + $"scene brightness {capi.Ambient.BlendedSceneBrightness:0.00}); fog colour sources: "
+            + $"scene brightness {capi.Ambient.BlendedSceneBrightness:0.00}); seam fog drawn in "
+            + $"{renderer.SilhouetteFogColour.R:0.00},{renderer.SilhouetteFogColour.G:0.00},"
+            + $"{renderer.SilhouetteFogColour.B:0.00} (local weather and cave darkening at "
+            + $"{LodSteadyFogColour.LocalShare * 100f:0}%); fog colour sources: "
             + DescribeFogColourSources();
 
     /// <summary>

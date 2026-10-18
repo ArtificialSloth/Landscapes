@@ -15,6 +15,7 @@ public static class TerrainFogChecks
         TheDiscIsCellCentres(c);
         WiringFollowsTheTerrain(c);
         CurtainHangsDownTheWall(c);
+        FogColourIsSteady(c);
     }
 
     static void EdgesFormOnlyBetweenAvailableCells(Check c)
@@ -186,5 +187,61 @@ public static class TerrainFogChecks
                     StringComparison.Ordinal),
             "the march reaches down to the wall's foot beside the wall and never skips sideways "
                 + "into the curtain; a dissolving field keeps its curtain while it fades");
+    }
+
+    /// <summary>
+    /// The seam fog's colour (owner, 2026-10-18): it follows the time of day whole, and the
+    /// weather and cave darkening at the player's position only in part.
+    /// </summary>
+    static void FogColourIsSteady(Check c)
+    {
+        static Vintagestory.API.Common.AmbientModifier Modifier() =>
+            new Vintagestory.API.Common.AmbientModifier().EnsurePopulated();
+        var baseModifier = Modifier();
+        baseModifier.FogColor.Value = new[] { 1f, 1f, 1f };
+        baseModifier.SceneBrightness.Value = 1f;
+        baseModifier.FogBrightness.Value = 1f;
+        var night = Modifier();
+        night.FogBrightness.Value = 0f;
+        night.FogBrightness.Weight = 0.5f;
+        var storm = Modifier();
+        storm.FogColor.Value = new[] { 0.4f, 0.4f, 0.45f };
+        storm.FogColor.Weight = 0.8f;
+        storm.SceneBrightness.Value = 0.5f;
+        storm.SceneBrightness.Weight = 1f;
+        var caves = Modifier();
+        caves.FogColor.Value = new[] { 0f, 0f, 0f };
+        caves.FogColor.Weight = 1f;
+
+        float Red(float share, params (string Name, Vintagestory.API.Common.AmbientModifier Modifier)[] list) =>
+            LodSteadyFogColour.Blend(baseModifier,
+                list.Select(m => new KeyValuePair<string, Vintagestory.API.Common.AmbientModifier>(m.Name, m.Modifier)),
+                share, new Vintagestory.API.MathTools.Vec4f()).R;
+
+        // The game's own blend, worked by hand: colour 0.8 x 0.4 + 0.2 x 1, scene 0.5, fog 0.5.
+        c.True(MathF.Abs(Red(1f, ("night", night), ("weather", storm)) - 0.52f * 0.5f * 0.5f) < 1e-5f,
+            "with the local modifiers whole it is the game's own fog colour");
+        c.True(MathF.Abs(Red(0.3f, ("night", night)) - Red(1f, ("night", night))) < 1e-6f
+                && MathF.Abs(Red(0.3f, ("night", night)) - 0.5f) < 1e-5f,
+            "the time of day darkens it whole");
+        float steadyStorm = Red(0.3f, ("night", night), ("weather", storm));
+        c.True(MathF.Abs(steadyStorm - (0.24f * 0.4f + 0.76f) * 0.85f * 0.5f) < 1e-5f
+                && steadyStorm > 2.5f * Red(1f, ("night", night), ("weather", storm)),
+            $"a storm overhead darkens it only in part ({steadyStorm:0.000} against the game's "
+                + $"{Red(1f, ("night", night), ("weather", storm)):0.000})");
+        c.True(MathF.Abs(Red(LodSteadyFogColour.LocalShare, ("blackfogincaves", caves))
+                - (1f - LodSteadyFogColour.LocalShare)) < 1e-5f
+                && Red(LodSteadyFogColour.LocalShare, ("serverambient", caves)) == 0f,
+            "the cave darkening at the player counts in part; the world's saved ambient counts whole");
+
+        string src = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src", "Render");
+        string draw = File.ReadAllText(Path.Combine(src, "LodTerrainRenderer.SilhouetteFog.cs"));
+        string terrain = File.ReadAllText(Path.Combine(src, "LodTerrainRenderer.cs"));
+        c.True(draw.Contains("p.Uniform(\"rgbaFogIn\", LodSteadyFogColour.Blend(capi.Ambient.Base,",
+                    StringComparison.Ordinal)
+                && !draw.Contains("capi.Ambient.BlendedFogColor", StringComparison.Ordinal)
+                && terrain.Contains("prog.Uniform(\"rgbaFogIn\", capi.Ambient.BlendedFogColor);",
+                    StringComparison.Ordinal),
+            "only the seam fog takes the steadier colour; the cached terrain's haze keeps the game's");
     }
 }

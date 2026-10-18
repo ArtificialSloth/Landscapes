@@ -138,6 +138,13 @@ public partial class LodTerrainRenderer
     readonly float[] silhouetteFogInvProjection = new float[16];
     readonly float[] silhouetteFogInvView = new float[16];
 
+    // The seam fog's colour, reused each frame: the game's fog colour with the weather and cave
+    // darkening at the player's position taken only in part (LodSteadyFogColour).
+    readonly Vec4f silhouetteFogColour = new(1f, 1f, 1f, 1f);
+
+    /// <summary>The colour the seam fog was last drawn in, for `.dlfog stats`.</summary>
+    internal Vec4f SilhouetteFogColour => silhouetteFogColour;
+
     void RegisterSilhouetteFogStage()
     {
         silhouetteFogStageRenderer = new BeforeStageRenderer(
@@ -700,7 +707,8 @@ public partial class LodTerrainRenderer
             float focal = MathF.Abs(projection[5]);
             p.Uniform("fogPixelScale",
                 focal > 1e-6f ? 2f / (focal * Math.Max(1, silhouetteFogLowHeight)) : 0.001f);
-            p.Uniform("rgbaFogIn", capi.Ambient.BlendedFogColor);
+            p.Uniform("rgbaFogIn", LodSteadyFogColour.Blend(capi.Ambient.Base,
+                capi.Ambient.CurrentModifiers, LodSteadyFogColour.LocalShare, silhouetteFogColour));
             p.Uniform("sunPosition", capi.World.Calendar.SunPositionNormalized);
             p.Uniform("sunColor", capi.World.Calendar.SunColor);
             p.Uniform("dayLight", Math.Max(0, capi.World.Calendar.DayLightStrength));
