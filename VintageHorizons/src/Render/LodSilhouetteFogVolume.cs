@@ -157,9 +157,34 @@ internal static class LodSilhouetteFogVolume
     public const float CurtainLipBlocks = 10f;
     public const float CurtainLipDepthBlocks = 14f;
 
-    /// <summary>It starts this far above the edge's ground and fades out this far below the wall's foot.</summary>
+    /// <summary>
+    /// It starts this far above the edge's ground, and below the wall's foot breaks into
+    /// tendrils over this many blocks: ever fewer survive as they fall, gone by the end (0.4.153).
+    /// </summary>
     public const float CurtainLipRiseBlocks = 4f;
-    public const float CurtainBottomFadeBlocks = 16f;
+    public const float CurtainBottomFadeBlocks = 48f;
+
+    /// <summary>Past the band, beside empty sky, the dense strip fades out over this many blocks.</summary>
+    public const float CurtainStripFadeBlocks = 6f;
+
+    /// <summary>The curtain's top undulates by this much with its tendrils.</summary>
+    public const float CurtainTopBillowBlocks = 3f;
+
+    /// <summary>
+    /// Within the curtain's reach a march step is at most this many half-resolution pixels deep,
+    /// and never less than the minimum: longer strides landed inside the dense curtain at a
+    /// jittered depth and drew it as fine dashes (0.4.151).
+    /// </summary>
+    public const float CurtainStepPixels = 2f;
+    public const float CurtainMinStepBlocks = 1f;
+
+    /// <summary>
+    /// Below the foot each column hangs on as a tendril of its own length, a quarter to the
+    /// whole of the dissolve: columns this many blocks across, their lengths drifting this much
+    /// of a cell per block fallen.
+    /// </summary>
+    public const float CurtainDripBlocks = 6f;
+    public const float CurtainDripDrift = 0.02f;
 
     /// <summary>Inside the cached terrain it ends this far past the band, in the rock.</summary>
     public const float CurtainInnerFadeBlocks = 4f;
@@ -1108,18 +1133,24 @@ internal static class LodSilhouetteFogVolume
     /// </summary>
     internal static float CurtainExtinctionAt(float signedDistance, float heightAboveGround,
         float stripHalfBlocks, float wallDepthBlocks, float streak, float tongueBlocks = 0f,
-        float weight = 1f)
+        float weight = 1f, float drip = 1f)
     {
         float dropped = heightAboveGround + SpillDroop(signedDistance, stripHalfBlocks);
-        if (dropped >= CurtainLipRiseBlocks) return 0f;
+        if (dropped >= CurtainLipRiseBlocks + 0.5f * CurtainTopBillowBlocks) return 0f;
+        float below = MathF.Max(0f, -wallDepthBlocks - heightAboveGround) / CurtainBottomFadeBlocks;
+        float innerEdge = Lerp(-stripHalfBlocks, stripHalfBlocks - StripMarginBlocks,
+            SmoothStep(0f, 0.4f, below));
         float lip = CurtainLipBlocks * MathF.Exp(-MathF.Max(0f, -heightAboveGround) / CurtainLipDepthBlocks);
         float rim = MathF.Max(0f, signedDistance - stripHalfBlocks - lip - MathF.Max(0f, tongueBlocks));
         float lateral = MathF.Exp(-rim / CurtainFalloffBlocks)
             * Lerp(1f, streak, SmoothStep(0f, CurtainFalloffBlocks, rim))
             * (1f - SmoothStep(2f * CurtainFalloffBlocks, 3.5f * CurtainFalloffBlocks, rim))
-            * SmoothStep(-stripHalfBlocks - CurtainInnerFadeBlocks, -stripHalfBlocks, signedDistance);
-        float vertical = (1f - SmoothStep(0f, CurtainLipRiseBlocks, dropped))
-            * SmoothStep(-wallDepthBlocks - CurtainBottomFadeBlocks, -wallDepthBlocks, heightAboveGround);
+            * SmoothStep(innerEdge - CurtainInnerFadeBlocks, innerEdge, signedDistance);
+        float vertical = 1f - SmoothStep(0f, CurtainLipRiseBlocks,
+            dropped + (streak - 0.5f) * CurtainTopBillowBlocks);
+        float hangs = 0.25f + 0.75f * drip;
+        vertical *= (1f - SmoothStep(hangs - 0.25f, hangs, below))
+            * (1f - SmoothStep(0.4f, 1f, below));
         float w = Math.Clamp(weight, 0f, 1f);
         return CurtainExtinction * lateral * vertical * (0.75f + 0.5f * streak) * w * w;
     }

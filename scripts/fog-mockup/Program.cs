@@ -190,6 +190,7 @@ void RenderCliff()
         new View("from the ground, looking out", new Vector3(0f, g + 12f, edge - 140f), 0f, -12f, 60f),
         new View("straight down over the lip", new Vector3(0f, g + 240f, edge + 40f), 0f, -89.5f, 60f),
         new View("the lip side-on", new Vector3(-260f, g + 6f, Scene.CentreZ(-260f) + 70f), 105f, -6f, 45f),
+        new View("the foot, where it dissolves", new Vector3(0f, Scene.WallFootY - 18f, edge + 150f), 180f, 0f, 50f),
     };
     var without = new ShippedFog(shader, shipped, noise, core, stripHalf);
     var with = new ShippedFog(shader, shipped, noise, core, stripHalf, curtain: true);
@@ -197,7 +198,7 @@ void RenderCliff()
     {
         ("no fog", (c, d, e, l, x, y, p) => default),
         ("0.4.148, no curtain", (c, d, e, l, x, y, p) => without.March(c, d, e, l, x, y, p, current)),
-        ("0.4.151, curtain", (c, d, e, l, x, y, p) => with.March(c, d, e, l, x, y, p, current)),
+        ("0.4.153, curtain", (c, d, e, l, x, y, p) => with.March(c, d, e, l, x, y, p, current)),
     };
     var page = new Image(cliffColumns.Count * tileWidth + (cliffColumns.Count + 1) * gap,
         headerHeight + cliffViews.Length * (tileHeight + labelHeight + gap) + gap, fill: 28);

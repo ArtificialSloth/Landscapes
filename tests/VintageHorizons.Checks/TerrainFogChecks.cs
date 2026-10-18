@@ -141,7 +141,7 @@ public static class TerrainFogChecks
             "the capture still runs every column down to y = 1, the curtain's floor");
         c.False(farseer.Contains("curtain: true", StringComparison.Ordinal),
             "Farseer's ground hides the wall: its fog has no curtain");
-        c.True(shader.Contains("if (fogCurtainActive != 0 && height < CurtainLipRiseBlocks)",
+        c.True(shader.Contains("if (fogCurtainActive != 0 && height < CurtainLipRiseBlocks + 0.5 * CurtainTopBillowBlocks)",
                     StringComparison.Ordinal)
                 && shader.Contains("uniform int fogCurtainActive;", StringComparison.Ordinal)
                 && draw.Contains("p.Uniform(\"fogCurtainActive\", silhouetteFogCurtain ? 1 : 0);",
@@ -158,7 +158,7 @@ public static class TerrainFogChecks
         // along their fall: on screen they moved only sideways. 0.4.150's two cross-faded copies
         // pulsed, tore in a line where the flow turned, and crossed the top as fast as they fell
         // (owner, 2026-10-18).
-        c.True(shader.Contains("vec2 along = fogWorld.xz - outward * signedDistance;",
+        c.True(shader.Contains("vec2 along = fogWorld.xz - outward * acrossTop;",
                     StringComparison.Ordinal)
                 && shader.Contains("float path = CurtainTopSlowdown * acrossTop - height;",
                     StringComparison.Ordinal)
@@ -174,9 +174,23 @@ public static class TerrainFogChecks
                 && LodSilhouetteFogVolume.SpillDroop(32f, 20f) > 5f
                 && LodSilhouetteFogVolume.SpillDroop(44f, 20f) > 4f * LodSilhouetteFogVolume.SpillDroop(32f, 20f) - 0.01f
                 && shader.Contains("height += droop;", StringComparison.Ordinal)
-                && shader.Contains("stripHeight += droop;", StringComparison.Ordinal),
-            "beside empty sky the fog rolls over the lip: its floor curves down past the band, "
-                + "ever more steeply, instead of standing out level as a shelf");
+                && !shader.Contains("stripHeight += droop;", StringComparison.Ordinal)
+                && shader.Contains("stripProfile *= 1.0 - smoothstep(0.0, CurtainStripFadeBlocks,",
+                    StringComparison.Ordinal),
+            "beside empty sky the bank rolls over the lip, its floor curving down past the band ever "
+                + "more steeply, and the dense strip ends there rather than bending into a sheet");
+        c.True(shader.Contains("vec2 along = fogWorld.xz - outward * acrossTop;", StringComparison.Ordinal)
+                && shader.Contains("rayDistance * fogPixelScale * CurtainStepPixels", StringComparison.Ordinal),
+            "the tendrils keep their place along the edge only where they travel outward, so they do "
+                + "not fan out below corners, and the march strides through the curtain a pixel deep");
+        const float tendrilWall = 100f, tendrilBand = 20f;
+        float halfway = -tendrilWall - 0.5f * LodSilhouetteFogVolume.CurtainBottomFadeBlocks;
+        c.True(LodSilhouetteFogVolume.CurtainExtinctionAt(tendrilBand, halfway, tendrilBand, tendrilWall, 0.5f, drip: 1f) > 0.05f
+                && LodSilhouetteFogVolume.CurtainExtinctionAt(tendrilBand, halfway, tendrilBand, tendrilWall, 0.5f, drip: 0f) == 0f
+                && LodSilhouetteFogVolume.CurtainExtinctionAt(0f, halfway, tendrilBand, tendrilWall, 0.5f, drip: 1f) == 0f
+                && LodSilhouetteFogVolume.CurtainExtinctionAt(0f, -tendrilWall + 0.5f, tendrilBand, tendrilWall, 0f, drip: 0f) > 0.3f,
+            "below the wall's foot the curtain thins to the sheet off the wall's face and each column "
+                + "hangs on to its own length, while the whole wall down to its foot stays covered");
         c.True(shader.Contains("float extinction = bank + strip + curtain;", StringComparison.Ordinal)
                 && shader.Contains("curtain = max(curtain, oldCurtain);", StringComparison.Ordinal)
                 && shader.Contains("-vhFogFloorBelow(curtainGap, ground, bankFloor)",

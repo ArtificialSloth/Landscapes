@@ -84,7 +84,7 @@ sealed class ShippedFog
     struct FogNoise
     {
         public Vector4 Broad;
-        public float Body, Thread, DetailWeight, BaseLod, Streak, Tongue;
+        public float Body, Thread, DetailWeight, BaseLod, Streak, Tongue, Drip;
     }
 
     /// <summary>vhFogSampleNoise.</summary>
@@ -128,14 +128,15 @@ sealed class ShippedFog
                     detailLod).W;
         }
         n.Streak = 0.5f;
+        n.Drip = 1f;
         n.Tongue = n.Broad.X;
         if (streak)
         {
             float streakBlocks = MathF.Max(4f, billowBlocks * 0.6f);
             float streakLod = NoiseLod(pixelBlocks, 1f / streakBlocks);
-            var along = new Vector2(fogWorld.X, fogWorld.Z) - outward * signedDistance;
             float acrossTop = Math.Clamp(signedDistance - stripHalfBlocks, -64f, 64f);
             acrossTop = -K("CurtainTurnBlocks") * MathF.Log(1f + MathF.Exp(-acrossTop / K("CurtainTurnBlocks")));
+            var along = new Vector2(fogWorld.X, fogWorld.Z) - outward * acrossTop;
             float path = K("CurtainTopSlowdown") * acrossTop - height;
             var pathCells = new Vector3(along.X, (path - d.FallBlocks) / K("CurtainStreakStretch"), along.Y) / streakBlocks;
             float fine = streakLod + 1f < K("NoiseFlatLod")
@@ -145,6 +146,9 @@ sealed class ShippedFog
             n.Tongue = Noise(fogWorld * new Vector3(cellsPerBlock * 0.55f, cellsPerBlock * 0.15f,
                 cellsPerBlock * 0.55f) + new Vector3(5.9f, 2.3f, 8.1f),
                 NoiseLod(pixelBlocks, cellsPerBlock * 0.55f)).X;
+            n.Drip = SmoothStep(0.25f, 0.75f, Noise(new Vector3(fogWorld.X / K("CurtainDripBlocks"),
+                d.FallBlocks * K("CurtainDripDrift"), fogWorld.Z / K("CurtainDripBlocks")) + new Vector3(2.7f, 9.1f, 4.4f),
+                NoiseLod(pixelBlocks, 1f / K("CurtainDripBlocks"))).W);
         }
         return n;
     }
@@ -158,7 +162,6 @@ sealed class ShippedFog
         float droop = Droop(signedDistance);
         float wallHeight = height;
         height += droop;
-        stripHeight += droop;
         float beyond = MathF.Max(0f, MathF.Abs(signedDistance) - coreBlocks);
         float wanderBlocks = Clamp01(d.Softness) * 0.5f * d.Spill;
         float rim = MathF.Max(0f, beyond + (n.Broad.X - 0.5f) * 1.8f * wanderBlocks);
@@ -200,6 +203,8 @@ sealed class ShippedFog
         float stripProfile = MathF.Exp(-stripRim / falloff)
             * Mix(1f, 0.15f + 0.85f * n.Body, SmoothStep(0f, falloff, stripRim))
             * (1f - SmoothStep(2f * falloff, 3.5f * falloff, stripRim));
+        if (curtain)
+            stripProfile *= 1f - SmoothStep(0f, K("CurtainStripFadeBlocks"), signedDistance - stripHalfBlocks);
         float stripTop = MathF.Max(0.5f, d.StripHeight)
             * (0.8f + 0.4f * n.Broad.W) * (0.8f + 0.4f * n.Body)
             * (1f - 0.4f * SmoothStep(0f, 3f * falloff, stripRim));
@@ -212,18 +217,23 @@ sealed class ShippedFog
         stripAbove = stripDensity * MathF.Max(0f, K("StripColumnFraction") * stripTop - MathF.Max(0f, stripHeight));
 
         curtainExtinction = 0f;
-        if (curtain && height < K("CurtainLipRiseBlocks"))
+        if (curtain && height < K("CurtainLipRiseBlocks") + 0.5f * K("CurtainTopBillowBlocks"))
         {
             float cf = K("CurtainFalloffBlocks");
+            float below = MathF.Max(0f, -wallDepth - wallHeight) / K("CurtainBottomFadeBlocks");
+            float innerEdge = Mix(-stripHalfBlocks, stripHalfBlocks - 6f, SmoothStep(0f, 0.4f, below));
             float lip = K("CurtainLipBlocks") * MathF.Exp(-MathF.Max(0f, -wallHeight) / K("CurtainLipDepthBlocks"));
             float tongue = n.Tongue * 2f * K("CurtainWanderBlocks");
             float curtainRim = MathF.Max(0f, signedDistance - stripHalfBlocks - lip - tongue);
             float lateral = MathF.Exp(-curtainRim / cf)
                 * Mix(1f, n.Streak, SmoothStep(0f, cf, curtainRim))
                 * (1f - SmoothStep(2f * cf, 3.5f * cf, curtainRim))
-                * SmoothStep(-stripHalfBlocks - K("CurtainInnerFadeBlocks"), -stripHalfBlocks, signedDistance);
-            float vertical = (1f - SmoothStep(0f, K("CurtainLipRiseBlocks"), height))
-                * SmoothStep(-wallDepth - K("CurtainBottomFadeBlocks"), -wallDepth, wallHeight);
+                * SmoothStep(innerEdge - K("CurtainInnerFadeBlocks"), innerEdge, signedDistance);
+            float vertical = 1f - SmoothStep(0f, K("CurtainLipRiseBlocks"),
+                height + (n.Streak - 0.5f) * K("CurtainTopBillowBlocks"));
+            float hangs = 0.25f + 0.75f * n.Drip;
+            vertical *= (1f - SmoothStep(hangs - 0.25f, hangs, below))
+                * (1f - SmoothStep(0.4f, 1f, below));
             curtainExtinction = K("CurtainExtinction") * lateral * vertical * (0.75f + 0.5f * n.Streak)
                 * weight * weight * MathF.Max(0f, d.SeamStrength);
         }
@@ -319,13 +329,18 @@ sealed class ShippedFog
             float landingNow = lands
                 ? 1f - SmoothStep(K("StripAnchorNearBlocks"), K("StripAnchorFarBlocks"), toLandingNow) : 0f;
             float stripHeightNow = fieldPosition.Y
-                - Mix(Scene.GroundY, StripGround(Scene.GroundY, landing.Y), landingNow) + Droop(signedDistance);
+                - Mix(Scene.GroundY, StripGround(Scene.GroundY, landing.Y), landingNow);
             if (outside <= 0f && stripBand <= 0f && (!curtain || stripHeightNow > -d.Floor - 2f))
             {
                 float descent = MathF.Max(0.02f, -rayDirection.Y);
                 float stripRoom = MathF.Max(0f, stripHeightNow - stripDepth * 1.95f);
                 stepBlocks = MathF.Min(stepBlocks, MathF.Max(0.3f, (stripRoom + 0.35f * stripDepth) / descent));
             }
+            if (curtain && outside <= 0f && curtainGap <= 0f
+                && heightAboveGround < K("CurtainLipRiseBlocks") + K("CurtainTopBillowBlocks"))
+                // The game marches at half resolution: its pixel is two of these.
+                stepBlocks = MathF.Min(stepBlocks, MathF.Max(K("CurtainMinStepBlocks"),
+                    rayDistance * pixelScale * 2f * K("CurtainStepPixels")));
             stepBlocks = MathF.Min(stepBlocks, marchEnd - rayDistance);
             previousExtinction = 0f;
 
