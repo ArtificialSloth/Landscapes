@@ -139,6 +139,35 @@ internal static class LodSilhouetteFogVolume
     public const float StripAnchorReachBlocks = 16f;
 
     /// <summary>
+    /// The curtain (0.4.149), with empty sky beyond the cached terrain's edge: optical depth per
+    /// block at full seam density and its thinnest billow's three quarters, over the strip's
+    /// band and its margin. The wall strays across the band, so even its outermost stretch has
+    /// the margin and the fringe in front of it (<see cref="CurtainCoverDepth"/>).
+    /// </summary>
+    public const float CurtainExtinction = 0.5f;
+
+    /// <summary>
+    /// Past the band the curtain frays out over this many blocks in tendrils, gone by 3.5 of
+    /// them; its tongues reach out up to twice the wander and never in.
+    /// </summary>
+    public const float CurtainFalloffBlocks = 10f;
+    public const float CurtainWanderBlocks = 5f;
+
+    /// <summary>Where it pours over the lip it bulges out this far, settling over this depth.</summary>
+    public const float CurtainLipBlocks = 10f;
+    public const float CurtainLipDepthBlocks = 14f;
+
+    /// <summary>It starts this far above the edge's ground and fades out this far below the wall's foot.</summary>
+    public const float CurtainLipRiseBlocks = 4f;
+    public const float CurtainBottomFadeBlocks = 16f;
+
+    /// <summary>Inside the cached terrain it ends this far past the band, in the rock.</summary>
+    public const float CurtainInnerFadeBlocks = 4f;
+
+    /// <summary>Its tendrils are this many times taller than they are wide.</summary>
+    public const float CurtainStreakStretch = 4f;
+
+    /// <summary>
     /// Mean optical depth of a level crossing through the bank's ground layer, square to the
     /// seam, at full density: how see-through it is from the ground. Its density per block does
     /// not depend on its height, so a taller bank is deeper from above, not from the side.
@@ -1035,6 +1064,49 @@ internal static class LodSilhouetteFogVolume
         float rim = MathF.Max(0f, beyondBandBlocks);
         return MathF.Exp(-rim / StripFalloffBlocks)
             * (1f - SmoothStep(2f * StripFalloffBlocks, 3.5f * StripFalloffBlocks, rim));
+    }
+
+    /// <summary>
+    /// CPU counterpart of the shader's curtain at a signed distance from the smoothed edge (empty
+    /// sky positive) and a height above the edge's ground: extinction per block for a tendril
+    /// value (0 the thinnest, 1 the thickest), a lip bulge and tongue reach in blocks, the
+    /// wall's depth below the ground, and a weight.
+    /// </summary>
+    internal static float CurtainExtinctionAt(float signedDistance, float heightAboveGround,
+        float stripHalfBlocks, float wallDepthBlocks, float streak, float tongueBlocks = 0f,
+        float weight = 1f)
+    {
+        if (heightAboveGround >= CurtainLipRiseBlocks) return 0f;
+        float lip = CurtainLipBlocks * MathF.Exp(-MathF.Max(0f, -heightAboveGround) / CurtainLipDepthBlocks);
+        float rim = MathF.Max(0f, signedDistance - stripHalfBlocks - lip - MathF.Max(0f, tongueBlocks));
+        float lateral = MathF.Exp(-rim / CurtainFalloffBlocks)
+            * Lerp(1f, streak, SmoothStep(0f, CurtainFalloffBlocks, rim))
+            * (1f - SmoothStep(2f * CurtainFalloffBlocks, 3.5f * CurtainFalloffBlocks, rim))
+            * SmoothStep(-stripHalfBlocks - CurtainInnerFadeBlocks, -stripHalfBlocks, signedDistance);
+        float vertical = (1f - SmoothStep(0f, CurtainLipRiseBlocks, heightAboveGround))
+            * SmoothStep(-wallDepthBlocks - CurtainBottomFadeBlocks, -wallDepthBlocks, heightAboveGround);
+        float w = Math.Clamp(weight, 0f, 1f);
+        return CurtainExtinction * lateral * vertical * (0.75f + 0.5f * streak) * w * w;
+    }
+
+    /// <summary>How far out from the smoothed edge the curtain can reach.</summary>
+    internal static float CurtainReach(float stripHalfBlocks) =>
+        stripHalfBlocks + CurtainLipBlocks + 2f * CurtainWanderBlocks + 3.5f * CurtainFalloffBlocks;
+
+    /// <summary>
+    /// Optical depth in front of a stretch of wall at a signed distance, along a level line
+    /// straight out from it, at a height: the curtain between that wall and open sky.
+    /// </summary>
+    internal static float CurtainCoverDepth(float wallSignedDistance, float heightAboveGround,
+        float stripHalfBlocks, float wallDepthBlocks, float streak)
+    {
+        const float step = 0.25f;
+        float depth = 0f;
+        float reach = CurtainReach(stripHalfBlocks);
+        for (float d = wallSignedDistance + step * 0.5f; d < reach; d += step)
+            depth += CurtainExtinctionAt(d, heightAboveGround, stripHalfBlocks, wallDepthBlocks,
+                streak) * step;
+        return depth;
     }
 
     /// <summary>

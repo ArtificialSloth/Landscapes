@@ -14,6 +14,7 @@ public static class TerrainFogChecks
         EdgesFormOnlyBetweenAvailableCells(c);
         TheDiscIsCellCentres(c);
         WiringFollowsTheTerrain(c);
+        CurtainHangsDownTheWall(c);
     }
 
     static void EdgesFormOnlyBetweenAvailableCells(Check c)
@@ -68,9 +69,11 @@ public static class TerrainFogChecks
         string draw = File.ReadAllText(Path.Combine(src, "LodTerrainRenderer.SilhouetteFog.cs"));
         c.True(fog.Contains("SilhouetteStableReplacementCoverage(tile.TileX, tile.TileZ)", StringComparison.Ordinal),
             "the outline is the same ownership answer Farseer's fog uses, for any tile");
-        c.True(fog.Contains("QueueSilhouetteFogVolume(farDistance, TerrainFogHeightAtGrid, globe: false)",
+        c.True(fog.Contains(
+                "QueueSilhouetteFogVolume(farDistance, TerrainFogHeightAtGrid, globe: false, curtain: true)",
                 StringComparison.Ordinal),
-            "its heights are the cached surface, and the cached terrain's edge is not lowered by the globe");
+            "its heights are the cached surface, the cached terrain's edge is not lowered by the "
+                + "globe, and a curtain hangs down its wall");
         c.True(pass.Contains("if (silhouetteMeshes.Count == 0)\n        {\n            PrepareTerrainFogFrame();",
                 StringComparison.Ordinal)
             || pass.Replace("\r\n", "\n").Contains(
@@ -82,5 +85,83 @@ public static class TerrainFogChecks
         c.True(fog.Contains("if (!SilhouetteFogEnabled || silhouetteFogVolumeFailed)", StringComparison.Ordinal)
                 && fog.Contains("ClearTerrainFog();", StringComparison.Ordinal),
             "switched off, it keeps nothing");
+    }
+
+    /// <summary>
+    /// The curtain (owner, 2026-10-18): with Farseer off the cached terrain's wall drops into
+    /// empty sky, and the fog must cover it from the lip to its foot, with its tendrils falling.
+    /// </summary>
+    static void CurtainHangsDownTheWall(Check c)
+    {
+        // The worst stretch of wall stands out at the band's edge less its margin; the strip's
+        // band ranges from its minimum to its maximum half-width.
+        foreach (float stripHalf in new[]
+        {
+            LodSilhouetteFogVolume.MinStripHalfBlocks, 20f, LodSilhouetteFogVolume.MaxStripHalfBlocks,
+        })
+        {
+            const float wallDepth = 120f;
+            float wall = stripHalf - LodSilhouetteFogVolume.StripMarginBlocks;
+            float thinnest = float.MaxValue;
+            foreach (float height in new[] { -1f, -10f, -40f, -80f, -wallDepth + 0.5f })
+                thinnest = MathF.Min(thinnest, LodSilhouetteFogVolume.CurtainCoverDepth(
+                    wall, height, stripHalf, wallDepth, streak: 0f));
+            c.True(thinnest >= 3.5f,
+                $"with a {stripHalf:0}-block band, the curtain in front of the outermost wall is at "
+                    + $"least 3.5 deep from lip to foot at its thinnest billow ({thinnest:0.00})");
+        }
+
+        const float band = 20f, depth = 100f;
+        c.Eq(0f, LodSilhouetteFogVolume.CurtainExtinctionAt(
+                -band - LodSilhouetteFogVolume.CurtainInnerFadeBlocks - 1f, -30f, band, depth, 1f),
+            "inside the cached terrain, past the band, the curtain is in the rock and ends");
+        c.Eq(0f, LodSilhouetteFogVolume.CurtainExtinctionAt(
+                0f, -depth - LodSilhouetteFogVolume.CurtainBottomFadeBlocks - 1f, band, depth, 1f),
+            "it ends a little below the wall's foot");
+        c.Eq(0f, LodSilhouetteFogVolume.CurtainExtinctionAt(
+                LodSilhouetteFogVolume.CurtainReach(band) + 1f, -30f, band, depth, 1f, tongueBlocks: 10f),
+            "nothing of it lies past its reach, which bounds the march");
+        c.True(LodSilhouetteFogVolume.CurtainExtinctionAt(band + 8f, -2f, band, depth, 0.5f)
+                > LodSilhouetteFogVolume.CurtainExtinctionAt(band + 8f, -60f, band, depth, 0.5f),
+            "it bulges out where it pours over the lip");
+        c.Eq(1f, LodTerrainRenderer.TerrainFogWallFootY,
+            "the wall reaches down to y = 1, where every captured column ends");
+
+        string root = GameAssemblies.RepoRoot;
+        string shader = File.ReadAllText(Path.Combine(root, "VintageHorizons", "assets",
+            "dodenslandscapes", "shaders", "lodsilhouettefogvolume.fsh"));
+        string draw = File.ReadAllText(Path.Combine(root, "VintageHorizons", "src", "Render",
+            "LodTerrainRenderer.SilhouetteFog.cs"));
+        string farseer = File.ReadAllText(Path.Combine(root, "VintageHorizons", "src", "Render",
+            "LodTerrainRenderer.Silhouette.cs"));
+        string worker = File.ReadAllText(Path.Combine(root, "VintageHorizons", "src", "Lod",
+            "LodWorker.cs"));
+        c.True(worker.Contains("for (int y = startY; y >= 1; y--)", StringComparison.Ordinal),
+            "the capture still runs every column down to y = 1, the curtain's floor");
+        c.False(farseer.Contains("curtain: true", StringComparison.Ordinal),
+            "Farseer's ground hides the wall: its fog has no curtain");
+        c.True(shader.Contains("if (fogCurtainActive != 0 && height < CurtainLipRiseBlocks)",
+                    StringComparison.Ordinal)
+                && shader.Contains("uniform int fogCurtainActive;", StringComparison.Ordinal)
+                && draw.Contains("p.Uniform(\"fogCurtainActive\", silhouetteFogCurtain ? 1 : 0);",
+                    StringComparison.Ordinal),
+            "the curtain is drawn only for a field that follows the cached terrain's edge");
+        c.True(draw.Contains("silhouetteFogFallBlocks = (silhouetteFogFallBlocks", StringComparison.Ordinal)
+                && draw.Contains("+ seconds * SilhouetteFogFallBlocksPerSecond)", StringComparison.Ordinal)
+                && draw.Contains("p.Uniform(\"fogFallBlocks\", silhouetteFogFallBlocks);",
+                    StringComparison.Ordinal)
+                && shader.Contains("(world.y + fogFallBlocks) / CurtainStreakStretch",
+                    StringComparison.Ordinal),
+            "the tendrils fall by an integrated distance the drift dial scales, so drift 0 holds them");
+        c.True(shader.Contains("float extinction = bank + strip + curtain;", StringComparison.Ordinal)
+                && shader.Contains("curtain = max(curtain, oldCurtain);", StringComparison.Ordinal)
+                && shader.Contains("-vhFogFloorBelow(curtainGap, ground, bankFloor)",
+                    StringComparison.Ordinal)
+                && shader.Contains("if (curtainGap > 0.0) verticalSkip = min(verticalSkip, curtainGap);",
+                    StringComparison.Ordinal)
+                && draw.Contains("fieldMinY = MathF.Min(fieldMinY, TerrainFogWallFootY",
+                    StringComparison.Ordinal),
+            "the march reaches down to the wall's foot beside the wall and never skips sideways "
+                + "into the curtain; a dissolving field keeps its curtain while it fades");
     }
 }

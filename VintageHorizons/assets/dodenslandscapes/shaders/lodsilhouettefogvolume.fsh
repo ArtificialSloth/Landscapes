@@ -19,6 +19,10 @@
 // dissolves over the fade time instead of vanishing: its weight wears down, which thins,
 // lowers and erodes its bank and fades its strip. Mirrored for the checks by
 // LodSilhouetteFogVolume.
+//
+// Without Farseer (0.4.149) nothing lies beyond the edge, and the cached terrain's wall drops
+// from the lip to the foot of its columns in open sky. A curtain hangs over that wall: mist
+// pouring over the lip and down the whole face, its long tendrils sliding downward.
 
 uniform sampler2D sceneDepth;
 uniform sampler2D fogField;
@@ -73,6 +77,13 @@ uniform float fogDriftBlocks;
 // Fade durations since the residual's weights were taken; 0 when fogResidualActive is 0.
 uniform float fogResidualElapsed;
 uniform int fogResidualActive;
+// 1 while the fog follows the cached terrain's own edge, with empty sky beyond it: the curtain
+// hangs down the wall there. Farseer's ground hides no wall, so with Farseer it is 0.
+uniform int fogCurtainActive;
+// Where the wall ends: the foot of the cached columns.
+uniform float fogCurtainFloorY;
+// Distance the curtain's tendrils have already fallen, in blocks, integrated on the CPU.
+uniform float fogFallBlocks;
 
 layout(location = 0) out vec4 outFog;
 layout(location = 1) out float outDistance;
@@ -112,6 +123,24 @@ const float SunProbeBlocks = 14.0;
 // within the step budget. Dense fog keeps short steps whatever the distance.
 const float FarStepFraction = 0.02;
 const int MaxFogSteps = 192;
+// The curtain: whole over the strip's band, the band the wall strays across, and out to the
+// band's margin, so even the outermost wall has the margin's depth of it in front. 0.5 a block
+// at its thinnest billow leaves under 3% of that wall showing through the margin and fringe.
+const float CurtainExtinction = 0.5;
+// Past the band it frays out over this many blocks in tendrils, and its tongues reach out up to
+// twice the wander, never in: only outward, so they cannot thin the band.
+const float CurtainFalloffBlocks = 10.0;
+const float CurtainWanderBlocks = 5.0;
+// Where it pours over the lip it bulges out this far, settling back over this depth.
+const float CurtainLipBlocks = 10.0;
+const float CurtainLipDepthBlocks = 14.0;
+// It starts this far above the edge's ground and fades out this far below the wall's foot.
+const float CurtainLipRiseBlocks = 4.0;
+const float CurtainBottomFadeBlocks = 16.0;
+// Inside the cached terrain it ends this far past the band: there it is in the rock.
+const float CurtainInnerFadeBlocks = 4.0;
+// The tendrils are this many times taller than they are wide.
+const float CurtainStreakStretch = 4.0;
 
 // Every noise lookup at one point. They depend on the position only, so the current field and
 // a dissolving one share them.
@@ -123,6 +152,8 @@ struct FogNoise
     float thread;
     float detailWeight;
     float baseLod;
+    // The curtain's falling tendrils, remapped like the body; 0.5 where none was looked up.
+    float streak;
 };
 
 float vhFogHash(vec3 p)
@@ -188,8 +219,9 @@ float vhFogPhase(float cosine, float g)
     return (1.0 - g2) / pow(1.0 + g2 - 2.0 * g * cosine, 1.5);
 }
 
-// `cheap` is the sun probe's cut-down form: one octave and no threads.
-FogNoise vhFogSampleNoise(vec3 fogWorld, float pixelBlocks, bool cheap)
+// `cheap` is the sun probe's cut-down form: one octave and no threads. `streak` looks up the
+// curtain's tendrils, only where a curtain can be.
+FogNoise vhFogSampleNoise(vec3 fogWorld, float pixelBlocks, bool cheap, bool streak)
 {
     float billowBlocks = max(1.0, fogBillowSizeBlocks);
     float cellsPerBlock = 1.0 / billowBlocks;
@@ -223,6 +255,21 @@ FogNoise vhFogSampleNoise(vec3 fogWorld, float pixelBlocks, bool cheap)
         if (n.detailWeight > 0.0)
             n.thread = vhFogNoise(q * vec3(3.3, 2.7, 3.3) + vec3(5.2, 1.7, 9.4), detailLod).a;
     }
+
+    n.streak = 0.5;
+    if (streak)
+    {
+        // Tall, narrow tendrils that drift with the billows. The lookup climbs as the fall
+        // grows, so the pattern slides down the wall.
+        float streakBlocks = max(4.0, billowBlocks * 0.6);
+        vec3 s = vec3(world.x, (world.y + fogFallBlocks) / CurtainStreakStretch, world.z)
+            / streakBlocks;
+        float streakLod = vhFogNoiseLod(pixelBlocks, 1.0 / streakBlocks);
+        float fine = streakLod + 1.0 < NoiseFlatLod
+            ? vhFogNoise(s * 2.07 + vec3(13.3, 6.1, 2.9), streakLod + 1.0).b : 0.5;
+        n.streak = smoothstep(0.2, 0.8,
+            0.65 * vhFogNoise(s + vec3(7.1, 3.3, 1.9), streakLod).g + 0.35 * fine);
+    }
     return n;
 }
 
@@ -232,8 +279,10 @@ FogNoise vhFogSampleNoise(vec3 fogWorld, float pixelBlocks, bool cheap)
 // open-end fade, times what is left of its dissolve for the residual. The strip is normalized
 // by its own column, so its vertical integral is its optical depth whatever its local top;
 // `stripAbove` is about how much of that column lies above the point, for its shading.
-void vhFogShape(vec4 field, float weight, float height, float stripHeight, FogNoise n,
-    out float bankExtinction, out float stripExtinction, out float stripAbove, out float top)
+// `wallDepth` is how far the wall drops below that field's seam ground, for the curtain.
+void vhFogShape(vec4 field, float weight, float height, float stripHeight, float wallDepth,
+    FogNoise n, out float bankExtinction, out float stripExtinction, out float stripAbove,
+    out float top, out float curtainExtinction)
 {
     float signedDistance = field.r;
     float lowerFade = max(2.0, min(10.0, fogFloorDepthBlocks * 0.35 + 2.0));
@@ -309,6 +358,44 @@ void vhFogShape(vec4 field, float weight, float height, float stripHeight, FogNo
         * weight * weight * max(0.0, fogSeamStrength);
     stripExtinction = stripDensity * stripVertical;
     stripAbove = stripDensity * max(0.0, StripColumnFraction * stripTop - max(0.0, stripHeight));
+
+    // 7. The curtain, with empty sky beyond the edge: whole over the band and its margin, so
+    //    every stretch of the wall is behind it; bulging out where it pours over the lip;
+    //    fraying outward in tendrils with tongues that only ever reach further out; ending in
+    //    the rock on the inside and a little below the wall's foot.
+    curtainExtinction = 0.0;
+    if (fogCurtainActive != 0 && height < CurtainLipRiseBlocks)
+    {
+        float lip = CurtainLipBlocks * exp(-max(0.0, -height) / CurtainLipDepthBlocks);
+        float tongue = n.broad.r * 2.0 * CurtainWanderBlocks;
+        float curtainRim = max(0.0, signedDistance - fogStripHalfBlocks - lip - tongue);
+        float lateral = exp(-curtainRim / CurtainFalloffBlocks)
+            * mix(1.0, n.streak, smoothstep(0.0, CurtainFalloffBlocks, curtainRim))
+            * (1.0 - smoothstep(2.0 * CurtainFalloffBlocks, 3.5 * CurtainFalloffBlocks,
+                curtainRim))
+            * smoothstep(-fogStripHalfBlocks - CurtainInnerFadeBlocks, -fogStripHalfBlocks,
+                signedDistance);
+        float vertical = (1.0 - smoothstep(0.0, CurtainLipRiseBlocks, height))
+            * smoothstep(-wallDepth - CurtainBottomFadeBlocks, -wallDepth, height);
+        curtainExtinction = CurtainExtinction * lateral * vertical * (0.75 + 0.5 * n.streak)
+            * weight * weight * max(0.0, fogSeamStrength);
+    }
+}
+
+// How far sideways a point lies outside the band beside the wall where the curtain can be: past
+// its widest outward reach, or past its fade into the rock. Huge with no curtain.
+float vhFogCurtainGap(float signedDistance, float curtainReach)
+{
+    return fogCurtainActive == 0 ? 1.0e6 : max(signedDistance - curtainReach,
+        -signedDistance - fogStripHalfBlocks - CurtainInnerFadeBlocks);
+}
+
+// How far below the seam ground fog can reach at a point: down to the wall's foot beside the
+// wall, else the bank's floor.
+float vhFogFloorBelow(float curtainGap, float ground, float bankFloor)
+{
+    return curtainGap > 0.0 ? bankFloor
+        : max(bankFloor, ground - fogCurtainFloorY + CurtainBottomFadeBlocks);
 }
 
 // Where the strip rests under a point: on the surface the ray lands on while the point is near
@@ -381,8 +468,11 @@ void main()
     vec3 scattered = vec3(0.0);
     // The strip's widest sideways reach: its band, its wander and its cut-off fringe.
     float stripReach = fogStripHalfBlocks + 2.0 * StripWanderBlocks + 3.5 * StripFalloffBlocks;
-    float conservativeReach = max(fogCoreBlocks + fogSpillBlocks * FarseerReachScale * 1.5
-        + clamp(fogEdgeSoftness, 0.0, 1.0) * 0.5 * fogSpillBlocks, stripReach)
+    // The curtain's widest outward reach: its band, its lip, its longest tongue and its fringe.
+    float curtainReach = fogCurtainActive != 0 ? fogStripHalfBlocks + CurtainLipBlocks
+        + 2.0 * CurtainWanderBlocks + 3.5 * CurtainFalloffBlocks : 0.0;
+    float conservativeReach = max(max(fogCoreBlocks + fogSpillBlocks * FarseerReachScale * 1.5
+        + clamp(fogEdgeSoftness, 0.0, 1.0) * 0.5 * fogSpillBlocks, stripReach), curtainReach)
         + fieldTexelBlocks * 1.5;
     float stripDepth = max(0.5, fogStripHeightBlocks);
     // The highest bank top is 1.3 heights and its ceiling ends at 1.15 of that; the strip's
@@ -420,8 +510,10 @@ void main()
         float globeDrop = globeEffect * globe * globe * farViewDistance;
         float ground = field.g - globeDrop;
         float heightAboveGround = fieldPosition.y - ground;
+        float curtainGap = vhFogCurtainGap(field.r, curtainReach);
         float verticalOutside = max(0.0, max(
-            -bankFloor - heightAboveGround, heightAboveGround - bankCeiling));
+            -vhFogFloorBelow(curtainGap, ground, bankFloor) - heightAboveGround,
+            heightAboveGround - bankCeiling));
         float horizontalOutside = max(0.0, field.b - conservativeReach);
         // How far outside the strip's widest reach this point lies, sideways.
         float stripBand = abs(field.r) - stripReach;
@@ -431,19 +523,26 @@ void main()
             vec4 residual = texture(fogResidual, fieldUv);
             if (residual.a - fogResidualElapsed > 0.0)
             {
-                float residualHeight = fieldPosition.y - (residual.g - globeDrop);
+                float residualGround = residual.g - globeDrop;
+                float residualHeight = fieldPosition.y - residualGround;
+                float residualGap = vhFogCurtainGap(residual.r, curtainReach);
                 horizontalOutside = min(horizontalOutside,
                     max(0.0, residual.b - conservativeReach));
                 verticalOutside = min(verticalOutside, max(0.0, max(
-                    -bankFloor - residualHeight, residualHeight - bankCeiling)));
+                    -vhFogFloorBelow(residualGap, residualGround, bankFloor) - residualHeight,
+                    residualHeight - bankCeiling)));
                 stripBand = min(stripBand, abs(residual.r) - stripReach);
+                curtainGap = min(curtainGap, residualGap);
             }
         }
         float landingNow = lands ? 1.0 - smoothstep(StripAnchorNearBlocks,
             StripAnchorFarBlocks, length(relative.xz - relativeEndpoint.xz)) : 0.0;
         // A ray that follows the seam while above or below its local terrain must still advance;
         // otherwise it can spend the whole fixed budget walking empty air in tiny steps.
-        float outside = max(horizontalOutside, verticalOutside * 0.35);
+        // Below the bank beside the curtain, a skip may not carry the ray sideways into it.
+        float verticalSkip = verticalOutside * 0.35;
+        if (curtainGap > 0.0) verticalSkip = min(verticalSkip, curtainGap);
+        float outside = max(horizontalOutside, verticalSkip);
         float farStep = max(baseStep, rayDistance * FarStepFraction);
         // Inside the fog each segment stays optically thin, so a dense strip cannot become a
         // stepped surface, while thin fog far away is crossed in longer strides.
@@ -492,13 +591,19 @@ void main()
                 fieldPosition.y + globeDrop,
                 fieldWorldOriginZ + fieldPosition.z);
             float pixelBlocks = max(0.001, middle * fogPixelScale);
-            FogNoise pointNoise = vhFogSampleNoise(fogWorldPosition, pixelBlocks, false);
+            // The tendrils are looked up only where a curtain can be: below its top, which a
+            // dissolving field's ground differs from by no more than the strip's anchor reach.
+            bool wantStreak = fogCurtainActive != 0
+                && heightAboveGround < CurtainLipRiseBlocks + StripAnchorReachBlocks;
+            FogNoise pointNoise = vhFogSampleNoise(fogWorldPosition, pixelBlocks, false,
+                wantStreak);
             float bank;
             float strip;
             float stripAbove;
             float top;
-            vhFogShape(field, clamp(field.a, 0.0, 1.0), heightAboveGround, stripHeight, pointNoise,
-                bank, strip, stripAbove, top);
+            float curtain;
+            vhFogShape(field, clamp(field.a, 0.0, 1.0), heightAboveGround, stripHeight,
+                ground - fogCurtainFloorY, pointNoise, bank, strip, stripAbove, top, curtain);
             vec4 residual = vec4(0.0);
             float residualWeight = 0.0;
             if (residualActive)
@@ -514,17 +619,20 @@ void main()
                     float oldStrip;
                     float oldAbove;
                     float oldTop;
+                    float oldCurtain;
                     vhFogShape(residual, residualWeight, fieldPosition.y - oldGround,
                         fieldPosition.y - mix(oldGround, vhFogStripGround(oldGround, landingY),
                             landingWeight),
-                        pointNoise, oldBank, oldStrip, oldAbove, oldTop);
+                        oldGround - fogCurtainFloorY, pointNoise,
+                        oldBank, oldStrip, oldAbove, oldTop, oldCurtain);
                     if (oldBank > bank) top = oldTop;
                     bank = max(bank, oldBank);
                     strip = max(strip, oldStrip);
                     stripAbove = max(stripAbove, oldAbove);
+                    curtain = max(curtain, oldCurtain);
                 }
             }
-            float extinction = bank + strip;
+            float extinction = bank + strip + curtain;
             previousExtinction = extinction;
             if (extinction > 0.0000001)
             {
@@ -537,8 +645,12 @@ void main()
                     // Fog between this point and the sun shades it: one cheap look toward the
                     // sun, plus this point's own share. Without the look the bank goes flat
                     // grey. The strip shades only through the few blocks of itself above, so
-                    // its billowed top catches the light and its hollows do not.
-                    float stripShade = stripAbove * 0.5 / sunHeight;
+                    // its billowed top catches the light and its hollows do not. Below the lip,
+                    // beside empty sky, the strip is no longer lying on ground under a bank: it
+                    // is lit as the curtain is, or it draws a dark band under the lip.
+                    float sunk = fogCurtainActive != 0
+                        ? smoothstep(0.0, -4.0, heightAboveGround) : 0.0;
+                    float stripShade = stripAbove * 0.5 / sunHeight * (1.0 - sunk);
                     float towardSun = bank * max(1.0, ScaleHeightFraction * top) / sunHeight
                         + stripShade;
                     vec3 probePosition = fieldPosition + sunDirection * SunProbeBlocks;
@@ -548,29 +660,45 @@ void main()
                     {
                         vec4 probeField = texture(fogField, probeUv);
                         FogNoise probeNoise = vhFogSampleNoise(
-                            fogWorldPosition + sunDirection * SunProbeBlocks, pixelBlocks, true);
-                        float probeHeight = probePosition.y - (probeField.g - globeDrop);
+                            fogWorldPosition + sunDirection * SunProbeBlocks, pixelBlocks, true,
+                            false);
+                        float probeGround = probeField.g - globeDrop;
+                        float probeHeight = probePosition.y - probeGround;
                         float probeBank;
                         float probeStrip;
                         float probeAbove;
                         float probeTop;
+                        float probeCurtain;
                         vhFogShape(probeField, clamp(probeField.a, 0.0, 1.0), probeHeight,
-                            probeHeight, probeNoise, probeBank, probeStrip, probeAbove, probeTop);
+                            probeHeight, probeGround - fogCurtainFloorY, probeNoise,
+                            probeBank, probeStrip, probeAbove, probeTop, probeCurtain);
                         if (residualWeight > 0.0)
                         {
                             vec4 probeResidual = texture(fogResidual, probeUv);
-                            float probeOldHeight = probePosition.y - (probeResidual.g - globeDrop);
+                            float probeOldGround = probeResidual.g - globeDrop;
+                            float probeOldHeight = probePosition.y - probeOldGround;
                             float oldBank;
                             float oldStrip;
+                            float oldCurtain;
                             vhFogShape(probeResidual,
                                 clamp(probeResidual.a - fogResidualElapsed, 0.0, 1.0),
-                                probeOldHeight, probeOldHeight, probeNoise,
-                                oldBank, oldStrip, probeAbove, probeTop);
+                                probeOldHeight, probeOldHeight, probeOldGround - fogCurtainFloorY,
+                                probeNoise, oldBank, oldStrip, probeAbove, probeTop, oldCurtain);
                             probeBank = max(probeBank, oldBank);
                             probeStrip = max(probeStrip, oldStrip);
+                            probeCurtain = max(probeCurtain, oldCurtain);
                         }
-                        towardSun = (bank * 0.35 + probeBank + probeStrip) * SunProbeBlocks * 1.6
-                            + stripShade;
+                        // The curtain is dense: lit through its skin like the strip, so only a
+                        // little of it, or of the strip, toward the sun counts for its mist or
+                        // for the strip below the lip. A look that ends inside the cached
+                        // terrain, under its ground, is in the cliff's shadow.
+                        float curtainShare = max(curtain / extinction, sunk);
+                        float rock = fogCurtainActive != 0
+                            ? smoothstep(0.0, fogStripHalfBlocks, -probeField.r)
+                                * smoothstep(0.0, 4.0, -probeHeight) : 0.0;
+                        towardSun = (bank * 0.35 + probeBank
+                                + probeStrip * mix(1.0, 0.15, curtainShare) + 0.15 * probeCurtain)
+                            * SunProbeBlocks * 1.6 + stripShade + 4.0 * rock;
                     }
                     // Beer's law plus a softer lobe standing in for light scattered many times.
                     float direct = (exp(-towardSun) + 0.6 * exp(-towardSun * 0.25)) / 1.6;
@@ -580,8 +708,13 @@ void main()
                     float bankLift = clamp(max(0.0, heightAboveGround) / max(1.0, top), 0.0, 1.0);
                     float stripRise = (0.8 + 0.4 * pointNoise.broad.a)
                         * (0.8 + 0.4 * pointNoise.body);
-                    float stripLift = mix(0.25, 0.75, clamp((stripRise - 0.64) / 0.8, 0.0, 1.0));
-                    float lift = (bank * bankLift + strip * stripLift) / extinction;
+                    // The curtain hangs in open sky. Its tendrils catch more of it than the
+                    // gaps between them, so even where it is whole the fall shows.
+                    float curtainLift = mix(0.3, 0.9, pointNoise.streak);
+                    float stripLift = mix(mix(0.25, 0.75, clamp((stripRise - 0.64) / 0.8, 0.0, 1.0)),
+                        curtainLift, sunk);
+                    float lift = (bank * bankLift + strip * stripLift + curtain * curtainLift)
+                        / extinction;
                     float sky = mix(0.55, 1.0, lift);
                     float sunlit = 0.62 * direct * phase + 0.38 * sky;
                     float light = clamp(mix(sky, sunlit, daylight), 0.0, 1.2);

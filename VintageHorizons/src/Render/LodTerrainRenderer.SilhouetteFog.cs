@@ -32,6 +32,12 @@ public partial class LodTerrainRenderer
 
     /// <summary>Wrapped so a long session cannot erode the noise interpolation's precision.</summary>
     internal const float SilhouetteFogDriftWrapBlocks = 1 << 20;
+
+    /// <summary>
+    /// How fast the curtain's tendrils slide down the wall at drift speed one (0.4.149), in
+    /// blocks per second. The drift dial sets both, so drift 0 still holds the fog still.
+    /// </summary>
+    internal const float SilhouetteFogFallBlocksPerSecond = 5f;
     BeforeStageRenderer? silhouetteFogStageRenderer;
     IShaderProgram? silhouetteFogVolumeProg;
     IShaderProgram? silhouetteFogUpsampleProg;
@@ -57,6 +63,7 @@ public partial class LodTerrainRenderer
     int silhouetteFogErrorChecksLeft = 240;
     bool silhouetteFogReportedPendingError;
     float silhouetteFogDriftBlocks;
+    float silhouetteFogFallBlocks;
     int silhouetteFogNoiseTexture;
     int silhouetteFogNoiseProgram;
     int silhouetteFogNoiseLocation = -1;
@@ -67,6 +74,10 @@ public partial class LodTerrainRenderer
     // globe curve. Without Farseer the fog follows the cached terrain's edge, which is not lowered.
     float silhouetteFogReachBlocks = 1f;
     bool silhouetteFogGlobe = true;
+
+    // Whether the queued field's edge has empty sky beyond it, so a curtain hangs down its wall:
+    // the cached terrain's own edge, not Farseer's seam (0.4.149).
+    bool silhouetteFogCurtain;
 
     // The dissolving previous fog (0.4.125). The shown layer is the published field's texels,
     // which the next build carries on; the residual is on the published field's lattice, and
@@ -146,8 +157,10 @@ public partial class LodTerrainRenderer
     /// <param name="heightAtGrid">The ground height at a 32-block grid point.</param>
     /// <param name="globe">Whether the fog sinks with Farseer's globe curve. Only Farseer's
     /// terrain is lowered by it; the cached terrain's edge is not.</param>
+    /// <param name="curtain">Whether empty sky lies beyond the edge, so mist hangs down the
+    /// cached terrain's wall there. Farseer's ground hides that wall.</param>
     void QueueSilhouetteFogVolume(float reachBlocks, Func<int, int, float> heightAtGrid,
-        bool globe = true)
+        bool globe = true, bool curtain = false)
     {
         if (!SilhouetteFogEnabled || !silhouetteSeamMask.HasEdges)
         {
@@ -164,6 +177,7 @@ public partial class LodTerrainRenderer
                     reachBlocks, SilhouetteFogSpillBlocks));
             silhouetteFogReachBlocks = reachBlocks;
             silhouetteFogGlobe = globe;
+            silhouetteFogCurtain = curtain;
             silhouetteFogPendingBuild = prepared;
             silhouetteFogPendingRevision = ++silhouetteFogBuildRevision;
             silhouetteFogGeometryDirty = false;
@@ -545,12 +559,13 @@ public partial class LodTerrainRenderer
     void AdvanceSilhouetteFogDrift(float deltaSeconds)
     {
         if (!float.IsFinite(deltaSeconds) || deltaSeconds <= 0f) return;
-        float step = MathF.Min(deltaSeconds, SilhouetteFogMaxDriftStepSeconds)
+        float seconds = MathF.Min(deltaSeconds, SilhouetteFogMaxDriftStepSeconds)
             * Math.Clamp(SilhouetteFogDriftSpeed,
-                LodSilhouetteFogVolume.MinDriftSpeed, LodSilhouetteFogVolume.MaxDriftSpeed)
-            * SilhouetteFogDriftBlocksPerSecond;
-        silhouetteFogDriftBlocks =
-            (silhouetteFogDriftBlocks + step) % SilhouetteFogDriftWrapBlocks;
+                LodSilhouetteFogVolume.MinDriftSpeed, LodSilhouetteFogVolume.MaxDriftSpeed);
+        silhouetteFogDriftBlocks = (silhouetteFogDriftBlocks
+            + seconds * SilhouetteFogDriftBlocksPerSecond) % SilhouetteFogDriftWrapBlocks;
+        silhouetteFogFallBlocks = (silhouetteFogFallBlocks
+            + seconds * SilhouetteFogFallBlocksPerSecond) % SilhouetteFogDriftWrapBlocks;
     }
 
     void DrawSilhouetteFogVolume(float deltaSeconds)
@@ -669,8 +684,12 @@ public partial class LodTerrainRenderer
             }
             // The strip may rest up to its anchor reach off the sampled ground.
             float anchor = LodSilhouetteFogVolume.StripAnchorReachBlocks;
-            p.Uniform("fieldMinY",
-                minGround - SilhouetteFogFloorDepthBlocks - anchor - globeDrop - 4f);
+            float fieldMinY = minGround - SilhouetteFogFloorDepthBlocks - anchor - globeDrop - 4f;
+            // The curtain reaches down to the wall's foot and fades out a little below it.
+            if (silhouetteFogCurtain)
+                fieldMinY = MathF.Min(fieldMinY, TerrainFogWallFootY
+                    - LodSilhouetteFogVolume.CurtainBottomFadeBlocks - 4f);
+            p.Uniform("fieldMinY", fieldMinY);
             // The tallest bank top is 1.3 heights and its ceiling ends at 1.15 of that; the
             // strip's highest top is 1.44 of its depth and its profile ends at 1.35 of that.
             p.Uniform("fieldMaxY", maxGround + MathF.Max(SilhouetteFogHeightBlocks * 1.5f,
@@ -699,6 +718,9 @@ public partial class LodTerrainRenderer
             p.Uniform("fogEdgeSoftness", SilhouetteFogEdgeSoftness);
             p.Uniform("fogLayerDetail", SilhouetteFogLayerDetail);
             p.Uniform("fogDriftBlocks", silhouetteFogDriftBlocks);
+            p.Uniform("fogCurtainActive", silhouetteFogCurtain ? 1 : 0);
+            p.Uniform("fogCurtainFloorY", TerrainFogWallFootY);
+            p.Uniform("fogFallBlocks", silhouetteFogFallBlocks);
             p.BindTexture2D("sceneDepth", primary.DepthTextureId, 0);
             p.BindTexture2D("fogField", silhouetteFogFieldTexture, 1);
             // Always bound, so the sampler is valid; read only while active.

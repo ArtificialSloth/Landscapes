@@ -2033,7 +2033,7 @@ public static class SilhouetteChecks
         // the whole pattern by that elapsed time the moment the dial moves, which is the only
         // motion 0.4.109 and earlier ever showed, and none between adjustments.
         c.True(fogPass.Contains("AdvanceSilhouetteFogDrift(deltaSeconds);", StringComparison.Ordinal)
-                && fogPass.Contains("silhouetteFogDriftBlocks + step", StringComparison.Ordinal)
+                && fogPass.Contains("+ seconds * SilhouetteFogDriftBlocksPerSecond)", StringComparison.Ordinal)
                 && fogPass.Contains("SilhouetteFogDriftBlocksPerSecond", StringComparison.Ordinal)
                 && fogPass.Contains("SilhouetteFogMaxDriftStepSeconds", StringComparison.Ordinal)
                 && fogPass.Contains("p.Uniform(\"fogDriftBlocks\", silhouetteFogDriftBlocks);",
@@ -2054,6 +2054,7 @@ public static class SilhouetteChecks
             "fogFloorDepthBlocks", "fogBillowSizeBlocks", "fogEdgeSoftness",
             "fogLayerDetail", "fogDriftBlocks", "fogCoreBlocks", "fogPixelScale", "dayLight",
             "fogSeamStrength", "fogStripHalfBlocks", "fogStripHeightBlocks", "fogResidualElapsed",
+            "fogCurtainFloorY", "fogFallBlocks",
         })
             c.True(fogFragment.Contains("uniform float " + uniform + ";", StringComparison.Ordinal)
                     && fogPass.Contains("p.Uniform(\"" + uniform + "\"", StringComparison.Ordinal),
@@ -2106,6 +2107,15 @@ public static class SilhouetteChecks
             ("FarseerReachScale", LodSilhouetteFogVolume.FarseerReachScale),
             ("GroundLayerFraction", LodSilhouetteFogVolume.GroundLayerFraction),
             ("ScaleHeightFraction", LodSilhouetteFogVolume.ScaleHeightFraction),
+            ("CurtainExtinction", LodSilhouetteFogVolume.CurtainExtinction),
+            ("CurtainFalloffBlocks", LodSilhouetteFogVolume.CurtainFalloffBlocks),
+            ("CurtainWanderBlocks", LodSilhouetteFogVolume.CurtainWanderBlocks),
+            ("CurtainLipBlocks", LodSilhouetteFogVolume.CurtainLipBlocks),
+            ("CurtainLipDepthBlocks", LodSilhouetteFogVolume.CurtainLipDepthBlocks),
+            ("CurtainLipRiseBlocks", LodSilhouetteFogVolume.CurtainLipRiseBlocks),
+            ("CurtainBottomFadeBlocks", LodSilhouetteFogVolume.CurtainBottomFadeBlocks),
+            ("CurtainInnerFadeBlocks", LodSilhouetteFogVolume.CurtainInnerFadeBlocks),
+            ("CurtainStreakStretch", LodSilhouetteFogVolume.CurtainStreakStretch),
             ("NoisePeriod", (float)LodSilhouetteFogNoise.PeriodCells),
             ("NoiseTexelsPerCell", (float)LodSilhouetteFogNoise.TexelsPerCell),
         })

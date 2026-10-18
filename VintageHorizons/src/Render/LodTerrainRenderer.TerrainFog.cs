@@ -46,6 +46,13 @@ public partial class LodTerrainRenderer
     /// <summary>Where cached terrain begins to fade into the sky, as a share of its far distance.</summary>
     internal const float TerrainFogReachFraction = 0.75f;
 
+    /// <summary>
+    /// The foot of the cached terrain's wall at its edge. Every column is captured down to y = 1
+    /// (LodWorker's capture loop) and the mesher walls off a missing neighbour from the column's
+    /// top to its foot, so the wall the curtain must cover always reaches down to here.
+    /// </summary>
+    internal const float TerrainFogWallFootY = 1f;
+
     readonly Dictionary<long, TerrainFogTile> terrainFogTiles = new();
     readonly List<TerrainFogTile> terrainFogFrameTiles = new();
     readonly List<long> terrainFogStaleKeys = new();
@@ -153,7 +160,7 @@ public partial class LodTerrainRenderer
             silhouetteSeamMask.CompleteBuild();
             SilhouetteFogFollowsTerrain = true;
             terrainFogHeights.Clear();
-            QueueSilhouetteFogVolume(farDistance, TerrainFogHeightAtGrid, globe: false);
+            QueueSilhouetteFogVolume(farDistance, TerrainFogHeightAtGrid, globe: false, curtain: true);
         }
         else if (silhouetteSeamMask.HasEdges
             && (silhouetteFogGeometryDirty
@@ -162,7 +169,7 @@ public partial class LodTerrainRenderer
         {
             SilhouetteFogFollowsTerrain = true;
             terrainFogHeights.Clear();
-            QueueSilhouetteFogVolume(farDistance, TerrainFogHeightAtGrid, globe: false);
+            QueueSilhouetteFogVolume(farDistance, TerrainFogHeightAtGrid, globe: false, curtain: true);
         }
     }
 

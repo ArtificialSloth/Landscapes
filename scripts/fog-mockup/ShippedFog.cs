@@ -7,7 +7,7 @@ namespace VintageHorizons.Tools;
 /// <summary>The seam-fog dials, as the Farseer tab stores them.</summary>
 record FogDials(float Strength, float Coverage, float Spill, float Height, float Floor,
     float Billow, float Softness, float Quality, float DriftBlocks, float SeamStrength,
-    float StripHeight = 3f);
+    float StripHeight = 3f, float FallBlocks = 0f);
 
 readonly record struct Fog(Vector3 Colour, float Alpha);
 
@@ -32,9 +32,11 @@ sealed class ShippedFog
     readonly NoiseTexture noise;
     readonly float coreBlocks;
     readonly float stripHalfBlocks;
+    // fogCurtainActive: the cached terrain's own edge with empty sky beyond (Scene.Cliff).
+    readonly bool curtain;
 
     public ShippedFog(string shaderSource, FogDials dials, NoiseTexture noise, float coreBlocks,
-        float stripHalfBlocks)
+        float stripHalfBlocks, bool curtain = false)
     {
         k = Regex.Matches(shaderSource, @"const\s+(?:float|int)\s+(\w+)\s*=\s*([-\d.]+)\s*;")
             .ToDictionary(m => m.Groups[1].Value,
@@ -43,6 +45,7 @@ sealed class ShippedFog
         this.noise = noise;
         this.coreBlocks = coreBlocks;
         this.stripHalfBlocks = stripHalfBlocks;
+        this.curtain = curtain;
     }
 
     float K(string name) => k.TryGetValue(name, out float value)
@@ -81,11 +84,11 @@ sealed class ShippedFog
     struct FogNoise
     {
         public Vector4 Broad;
-        public float Body, Thread, DetailWeight, BaseLod;
+        public float Body, Thread, DetailWeight, BaseLod, Streak;
     }
 
     /// <summary>vhFogSampleNoise.</summary>
-    FogNoise SampleNoise(Vector3 fogWorld, float pixelBlocks, bool cheap)
+    FogNoise SampleNoise(Vector3 fogWorld, float pixelBlocks, bool cheap, bool streak = false)
     {
         float billowBlocks = MathF.Max(1f, d.Billow);
         float cellsPerBlock = 1f / billowBlocks;
@@ -112,12 +115,25 @@ sealed class ShippedFog
                 n.Thread = Noise(q * new Vector3(3.3f, 2.7f, 3.3f) + new Vector3(5.2f, 1.7f, 9.4f),
                     detailLod).W;
         }
+        n.Streak = 0.5f;
+        if (streak)
+        {
+            float streakBlocks = MathF.Max(4f, billowBlocks * 0.6f);
+            var s = new Vector3(world.X, (world.Y + d.FallBlocks) / K("CurtainStreakStretch"), world.Z)
+                / streakBlocks;
+            float streakLod = NoiseLod(pixelBlocks, 1f / streakBlocks);
+            float fine = streakLod + 1f < K("NoiseFlatLod")
+                ? Noise(s * 2.07f + new Vector3(13.3f, 6.1f, 2.9f), streakLod + 1f).Z : 0.5f;
+            n.Streak = SmoothStep(0.2f, 0.8f,
+                0.65f * Noise(s + new Vector3(7.1f, 3.3f, 1.9f), streakLod).Y + 0.35f * fine);
+        }
         return n;
     }
 
     /// <summary>vhFogShape.</summary>
-    void Shape(float signedDistance, float weight, float height, float stripHeight, in FogNoise n,
-        out float bankExtinction, out float stripExtinction, out float stripAbove, out float top)
+    void Shape(float signedDistance, float weight, float height, float stripHeight, float wallDepth,
+        in FogNoise n, out float bankExtinction, out float stripExtinction, out float stripAbove,
+        out float top, out float curtainExtinction)
     {
         float lowerFade = MathF.Max(2f, MathF.Min(10f, d.Floor * 0.35f + 2f));
         float beyond = MathF.Max(0f, MathF.Abs(signedDistance) - coreBlocks);
@@ -170,7 +186,31 @@ sealed class ShippedFog
             * weight * weight * MathF.Max(0f, d.SeamStrength);
         stripExtinction = stripDensity * stripVertical;
         stripAbove = stripDensity * MathF.Max(0f, K("StripColumnFraction") * stripTop - MathF.Max(0f, stripHeight));
+
+        curtainExtinction = 0f;
+        if (curtain && height < K("CurtainLipRiseBlocks"))
+        {
+            float cf = K("CurtainFalloffBlocks");
+            float lip = K("CurtainLipBlocks") * MathF.Exp(-MathF.Max(0f, -height) / K("CurtainLipDepthBlocks"));
+            float tongue = n.Broad.X * 2f * K("CurtainWanderBlocks");
+            float curtainRim = MathF.Max(0f, signedDistance - stripHalfBlocks - lip - tongue);
+            float lateral = MathF.Exp(-curtainRim / cf)
+                * Mix(1f, n.Streak, SmoothStep(0f, cf, curtainRim))
+                * (1f - SmoothStep(2f * cf, 3.5f * cf, curtainRim))
+                * SmoothStep(-stripHalfBlocks - K("CurtainInnerFadeBlocks"), -stripHalfBlocks, signedDistance);
+            float vertical = (1f - SmoothStep(0f, K("CurtainLipRiseBlocks"), height))
+                * SmoothStep(-wallDepth - K("CurtainBottomFadeBlocks"), -wallDepth, height);
+            curtainExtinction = K("CurtainExtinction") * lateral * vertical * (0.75f + 0.5f * n.Streak)
+                * weight * weight * MathF.Max(0f, d.SeamStrength);
+        }
     }
+
+    float CurtainGap(float signedDistance, float curtainReach) => !curtain ? 1e6f
+        : MathF.Max(signedDistance - curtainReach,
+            -signedDistance - stripHalfBlocks - K("CurtainInnerFadeBlocks"));
+
+    float FloorBelow(float curtainGap, float ground, float bankFloor) => curtainGap > 0f ? bankFloor
+        : MathF.Max(bankFloor, ground - Scene.WallFootY + K("CurtainBottomFadeBlocks"));
 
     float StripGround(float sampledGround, float landing) =>
         sampledGround + Math.Clamp(landing - sampledGround,
@@ -189,6 +229,7 @@ sealed class ShippedFog
         float bankCeiling = MathF.Max(d.Height * 1.5f, reach + stripDepth * 1.95f);
         float bankFloor = d.Floor + reach;
         float fieldMinY = Scene.GroundY - bankFloor - 4f;
+        if (curtain) fieldMinY = MathF.Min(fieldMinY, Scene.WallFootY - K("CurtainBottomFadeBlocks") - 4f);
         float fieldMaxY = Scene.GroundY + bankCeiling + 4f;
         float marchStart = 0f, marchEnd = endpointDistance;
         if (!Slab(cam.Y, rayDirection.Y, fieldMinY, fieldMaxY, ref marchStart, ref marchEnd)
@@ -202,8 +243,11 @@ sealed class ShippedFog
         float transmittance = 1f;
         Vector3 scattered = Vector3.Zero;
         float stripReach = stripHalfBlocks + 2f * K("StripWanderBlocks") + 3.5f * K("StripFalloffBlocks");
-        float conservativeReach = MathF.Max(coreBlocks + d.Spill * K("FarseerReachScale") * 1.5f
-            + Clamp01(d.Softness) * 0.5f * d.Spill, stripReach) + 8f * 1.5f;
+        float curtainReach = curtain ? stripHalfBlocks + K("CurtainLipBlocks")
+            + 2f * K("CurtainWanderBlocks") + 3.5f * K("CurtainFalloffBlocks") : 0f;
+        float conservativeReach = MathF.Max(MathF.Max(coreBlocks + d.Spill * K("FarseerReachScale") * 1.5f
+            + Clamp01(d.Softness) * 0.5f * d.Spill, stripReach), curtainReach) + 8f * 1.5f;
+        float wallDepth = Scene.GroundY - Scene.WallFootY;
         bool residualActive = fields.Residual != null && fields.ResidualWeight > 0f;
         float residualWeight = Clamp01(fields.ResidualWeight);
 
@@ -226,17 +270,23 @@ sealed class ShippedFog
             float signedDistance = fields.Current(fieldPosition.X, fieldPosition.Z);
             float nearest = MathF.Abs(signedDistance);
             float stripBand = MathF.Abs(signedDistance) - stripReach;
+            float curtainGap = CurtainGap(signedDistance, curtainReach);
             if (residualActive)
             {
-                float old = MathF.Abs(fields.Residual!(fieldPosition.X, fieldPosition.Z));
+                float oldSigned = fields.Residual!(fieldPosition.X, fieldPosition.Z);
+                float old = MathF.Abs(oldSigned);
                 nearest = MathF.Min(nearest, old);
                 stripBand = MathF.Min(stripBand, old - stripReach);
+                curtainGap = MathF.Min(curtainGap, CurtainGap(oldSigned, curtainReach));
             }
             float horizontalOutside = MathF.Max(0f, nearest - conservativeReach);
             float heightAboveGround = fieldPosition.Y - Scene.GroundY;
-            float verticalOutside = MathF.Max(0f, MathF.Max(-bankFloor - heightAboveGround,
+            float verticalOutside = MathF.Max(0f, MathF.Max(
+                -FloorBelow(curtainGap, Scene.GroundY, bankFloor) - heightAboveGround,
                 heightAboveGround - bankCeiling));
-            float outside = MathF.Max(horizontalOutside, verticalOutside * 0.35f);
+            float verticalSkip = verticalOutside * 0.35f;
+            if (curtainGap > 0f) verticalSkip = MathF.Min(verticalSkip, curtainGap);
+            float outside = MathF.Max(horizontalOutside, verticalSkip);
             float farStep = MathF.Max(baseStep, rayDistance * K("FarStepFraction"));
             float stepBlocks = outside > 0f
                 ? Math.Clamp(outside * 0.72f, baseStep, 512f)
@@ -269,20 +319,24 @@ sealed class ShippedFog
                 float stripHeight = fieldPosition.Y
                     - Mix(ground, StripGround(ground, landing.Y), landingWeight);
                 float pixelBlocks = MathF.Max(0.001f, middle * pixelScale);
-                FogNoise n = SampleNoise(fieldPosition, pixelBlocks, false);
-                Shape(signedDistance, 1f, heightAboveGround, stripHeight, n,
-                    out float bank, out float strip, out float stripAbove, out float top);
+                bool wantStreak = curtain
+                    && heightAboveGround < K("CurtainLipRiseBlocks") + K("StripAnchorReachBlocks");
+                FogNoise n = SampleNoise(fieldPosition, pixelBlocks, false, wantStreak);
+                Shape(signedDistance, 1f, heightAboveGround, stripHeight, wallDepth, n,
+                    out float bank, out float strip, out float stripAbove, out float top,
+                    out float curtainHere);
                 if (residualActive)
                 {
                     Shape(fields.Residual!(fieldPosition.X, fieldPosition.Z), residualWeight,
-                        heightAboveGround, stripHeight, n, out float oldBank, out float oldStrip,
-                        out float oldAbove, out float oldTop);
+                        heightAboveGround, stripHeight, wallDepth, n, out float oldBank, out float oldStrip,
+                        out float oldAbove, out float oldTop, out float oldCurtain);
                     if (oldBank > bank) top = oldTop;
                     bank = MathF.Max(bank, oldBank);
                     strip = MathF.Max(strip, oldStrip);
                     stripAbove = MathF.Max(stripAbove, oldAbove);
+                    curtainHere = MathF.Max(curtainHere, oldCurtain);
                 }
-                float extinction = bank + strip;
+                float extinction = bank + strip + curtainHere;
                 previousExtinction = extinction;
                 if (extinction > 0.0000001f)
                 {
@@ -291,27 +345,38 @@ sealed class ShippedFog
                     transmittance *= 1f - segmentAlpha;
                     if (contribution >= 0.0005f)
                     {
-                        float stripShade = stripAbove * 0.5f / sunHeight;
+                        float sunk = curtain ? SmoothStep(0f, -4f, heightAboveGround) : 0f;
+                        float stripShade = stripAbove * 0.5f / sunHeight * (1f - sunk);
                         float sunProbe = K("SunProbeBlocks");
                         Vector3 probe = fieldPosition + sunDirection * sunProbe;
                         FogNoise pn = SampleNoise(probe, pixelBlocks, true);
                         float probeHeight = probe.Y - Scene.GroundY;
-                        Shape(fields.Current(probe.X, probe.Z), 1f, probeHeight, probeHeight, pn,
-                            out float probeBank, out float probeStrip, out _, out _);
+                        float probeSigned = fields.Current(probe.X, probe.Z);
+                        Shape(probeSigned, 1f, probeHeight, probeHeight, wallDepth, pn,
+                            out float probeBank, out float probeStrip, out _, out _, out float probeCurtain);
                         if (residualActive)
                         {
                             Shape(fields.Residual!(probe.X, probe.Z), residualWeight, probeHeight,
-                                probeHeight, pn, out float oldBank, out float oldStrip, out _, out _);
+                                probeHeight, wallDepth, pn, out float oldBank, out float oldStrip, out _, out _,
+                                out float oldCurtain);
                             probeBank = MathF.Max(probeBank, oldBank);
                             probeStrip = MathF.Max(probeStrip, oldStrip);
+                            probeCurtain = MathF.Max(probeCurtain, oldCurtain);
                         }
-                        float towardSun = (bank * 0.35f + probeBank + probeStrip) * sunProbe * 1.6f
-                            + stripShade;
+                        float rock = curtain
+                            ? SmoothStep(0f, stripHalfBlocks, -probeSigned) * SmoothStep(0f, 4f, -probeHeight) : 0f;
+                        float curtainShare = MathF.Max(curtainHere / extinction, sunk);
+                        float towardSun = (bank * 0.35f + probeBank
+                                + probeStrip * Mix(1f, 0.15f, curtainShare) + 0.15f * probeCurtain)
+                            * sunProbe * 1.6f + stripShade + 4f * rock;
                         float direct = (MathF.Exp(-towardSun) + 0.6f * MathF.Exp(-towardSun * 0.25f)) / 1.6f;
                         float bankLift = Clamp01(MathF.Max(0f, heightAboveGround) / MathF.Max(1f, top));
                         float stripRise = (0.8f + 0.4f * n.Broad.W) * (0.8f + 0.4f * n.Body);
-                        float stripLift = Mix(0.25f, 0.75f, Clamp01((stripRise - 0.64f) / 0.8f));
-                        float lift = (bank * bankLift + strip * stripLift) / extinction;
+                        float curtainLift = Mix(0.3f, 0.9f, n.Streak);
+                        float stripLift = Mix(Mix(0.25f, 0.75f, Clamp01((stripRise - 0.64f) / 0.8f)),
+                            curtainLift, sunk);
+                        float lift = (bank * bankLift + strip * stripLift + curtainHere * curtainLift)
+                            / extinction;
                         float sky = Mix(0.55f, 1f, lift);
                         float sunlit = 0.62f * direct * phase + 0.38f * sky;
                         float light = Math.Clamp(Mix(sky, sunlit, daylight), 0f, 1.2f);

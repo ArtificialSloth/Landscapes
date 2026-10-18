@@ -148,6 +148,96 @@ static class Scene
         return Vector3.Lerp(c, FogColour * 0.96f, haze * 0.85f);
     }
 
+    /// <summary>
+    /// The cliff scene (0.4.149): Farseer off, so the high-z side is empty sky and the cached
+    /// terrain ends in its 32-block staircase of walls, dropping from the ground to the foot of
+    /// its columns, as at the edge of the owner's world (2026-10-18).
+    /// </summary>
+    public static bool Cliff;
+
+    /// <summary>Where every captured column, and so the cached terrain's wall, ends.</summary>
+    public const float WallFootY = 1f;
+
+    /// <summary>
+    /// The cliff scene's ray hit: whole 32-block cells of cached terrain, solid from the wall's
+    /// foot to the ground, walked cell by cell. Infinity on a miss; the normal is the face hit.
+    /// </summary>
+    public static float CliffIntersect(Vector3 origin, Vector3 dir, float maxDistance, out Vector3 normal)
+    {
+        normal = Vector3.UnitY;
+        const float cell = 32f;
+        int cx = (int)MathF.Floor(origin.X / cell), cz = (int)MathF.Floor(origin.Z / cell);
+        int stepX = dir.X >= 0f ? 1 : -1, stepZ = dir.Z >= 0f ? 1 : -1;
+        float nextX = MathF.Abs(dir.X) < 1e-7f ? float.PositiveInfinity
+            : ((cx + (stepX > 0 ? 1 : 0)) * cell - origin.X) / dir.X;
+        float nextZ = MathF.Abs(dir.Z) < 1e-7f ? float.PositiveInfinity
+            : ((cz + (stepZ > 0 ? 1 : 0)) * cell - origin.Z) / dir.Z;
+        float deltaX = MathF.Abs(cell / dir.X), deltaZ = MathF.Abs(cell / dir.Z);
+        float enter = 0f;
+        Vector3 enterNormal = Vector3.UnitY;
+        while (enter <= maxDistance)
+        {
+            float exit = MathF.Min(nextX, nextZ);
+            bool solid = !Farseer((cx + 0.5f) * cell, (cz + 0.5f) * cell);
+            if (solid)
+            {
+                float y0 = origin.Y + dir.Y * enter;
+                if (enter > 0f && y0 >= WallFootY && y0 <= GroundY)
+                {
+                    normal = enterNormal;
+                    return enter;
+                }
+                // Through the top or the underside within this cell.
+                float plane = y0 > GroundY ? GroundY : y0 < WallFootY ? WallFootY : float.NaN;
+                if (!float.IsNaN(plane) && MathF.Abs(dir.Y) > 1e-7f)
+                {
+                    float t = (plane - origin.Y) / dir.Y;
+                    if (t >= enter && t <= exit)
+                    {
+                        normal = plane == GroundY ? Vector3.UnitY : -Vector3.UnitY;
+                        return t;
+                    }
+                }
+            }
+            if (nextX < nextZ)
+            {
+                enter = nextX;
+                nextX += deltaX;
+                cx += stepX;
+                enterNormal = new Vector3(-stepX, 0f, 0f);
+            }
+            else
+            {
+                enter = nextZ;
+                nextZ += deltaZ;
+                cz += stepZ;
+                enterNormal = new Vector3(0f, 0f, -stepZ);
+            }
+        }
+        return float.PositiveInfinity;
+    }
+
+    /// <summary>The cliff's colours: grass on top, the wall's stone on its faces, lit by face.</summary>
+    public static Vector3 CliffSurface(Vector3 p, Vector3 normal, float distance)
+    {
+        Vector3 c;
+        if (normal.Y > 0.5f)
+        {
+            float patch = LodSilhouetteFogNoise.ValueNoise(p.X / 24f, 5.1f, p.Z / 24f, 2);
+            c = new Vector3(0.37f, 0.44f, 0.31f) * (0.88f + 0.10f * patch);
+        }
+        else
+        {
+            float block = LodSilhouetteFogNoise.ValueNoise(MathF.Floor(p.X + p.Z) + 0.5f,
+                MathF.Floor(p.Y) + 0.5f, 3.3f, 1);
+            c = new Vector3(0.62f, 0.62f, 0.64f) * (0.9f + 0.1f * block);
+        }
+        float lambert = MathF.Max(0f, Vector3.Dot(normal, SunDirection));
+        c *= 0.5f + 0.5f * lambert / MathF.Max(0.3f, SunDirection.Y);
+        float haze = 1f - MathF.Exp(-distance / 3500f);
+        return Vector3.Lerp(c, FogColour * 0.96f, haze * 0.85f);
+    }
+
     public static Vector3 Sky(Vector3 dir) =>
         Vector3.Lerp(FogColour, new Vector3(0.52f, 0.64f, 0.85f), SmoothStep(0f, 0.35f, dir.Y));
 

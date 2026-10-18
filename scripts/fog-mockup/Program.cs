@@ -22,6 +22,11 @@ using VintageHorizons.Tools;
 // real ground at the staircase is off the sampled seam height as on a hillside, and adds a
 // column with the strip resting on the sampled height alone.
 //
+// --cliff renders Farseer switched off instead (0.4.149): the cached terrain ends in its wall,
+// dropping from the ground to y = 1 in empty sky. OUT_DIR/fog-cliff.png compares no fog, the
+// fog without the curtain (0.4.148) and with it, and prints how much of the wall shows through;
+// OUT_DIR/fog-cliff-fall.png shows the curtain's tendrils one second apart as they fall.
+//
 // The mock-up marches at full resolution; the game marches at half and upsamples. Session 107
 // introduced it; 0.4.125 added the hills, the ramp, the dissolve and the see-through count.
 //
@@ -33,6 +38,7 @@ using VintageHorizons.Tools;
 string repo = FindRepository();
 bool with0122 = args.Contains("--with-0.4.122");
 bool with0124 = args.Contains("--with-0.4.124");
+bool cliff = args.Contains("--cliff");
 string? rampArg = args.FirstOrDefault(a => a.StartsWith("--ramp=", StringComparison.Ordinal));
 Scene.Ramp = rampArg == null ? 0f : float.Parse(rampArg["--ramp=".Length..], CultureInfo.InvariantCulture);
 args = args.Where(a => !a.StartsWith("--", StringComparison.Ordinal)).ToArray();
@@ -101,6 +107,11 @@ if (with0122)
     columns.Insert(1, ("0.4.122, old dials", (c, d, e, l, x, y, p) => Fog0122.March(dials0122, c, d, e, x, y)));
 
 const int gap = 8, labelHeight = 72, headerHeight = 64;
+if (cliff)
+{
+    RenderCliff();
+    return;
+}
 var sheet = new Image(columns.Count * tileWidth + (columns.Count + 1) * gap,
     headerHeight + views.Length * (tileHeight + labelHeight + gap) + gap, fill: 28);
 sheet.Text(gap, 10, "seam fog mock-up: one 32-block staircase seam, farseer hills behind, fixed sun.", 3, 235);
@@ -164,6 +175,84 @@ path = Path.Combine(outDir, "fog-dissolve.png");
 dissolve.WritePng(path);
 Console.WriteLine(path);
 
+// Farseer off: the edge of the cached terrain, its wall and the curtain.
+void RenderCliff()
+{
+    Scene.Cliff = true;
+    float g = Scene.GroundY;
+    float edge = Scene.CentreZ(0f);
+    var cliffViews = new[]
+    {
+        new View("from the sky, above the lip", new Vector3(0f, g + 80f, edge + 260f), 180f, -22f, 60f),
+        new View("level with the wall", new Vector3(0f, g - 45f, edge + 210f), 180f, 0f, 60f),
+        new View("from below the foot", new Vector3(0f, -30f, edge + 170f), 180f, 18f, 60f),
+        new View("along the edge", new Vector3(-700f, g + 30f, Scene.CentreZ(-700f) + 140f), 90f, -14f, 55f),
+        new View("from the ground, looking out", new Vector3(0f, g + 12f, edge - 140f), 0f, -12f, 60f),
+        new View("straight down over the lip", new Vector3(0f, g + 240f, edge + 40f), 0f, -89.5f, 60f),
+    };
+    var without = new ShippedFog(shader, shipped, noise, core, stripHalf);
+    var with = new ShippedFog(shader, shipped, noise, core, stripHalf, curtain: true);
+    var cliffColumns = new List<(string Name, Marcher March)>
+    {
+        ("no fog", (c, d, e, l, x, y, p) => default),
+        ("0.4.148, no curtain", (c, d, e, l, x, y, p) => without.March(c, d, e, l, x, y, p, current)),
+        ("0.4.149, curtain", (c, d, e, l, x, y, p) => with.March(c, d, e, l, x, y, p, current)),
+    };
+    var page = new Image(cliffColumns.Count * tileWidth + (cliffColumns.Count + 1) * gap,
+        headerHeight + cliffViews.Length * (tileHeight + labelHeight + gap) + gap, fill: 28);
+    page.Text(gap, 10, "farseer off: the cached terrain's wall drops to y 1 in empty sky.", 3, 235);
+    page.Text(gap, 38, $"wall: how much of it shows through. strip band {stripHalf:0} blocks each side, "
+        + "wall strays across it.", 2, 200);
+    for (int row = 0; row < cliffViews.Length; row++)
+    {
+        for (int column = 0; column < cliffColumns.Count; column++)
+        {
+            Tile tile = Render(cliffViews[row], tileWidth, tileHeight, cliffColumns[column].March, core);
+            int ox = gap + column * (tileWidth + gap);
+            int oy = headerHeight + row * (tileHeight + labelHeight + gap);
+            page.Text(ox, oy + 6, $"{cliffColumns[column].Name}, {cliffViews[row].Name}", 2, 235);
+            if (column > 0 && tile.SeamCount > 0)
+                page.Text(ox, oy + 26, $"wall shows: avg {tile.SeamMean * 100f:0}%, worst {tile.SeamWorst * 100f:0}%",
+                    2, tile.SeamMean > 0.05f || tile.SeamWorst > 0.15f ? (byte)150 : (byte)235);
+            page.Blit(tile.Picture, ox, oy + labelHeight);
+            Console.WriteLine($"{cliffViews[row].Name,-30} {cliffColumns[column].Name,-22} wall {tile.SeamCount,6} px, "
+                + $"shows avg {tile.SeamMean * 100f,5:0.0}%, worst {tile.SeamWorst * 100f,5:0.0}%{tile.Where}");
+        }
+    }
+    string cliffPath = Path.Combine(outDir, "fog-cliff.png");
+    page.WritePng(cliffPath);
+    Console.WriteLine(cliffPath);
+
+    // One second apart at drift speed one: 5 blocks of fall, 6 of drift.
+    View[] fallViews = { cliffViews[0], cliffViews[1] };
+    const int frames = 5;
+    int small = Math.Max(240, tileWidth / 2), smallHeight = small * 9 / 16;
+    var fall = new Image(frames * small + (frames + 1) * gap,
+        headerHeight + fallViews.Length * (smallHeight + 32 + gap) + gap, fill: 28);
+    fall.Text(gap, 10, "the curtain's tendrils, one second apart at drift speed 1.", 3, 235);
+    fall.Text(gap, 38, "they slide down the wall at 5 blocks a second and drift with the bank.", 2, 200);
+    for (int row = 0; row < fallViews.Length; row++)
+    {
+        for (int frame = 0; frame < frames; frame++)
+        {
+            var moving = new ShippedFog(shader, shipped with
+            {
+                FallBlocks = frame * 5f,
+                DriftBlocks = shipped.DriftBlocks + frame * 6f,
+            }, noise, core, stripHalf, curtain: true);
+            Tile tile = Render(fallViews[row], small, smallHeight,
+                (c, d, e, l, x, y, px) => moving.March(c, d, e, l, x, y, px, current), core);
+            int ox = gap + frame * (small + gap);
+            int oy = headerHeight + row * (smallHeight + 32 + gap);
+            fall.Text(ox, oy + 8, frame == 0 ? $"0 s, {fallViews[row].Name}" : $"{frame} s", 2, 235);
+            fall.Blit(tile.Picture, ox, oy + 32);
+        }
+    }
+    string fallPath = Path.Combine(outDir, "fog-cliff-fall.png");
+    fall.WritePng(fallPath);
+    Console.WriteLine(fallPath);
+}
+
 static Tile Render(View view, int w, int h, Marcher march, float core)
 {
     var image = new Image(w, h);
@@ -186,12 +275,22 @@ static Tile Render(View view, int w, int h, Marcher march, float core)
             float ndcY = 1f - (py + 0.5f) / h * 2f;
             Vector3 dir = Vector3.Normalize(forward + right * (ndcX * tanHalf * aspect)
                 + up * (ndcY * tanHalf));
-            float hit = Scene.Intersect(view.Camera, dir, Scene.FarViewDistance);
+            Vector3 normal = Vector3.UnitY;
+            float hit = Scene.Cliff
+                ? Scene.CliffIntersect(view.Camera, dir, Scene.FarViewDistance, out normal)
+                : Scene.Intersect(view.Camera, dir, Scene.FarViewDistance);
             bool lands = float.IsFinite(hit) && hit < Scene.FarViewDistance;
             float endpoint = MathF.Min(hit, Scene.FarViewDistance);
             Vector3 background;
             bool edge = false, past = false;
-            if (lands)
+            if (lands && Scene.Cliff)
+            {
+                // The wall is what the curtain must hide: the side faces, not the top or the underside.
+                Vector3 p = view.Camera + dir * hit;
+                background = Scene.CliffSurface(p, normal, hit);
+                edge = MathF.Abs(normal.Y) < 0.5f;
+            }
+            else if (lands)
             {
                 Vector3 p = view.Camera + dir * hit;
                 background = Scene.Ground(p.X, p.Z, hit);
