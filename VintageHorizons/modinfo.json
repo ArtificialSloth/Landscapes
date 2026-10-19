@@ -2,11 +2,11 @@
   "type": "code",
   "modid": "dodenslandscapes",
   "name": "Doden's Landscapes",
-  "version": "0.4.158",
+  "version": "0.4.159",
   "side": "Universal",
   "requiredOnClient": false,
   "requiredOnServer": false,
-  "description": "Unlimited render distance for Vintage Story. It works on ANY server, and that server needs nothing installed. The mod builds a persistent LOD cache from the terrain that you explore. You get real 3D horizons: mountains, overhangs, forests, translucent water, live seasonal colors and snow lines. Install it on your server too and it shares its own cache with players. A server can also sweep terrain from earlier sessions, and an admin can build the horizon on request. Neither writes anything to the savegame. Coverage grows as you play, and it persists forever per world. It does not step aside for other LOD mods, so keep only one LOD mod switched on. Founded on AliasFactory's Vintage Horizons.",
+  "description": "View beautiful landscapes far beyond your view distance, with Level of Detail rendering built for high performance.",
   "authors": [
     "Doden"
   ],
