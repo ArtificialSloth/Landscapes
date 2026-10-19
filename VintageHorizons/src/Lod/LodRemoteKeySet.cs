@@ -380,6 +380,9 @@ public class LodRemoteKeySet
     public long[] FillWanted() =>
         fillWanted.Count == 0 ? Array.Empty<long>() : fillWanted.ToArray();
 
+    /// <summary><see cref="FillWanted"/> added to a reused list, for the per-tick request pumps.</summary>
+    public void AppendFillWanted(List<long> into) => into.AddRange(fillWanted);
+
     /// <summary>True when a decoded copy of this key may be merged into the resident one.</summary>
     public bool CanMergeInto(long key) => fills.ContainsKey(key) || RemoteOnly.Contains(key);
 
@@ -393,6 +396,9 @@ public class LodRemoteKeySet
     /// </summary>
     public long[] Wanted() =>
         remoteWanted.Count == 0 ? Array.Empty<long>() : remoteWanted.ToArray();
+
+    /// <summary><see cref="Wanted"/> added to a reused list, for the per-tick request pumps.</summary>
+    public void AppendWanted(List<long> into) => into.AddRange(remoteWanted);
 
     /// <summary>
     /// Drop the keys that were actually asked for. Only these, never the whole set: a key

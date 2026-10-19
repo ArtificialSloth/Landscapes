@@ -18,6 +18,7 @@ public static class ConfigChecks
         Description(c);
         ClientGpuDefaults(c);
         ClientLoadingDefaults(c);
+        TypedNumbersReadOnAnyPc(c);
     }
 
     static void Defaults(Check c)
@@ -335,5 +336,34 @@ public static class ConfigChecks
             "paused loading resumes exactly at the 50 ms cadence");
         c.True(PausedLodLoadingPolicy.IsDue(5, 100),
             "a monotonic-clock reset cannot strand paused loading");
+    }
+
+    /// <summary>
+    /// Pre-release review B5: the command dials parsed numbers with the PC's language, so on a
+    /// German-language PC ".dlband width 1.5" was refused. Both separators now read the same
+    /// on any PC.
+    /// </summary>
+    static void TypedNumbersReadOnAnyPc(Check c)
+    {
+        var previous = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            foreach (string culture in new[] { "en-US", "de-DE" })
+            {
+                System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo(culture);
+                c.True(VintageHorizonsModSystem.TryParseSetting("1.5", out float dot) && dot == 1.5f,
+                    $"'1.5' is one and a half on a {culture} PC");
+                c.True(VintageHorizonsModSystem.TryParseSetting("1,5", out float comma) && comma == 1.5f,
+                    $"and so is '1,5'");
+                c.True(VintageHorizonsModSystem.TryParseSetting(" 48 ", out float whole) && whole == 48f,
+                    "a whole number with spaces around it reads");
+                c.False(VintageHorizonsModSystem.TryParseSetting("wide", out _), "a word is still refused");
+                c.False(VintageHorizonsModSystem.TryParseSetting(null, out _), "and so is nothing at all");
+            }
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = previous;
+        }
     }
 }

@@ -931,6 +931,73 @@ public static class StoreChecks
         c.NoThrow(() => store.DeserializeForeign(garbage, null), "a corrupted blob does not throw");
 
         c.True(store.DeserializeForeign(good, null) != null, "a good blob still deserializes");
+
+        OversizedClaimsAreRefusedBeforeAllocating(c, store);
+    }
+
+    /// <summary>
+    /// Pre-release review S4: a blob states its own sizes, and the reader used to believe them
+    /// - up to 2 GB of runs allocated before a byte was read, or a palette name of any length.
+    /// A server sends these blobs, so a hostile one could freeze or crash a client.
+    /// </summary>
+    static void OversizedClaimsAreRefusedBeforeAllocating(Check c, LodStore store)
+    {
+        int columns = LodSection.GridSize * LodSection.GridSize;
+
+        // Every column claims the per-column maximum: 16.7 million runs, 134 MB, from a blob
+        // of a few kilobytes.
+        byte[] manyRuns = CraftedBlob(w =>
+        {
+            w.Write((ushort)0);
+            for (int col = 0; col < columns; col++) w.Write((ushort)LodStore.MaxRunsPerColumn);
+        });
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        c.Eq(null, store.DeserializeForeign(manyRuns, null),
+            "a section claiming more runs than it may unpack to is refused");
+        c.True(GC.GetAllocatedBytesForCurrentThread() - before < 8L * 1024 * 1024,
+            "and refused before the run array is allocated");
+
+        byte[] tallColumn = CraftedBlob(w =>
+        {
+            w.Write((ushort)0);
+            w.Write((ushort)(LodStore.MaxRunsPerColumn + 1));
+        });
+        c.Eq(null, store.DeserializeForeign(tallColumn, null),
+            "one column taller than any world is refused");
+
+        // A palette name claiming a gigabyte.
+        byte[] longName = CraftedBlob(w =>
+        {
+            w.Write((ushort)1);
+            w.Write7BitEncodedInt(1 << 30);
+            w.Write(new byte[64]);
+        });
+        before = GC.GetAllocatedBytesForCurrentThread();
+        c.Eq(null, store.DeserializeForeign(longName, null), "a palette name claiming a gigabyte is refused");
+        c.True(GC.GetAllocatedBytesForCurrentThread() - before < 8L * 1024 * 1024,
+            "without reading it in");
+
+        // The stream itself stops at the ceiling, whatever the format around it claims.
+        using var zeros = new MemoryStream(new byte[4096]);
+        using var bounded = new LodBoundedReadStream(zeros, 1000);
+        var sink = new byte[600];
+        c.Eq(600, bounded.Read(sink, 0, 600), "a bounded stream delivers up to its limit");
+        c.Eq(400, bounded.Read(sink, 0, 600), "and stops exactly there");
+        c.Throws<InvalidDataException>(() => bounded.Read(sink, 0, 1),
+            "asking for more than the limit fails instead of unpacking it");
+    }
+
+    static byte[] CraftedBlob(Action<BinaryWriter> body)
+    {
+        using var ms = new MemoryStream();
+        ms.WriteByte(4);
+        using (var deflate = new System.IO.Compression.DeflateStream(ms,
+            System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
+        using (var w = new BinaryWriter(deflate, System.Text.Encoding.UTF8))
+        {
+            body(w);
+        }
+        return ms.ToArray();
     }
 
     static void BackgroundForeignDecodeIsBoundedAndIsolated(Check c)

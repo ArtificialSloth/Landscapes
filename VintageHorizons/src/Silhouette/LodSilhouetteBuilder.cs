@@ -107,6 +107,31 @@ internal sealed class LodSilhouetteBuilder
         public readonly HashSet<long> Queued = new();
         public readonly Queue<(long Key, long SessionId)> Requests = new();
         public readonly LodTickAllowance SendAllowance = new();
+        public long LastRequestMs = long.MinValue;
+        /// <summary>The reach the client asked for, before this server's clamp.</summary>
+        public int AskedReachBlocks;
+    }
+
+    /// <summary>
+    /// Tile keys one request may carry, and keys one player may have waiting (pre-release review
+    /// S5, matching the section limits in LodAssistAdmission). The honest client sends at most
+    /// <see cref="LodAssist.MaxSilhouetteTilesInFlight"/> at a time and holds no more than that.
+    /// Past these a request goes unanswered: refusing each key at once is the flood being prevented.
+    /// </summary>
+    internal const int MaxTileKeysPerRequest = 4 * LodAssist.MaxSilhouetteTilesInFlight;
+    internal const int MaxTileRequestsQueued = 16 * LodAssist.MaxSilhouetteTilesInFlight;
+
+    /// <summary>An unchanged repeat of a player's silhouette request within this long is ignored.</summary>
+    internal const long RepeatRequestIgnoreMs = 5000;
+
+    /// <summary>Players warned about this connection, so a flood logs one line.</summary>
+    readonly HashSet<string> warnedRequestFlood = new(StringComparer.Ordinal);
+
+    void WarnRequestFlood(IServerPlayer player, string what)
+    {
+        if (!warnedRequestFlood.Add(player.PlayerUID)) return;
+        logger.Warning("Horizon silhouettes: {0} {1}. Requests like this are ignored; only a modified "
+            + "client sends them. Further ones from this connection are not logged.", player.PlayerName, what);
     }
 
     enum EnumProbeStep { Probed, Exhausted, Paused }
@@ -207,12 +232,25 @@ internal sealed class LodSilhouetteBuilder
 
         int askedReach = request.ReachBlocks <= 0 ? DefaultReachBlocks : request.ReachBlocks;
         int reach = Math.Clamp(askedReach, MinReachBlocks, maxReachBlocks);
+        long now = sapi.World.ElapsedMilliseconds;
         if (!demands.TryGetValue(player.PlayerUID, out Demand? demand))
         {
             demand = new Demand { Player = player };
             demands[player.PlayerUID] = demand;
             demandOrder.Add(player.PlayerUID);
         }
+        else if (demand.SessionId == request.SessionId && demand.TransportVersion == request.TransportVersion
+            && demand.AskedReachBlocks == askedReach && now - demand.LastRequestMs < RepeatRequestIgnoreMs)
+        {
+            // The client sends this once and on change. An identical repeat seconds later asks for
+            // nothing new, and answering it re-plans the player's whole reach and writes two log
+            // lines - per packet, for a client that sends them in a loop (review S5).
+            demand.LastRequestMs = now;
+            WarnRequestFlood(player, "repeated an unchanged silhouette request");
+            return;
+        }
+        demand.LastRequestMs = now;
+        demand.AskedReachBlocks = askedReach;
         demand.Player = player;
         bool newSession = demand.SessionId != request.SessionId
             || demand.TransportVersion != request.TransportVersion;
@@ -245,22 +283,35 @@ internal sealed class LodSilhouetteBuilder
     public void RequestTiles(IServerPlayer player, AssistSilhouetteTileRequest request)
     {
         long[] keys = request.Keys ?? Array.Empty<long>();
+        if (keys.Length > MaxTileKeysPerRequest)
+        {
+            WarnRequestFlood(player, $"asked for {keys.Length} silhouette tiles in one message; the mod "
+                + $"never asks for more than {LodAssist.MaxSilhouetteTilesInFlight}");
+            return;
+        }
         if (!demands.TryGetValue(player.PlayerUID, out Demand? demand))
         {
+            // A late request from a client that has just switched silhouettes off: answered, and
+            // bounded by the per-message limit above.
             foreach (long key in keys) SendRefusal(player, key, request.SessionId, retryable: false);
             return;
         }
-        foreach (long key in keys)
+        int room = Math.Clamp(MaxTileRequestsQueued - demand.Requests.Count, 0, keys.Length);
+        for (int i = 0; i < room; i++)
         {
-            demand.Requests.Enqueue((key, request.SessionId));
+            demand.Requests.Enqueue((keys[i], request.SessionId));
             TilesRequested++;
         }
-        if (keys.Length > 0) EnsureListening();
+        if (room < keys.Length)
+            WarnRequestFlood(player, $"held {demand.Requests.Count} silhouette tile requests, far past the "
+                + $"mod's own limit of {LodAssist.MaxSilhouetteTilesInFlight}; {keys.Length - room} more were ignored");
+        if (room > 0) EnsureListening();
     }
 
     /// <summary>Main thread. True when the player had a demand.</summary>
     public bool Forget(string playerUid)
     {
+        warnedRequestFlood.Remove(playerUid);
         if (!demands.Remove(playerUid)) return false;
         demandOrder.Remove(playerUid);
         if (demands.Count == 0) StopListening();

@@ -246,6 +246,14 @@ public class LodAssistServerSystem : ModSystem
 
     void OnSilhouetteTileRequest(IServerPlayer fromPlayer, AssistSilhouetteTileRequest request)
     {
+        // Dropped here like an oversized section request, before it becomes owning-thread work.
+        int keys = request.Keys?.Length ?? 0;
+        if (keys > LodSilhouetteBuilder.MaxTileKeysPerRequest)
+        {
+            WarnRequestFlood(fromPlayer, $"asked for {keys} silhouette tiles in one message; the mod "
+                + $"never asks for more than {LodAssist.MaxSilhouetteTilesInFlight}");
+            return;
+        }
         sapi.Event.EnqueueMainThreadTask(() =>
         {
             if (silhouettes == null || !silhouettesOffered || !ledger.HasGreeted(fromPlayer.PlayerUID))

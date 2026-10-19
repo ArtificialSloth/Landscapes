@@ -1079,6 +1079,21 @@ public class LodStore : SQLiteDBConnection
         return ms.ToArray();
     }
 
+    /// <summary>
+    /// What one section may unpack to. Real sections come to a few MB at most (a busy level-0
+    /// section holds well under a million runs); these bounds only refuse a blob that claims
+    /// more, as one crafted by a hostile server would (pre-release review S4). Before them the
+    /// run array was allocated from the blob's own counts, up to 268 million entries (2 GB),
+    /// before a byte of it had been read.
+    /// </summary>
+    internal const int MaxUnpackedSectionBytes = 64 * 1024 * 1024;
+
+    /// <summary>Runs one column may claim: each covers at least one block of height.</summary>
+    internal const int MaxRunsPerColumn = 4096;
+
+    /// <summary>Bytes one palette block code may claim; real codes such as "game:soil-medium-normal" are tens.</summary>
+    internal const int MaxBlockCodeBytes = 1024;
+
     /// <param name="world">Null to defer block-id resolution to the main thread.</param>
     LodSection? Deserialize(byte[] blob, IWorldAccessor? world)
     {
@@ -1088,7 +1103,8 @@ public class LodStore : SQLiteDBConnection
         {
             using var ms = new MemoryStream(blob, 1, blob.Length - 1);
             using var deflate = new DeflateStream(ms, CompressionMode.Decompress);
-            using var r = new BinaryReader(deflate, Encoding.UTF8);
+            using var bounded = new LodBoundedReadStream(deflate, MaxUnpackedSectionBytes);
+            using var r = new BinaryReader(bounded, Encoding.UTF8);
 
             var section = new LodSection();
 
@@ -1097,7 +1113,13 @@ public class LodStore : SQLiteDBConnection
 
             for (int i = 0; i < paletteCount; i++)
             {
-                string code = r.ReadString();
+                // BinaryWriter.Write(string)'s own layout, read with a ceiling: the length
+                // prefix is the blob's claim, and ReadString would believe a gigabyte of it.
+                int codeBytes = r.Read7BitEncodedInt();
+                if (codeBytes < 0 || codeBytes > MaxBlockCodeBytes) return null;
+                byte[] codeUtf8 = r.ReadBytes(codeBytes);
+                if (codeUtf8.Length != codeBytes) return null;
+                string code = Encoding.UTF8.GetString(codeUtf8);
                 int color = r.ReadInt32();
                 byte flags = r.ReadByte();
 
@@ -1126,9 +1148,12 @@ public class LodStore : SQLiteDBConnection
             for (int col = 0; col < total; col++)
             {
                 counts[col] = r.ReadUInt16();
+                if (counts[col] > MaxRunsPerColumn) return null;
                 runTotal += counts[col];
             }
 
+            // Checked before the array exists, against what the stream may still deliver.
+            if ((long)runTotal * sizeof(ulong) > MaxUnpackedSectionBytes - bounded.Consumed) return null;
             section.Runs = new ulong[runTotal];
             for (int i = 0; i < runTotal; i++) section.Runs[i] = r.ReadUInt64();
 

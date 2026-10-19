@@ -27,6 +27,7 @@ public static class RemoteKeyChecks
         MergeRecordsWaitForTheDurableSave(c);
         NetworkRefreshMergesInsteadOfReplacing(c);
         Unavailable(c);
+        NearestFirstMatchesTheOldOrder(c);
     }
 
     /// <summary>
@@ -557,5 +558,36 @@ public static class RemoteKeyChecks
         c.False(raced.LoadsInFlight.Contains(resident), "a resident section stops waiting");
         c.False(raced.LoadFailed.Contains(resident),
             "a resident section is not marked failed, so it can reload after eviction");
+    }
+
+    /// <summary>
+    /// Pre-release review P2: the request pumps order wanted sections with reused storage and
+    /// one distance per key. The order must be the one the old per-compare sort produced.
+    /// </summary>
+    static void NearestFirstMatchesTheOldOrder(Check c)
+    {
+        var random = new Random(160);
+        var keys = new List<long>();
+        for (int i = 0; i < 500; i++)
+        {
+            int level = random.Next(0, 7);
+            keys.Add(LodWorld.SectionKey(level, random.Next(7900 >> level, 8100 >> level),
+                random.Next(7900 >> level, 8100 >> level)));
+        }
+        const double x = 512_100, z = 511_950;
+        double[] expected = keys.Select(k => LodWorld.NearestDistanceSqTo(k, x, z)).OrderBy(d => d).ToArray();
+
+        var order = new LodNearestFirst();
+        order.Keys.AddRange(keys);
+        order.Sort(x, z);
+        c.SeqEq(expected, order.Keys.Select(k => LodWorld.NearestDistanceSqTo(k, x, z)).ToArray(),
+            "the reused sort gives the same nearest-first distances as the old comparison");
+        c.True(order.Keys.OrderBy(k => k).SequenceEqual(keys.OrderBy(k => k)),
+            "and holds exactly the keys it was given");
+
+        order.Keys.Clear();
+        order.Keys.AddRange(keys.Take(3));
+        order.Sort(x, z);
+        c.Eq(3, order.Keys.Count, "a shorter list after a longer one reuses the buffer without leftovers");
     }
 }

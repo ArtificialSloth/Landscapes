@@ -20,6 +20,7 @@ public static class SilhouetteChecks
     public static void Run(Check c)
     {
         TileCellMapping(c);
+        SilhouetteRequestsAreBounded(c);
         TileSourceOrder(c);
         TileRoundTrip(c);
         TileRejectsBadPayloads(c);
@@ -2332,5 +2333,43 @@ public static class SilhouetteChecks
             "SilhouetteFogSeamStrength", "SilhouetteFogStripHeightBlocks", "SilhouetteFogFadeSeconds",
         })
             c.True(mod.Contains(name, StringComparison.Ordinal), name + " is persisted in client config");
+    }
+
+    /// <summary>
+    /// Pre-release review S5: tile requests had no per-message or per-player bound, a player
+    /// with no demand had every key refused at once, and every repeat of a silhouette request
+    /// re-planned the reach and wrote two server log lines.
+    /// </summary>
+    static void SilhouetteRequestsAreBounded(Check c)
+    {
+        c.True(LodSilhouetteBuilder.MaxTileKeysPerRequest >= LodAssist.MaxSilhouetteTilesInFlight
+                && LodSilhouetteBuilder.MaxTileRequestsQueued >= LodAssist.MaxSilhouetteTilesInFlight,
+            "the honest client's largest request and whole in-flight allowance fit inside the bounds");
+
+        string builder = Source("src", "Silhouette", "LodSilhouetteBuilder.cs");
+        int start = builder.IndexOf("public void RequestTiles(", StringComparison.Ordinal);
+        int end = start < 0 ? -1 : builder.IndexOf("public bool Forget(", start, StringComparison.Ordinal);
+        string tiles = start < 0 || end < 0 ? "" : builder[start..end];
+        int cap = tiles.IndexOf("keys.Length > MaxTileKeysPerRequest", StringComparison.Ordinal);
+        int refuse = tiles.IndexOf("SendRefusal(", StringComparison.Ordinal);
+        c.True(cap >= 0 && refuse > cap,
+            "an oversized tile request is dropped before any key is refused");
+        c.True(tiles.Contains("MaxTileRequestsQueued - demand.Requests.Count", StringComparison.Ordinal),
+            "and a player's queue stops at its bound");
+
+        int request = builder.IndexOf("public void Request(", StringComparison.Ordinal);
+        int repeat = request < 0 ? -1 : builder.IndexOf("RepeatRequestIgnoreMs", request, StringComparison.Ordinal);
+        int replan = request < 0 ? -1 : builder.IndexOf("Recentre(demand, force: true)", request, StringComparison.Ordinal);
+        c.True(repeat > request && replan > repeat,
+            "an unchanged repeat is turned away before the reach is re-planned");
+        c.True(builder.Contains("demand.AskedReachBlocks == askedReach", StringComparison.Ordinal),
+            "comparing what the client asked for, so two reaches the server clamps alike are not mistaken for a repeat");
+
+        string server = Source("src", "Net", "LodAssistServerSystem.cs");
+        int handler = server.IndexOf("void OnSilhouetteTileRequest(", StringComparison.Ordinal);
+        int drop = handler < 0 ? -1 : server.IndexOf("LodSilhouetteBuilder.MaxTileKeysPerRequest", handler, StringComparison.Ordinal);
+        int queued = handler < 0 ? -1 : server.IndexOf("EnqueueMainThreadTask", handler, StringComparison.Ordinal);
+        c.True(drop > handler && queued > drop,
+            "the server drops an oversized tile request on the network thread, before queuing work");
     }
 }

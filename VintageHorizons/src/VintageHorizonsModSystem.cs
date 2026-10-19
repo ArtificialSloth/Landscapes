@@ -742,19 +742,22 @@ public partial class VintageHorizonsModSystem : ModSystem
         // of the player stayed at its coarse parent, which is what the no-holes rule draws
         // until all four children land. Sorting here rather than in the pipeline keeps the
         // pipeline free of any notion of where the viewer is.
-        long[] wanted = pipeline.RemoteWanted();
-
-        // Merges into held sections come from the sibling cache when there is one. Over the
-        // network they are the dedicated server's refreshed level-0 rows.
-        if (localOffers == null) wanted = [.. wanted, .. pipeline.FillWanted()];
-        if (wanted.Length > 1)
+        //
+        // With every request slot taken nothing can be sent, so the list is not even built: on
+        // most ticks while terrain streams in, that is the whole of this step (review P2).
+        if (assist.InFlight < LodAssist.MaxSectionsInFlight)
         {
-            var at = capi.World.Player.Entity.Pos;
-            double px = at.X, pz = at.Z;
-            Array.Sort(wanted, (a, b) =>
-                LodWorld.NearestDistanceSqTo(a, px, pz).CompareTo(LodWorld.NearestDistanceSqTo(b, px, pz)));
+            requestOrder.Keys.Clear();
+            // Merges into held sections come from the sibling cache when there is one. Over the
+            // network they are the dedicated server's refreshed level-0 rows.
+            pipeline.AppendRequestable(requestOrder.Keys, fills: localOffers == null);
+            if (requestOrder.Keys.Count > 0)
+            {
+                var at = capi.World.Player.Entity.Pos;
+                requestOrder.Sort(at.X, at.Z);
+                pipeline.MarkRemoteRequested(assist.Request(requestOrder.Keys));
+            }
         }
-        pipeline.MarkRemoteRequested(assist.Request(wanted));
 
         if (pipeline.RemoteOnly.Count != before && !loggedRemoteKeys)
         {
@@ -766,6 +769,9 @@ public partial class VintageHorizonsModSystem : ModSystem
     }
 
     bool loggedRemoteKeys;
+
+    /// <summary>Reused nearest-first storage for both request pumps, which run one after the other.</summary>
+    readonly LodNearestFirst requestOrder = new();
 
     /// <summary>
     /// One chunk of a versioned span from a server that syncs by version. Held sections become
@@ -992,20 +998,19 @@ public partial class VintageHorizonsModSystem : ModSystem
         localOfferBytesProcessed += installBudget.Bytes;
 
         // Held sections waiting for a merge are read through the same reader and budget, in
-        // the same nearest-first order, as the sections the view is missing outright.
-        long[] wanted = [.. pipeline.RemoteWanted(), .. pipeline.FillWanted()];
-        if (wanted.Length == 0) return;
+        // the same nearest-first order, as the sections the view is missing outright. With the
+        // reader's slots full nothing can be asked for, so the list is not built (review P2).
+        if (!localOffers.CanRequestBlob) return;
+        requestOrder.Keys.Clear();
+        pipeline.AppendRequestable(requestOrder.Keys, fills: true);
+        List<long> wanted = requestOrder.Keys;
+        if (wanted.Count == 0) return;
 
-        if (wanted.Length > 1)
-        {
-            var at = capi.World.Player.Entity.Pos;
-            double px = at.X, pz = at.Z;
-            Array.Sort(wanted, (a, b) =>
-                LodWorld.NearestDistanceSqTo(a, px, pz).CompareTo(LodWorld.NearestDistanceSqTo(b, px, pz)));
-        }
+        var at = capi.World.Player.Entity.Pos;
+        requestOrder.Sort(at.X, at.Z);
 
         int requests = 0;
-        for (int i = 0; i < wanted.Length && requests < LocalOffersPerTick
+        for (int i = 0; i < wanted.Count && requests < LocalOffersPerTick
             && localOffers.CanRequestBlob; i++)
             if (localOffers.RequestBlob(wanted[i])) requests++;
     }
@@ -2082,7 +2087,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         assist?.Greet(sync);
 
         Mod.Logger.Notification(
-            "Level finalized. LOD capture active (render distance: unlimited, {0} sections from cache{1}).",
+            "Level finalized. LOD capture active (render distance: {0}, {1} sections from cache{2}).",
+            renderer.FarViewDistanceCap > 0 ? renderer.FarViewDistanceCap + " blocks" : "unlimited",
             pipeline.CachedSectionsLoaded, renderer.AutoUnpause ? ", auto-unpause on" : "");
 
         capi.Event.RegisterCallback(_ => LogStats("Stats after 30s"), 30000);
@@ -3522,7 +3528,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             $"[Landscapes] shape view {(renderer.BandDebugPaint ? "on" : "off")}.");
 
                     case "width":
-                        if (!float.TryParse(value, out float width))
+                        if (!TryParseSetting(value, out float width))
                             return TextCommandResult.Success(
                                 $"[Landscapes] band width {renderer.BandWidthBlocks:0} blocks. "
                                 + "Give a number of blocks. Wider hides a bigger colour step but "
@@ -3532,7 +3538,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             $"[Landscapes] band width {renderer.BandWidthBlocks:0} blocks.");
 
                     case "step":
-                        if (!float.TryParse(value, out float step))
+                        if (!TryParseSetting(value, out float step))
                             return TextCommandResult.Success(
                                 $"[Landscapes] step {renderer.BandStepBlocks:0} blocks. "
                                 + "8, 16 or 32. Bigger steps read as chunkier terrain; there is "
@@ -3550,7 +3556,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                                 $"[Landscapes] inner edge follows the overlap: "
                                 + $"{renderer.BandInnerBlocks:0} blocks.");
                         }
-                        if (!float.TryParse(value, out float inner))
+                        if (!TryParseSetting(value, out float inner))
                             return TextCommandResult.Success(
                                 $"[Landscapes] inner edge {renderer.BandInnerBlocks:0} blocks"
                                 + (renderer.BandInnerDerived ? " (following the overlap)" : " (pinned)")
@@ -3563,7 +3569,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             $"[Landscapes] inner edge pinned at {renderer.BandInnerBlocks:0} blocks.");
 
                     case "strength":
-                        if (!float.TryParse(value, out float strength))
+                        if (!TryParseSetting(value, out float strength))
                             return TextCommandResult.Success(
                                 $"[Landscapes] strength {renderer.BandStrength:0.00}. "
                                 + "0 to 1. How much of the correction lands right at the seam.");
@@ -3572,7 +3578,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             $"[Landscapes] strength {renderer.BandStrength:0.00}.");
 
                     case "speckle":
-                        if (!float.TryParse(value, out float speckle))
+                        if (!TryParseSetting(value, out float speckle))
                             return TextCommandResult.Success(
                                 $"[Landscapes] speckle {renderer.BandSpeckle:0.00}. "
                                 + "How much block-to-block variation distant terrain gets at the "
@@ -3584,7 +3590,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             $"[Landscapes] speckle {renderer.BandSpeckle:0.00}.");
 
                     case "darken":
-                        if (!float.TryParse(value, out float darken))
+                        if (!TryParseSetting(value, out float darken))
                             return TextCommandResult.Success(
                                 $"[Landscapes] darken {renderer.BandDarken:0.00}. "
                                 + "How much dimmer distant terrain is made at the seam. Below 1 "
@@ -3595,7 +3601,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             $"[Landscapes] darken {renderer.BandDarken:0.00}.");
 
                     case "saturate":
-                        if (!float.TryParse(value, out float saturate))
+                        if (!TryParseSetting(value, out float saturate))
                             return TextCommandResult.Success(
                                 $"[Landscapes] saturate {renderer.BandSaturate:0.00}. "
                                 + "How much more colourful, less washed out, distant terrain is "
@@ -3606,7 +3612,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             $"[Landscapes] saturate {renderer.BandSaturate:0.00}.");
 
                     case "overlap":
-                        if (!float.TryParse(value, out float overlap))
+                        if (!TryParseSetting(value, out float overlap))
                             return TextCommandResult.Success(
                                 $"[Landscapes] overlap +{renderer.OverlapMarginBlocks:0} blocks. "
                                 + "How early distant terrain takes back ground from the game's own. "
@@ -3646,7 +3652,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 if (renderer == null)
                     return TextCommandResult.Success("[Landscapes] the distant-terrain renderer did not start; the client log says why.");
                 if (args.Parsers[0].IsMissing
-                    || !float.TryParse((string)args[0], out float blocks))
+                    || !TryParseSetting((string)args[0], out float blocks))
                     return TextCommandResult.Success(
                         $"[Landscapes] near suppression {renderer.NearSuppressionBlocks:0} blocks. "
                         + "0 is off. It used to be 48, to stop rough distant terrain appearing at "
@@ -3708,7 +3714,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             + renderer.DescribeBlockTextures());
 
                     case "detail":
-                        if (!float.TryParse(
+                        if (!TryParseSetting(
                                 args.Parsers[1].IsMissing ? "" : (string)args[1], out float detail))
                             return TextCommandResult.Success(
                                 $"[Landscapes] texture detail {renderer.BlockTextureDetail:0.0}. "
@@ -3722,7 +3728,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             $"[Landscapes] texture detail {renderer.BlockTextureDetail:0.0}.");
 
                     case "mips":
-                        if (!float.TryParse(
+                        if (!TryParseSetting(
                                 args.Parsers[1].IsMissing ? "" : (string)args[1], out float mips))
                             return TextCommandResult.Success(
                                 $"[Landscapes] texture detail limit {renderer.BlockTextureMipLimit:0.0}. "
@@ -3735,7 +3741,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             $"[Landscapes] texture detail limit {renderer.BlockTextureMipLimit:0.0}.");
 
                     case "strength":
-                        if (!float.TryParse(
+                        if (!TryParseSetting(
                                 args.Parsers[1].IsMissing ? "" : (string)args[1], out float strength))
                             return TextCommandResult.Success(
                                 $"[Landscapes] texture strength {renderer.BlockTextureStrength:0.00}. "
@@ -4250,8 +4256,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             $"[Landscapes] {DescribeWater(renderer)}. Look now.");
 
                     case "glint":
-                        if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out float glint))
+                        if (!TryParseSetting(value, out float glint))
                         {
                             return TextCommandResult.Success(
                                 $"[Landscapes] glint {renderer.WaterGlint:0.00}. 0 to 1. How much "
@@ -4265,8 +4270,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             $"[Landscapes] glint {renderer.WaterGlint:0.00}. Look now.");
 
                     case "foam":
-                        if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out float foam))
+                        if (!TryParseSetting(value, out float foam))
                         {
                             return TextCommandResult.Success(
                                 $"[Landscapes] foam {renderer.WaterFoam:0.00}. 0 to 2. One is the game's "
@@ -4344,8 +4348,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             + "Rebuilding.");
 
                     case "clarity":
-                        if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out float clarity))
+                        if (!TryParseSetting(value, out float clarity))
                         {
                             return TextCommandResult.Success(
                                 $"[Landscapes] clarity {renderer.WaterClarity:0} blocks. "
@@ -4364,8 +4367,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             + "Rebuilding. " + renderer.DescribeWaterAbsorption());
 
                     case "alpha":
-                        if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out float maxAlpha))
+                        if (!TryParseSetting(value, out float maxAlpha))
                         {
                             return TextCommandResult.Success(
                                 $"[Landscapes] alpha {renderer.WaterMaxAlpha:0.00}. 0.05 to 2. "
@@ -4866,12 +4868,14 @@ public partial class VintageHorizonsModSystem : ModSystem
                 + "view and resolution instead.";
     }
 
-    /// <summary>A number typed in chat, with either decimal separator.</summary>
-    static bool TryParseSetting(string text, out float value) =>
-        float.TryParse(text, System.Globalization.NumberStyles.Float,
-            System.Globalization.CultureInfo.InvariantCulture, out value)
-        || float.TryParse(text, System.Globalization.NumberStyles.Float,
-            System.Globalization.CultureInfo.CurrentCulture, out value);
+    /// <summary>
+    /// A number typed in chat, with either decimal separator on any PC: "1.5" and "1,5" both read
+    /// as one and a half. Every command dial goes through here; a bare float.TryParse follows the
+    /// PC's language, so a German player's "1.5" was refused (pre-release review B5).
+    /// </summary>
+    internal static bool TryParseSetting(string? text, out float value) =>
+        float.TryParse((text ?? "").Trim().Replace(',', '.'), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out value);
 
     void ApplyGuiConfig(int[] thresholds, bool autoThresholds, int farViewDistanceCap,
         bool loadWhilePaused, LodVisualSettings visuals, LodTaaDials taaDials,

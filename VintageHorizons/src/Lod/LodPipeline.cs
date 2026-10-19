@@ -708,6 +708,13 @@ public class LodPipeline
     /// <inheritdoc cref="LodRemoteKeySet.Wanted"/>
     public long[] RemoteWanted() => Remote.Wanted();
 
+    /// <summary>The wanted remote keys and, optionally, the pending fills, added to a reused list.</summary>
+    public void AppendRequestable(List<long> into, bool fills)
+    {
+        Remote.AppendWanted(into);
+        if (fills) Remote.AppendFillWanted(into);
+    }
+
     /// <inheritdoc cref="LodRemoteKeySet.MarkRequested"/>
     public void MarkRemoteRequested(IEnumerable<long> sent) => Remote.MarkRequested(sent);
 
