@@ -185,6 +185,21 @@ When an incompatible update changes what the stored data means, the mod discards
 Compatible additions are read conservatively—for example, old rows without an observed-snow
 answer keep their terrain and use the climate fallback until recaptured.
 
+### Sharing the server's cache
+
+A server with Doden's Landscapes shares its cache with players who have the mod. The settings
+are in `ModConfig/dodenslandscapes-server.json`: `EnableServing` (default `true`),
+`ServeRadiusBlocks` (default 8,192 blocks; 0 is unlimited), `MaxSectionsPerSecondPerPlayer` (8)
+and `MaxSectionsPerSecondTotal` (32).
+
+The radius limits which terrain a player is sent, not the list of what the server holds. Every
+player with the mod receives that list for the whole world, in 64×64-block pieces, and a notice
+whenever one of them changes; this is how a returning player catches up on what changed while
+they were away. The mod never shows that list, but a modified client could use it to see where
+players have explored and where terrain is being built or dug, anywhere on the server. On a PvP or
+raiding server where that matters, set `EnableServing` to `false`: players then build their own
+caches from what they see, as on a server without the mod.
+
 ### Horizon silhouettes
 
 Silhouettes need Doden's Landscapes on both the client and server; integrated singleplayer counts as
