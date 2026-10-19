@@ -703,8 +703,27 @@ live until the exact replacement persistence revision is acknowledged.
     (where cached terrain fades into the sky); a cell outside the disc is no owner, so the rim never
     draws fog; heights are the highest cached surface at each 32-block corner, with no globe drop.
     Farseer's tiles take over the moment they arrive. Farseer off frees only Farseer's meshes; the fog
-    switch off frees the fog. Its colour is always the game's natural fog colour (owner, 2026-10-16).
-    Loading Farseer's tiles only to shape the fog was written and rejected for this.
+    switch off frees the fog. Its colour is the game's natural fog colour (owner, 2026-10-16), with
+    the player-local darkening taken in part since decision 59. Loading Farseer's tiles only to shape
+    the fog was written and rejected for this.
+58. **Without Farseer, mist hangs down the cached terrain's wall as a veil** (owner, 2026-10-18;
+    0.4.149-0.4.156). Past the cached edge stands a wall from the lip to y = 1, every column's foot.
+    For a field built from that edge only (`fogCurtainActive`), the fog hangs a curtain over it: a
+    sheet from just behind the outermost stretch of wall outward, dense in falling streams and nearly
+    clear between them, so the wall shows dimly (owner: less coverage looks more real; it is never
+    hidden whole). Beside empty sky the bank's floor curves down past the band so the fog rolls over
+    the lip, and the dense strip ends there. The curtain never rides the wind: it crosses the top
+    slowly along a path in the edge's own frame, falls at the drift dial's pace, is bent by a slower
+    unseen eddy field so its shapes change as they fall, and ends in tendrils 48 blocks below the foot.
+    Farseer's ground hides the wall, so Farseer's fog has no curtain and is unchanged. Rejected: a
+    cross-faded flow map, the nearest edge point as place everywhere, a bent dense strip, and tendrils
+    cut from the flowing pattern (G281-G283).
+59. **The seam fog takes the player's own weather and cave darkness only in part** (owner,
+    2026-10-18; 0.4.152). The game's fog colour includes modifiers describing only the player's spot
+    (`weather`, `desertstorm`, `lightningambient`, `blackfogincaves`; G284), which turned the whole
+    horizon bank grey. `LodSteadyFogColour` repeats the game's blend with those at 30% of their weight;
+    time of day, the world's saved ambient and water or lava over the eyes count whole. The cached
+    terrain's own haze keeps the game's colour.
 
 ## Concurrency invariants
 

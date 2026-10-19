@@ -4,12 +4,12 @@
 
 ## Start here
 
-Read [Session 114](sessions/SESSION_114.md), then [Session 113](sessions/SESSION_113.md). The mod is
+Read [Session 115](sessions/SESSION_115.md), then [Session 114](sessions/SESSION_114.md). The mod is
 **Doden's Landscapes** (mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log),
-licensed GPL-3.0 only with a Vintage Story exception. 0.4.148 is installed and owner-checked; its
-settings window has a simple view and an Advanced switch, and the seam fog works without Farseer.
-All assertions pass (26,211-26,296; the savegame change detection fixture's count varies). The public
-release is next. The stutter while
+licensed GPL-3.0 only with a Vintage Story exception. 0.4.156 is installed and owner-played ("Good
+enough"); without Farseer the seam fog hangs a falling veil of mist down the cached terrain's wall
+(decision 58) and its colour takes the player's own weather and cave darkness only in part (decision
+59). All assertions pass (26,355). The public release is next. The stutter while
 exploring is solved for him by the all-cores garbage collector, an opt-in switch on the settings
 editor's Performance tab (0.4.134, settled decision 54), and the game's chunk thread rests when it
 has nothing to do (0.4.132, settled decision 53).
@@ -17,18 +17,18 @@ has nothing to do (0.4.132, settled decision 53).
 ### The public release (owner's calls)
 
 - **Version:** promote the build he last played to a release number (CLAUDE.md: only he calls a
-  promotion, and the promoted build must be one somebody played). 0.4.148 is the candidate.
+  promotion, and the promoted build must be one somebody played). 0.4.156 is the newest played build.
 - **The game-launching check tiers** (`scripts/check.sh smoke` and `matrix`, about 25 minutes) have
   not run since the rename; the `lod-conflict` and `farseer-off` scenarios have never run. Ask first.
-- **Push:** six local commits since `1bea2c1` (0.4.143-0.4.148 and this documentation) are not on
-  `origin`; push only with his OK.
+- **Push:** the commits since `1bea2c1` (0.4.143-0.4.156 and the Session 114 and 115 documentation)
+  are not on `origin`; push only with his OK.
 - **GitHub:** the full history is on `main` at `DodenGruva/Landscapes`, still private; he makes it
   public. The old fork `DodenGruva/Horizons` still shows his personal email in 91 commits; he deletes
   it (a public fork cannot be made private).
 - **ModDB:** the page at `mods.vintagestory.at/dodenslandscapes` (modinfo already points there), with
   GNU GPL v3 chosen as the licence. The README now tells players about the Performance tab and about
   keeping one LOD mod on. Its description should also mention the Advanced settings switch,
-  `.dlconfig <tab>`, and that the seam fog works without Farseer.
+  `.dlconfig <tab>`, that the seam fog works without Farseer, and the mist down the terrain's edge.
 
 ### What Session 113 left open
 
@@ -41,13 +41,36 @@ has nothing to do (0.4.132, settled decision 53).
 - **Memory:** his 0.4.139 session reached 12.1 GB for the whole game while flying up to 5,200 blocks a
   minute, the highest seen; part of the longer memory look below.
 
+### What Session 115 left open
+
+- **Where the fog's 0.52 ms goes.** On one scene the owner measured fog off 490 FPS, fog only (Farseer
+  off) 390, Farseer on 410. Cutting the curtain's work (about 70% fewer extra texture reads in the
+  mock-up) did not move his numbers, so most of the cost is the fog's general machinery. Next, ask for
+  `.dlfog stats` typed on its own after the fog has been on for half a minute (G285): it gives the
+  main-thread microseconds for Farseer's and the fog's preparation and for issuing the fog pass. Its
+  first readings were taken at the instant of switching on and measured nothing. The 0.4.156 pacing of
+  the outline's tile walks (960 a second instead of 16 a frame) has not been measured either.
+- **The outline's path tracing runs on the main thread.** While he travelled in his 0.4.156 session,
+  9-10% of the main thread's 40-46 MB/s of allocation was `LodSilhouetteFogVolume.Prepare`'s
+  `ValueTuple<PlanPoint, ...>[]` arrays, built on every field rebuild from
+  `QueueSilhouetteFogVolume`. Moving that tracing to the build worker, or reusing its arrays, is the
+  obvious main-thread saving.
+- **If the graphics card's share is most of it:** march the fog at a lower resolution, or march half
+  of the pixels each frame and reuse the rest; both soften the fog a little. Not started; owner's call.
+- **The veil's look, unconfirmed in game:** in the mock-up the wall's stepped outline and flat foot
+  show faintly between streams, and the strands below the foot are darker than the sky when the sun is
+  behind the cliff (the floating terrain shades them; lighting them was tried and rejected). The owner
+  has not commented on either. In game the wall is light grey.
+- **No player dial for the curtain:** its density, speed and length are constants
+  (`LodSilhouetteFogVolume.Curtain*`); the seam density and drift dials scale it. Add a dial only if he
+  asks.
+- **The curtain at the largest far distances and on a slower machine** is untested.
+
 ### What Session 114 left open
 
-- **Fog without Farseer** (0.4.146, decision 57) has been seen only in the bench sandbox, after its
-  test world's black server ambient was cleared (G278). Look at it in his own world with Farseer off,
-  from the ground and from above, and check the cost with `.dlfog`.
-- **Its disc at the largest far distances:** 16 tiles' coverage are refreshed a frame; at 32,768
-  blocks the disc is about 2,100 tiles and the field 32 blocks per texel. Untested on a slower machine.
+- **The disc at the largest far distances:** at 32,768 blocks the disc is about 2,100 tiles and the
+  field 32 blocks per texel; since 0.4.156 the coverage refresh is 960 tiles a second. Untested on a
+  slower machine.
 - **Translation:** every settings and notice string is written in the code; the owner deferred
   moving them to language files until after release.
 - **The bench sandbox world** now has its server ambient cleared (`/setambient {}`); earlier fog
@@ -129,8 +152,9 @@ collector in force.
   - whether the ribbon holds still while turning and travelling (0.4.124's fix);
   - halos or blocky edges around near objects from the half-resolution upsample;
   - whether 0.8 s is the right fade, and whether new fog should fade in as well (offered, not built).
-- **Cost.** The `.dlfog` on/off frame rate in one scene has not been taken since 0.4.123's 400 against
-  550 FPS. It belongs with the exploring-hitch work above.
+- **Cost.** Without Farseer it was taken in Session 115: 490 FPS off against 390 on, one scene (see
+  "What Session 115 left open"). With Farseer the fog alone has not been taken since 0.4.123's 400
+  against 550 FPS.
 - **Defaults.** His tuning (spread 36, floor depth 20, edge softness 35%) is the source default after
   0.4.125 and reaches players with the next build.
 - Render `scripts/fog-mockup` before and after any change to the medium, and read its worst pixel

@@ -5309,3 +5309,83 @@ start until 0.4.147.
 and restore), open the window with `.dlconfig <tab>` in a route command, and ask before every launch.
 
 **Found:** 2026-10-16, Session 114.
+
+### G281 - A pattern stretched along its own motion hides that motion; one riding the wind reads as sideways
+
+**Trigger:** animating a noise pattern by scrolling it, as the seam fog's cliff curtain does.
+
+**Trap:** 0.4.149's curtain tendrils were stretched four times along their fall and also took the
+bank's wind drift. Sliding a long streak along its own length barely changes it, so the eye saw only
+the wind: the owner reported the curtain moving sideways, and the mock-up's motion measure gave 8 px a
+second right and 0 down. A pattern that only translates also reads as wallpaper (0.4.155: "the holes
+stay the same as it falls").
+
+**Safer action:** keep a falling pattern off the wind, stretch it at most about three times along its
+motion, and bend it with an unseen, slower-moving field so its shapes change as they go. Judge it with
+the mock-up's motion and tendril morphing measures (`scripts/fog-mockup --cliff`), not by eye on stills.
+
+**Found:** 2026-10-18, Session 115 (0.4.149-0.4.150, 0.4.156).
+
+### G282 - A cross-faded flow map pulses and tears; the nearest edge point fans out below corners
+
+**Trigger:** making noise flow along a path that turns, such as fog spilling over an edge and falling.
+
+**Trap:** two copies of a pattern sliding along a flow and cross-fading every cycle (0.4.150) pulse as
+every point restarts at once, and tear in a line where the flow turns within a few blocks. Placing the
+pattern by the nearest point on the edge instead (0.4.151) keeps it still under outward motion, but
+below a convex corner a whole arc of points shares one nearest point, so the pattern fans out, and in
+a thick medium a ray crossing the thickness meets a run of path values, averaged into a smear.
+
+**Safer action:** scroll one pattern without restarting along a path coordinate (`acrossTop`, `path`
+in `vhFogSampleNoise`), use the edge-frame place only where the path runs outward (over the band), and
+use world position where the medium only falls. Take the outward direction from central differences a
+texel either side, so it turns smoothly across the bilinear field.
+
+**Found:** 2026-10-18, Session 115 (0.4.150-0.4.153).
+
+### G283 - A long march stride into a dense medium lands at a jittered depth and draws dashes
+
+**Trigger:** a dense volume inside a ray march whose empty-air strides grow with distance.
+
+**Trap:** the seam fog crosses empty air in strides of `farStep` (8+ blocks at 400 blocks away). Its
+first sample inside the dense cliff curtain then fell anywhere in it, set by the per-pixel jitter, and
+the owner saw fine dashes ("striations") on the curtain (0.4.152). Capping strides across the curtain's
+whole reach (0.4.153) fixed the look but walked its thin fringe a block at a time and cost more than
+Farseer.
+
+**Safer action:** bound a stride by the distance to the box the dense part can fill (sideways, above
+and below), stay pixel-deep only near or inside it (`coreGap` in the march), and let thin or half-hidden
+medium take longer steps by optical depth.
+
+**Found:** 2026-10-18, Session 115 (0.4.153-0.4.154).
+
+### G284 - The game's fog colour carries the player's own weather and cave darkness
+
+**Trigger:** lighting anything far away from `capi.Ambient.BlendedFogColor`.
+
+**Trap:** `AmbientManager.UpdateAmbient` (decompiled 1.22.7) blends the base fog colour with ordered
+modifiers, then multiplies by scene and fog brightness. `weather`, `desertstorm` and
+`lightningambient` describe the sky over the player, and `blackfogincaves` pulls the fog to black when
+little sunlight reaches the player's block or they are below sea level. Vanilla's fog is thin and near,
+so this goes unseen; the seam fog's horizon bank turned grey under a passing storm and near-black under
+trees or in caves.
+
+**Safer action:** `LodSteadyFogColour.Blend` repeats the game's blend with those four modifiers at a
+share of their weight (30%, owner); `.dlfog stats` lists every source and both colours. Keep the
+cached terrain's haze on the game's colour so it matches the vanilla view.
+
+**Found:** 2026-10-18, Session 115 (0.4.152).
+
+### G285 - `.dlfog on` prints its stats at once, with averages from the fog-off period
+
+**Trigger:** asking the owner for the fog's main-thread timings from `.dlfog stats`.
+
+**Trap:** `.dlfog on` and `.dlfog off` print the stats line immediately. The timings are slow
+averages, so a line printed the moment the fog is switched on reports the fog-off frames: "no field
+published", 0 microseconds. All three readings in his 0.4.156 session were of this kind; nothing was
+measured.
+
+**Safer action:** ask for `.dlfog stats` typed separately after the fog has been on for at least half a
+minute in the scene being compared, and check that the line says a field is published.
+
+**Found:** 2026-10-18, Session 115.

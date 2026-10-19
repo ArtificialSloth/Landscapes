@@ -3,17 +3,42 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-10-16`
-**Mod version:** `0.4.148` - current private test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception. 0.4.143, 0.4.144 and 0.4.148 are owner-confirmed; 0.4.145-0.4.147 were owner-checked in the window he plays. All checks pass
+**Status date:** `2026-10-18`
+**Mod version:** `0.4.156` - current private test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception. 0.4.149-0.4.156 were each owner-played; his verdict after 0.4.156: "Good enough". All checks pass
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca` (these six not pushed); pushed to `main` on `DodenGruva/Landscapes` (private) on 2026-10-13, after the history was rewritten to his GitHub no-reply address
+**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c` (0.4.143 onward not pushed); pushed to `main` on `DodenGruva/Landscapes` (private) on 2026-10-13, after the history was rewritten to his GitHub no-reply address
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `149` C# files under `VintageHorizons/src`
+**Source files:** `150` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
+
+**Mist down the cached terrain's wall, and a steadier fog colour (0.4.149-0.4.156).** Session 115.
+
+- **The curtain (decision 58):** without Farseer the cached terrain ends in a wall from the lip to
+  y = 1 in empty sky. The seam fog hangs a veil over it: dense falling streams with the wall dimly
+  visible between them (wall 3.6-5.5% visible on average in the mock-up, up to 27-42% between
+  streams), rolling over the lip, crossing the top at a third of the fall speed, falling at 8 blocks a
+  second times the drift dial, bent by a slower unseen eddy field so its shapes change as they fall,
+  and ending in tendrils 48 blocks below the foot. It never rides the wind. Farseer's fog is unchanged
+  (the mock-up's Farseer render is byte-identical to 0.4.148's). Owner-played through eight builds:
+  coverage right, then "Good enough" after 0.4.156.
+- **Fog colour (decision 59, G284):** the game's fog colour carries the weather over the player and
+  the cave darkness at their block; the seam fog takes those at 30% and the time of day whole. Owner:
+  much better.
+- **Cost:** one scene, owner-measured: fog off 490 FPS, fog only 390, Farseer on 410 - the fog costs
+  about 0.52 ms a frame. The curtain's own work was cut by about 70% of its extra texture reads in the
+  mock-up without moving those numbers, so most of the cost lies elsewhere in the fog. 0.4.156 paces
+  the outline's main-thread tile walks by time (960 a second) and reports main-thread timings in
+  `.dlfog stats`; neither has been measured yet (the only readings were taken at the instant of
+  switching on, G285). The outline's path tracing allocates about 4 MB/s on the main thread while
+  travelling.
+- **Tools:** `scripts/fog-mockup --cliff` renders the Farseer-off edge with views from the sky, level,
+  below, along, the ground, straight down, side-on and at the foot, and prints wall visibility, march
+  cost per ray, motion, pulsing and tendril morphing.
+- **Evidence:** 26,355 assertions, 0 failures. G281-G285.
 
 **Release polish: tree colours, a settings window for players, and seam fog without Farseer
 (0.4.143-0.4.148).** Session 114.
@@ -30,9 +55,10 @@
 - **Farseer defaults (0.4.146):** the owner's look (reach 4,096, sky tint 2.0, light bias 0.75, far
   fade 0.70, geometry 50%, hill softness 25%); LOD edge depth/width fixed at 0/32 and removed.
 - **Seam fog without Farseer (0.4.146, decision 57):** with Farseer off or offering no tiles, the fog
-  traces the cached terrain's own edge in a disc to 0.75 of the far distance. Seen correct only in the
-  bench sandbox, after its world's black server ambient was cleared (G278); the fog always uses the
-  natural fog colour (owner).
+  traces the cached terrain's own edge in a disc to 0.75 of the far distance. Seen correct in the
+  bench sandbox, after its world's black server ambient was cleared (G278), and since Session 115 in
+  his own world; the fog uses the natural fog colour (owner), with player-local darkening taken in
+  part since 0.4.152 (decision 59).
 - **Evidence:** 26,211-26,296 assertions, 0 failures. The bench harness works again (G280).
 
 **Release preparation: renamed Doden's Landscapes, relicensed, and three long-standing faults fixed

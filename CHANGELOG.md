@@ -8,6 +8,17 @@ first.
 
 ## [Unreleased]
 
+**Mist pours down the edge of the distant terrain.** Without Farseer the distant terrain ends in a
+sheer wall in empty sky. The seam fog now hangs a veil of mist down that wall, from the edge to its
+foot: it rolls over the edge, crosses the top slowly, falls in streams that change shape as they go,
+and ends in tendrils that thin out and fade below the wall. The wall shows dimly through it, as
+through real mist. The drift-speed dial sets its pace, and Farseer's fog is unchanged (0.4.149-0.4.156).
+
+**Fog keeps its colour under storms and in caves.** The game darkens its fog colour by the weather
+over the player and by how little daylight reaches them. On a bank of fog along the horizon that
+turned the whole horizon grey; the seam fog now follows the time of day but takes only part of that
+local darkening (0.4.152).
+
 **Distant trees match the game's colours.** Log sides drew at the colour of the cut end's rings, not
 the bark - redwood trunks were about 2.5 times as bright as the game's (0.4.143) - and branchy leaves
 drew as dark grey-brown cubes, where the game shows ordinary green foliage (0.4.144).
@@ -148,6 +159,48 @@ read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.156] - 2026-10-18
+
+**The mist curtain changes shape as it falls.** Its streams and gaps used to slide down unchanged, like
+wallpaper; a slower, unseen swirl now bends them, so they stretch, merge and part as they go. The fog
+without Farseer does its outline bookkeeping a set number of times a second rather than every frame,
+and `.dlfog stats` reports how long the fog's work on the main thread takes.
+
+## [0.4.155] - 2026-10-18
+
+**The curtain is a veil.** Dense falling streams with the wall dimly visible between them, mist
+gathering at the wall's foot, and no pale band under the edge. Less fog to work through where only the
+curtain is.
+
+## [0.4.154] - 2026-10-18
+
+**The curtain costs less to draw.** Its pattern is looked up only beside the wall, and the fog steps
+through its thin outer wisps in longer strides.
+
+## [0.4.153] - 2026-10-18
+
+**No more fine dashes or smeared fans in the curtain**, no plastic-looking sheet of fog bending over the
+edge, and the curtain now reaches 48 blocks below the wall, breaking into hanging tendrils that fade.
+
+## [0.4.152] - 2026-10-18
+
+**The seam fog keeps its colour under storms and in caves**, following the time of day but taking only
+part of the darkening of the weather and shade where the player stands.
+
+## [0.4.151] - 2026-10-18
+
+**The curtain flows without pulsing.** It crosses the top slowly, then falls, as one continuous
+pattern; the fog rolls over the edge instead of standing out from it like a shelf.
+
+## [0.4.150] - 2026-10-18
+
+**The curtain falls instead of drifting sideways**, flowing out over the edge and down the wall.
+
+## [0.4.149] - 2026-10-18
+
+**Mist hangs down the edge of the distant terrain** when Farseer is off, covering the wall from the
+edge to its foot.
 
 ## [0.4.148] - 2026-10-16
 

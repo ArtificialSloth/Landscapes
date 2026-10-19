@@ -2,6 +2,16 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-10-18 - Mist down the cached terrain's wall, and a steadier fog colour (0.4.149-0.4.156)
+
+- **Fog without Farseer seen in his own world** (Session 114's open item): it covered only the top of
+  the cached terrain's wall, which runs from the lip to y = 1. A curtain now hangs over it as a
+  streamed veil (decision 58), owner-played through eight builds; "Good enough" after 0.4.156.
+- **Fog colour under storms and in caves:** player-local modifiers at 30% (decision 59, G284); owner:
+  much better.
+- **The fog's cost, first measured without Farseer:** fog off 490 FPS against 390 on, one scene.
+- Session 115 has the narrative.
+
 ## 2026-10-07..13 - Doden's Landscapes: rename, licence, release preparation (0.4.136-0.4.142)
 
 - **Stand-in fix accepted:** the owner played 0.4.135 on a fresh world on 2026-10-07 ("seemed to work
