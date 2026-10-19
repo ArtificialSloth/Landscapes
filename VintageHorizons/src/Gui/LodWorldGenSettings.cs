@@ -3,7 +3,10 @@ using VintageHorizons.Net;
 
 namespace VintageHorizons;
 
-/// <summary>Remembered client-side choices for the server-owned Generate page.</summary>
+/// <summary>
+/// Remembered client-side choices for the server-owned Generate page. X and Z are block
+/// coordinates measured from spawn, as the game shows them (0.4.160), so they may be negative.
+/// </summary>
 internal readonly record struct LodWorldGenPreferences(
     int RadiusChunks, EnumWorldGenShape Shape, EnumWorldGenCentreMode CentreMode,
     int X, int Z, string Preset)
@@ -18,7 +21,7 @@ internal readonly record struct LodWorldGenPreferences(
             Math.Clamp(RadiusChunks, 1, ceiling),
             Enum.IsDefined(Shape) ? Shape : LodWorldGenPlan.DefaultShape,
             Enum.IsDefined(CentreMode) ? CentreMode : EnumWorldGenCentreMode.Here,
-            Math.Max(0, X), Math.Max(0, Z), "Balanced");
+            X, Z, "Balanced");
     }
 }
 

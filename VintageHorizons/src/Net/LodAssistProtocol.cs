@@ -284,6 +284,13 @@ public class AssistWorldGenRequest
     [ProtoMember(6)] public int X;
     [ProtoMember(7)] public int Z;
     [ProtoMember(8)] public string Preset = "Balanced";
+
+    /// <summary>
+    /// X and Z are block coordinates measured from the world spawn, as the game's coordinate
+    /// display shows them, and may be negative. False, which every client before 0.4.160 sends,
+    /// keeps their old meaning: the game's internal block position, with -1 for "not given".
+    /// </summary>
+    [ProtoMember(9)] public bool SpawnRelative;
 }
 
 /// <summary>

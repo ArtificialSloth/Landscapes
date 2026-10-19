@@ -297,8 +297,6 @@ public partial class VintageHorizonsModSystem : ModSystem
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Client;
 
-    public override void StartPre(ICoreAPI api) => ModIdentity.TakeOverLegacyData(api, Mod.Logger);
-
     /// <summary>Everything the config file holds, so a partial save cannot drop a setting.</summary>
     VintageHorizonsConfig config = new();
     VintageHorizonsConfigDialog? configDialog;

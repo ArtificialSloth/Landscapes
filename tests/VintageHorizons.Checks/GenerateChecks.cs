@@ -160,35 +160,75 @@ public static class GenerateChecks
     }
 
     /// <summary>
-    /// Where a command run centres itself. World coordinates are never negative, so -1
-    /// means "not given". One coordinate alone used to be ignored in silence, and the
-    /// run centred somewhere else entirely without saying so.
+    /// Where a command run centres itself. Typed coordinates are measured from spawn, so any
+    /// number is real and only the parser knows whether one was given. One coordinate alone
+    /// used to be ignored in silence, and the run centred somewhere else entirely without
+    /// saying so.
     /// </summary>
     static void CentrePrecedence(Check c)
     {
         c.Eq(LodPlayerPregen.EnumCentre.Argument,
-            LodPlayerPregen.ResolveCentre(480000, 480000, callerHasPosition: true),
+            LodPlayerPregen.ResolveCentre(hasX: true, hasZ: true, callerHasPosition: true),
             "both coordinates win over the caller's position");
         c.Eq(LodPlayerPregen.EnumCentre.Argument,
-            LodPlayerPregen.ResolveCentre(0, 0, callerHasPosition: false),
-            "0,0 is a real coordinate, not a missing one");
+            LodPlayerPregen.ResolveCentre(hasX: true, hasZ: true, callerHasPosition: false),
+            "the console can name a centre too");
         c.Eq(LodPlayerPregen.EnumCentre.Caller,
-            LodPlayerPregen.ResolveCentre(-1, -1, callerHasPosition: true),
+            LodPlayerPregen.ResolveCentre(hasX: false, hasZ: false, callerHasPosition: true),
             "no coordinates centres on the caller");
         c.Eq(LodPlayerPregen.EnumCentre.Spawn,
-            LodPlayerPregen.ResolveCentre(-1, -1, callerHasPosition: false),
+            LodPlayerPregen.ResolveCentre(hasX: false, hasZ: false, callerHasPosition: false),
             "the console has no position, so it falls back to spawn");
 
         // The case that used to pass silently. Either half alone is refused.
         c.Eq(LodPlayerPregen.EnumCentre.Incomplete,
-            LodPlayerPregen.ResolveCentre(480000, -1, callerHasPosition: true),
+            LodPlayerPregen.ResolveCentre(hasX: true, hasZ: false, callerHasPosition: true),
             "an x with no z is refused, not ignored");
         c.Eq(LodPlayerPregen.EnumCentre.Incomplete,
-            LodPlayerPregen.ResolveCentre(-1, 480000, callerHasPosition: true),
+            LodPlayerPregen.ResolveCentre(hasX: false, hasZ: true, callerHasPosition: true),
             "a z with no x is refused, not ignored");
         c.Eq(LodPlayerPregen.EnumCentre.Incomplete,
-            LodPlayerPregen.ResolveCentre(480000, -1, callerHasPosition: false),
+            LodPlayerPregen.ResolveCentre(hasX: true, hasZ: false, callerHasPosition: false),
             "a half coordinate is refused from the console too");
+
+        SpawnRelativeCoordinates(c);
+    }
+
+    /// <summary>
+    /// Pre-release review B2: the game shows positions measured from spawn, and the Generate page
+    /// and commands used to read typed numbers as the map's internal position.
+    /// </summary>
+    static void SpawnRelativeCoordinates(Check c)
+    {
+        const int spawnX = 512000, spawnZ = 511800;
+        c.Eq((510800, 512140), LodSpawnCoordinates.ToWorld(-1200, 340, spawnX, spawnZ),
+            "a typed -1200, 340 is that far from spawn, not near the map's corner");
+        c.Eq((-1200, 340), LodSpawnCoordinates.ToShown(510800, 512140, spawnX, spawnZ),
+            "and a position is shown back the way the game's display shows it");
+        c.Eq("0, 0", LodSpawnCoordinates.Describe(spawnX, spawnZ, spawnX, spawnZ),
+            "spawn itself reads as 0, 0");
+
+        var page = new AssistWorldGenRequest
+        {
+            CentreMode = EnumWorldGenCentreMode.Coordinates, X = -1200, Z = 340, SpawnRelative = true,
+        };
+        c.Eq<(int, int)?>((510800, 512140), LodSpawnCoordinates.RequestedCentre(page, spawnX, spawnZ),
+            "the Generate page's typed coordinates are measured from spawn, negatives included");
+        var here = new AssistWorldGenRequest
+        {
+            CentreMode = EnumWorldGenCentreMode.Here, X = -1200, Z = 340, SpawnRelative = true,
+        };
+        c.Eq<(int, int)?>(null, LodSpawnCoordinates.RequestedCentre(here, spawnX, spawnZ),
+            "coordinates left in the boxes do not count unless Coordinates is chosen");
+        var legacy = new AssistWorldGenRequest
+        {
+            CentreMode = EnumWorldGenCentreMode.Coordinates, X = 480000, Z = 480000,
+        };
+        c.Eq<(int, int)?>((480000, 480000), LodSpawnCoordinates.RequestedCentre(legacy, spawnX, spawnZ),
+            "a request from an older client keeps its old meaning, the internal position");
+        c.Eq<(int, int)?>(null, LodSpawnCoordinates.RequestedCentre(
+                new AssistWorldGenRequest { X = -1, Z = -1 }, spawnX, spawnZ),
+            "where -1 still means not given");
     }
 
     static void AbsentSampling(Check c)

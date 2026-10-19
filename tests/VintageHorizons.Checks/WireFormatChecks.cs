@@ -92,7 +92,7 @@ public static class WireFormatChecks
             "1:RequestId:Int64", "2:Action:EnumWorldGenControlAction",
             "3:RadiusChunks:Int32", "4:Shape:EnumWorldGenShape",
             "5:CentreMode:EnumWorldGenCentreMode", "6:X:Int32", "7:Z:Int32",
-            "8:Preset:String",
+            "8:Preset:String", "9:SpawnRelative:Boolean",
         }, Layout(typeof(AssistWorldGenRequest)), "AssistWorldGenRequest field numbers");
 
         c.SeqEq(new[]

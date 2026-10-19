@@ -68,8 +68,6 @@ public class LodServerCaptureSystem : ModSystem
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Server;
 
-    public override void StartPre(ICoreAPI api) => ModIdentity.TakeOverLegacyData(api, Mod.Logger);
-
     /// <summary>Set once the cache is open; the assist handshake reports it.</summary>
     public bool Capturing => pipeline?.Active == true;
 
@@ -385,7 +383,8 @@ public class LodServerCaptureSystem : ModSystem
             .RequiresPrivilege(Privilege.controlserver)
             .HandleWith(_ => TextCommandResult.Success(GenerateStatusLine()))
             .BeginSubCommand("start")
-                .WithDescription("Start a run centred on you, or on x z when given")
+                .WithDescription("Start a run centred on you, or on x z when given (as the game "
+                    + "shows coordinates, measured from spawn)")
                 .WithArgs(
                     parsers.OptionalIntRange("radius",
                         1, Math.Max(1, Config.GenerateMaxRadiusChunks), Config.GenerateDefaultRadiusChunks),
@@ -430,16 +429,44 @@ public class LodServerCaptureSystem : ModSystem
     /// </summary>
     (int Cx, int Cz)? DiagnosticCentre(TextCommandCallingArgs args)
     {
-        int argX = (int)args.Parsers[0].GetValue();
-        int argZ = (int)args.Parsers[1].GetValue();
         var pos = args.Caller.Pos;
-        var centre = LodPlayerPregen.ResolveCentre(argX, argZ, pos != null);
+        var centre = LodPlayerPregen.ResolveCentre(
+            !args.Parsers[0].IsMissing, !args.Parsers[1].IsMissing, pos != null);
         if (centre == LodPlayerPregen.EnumCentre.Incomplete) return null;
 
-        bool aimed = centre == LodPlayerPregen.EnumCentre.Argument;
-        double bx = aimed ? argX : pos?.X ?? sapi.World.DefaultSpawnPosition.X;
-        double bz = aimed ? argZ : pos?.Z ?? sapi.World.DefaultSpawnPosition.Z;
+        (double bx, double bz) = centre == LodPlayerPregen.EnumCentre.Argument
+            ? TypedWorldBlock(args, 0, 1)
+            : (pos?.X ?? sapi.World.DefaultSpawnPosition.X, pos?.Z ?? sapi.World.DefaultSpawnPosition.Z);
         return ((int)bx / GlobalConstants.ChunkSize, (int)bz / GlobalConstants.ChunkSize);
+    }
+
+    /// <summary>The world spawn's block position, the origin of every coordinate players see.</summary>
+    (int X, int Z) SpawnBlock()
+    {
+        BlockPos spawn = sapi.World.DefaultSpawnPosition.AsBlockPos;
+        return (spawn.X, spawn.Z);
+    }
+
+    /// <summary>Two typed command arguments, spawn-relative as players read them, as a world position.</summary>
+    (int X, int Z) TypedWorldBlock(TextCommandCallingArgs args, int xIndex, int zIndex)
+    {
+        (int spawnX, int spawnZ) = SpawnBlock();
+        return LodSpawnCoordinates.ToWorld((int)args.Parsers[xIndex].GetValue(),
+            (int)args.Parsers[zIndex].GetValue(), spawnX, spawnZ);
+    }
+
+    /// <summary>The world block position a Generate-page request names, or null for none.</summary>
+    internal (int X, int Z)? RequestedWorldGenCentre(AssistWorldGenRequest request)
+    {
+        (int spawnX, int spawnZ) = SpawnBlock();
+        return LodSpawnCoordinates.RequestedCentre(request, spawnX, spawnZ);
+    }
+
+    /// <summary>A world block position written the way the game's coordinate display shows it.</summary>
+    string Shown(int worldX, int worldZ)
+    {
+        (int spawnX, int spawnZ) = SpawnBlock();
+        return LodSpawnCoordinates.Describe(worldX, worldZ, spawnX, spawnZ);
     }
 
     const string BothCoordinates =
@@ -523,11 +550,10 @@ public class LodServerCaptureSystem : ModSystem
         }
 
         int radius = (int)args.Parsers[0].GetValue();
-        int argX = (int)args.Parsers[1].GetValue();
-        int argZ = (int)args.Parsers[2].GetValue();
 
         var pos = args.Caller.Pos;
-        var centre = LodPlayerPregen.ResolveCentre(argX, argZ, pos != null);
+        var centre = LodPlayerPregen.ResolveCentre(
+            !args.Parsers[1].IsMissing, !args.Parsers[2].IsMissing, pos != null);
         if (centre == LodPlayerPregen.EnumCentre.Incomplete)
         {
             worldGenAuthority.Release(EnumWorldGenAuthority.TransientGeneration);
@@ -536,10 +562,10 @@ public class LodServerCaptureSystem : ModSystem
                 + $"{radius} <x> <z>. With neither, the run centres on you.");
         }
 
-        bool aimed = centre == LodPlayerPregen.EnumCentre.Argument;
         bool fromSpawn = centre == LodPlayerPregen.EnumCentre.Spawn;
-        double bx = aimed ? argX : pos?.X ?? sapi.World.DefaultSpawnPosition.X;
-        double bz = aimed ? argZ : pos?.Z ?? sapi.World.DefaultSpawnPosition.Z;
+        (double bx, double bz) = centre == LodPlayerPregen.EnumCentre.Argument
+            ? TypedWorldBlock(args, 1, 2)
+            : (pos?.X ?? sapi.World.DefaultSpawnPosition.X, pos?.Z ?? sapi.World.DefaultSpawnPosition.Z);
         int cs = GlobalConstants.ChunkSize;
         int centreCx = (int)bx / cs;
         int centreCz = (int)bz / cs;
@@ -565,7 +591,7 @@ public class LodServerCaptureSystem : ModSystem
         int seconds = LodPlayerPregen.EstimateSeconds(columns, Config.GenerateColumnsPerSecond);
         string time = seconds >= 120 ? seconds / 60 + " minutes" : seconds + " seconds";
         return TextCommandResult.Success(
-            $"[Landscapes] Generating LOD around {(fromSpawn ? "spawn " : "")}{(int)bx},{(int)bz} "
+            $"[Landscapes] Generating LOD around {(fromSpawn ? "spawn " : "")}{Shown((int)bx, (int)bz)} "
             + $"out to {radius} chunks ({radius * cs} blocks): {columns} columns, roughly {time} if "
             + "the server keeps up. Terrain that nobody visited is generated from the seed and "
             + "thrown away - nothing is written to the savegame, and no chunk is loaded for any "
@@ -598,7 +624,8 @@ public class LodServerCaptureSystem : ModSystem
             .HandleWith(OnWorldGenStatus)
             .BeginSubCommand("start")
                 .WithDescription(
-                    "Prepare a job: [radius] [circle|square] [here|spawn|coords] [x] [z]")
+                    "Prepare a job: [radius] [circle|square] [here|spawn|coords] [x] [z]; x z as the "
+                    + "game shows coordinates, measured from spawn")
                 .WithArgs(
                     parsers.OptionalIntRange("radius", 1,
                         Math.Max(1, Config.WorldGenMaxRadiusChunks),
@@ -658,12 +685,13 @@ public class LodServerCaptureSystem : ModSystem
             return TextCommandResult.Error(
                 "[Landscapes] Centre must be here, spawn, or coords followed by x z.");
 
-        int argX = (int)args.Parsers[3].GetValue();
-        int argZ = (int)args.Parsers[4].GetValue();
+        bool hasX = !args.Parsers[3].IsMissing, hasZ = !args.Parsers[4].IsMissing;
+        if (hasX != hasZ)
+            return TextCommandResult.Error("[Landscapes] Give both x and z, or neither.");
+        (int X, int Z)? typed = hasX ? TypedWorldBlock(args, 3, 4) : null;
         var result = WorldGenPrepare(WorldGenCallerKey(args),
             args.Caller.Player?.PlayerName ?? "the console",
-            args.Caller.Pos?.X, args.Caller.Pos?.Z, radius, shape, centre, argX, argZ,
-            "Balanced");
+            args.Caller.Pos?.X, args.Caller.Pos?.Z, radius, shape, centre, typed, "Balanced");
         return WorldGenCommandResult(result);
     }
 
@@ -698,10 +726,14 @@ public class LodServerCaptureSystem : ModSystem
         result.Success ? TextCommandResult.Success(result.Message) : TextCommandResult.Error(result.Message);
 
     /// <summary>Shared validation for the command and the Generate page.</summary>
+    /// <param name="typedBlock">
+    /// The world block position the caller typed, already converted from the spawn-relative
+    /// numbers players see (<see cref="LodSpawnCoordinates"/>), or null when none was typed.
+    /// </param>
     internal (bool Success, string Message) WorldGenPrepare(
         string callerKey, string startedBy, double? hereX, double? hereZ,
         int radius, EnumWorldGenShape shape, EnumWorldGenCentreMode centreMode,
-        int argX, int argZ, string preset)
+        (int X, int Z)? typedBlock, string preset)
     {
         if (!Config.EnableCapture)
             return (false, "[Landscapes] Server LOD capture is switched off.");
@@ -737,29 +769,31 @@ public class LodServerCaptureSystem : ModSystem
         double bx, bz;
         if (centreMode == EnumWorldGenCentreMode.Here)
         {
-            if (argX >= 0 || argZ >= 0)
+            if (typedBlock != null)
                 return (false, "[Landscapes] Typed coordinates require Coordinates as the centre.");
             bx = hereX ?? sapi.World.DefaultSpawnPosition.X;
             bz = hereZ ?? sapi.World.DefaultSpawnPosition.Z;
         }
         else if (centreMode == EnumWorldGenCentreMode.Spawn)
         {
-            if (argX >= 0 || argZ >= 0)
+            if (typedBlock != null)
                 return (false, "[Landscapes] Spawn takes no x z coordinates.");
             bx = sapi.World.DefaultSpawnPosition.X;
             bz = sapi.World.DefaultSpawnPosition.Z;
         }
         else
         {
-            if (argX < 0 || argZ < 0)
-                return (false, "[Landscapes] Coordinates requires non-negative x and z block positions.");
-            bx = argX;
-            bz = argZ;
+            if (typedBlock is not (int typedX, int typedZ))
+                return (false, "[Landscapes] Coordinates needs an x and a z, as the game shows them.");
+            bx = typedX;
+            bz = typedZ;
         }
 
         int cs = GlobalConstants.ChunkSize;
-        int centreCx = (int)bx / cs;
-        int centreCz = (int)bz / cs;
+        // Floored, not truncated: a typed position just past the map's edge must not round
+        // to chunk 0 and pass the bounds check below.
+        int centreCx = (int)Math.Floor(bx / cs);
+        int centreCz = (int)Math.Floor(bz / cs);
         int mapChunksX = sapi.WorldManager.MapSizeX / cs;
         int mapChunksZ = sapi.WorldManager.MapSizeZ / cs;
         if (centreCx < 0 || centreCz < 0 || centreCx >= mapChunksX || centreCz >= mapChunksZ)
@@ -777,7 +811,7 @@ public class LodServerCaptureSystem : ModSystem
         long estimatedSeconds = (long)Math.Ceiling(plan.Count / LodWorldGenJob.BaselineColumnsPerSecond);
         return (true, $"[Landscapes] Ready to generate {plan.Count:N0} real columns in a "
             + $"{shape.ToString().ToLowerInvariant()} of radius {radius} chunks ({radius * cs:N0} blocks) "
-            + $"around {centreCx * cs:N0},{centreCz * cs:N0}. Baseline estimate: "
+            + $"around {Shown((int)bx, (int)bz)}. Baseline estimate: "
             + $"{FormatWorldGenDuration(estimatedSeconds)} and up to {FormatWorldGenBytes(estimatedBytes)} "
             + "of savegame plus distant-terrain data. This permanently adds terrain to your "
             + "world; make a backup first if the world matters. Confirm within two minutes to begin.");
@@ -946,8 +980,9 @@ public class LodServerCaptureSystem : ModSystem
             return "[Landscapes] An interrupted job state exists but cannot be read: " + reason;
         if (state != null)
             return $"[Landscapes] Interrupted world-generation job available: "
-                + $"{state.DoneCount()}/{state.TotalColumns} durable columns around chunk "
-                + $"{state.CentreCx},{state.CentreCz}, radius {state.RadiusChunks} "
+                + $"{state.DoneCount()}/{state.TotalColumns} durable columns around "
+                + $"{Shown(state.CentreCx * GlobalConstants.ChunkSize, state.CentreCz * GlobalConstants.ChunkSize)}, "
+                + $"radius {state.RadiusChunks} "
                 + $"{state.Shape.ToString().ToLowerInvariant()}. Use /dlworldgen resume or stop.";
         return "[Landscapes] No savegame world-generation job has run. Use "
             + $"/dlworldgen start [radius] [circle|square] [here|spawn|coords] [x] [z]; "
@@ -1046,8 +1081,8 @@ public class LodServerCaptureSystem : ModSystem
         {
             status.Message = status.State == EnumWorldGenRemoteState.Prepared
                 ? $"[Landscapes] Ready to generate {status.TotalColumns:N0} real columns "
-                    + $"around {status.CentreCx * GlobalConstants.ChunkSize:N0},"
-                    + $"{status.CentreCz * GlobalConstants.ChunkSize:N0}. Confirm within two minutes."
+                    + $"around {Shown(status.CentreCx * GlobalConstants.ChunkSize, status.CentreCz * GlobalConstants.ChunkSize)}. "
+                    + "Confirm within two minutes."
                 : WorldGenStatusLine();
         }
         return status;

@@ -261,11 +261,15 @@ internal sealed class LodWorldGenJob
     {
         SaveState("start");
         logger.Notification(
-            "Savegame world generation {0} by {1}: {2} {3} columns around chunk {4},{5}, "
-            + "radius {6}, in {7} nearest-first 16x16 tiles. Queue target {8}, kept-column "
-            + "limit {9}. This permanently adds terrain to the world.",
+            "Savegame world generation {0} by {1}: {2} {3} columns around {4} (chunk {5},{6}), "
+            + "radius {7}, in {8} nearest-first 16x16 tiles. Queue target {9}, kept-column "
+            + "limit {10}. This permanently adds terrain to the world.",
             resumed ? "resumed" : "started", StartedBy, plan.Count,
-            state.Shape.ToString().ToLowerInvariant(), state.CentreCx, state.CentreCz,
+            state.Shape.ToString().ToLowerInvariant(),
+            LodSpawnCoordinates.Describe(state.CentreCx * Vintagestory.API.Config.GlobalConstants.ChunkSize,
+                state.CentreCz * Vintagestory.API.Config.GlobalConstants.ChunkSize,
+                sapi.World.DefaultSpawnPosition.AsBlockPos.X, sapi.World.DefaultSpawnPosition.AsBlockPos.Z),
+            state.CentreCx, state.CentreCz,
             state.RadiusChunks, plan.Tiles.Count, config.WorldGenQueueTarget,
             config.WorldGenMaxInFlight);
     }

@@ -243,8 +243,8 @@ public static class WorldGenChecks
             "an unknown remembered shape falls back to the circular default");
         c.Eq(EnumWorldGenCentreMode.Here, normalized.CentreMode,
             "an unknown remembered centre falls back to the player");
-        c.Eq((0, 0), (normalized.X, normalized.Z),
-            "remembered coordinates cannot become negative");
+        c.Eq((-5, -7), (normalized.X, normalized.Z),
+            "remembered coordinates are measured from spawn, so they keep their sign");
         c.Eq("Balanced", normalized.Preset,
             "an unmeasured remembered preset cannot reach the server");
 

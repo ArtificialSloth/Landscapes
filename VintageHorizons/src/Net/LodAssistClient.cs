@@ -348,6 +348,8 @@ public sealed class LodAssistClient
                 X = x,
                 Z = z,
                 Preset = preset,
+                // The page's coordinates are the ones the game shows, measured from spawn.
+                SpawnRelative = true,
             });
         }
         catch (Exception e)

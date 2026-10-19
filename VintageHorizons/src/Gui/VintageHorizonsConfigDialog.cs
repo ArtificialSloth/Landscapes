@@ -1216,16 +1216,17 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         return true;
     }
 
+    // The coordinates the game shows, measured from spawn, so they may be negative.
     void OnWorldGenXChanged(string value)
     {
         if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int x))
-            pendingWorldGen = pendingWorldGen with { X = Math.Max(0, x) };
+            pendingWorldGen = pendingWorldGen with { X = x };
     }
 
     void OnWorldGenZChanged(string value)
     {
         if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int z))
-            pendingWorldGen = pendingWorldGen with { Z = Math.Max(0, z) };
+            pendingWorldGen = pendingWorldGen with { Z = z };
     }
 
     void RefreshWorldGenEstimate()

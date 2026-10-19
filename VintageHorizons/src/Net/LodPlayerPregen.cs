@@ -100,8 +100,12 @@ public class LodPlayerPregen
     int ProbeRadius => radiusChunks + LodColumnMap.SafeNeighbourhood;
     int ProbeTotal => (2 * ProbeRadius + 1) * (2 * ProbeRadius + 1);
     public int WorkTotal => ColumnsFor(radiusChunks);
-    public int CentreBlockX => centreCx * GlobalConstants.ChunkSize;
-    public int CentreBlockZ => centreCz * GlobalConstants.ChunkSize;
+    // The centre as the game's coordinate display shows it, measured from spawn: these only ever
+    // reach status lines and the log, read by people comparing them with their own screen.
+    public int CentreBlockX => centreCx * GlobalConstants.ChunkSize
+        - sapi.World.DefaultSpawnPosition.AsBlockPos.X;
+    public int CentreBlockZ => centreCz * GlobalConstants.ChunkSize
+        - sapi.World.DefaultSpawnPosition.AsBlockPos.Z;
 
     /// <summary>Columns in a square of this radius. Printed to the person who typed the command.</summary>
     public static int ColumnsFor(int radiusChunks) => (2 * radiusChunks + 1) * (2 * radiusChunks + 1);
@@ -155,15 +159,16 @@ public class LodPlayerPregen
     /// <summary>
     /// Resolve where a run should be centred. Pure, so the precedence has a check.
     ///
-    /// World coordinates are never negative, so -1 means "not given". One coordinate
-    /// alone used to be ignored in silence, and the run quietly centred somewhere else -
-    /// a person who typed "/dlgen start 10 480000" got a run around themselves and no
-    /// hint that half their command went nowhere.
+    /// Typed coordinates are measured from spawn, as the game shows them, so any number is a
+    /// real coordinate and "not given" is the parser's own missing flag (0.4.160; before, -1
+    /// stood for it). One coordinate alone used to be ignored in silence, and the run quietly
+    /// centred somewhere else - a person who typed "/dlgen start 10 480000" got a run around
+    /// themselves and no hint that half their command went nowhere.
     /// </summary>
-    public static EnumCentre ResolveCentre(int argX, int argZ, bool callerHasPosition)
+    public static EnumCentre ResolveCentre(bool hasX, bool hasZ, bool callerHasPosition)
     {
-        if (argX >= 0 && argZ >= 0) return EnumCentre.Argument;
-        if (argX >= 0 || argZ >= 0) return EnumCentre.Incomplete;
+        if (hasX && hasZ) return EnumCentre.Argument;
+        if (hasX || hasZ) return EnumCentre.Incomplete;
         return callerHasPosition ? EnumCentre.Caller : EnumCentre.Spawn;
     }
 

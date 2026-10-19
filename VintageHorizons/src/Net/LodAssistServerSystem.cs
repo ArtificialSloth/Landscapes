@@ -57,8 +57,6 @@ public class LodAssistServerSystem : ModSystem
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Server;
 
-    public override void StartPre(ICoreAPI api) => ModIdentity.TakeOverLegacyData(api, Mod.Logger);
-
     public override void StartServerSide(ICoreServerAPI api)
     {
         sapi = api;
@@ -298,7 +296,7 @@ public class LodAssistServerSystem : ModSystem
                     player.PlayerUID, player.PlayerName,
                     player.Entity?.Pos.X, player.Entity?.Pos.Z,
                     request.RadiusChunks, request.Shape, request.CentreMode,
-                    request.X, request.Z, request.Preset ?? "Balanced"),
+                    owner.RequestedWorldGenCentre(request), request.Preset ?? "Balanced"),
                 EnumWorldGenControlAction.Confirm => owner.WorldGenConfirm(player.PlayerUID),
                 EnumWorldGenControlAction.Pause => owner.WorldGenPause(),
                 EnumWorldGenControlAction.Resume => owner.WorldGenResume(),
