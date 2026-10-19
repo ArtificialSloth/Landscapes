@@ -120,7 +120,7 @@ public sealed class LodSavegameScan
     /// unavailable or the read failed, and the caller must then fall back to probing.
     /// </summary>
     public bool ReadExistence(LodColumnMap into, Func<bool>? shouldStop = null) =>
-        reader.Read("SELECT position FROM mapchunk;", row =>
+        reader.ReadTable("mapchunk", "", row =>
         {
             long position = row.GetInt64(0);
             if (PositionDimension(position) != 0) return;
@@ -132,14 +132,14 @@ public sealed class LodSavegameScan
     ///
     /// Each row's hash is mixed with its own y before being combined into the column, and
     /// the rows are counted, so the result is sensitive to which layers are present without
-    /// needing them in order. That matters: ordering by position would sort y-major and
-    /// scatter each column's rows across the whole table, while an unordered sequential
-    /// scan is the access pattern the file is fastest at.
+    /// needing them in order. That matters: position order is y-major and scatters each
+    /// column's rows across the whole table. It is also the table's own row order, so the
+    /// batched read (<see cref="LodSavegameReader.ReadTable"/>) is still one sequential pass.
     /// </summary>
     public bool ReadFingerprints(Dictionary<long, LodColumnFingerprint> into,
         Func<bool>? shouldStop = null)
     {
-        return reader.Read("SELECT position, data FROM chunk;", row =>
+        return reader.ReadTable("chunk", ", data", row =>
         {
             long position = row.GetInt64(0);
             if (PositionDimension(position) != 0) return;

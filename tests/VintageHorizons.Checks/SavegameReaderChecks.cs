@@ -22,6 +22,7 @@ public static class SavegameReaderChecks
         try
         {
             ReadsASavegameShapedFile(c, Path.Combine(dir, "world.vcdbs"));
+            TheGameCanSaveBetweenBatches(c, Path.Combine(dir, "batches.vcdbs"));
             RefusesAnUnfamiliarSchema(c, Path.Combine(dir, "strange.vcdbs"));
             RefusesAMissingFile(c, Path.Combine(dir, "absent.vcdbs"));
             TracksTheChangeCounter(c, Path.Combine(dir, "counter.vcdbs"));
@@ -83,6 +84,75 @@ public static class SavegameReaderChecks
         count.CommandText = "SELECT COUNT(*) FROM mapchunk;";
         c.Eq(12L, (long)count.ExecuteScalar()!,
             "the rejected write left every row in place");
+    }
+
+    /// <summary>
+    /// Pre-release review B3. A query holds SQLite's read lock until it closes, sleeps
+    /// included, so a whole-table scan as one query kept the game from saving for as long as
+    /// it ran - fatal on a server running without a journal (CorruptionProtection off), where
+    /// the game's save gives up after 30 seconds. The fixture uses SQLite's default rollback
+    /// journal, which locks the same way.
+    /// </summary>
+    static void TheGameCanSaveBetweenBatches(Check c, string path)
+    {
+        CreateSavegame(path, chunkRows: 40, mapChunkRows: 12);
+        var logger = new CaptureLogger();
+        using var reader = new LodSavegameReader(logger, path);
+        c.True(reader.Open(), "the batch fixture opens");
+
+        // The old shape, shown failing: a write attempted while one long query is open.
+        bool savedDuringOneQuery = true;
+        bool tried = false;
+        reader.Read("SELECT position, data FROM chunk;", _ =>
+        {
+            if (tried) return;
+            tried = true;
+            savedDuringOneQuery = TryGameSave(path, 5000);
+        });
+        c.False(savedDuringOneQuery, "while one long query is open the game cannot save at all");
+
+        // The new shape: every batch closes its query, and the game saves in the gap.
+        var positions = new List<long>();
+        int gaps = 0, saves = 0;
+        reader.BetweenBatches = () =>
+        {
+            gaps++;
+            if (gaps == 1 && TryGameSave(path, 6000)) saves++;
+        };
+        c.True(reader.ReadTable("chunk", ", data", row => positions.Add(row.GetInt64(0)),
+                maxRowsPerBatch: 7),
+            "a batched whole-table read succeeds");
+        reader.BetweenBatches = null;
+        c.Eq(1, saves, "between batches the game saves without waiting");
+        c.True(gaps >= 5, "forty rows in batches of seven close the query at least five times");
+        c.SeqEq(Enumerable.Range(0, 40).Select(i => (long)i).Append(6000).ToList(), positions,
+            "every row is read exactly once, in order, including one the game saved mid-read");
+
+        int seen = 0;
+        c.False(reader.ReadTable("mapchunk", "", _ => seen++, () => seen >= 5, maxRowsPerBatch: 2),
+            "a batched read that was asked to stop reports that it did not complete");
+        c.Eq(5, seen, "and stops at the row it was asked to");
+        c.Throws<ArgumentException>(() => reader.ReadTable("gamedata", "", _ => { }),
+            "only the two terrain tables can be read this way");
+    }
+
+    /// <summary>One write the way the game makes one, with a one-second patience. True if it committed.</summary>
+    static bool TryGameSave(string path, long position)
+    {
+        try
+        {
+            using var conn = OpenWritable(path);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandTimeout = 1;
+            cmd.CommandText = "INSERT INTO chunk (position, data) VALUES ($p, x'00');";
+            cmd.Parameters.AddWithValue("$p", position);
+            cmd.ExecuteNonQuery();
+            return true;
+        }
+        catch (SqliteException)
+        {
+            return false;
+        }
     }
 
     static void RefusesAnUnfamiliarSchema(Check c, string path)

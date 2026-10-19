@@ -40,10 +40,11 @@ public enum EnumSavegameReadState
 public sealed class LodSavegameReader : IDisposable
 {
     /// <summary>
-    /// Owning-thread work between yields. The engine's autosave cannot overlap a reader
-    /// under a rollback journal, so a batch has to be short enough that a save never waits
+    /// Owning-thread work between yields. Without a write-ahead log the engine's save cannot
+    /// overlap an open read, so a batch has to be short enough that a save never waits
     /// noticeably: saves measured about five minutes apart and wrote nine chunks in one
-    /// observed case, so tens of milliseconds makes the contention immeasurable.
+    /// observed case, so tens of milliseconds makes the contention immeasurable. This only
+    /// holds because <see cref="ReadTable"/> closes its query at the end of each batch.
     /// </summary>
     const double RollbackBatchMs = 10.0;
 
@@ -205,13 +206,94 @@ public sealed class LodSavegameReader : IDisposable
     }
 
     /// <summary>
-    /// Runs one query, handing each row to <paramref name="row"/> on this caller's thread in
-    /// short batches with a yield between them, so the engine's own writer is never kept
-    /// waiting for long. Returns false if the reader is unavailable or the read failed; a
-    /// failure disables the reader.
+    /// Every row of one of the savegame's terrain tables, in short batches that each end the
+    /// query, so the engine's own writer can save between them (pre-release review B3).
+    ///
+    /// A query holds SQLite's read lock from its first row until it is closed, pauses included.
+    /// The whole-table scans used to be one query with sleeps inside it, which gave the file
+    /// back to nobody: under the game's default write-ahead log that only held up checkpoints,
+    /// but a server with CorruptionProtection off runs without a journal, and there the game's
+    /// chunk saves waited for the whole scan - minutes on a large world - and gave up with
+    /// "database is locked" after 30 seconds. Each batch here reads from just past the last
+    /// position it saw, in position order. Position is the table's row id, so that order is the
+    /// file's own and every batch starts with one index seek.
+    ///
+    /// The first column handed to <paramref name="row"/> is always the position; the rest are
+    /// <paramref name="columns"/>. Returns false if the reader is unavailable, the read failed
+    /// (which disables the reader), or <paramref name="shouldStop"/> asked it to stop.
+    /// </summary>
+    /// <param name="table">"chunk" or "mapchunk"; nothing else is accepted.</param>
+    /// <param name="columns">Extra columns after the position, such as ", data".</param>
+    /// <param name="maxRowsPerBatch">A row ceiling on top of the time budget, for the checks.</param>
+    public bool ReadTable(string table, string columns, Action<SqliteDataReader> row,
+        Func<bool>? shouldStop = null, int maxRowsPerBatch = int.MaxValue)
+    {
+        if (table is not (ChunkTable or MapChunkTable) || columns is not ("" or ", data"))
+            throw new ArgumentException($"no paged read of '{table}' with '{columns}'");
+
+        SqliteConnection? live;
+        lock (gate)
+        {
+            if (!Available) return false;
+            live = connection;
+        }
+        if (live == null) return false;
+
+        try
+        {
+            // Positions are never negative (LodSavegameScan's layout tops out at bit 62), so
+            // starting below zero reads the first row.
+            long after = -1;
+            while (true)
+            {
+                int read = 0;
+                bool more = false;
+                using (var command = live.CreateCommand())
+                {
+                    command.CommandText =
+                        $"SELECT position{columns} FROM {table} WHERE position > $after ORDER BY position;";
+                    command.CommandTimeout = BusyTimeoutSeconds;
+                    command.Parameters.AddWithValue("$after", after);
+                    using SqliteDataReader reader = command.ExecuteReader();
+                    var budget = new LodWorkBudget(BatchMilliseconds);
+                    while (reader.Read())
+                    {
+                        if (shouldStop?.Invoke() == true) return false;
+                        after = reader.GetInt64(0);
+                        row(reader);
+                        read++;
+                        if (budget.Expired || read >= maxRowsPerBatch)
+                        {
+                            more = true;
+                            break;
+                        }
+                    }
+                }
+                // The query is closed here, and with it the read lock.
+                if (!more) return true;
+                BetweenBatches?.Invoke();
+                Thread.Sleep(YieldMilliseconds);
+            }
+        }
+        catch (Exception e)
+        {
+            Disable($"reading it failed: {e.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Runs after each batch of <see cref="ReadTable"/> has closed its query. Checks only.</summary>
+    internal Action? BetweenBatches;
+
+    /// <summary>
+    /// Runs one query, handing each row to <paramref name="row"/> on this caller's thread.
+    /// The query holds the read lock until it ends, pauses included, so this is for short,
+    /// bounded reads such as one column's rows; a whole table goes through
+    /// <see cref="ReadTable"/>. Returns false if the reader is unavailable or the read failed;
+    /// a failure disables the reader.
     ///
     /// The caller supplies <paramref name="shouldStop"/> so a world shutting down does not
-    /// have to wait for a whole-world scan to finish.
+    /// have to wait for a long read to finish.
     /// </summary>
     public bool Read(string sql, Action<SqliteDataReader> row, Func<bool>? shouldStop = null,
         IReadOnlyList<(string Name, long Value)>? parameters = null)
