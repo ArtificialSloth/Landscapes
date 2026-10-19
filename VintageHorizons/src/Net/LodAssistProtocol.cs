@@ -172,7 +172,7 @@ public class AssistWelcome
 
     /// <summary>
     /// Where the server's Farseer heights come from, an <see cref="EnumSilhouetteHeightSource"/>, so
-    /// the Farseer tab can warn when no sampler mod is installed. Every older server sends zero
+    /// the settings window's Farseer row can warn when no sampler mod is installed. Every older server sends zero
     /// (unknown), which shows no warning.
     /// </summary>
     [ProtoMember(10)] public int SilhouetteHeightSource;

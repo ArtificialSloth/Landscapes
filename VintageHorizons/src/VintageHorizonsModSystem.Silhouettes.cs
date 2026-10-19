@@ -93,7 +93,7 @@ public partial class VintageHorizonsModSystem
         // A quick A/B switch for judging the seam fog's frame-time cost while playing.
         capi.ChatCommands.Create("dlfog")
             .WithDescription("Seam fog: on, off, or no argument to toggle. Session-only; the "
-                + "Farseer tab's Seam fog switch saves it.")
+                + "Seam fog switch in .dlconfig saves it.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("action"))
             .HandleWith(args =>
             {

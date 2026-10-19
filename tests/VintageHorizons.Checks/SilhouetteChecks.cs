@@ -2181,7 +2181,7 @@ public static class SilhouetteChecks
                 && dialog.Contains("pendingSilhouettes with { FogEnabled = on }", StringComparison.Ordinal)
                 && mod.Contains("public bool SilhouetteFog = true;", StringComparison.Ordinal)
                 && mod.Contains("config.SilhouetteFog = value.FogEnabled;", StringComparison.Ordinal),
-            "the seam fog has a saved switch on the Farseer tab and a session .dlfog toggle");
+            "the seam fog has a saved switch on General and a session .dlfog toggle");
         int reset = mod.IndexOf("void ResetOutdatedFogDials(bool fromFile)", StringComparison.Ordinal);
         int guard = mod.IndexOf("if (!fromFile) return;", reset, StringComparison.Ordinal);
         int store = mod.IndexOf("capi.StoreModConfig(config, \"dodenslandscapes.json\");", reset,
@@ -2283,26 +2283,18 @@ public static class SilhouetteChecks
                 < pass.IndexOf("silhouetteShaderWanted = true;", StringComparison.Ordinal),
             "an unavailable server never causes even the lazy silhouette shader compile");
 
-        c.True(dialog.Contains("SilhouettesTab => \"Farseer\"", StringComparison.Ordinal)
-                && dialog.Contains("ComposeSilhouettes", StringComparison.Ordinal)
+        // Farseer's tab went in 0.4.166 (owner, 2026-10-19): its two switches are on General and
+        // every dial is in the Developer tab's Farseer look and Seam fog groups.
+        c.True(dialog.Contains("ComposeFarseerRow(composer);", StringComparison.Ordinal)
+                && dialog.Contains("\"silhouette-enabled\"", StringComparison.Ordinal)
+                && dialog.Contains("ComposeSilhouetteDials", StringComparison.Ordinal)
                 && dialog.Contains("SilhouetteRows", StringComparison.Ordinal)
-                && !dialog.Contains("\"LOD edge depth\"", StringComparison.Ordinal)
-                && !dialog.Contains("\"LOD edge width\"", StringComparison.Ordinal)
                 && dialog.Contains("Geometry detail", StringComparison.Ordinal)
                 && dialog.Contains("Hill softness", StringComparison.Ordinal)
                 && dialog.Contains("Seam strip density", StringComparison.Ordinal)
-                && dialog.Contains("Seam strip height", StringComparison.Ordinal)
                 && dialog.Contains("Fog density", StringComparison.Ordinal)
-                && dialog.Contains("Fog fade time", StringComparison.Ordinal)
-                && dialog.Contains("Fog coverage", StringComparison.Ordinal)
-                && dialog.Contains("Fog spread", StringComparison.Ordinal)
-                && dialog.Contains("Fog height", StringComparison.Ordinal)
-                && dialog.Contains("Fog floor depth", StringComparison.Ordinal)
-                && dialog.Contains("Fog billow size", StringComparison.Ordinal)
-                && dialog.Contains("Fog drift speed", StringComparison.Ordinal)
-                && dialog.Contains("Fog quality", StringComparison.Ordinal)
-                && dialog.Contains("Fog edge softness", StringComparison.Ordinal),
-            "the Farseer editor exposes every seam-fog appearance and layer dial");
+                && dialog.Contains("Fog quality", StringComparison.Ordinal),
+            "Farseer's switches are on General and every look and fog dial is on Developer");
         c.True(scale.Contains("DrawMarker", StringComparison.Ordinal)
                 && scale.Contains("SilhouetteMarker", StringComparison.Ordinal)
                 && scale.Contains("silhouettesEnabled", StringComparison.Ordinal)

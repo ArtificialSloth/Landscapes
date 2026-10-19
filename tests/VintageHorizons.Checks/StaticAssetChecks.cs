@@ -2606,13 +2606,15 @@ public static class StaticAssetChecks
         // fit: a medium-weight title is taller than the box it is given, so every row overran
         // the two lines beneath it and the window read as a wall. That build also had tabs whose
         // strip clipped the labels to "Det" and "Visual fe", and the window went to one page.
-        // In 0.4.60 the owner asked for a second tab, to tune anti-aliasing with sliders: a tab
-        // is as wide as its label, and the strip sits above the window with room for both.
+        // Tabs came back in 0.4.60 for anti-aliasing sliders: a tab is as wide as its label, and
+        // the strip sits above the window. Anti-Aliasing and Farseer folded into Developer and
+        // General in 0.4.166 (owner).
         c.True(dialog.Contains("AddHorizontalTabs(", StringComparison.Ordinal)
                 && dialog.Contains("_ => \"General\"", StringComparison.Ordinal)
-                && dialog.Contains("AntiAliasingTab => \"Anti-Aliasing\"", StringComparison.Ordinal)
-                && dialog.Contains("GenerateTab => \"Generate\"", StringComparison.Ordinal),
-            "the settings window has General, Anti-Aliasing and Generate tabs");
+                && dialog.Contains("GenerateTab => \"Generate\"", StringComparison.Ordinal)
+                && dialog.Contains("PerformanceTab => \"Performance\"", StringComparison.Ordinal)
+                && dialog.Contains("DeveloperTab => \"Developer\"", StringComparison.Ordinal),
+            "the settings window has General, Generate, Performance and Developer tabs");
         c.True(dialog.Contains("OnWorldGenPrepare", StringComparison.Ordinal)
                 && dialog.Contains("OnWorldGenConfirm", StringComparison.Ordinal)
                 && dialog.Contains("OnWorldGenPause", StringComparison.Ordinal)
@@ -2651,15 +2653,15 @@ public static class StaticAssetChecks
             "all visual rows finish above the action buttons");
         c.True(VintageHorizonsConfigLayout.ShowTaaY + 32
                 < VintageHorizonsConfigLayout.ButtonY,
-            "the anti-aliasing footer finishes above the action buttons");
-        c.True(VintageHorizonsConfigLayout.ScaleHeight >= 200
-                && VintageHorizonsConfigLayout.ScaleY + VintageHorizonsConfigLayout.ScaleHeight
-                    < VintageHorizonsConfigLayout.DrawHeadingY,
-            "the distance map has four clear marker lanes and finishes above the next heading");
+            "the anti-aliasing tint switch finishes above the action buttons");
         c.True(VintageHorizonsConfigLayout.DialSliderX
                 - VintageHorizonsConfigLayout.Margin - 12 >= 280
             && dialog.Contains("row.Title, CairoFont.WhiteSmallishText()", StringComparison.Ordinal),
             "long anti-aliasing labels get a wide single-line smallish-text column");
+        c.True(VintageHorizonsConfigLayout.ScaleHeight >= 200
+                && VintageHorizonsConfigLayout.ScaleY + VintageHorizonsConfigLayout.ScaleHeight
+                    < VintageHorizonsConfigLayout.DrawHeadingY,
+            "the distance map has four clear marker lanes and finishes above the next heading");
 
         c.True(settings.Contains(
                 "internal const string HarmonyId = \"dodenslandscapes.settingstab\"",
@@ -2681,7 +2683,7 @@ public static class StaticAssetChecks
             "a changed vanilla Settings seam fails back to the command window");
         c.True(settings.Contains("BeforeLeavingSettings", StringComparison.Ordinal)
             && settings.Contains("oldEditor?.CloseEmbedded();", StringComparison.Ordinal),
-            "leaving Settings cancels an unsaved live anti-aliasing preview");
+            "leaving Settings cancels an unsaved live Farseer preview");
         c.True(settings.Contains("const double HorizonsButtonWidth = 150", StringComparison.Ordinal),
             "the full Landscapes label fits its vanilla Settings header button");
         c.True(VintageHorizonsConfigLayout.EmbeddedTabsY >= 80
@@ -2690,10 +2692,10 @@ public static class StaticAssetChecks
             "the editor tabs sit below vanilla's header and above their page title");
         c.True(VintageHorizonsConfigLayout.TabsWidth
                 / VintageHorizonsConfigLayout.PlannedTabCount >= 150,
-            "the tab strip reserves at least 150 pixels each with the Farseer tab present");
+            "the tab strip reserves at least 150 pixels for each tab");
         c.True(VintageHorizonsConfigLayout.Margin + VintageHorizonsConfigLayout.TabsWidth
                 <= VintageHorizonsConfigLayout.Width,
-            "the widened five-tab strip still fits inside the window, embedded or standalone");
+            "the tab strip fits inside the window, embedded or standalone");
         c.True(dialog.Contains("\"all-cores-gc\"", StringComparison.Ordinal)
                 && dialog.Contains("collector.Save(pendingAllCores);", StringComparison.Ordinal)
                 && mod.Contains("public bool AllCoresGarbageCollection;", StringComparison.Ordinal)

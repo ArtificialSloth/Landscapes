@@ -128,7 +128,8 @@ internal readonly record struct LodSilhouetteSettings(
 
 /// <summary>
 /// Live preview and status hooks used by both settings entry points. NoSampler is true when the
-/// server offers silhouettes but found neither supported sampler mod, so the tab shows a warning.
+/// server offers silhouettes but found neither supported sampler mod, so the Farseer row shows a
+/// warning.
 /// </summary>
 internal sealed record SilhouetteTuning(
     LodSilhouetteSettings Initial,

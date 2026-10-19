@@ -3,73 +3,78 @@ using VintageHorizons.Net;
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// The settings window's simple and advanced views (owner, 2026-10-13): a player sees the
-/// distances, the feature switches and Farseer's two switches; the tuning dials are behind
-/// "Advanced settings", and hiding them never changes their values.
+/// The settings window has one view (owner, 2026-10-19): General, Generate, Performance and
+/// Developer. There is no Advanced switch; every tuning dial is on Developer, one group at a time,
+/// and Farseer's two switches and the no-sampler warning share one row on General.
 /// </summary>
 public static class SettingsWindowChecks
 {
     public static void Run(Check c)
     {
-        AdvancedIsOptIn(c);
-        AntiAliasingTabIsAdvanced(c);
-        ChangedHiddenValuesAreFlagged(c);
+        OneViewFourTabs(c);
+        DeveloperGroupsCoverEveryDial(c);
+        FarseerRowOnGeneral(c);
         GenerateReadsAsAFlow(c);
         NoticePointsAtTheSettings(c);
         LayoutStaysClear(c);
     }
 
-    static void AdvancedIsOptIn(Check c)
-    {
-        c.False(new VintageHorizonsConfig().ShowAdvancedSettings,
-            "a fresh install shows the simple view");
-        string mod = Source("VintageHorizonsModSystem.cs");
-        c.True(mod.Contains("config.ShowAdvancedSettings = on;", StringComparison.Ordinal)
-                && mod.Contains("new AdvancedTuning(config.ShowAdvancedSettings", StringComparison.Ordinal),
-            "the choice is remembered in the mod's config");
-    }
 
-    static void AntiAliasingTabIsAdvanced(Check c)
+    static void OneViewFourTabs(Check c)
     {
-        int[] simple = VintageHorizonsConfigDialog.VisibleTabs(false);
-        int[] advanced = VintageHorizonsConfigDialog.VisibleTabs(true);
-        c.Eq(4, simple.Length, "the simple view has General, Farseer, Generate and Performance");
-        c.Eq(5, advanced.Length, "the advanced view adds Anti-Aliasing");
-        c.True(advanced.Except(simple).Count() == 1, "and that is the only difference");
-        c.Eq(advanced[0], simple[0], "General comes first either way");
+        int[] tabs = VintageHorizonsConfigDialog.Tabs;
+        c.Eq(4, tabs.Length, "General, Generate, Performance and Developer");
+        c.Eq(VintageHorizonsConfigLayout.PlannedTabCount, tabs.Length, "the strip is sized for them");
+        c.True(tabs.Select((tab, i) => tab == i).All(x => x),
+            "a tab's id is its position in the strip");
+        int? general = VintageHorizonsConfigDialog.TabNamed("general");
+        c.True(general == tabs[0]
+                && VintageHorizonsConfigDialog.TabNamed("Farseer") == general
+                && VintageHorizonsConfigDialog.TabNamed("performance") == tabs[2]
+                && VintageHorizonsConfigDialog.TabNamed("Developer") == tabs[3]
+                && VintageHorizonsConfigDialog.TabNamed("aa") == tabs[3]
+                && VintageHorizonsConfigDialog.TabNamed("nonsense") == null,
+            ".dlconfig opens a tab named in any case; Farseer opens General and AA opens Developer");
 
         string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
-        c.True(dialog.Contains("Array.IndexOf(VisibleTabs(showAdvanced), shownTab)", StringComparison.Ordinal),
-            "the highlighted tab is found by position, since a click reports the tab's id");
-        c.True(VintageHorizonsConfigDialog.TabNamed("Farseer") == advanced[2]
-                && VintageHorizonsConfigDialog.TabNamed("aa") == advanced[1]
-                && VintageHorizonsConfigDialog.TabNamed("general") == advanced[0]
-                && VintageHorizonsConfigDialog.TabNamed("nonsense") == null,
-            ".dlconfig opens on a tab named in any case, and names no other");
-        c.True(dialog.Contains("if (shownTab == AntiAliasingTab) shownTab = GeneralTab;", StringComparison.Ordinal),
-            "hiding the dials while on Anti-Aliasing moves to General");
-        c.True(dialog.Contains("if (!showAdvanced)", StringComparison.Ordinal)
-                && dialog.Contains("composer.AddStaticText(SilhouetteFooter", StringComparison.Ordinal),
-            "Farseer's simple page is its two switches and the footer");
+        string mod = Source("VintageHorizonsModSystem.cs");
+        c.False(dialog.Contains("show-advanced", StringComparison.Ordinal)
+                || mod.Contains("ShowAdvancedSettings", StringComparison.Ordinal),
+            "there is no Advanced switch and nothing remembers one");
     }
 
-    static void ChangedHiddenValuesAreFlagged(Check c)
+    static void DeveloperGroupsCoverEveryDial(Check c)
     {
-        LodSilhouetteSettings defaults = LodSilhouetteSettings.Default;
-        c.False(VintageHorizonsConfigDialog.HiddenValuesChanged(LodTaaDials.Default, defaults),
-            "defaults everywhere: nothing hidden differs");
-        c.False(VintageHorizonsConfigDialog.HiddenValuesChanged(LodTaaDials.Default,
-                defaults with { Enabled = false, FogEnabled = false, ReachBlocks = 4096 }),
-            "Farseer's switches and reach are on show, so they do not count");
-        c.True(VintageHorizonsConfigDialog.HiddenValuesChanged(LodTaaDials.Default,
-                defaults with { SkyTint = 7f }),
-            "a changed Farseer appearance dial counts");
-        c.True(VintageHorizonsConfigDialog.HiddenValuesChanged(LodTaaDials.Default,
-                defaults with { FogStrength = 1.5f }),
-            "and so does a fog dial");
-        c.True(VintageHorizonsConfigDialog.HiddenValuesChanged(
-                LodTaaDials.Default with { Sharpen = 0.2f }, defaults),
-            "and an anti-aliasing dial");
+        string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
+        c.True(dialog.Contains("\"Anti-aliasing\", \"Farseer look\", \"Seam fog\"", StringComparison.Ordinal)
+                && dialog.Contains("AddDropDown(DeveloperGroupCodes, DeveloperGroupNames", StringComparison.Ordinal),
+            "Developer picks one of three groups from a drop-down");
+        c.True(dialog.Contains("foreach (LodTaaSliders.Row row in LodTaaSliders.All)", StringComparison.Ordinal)
+                && dialog.Contains("\"taa-show\"", StringComparison.Ordinal),
+            "the anti-aliasing group has every dial and the tint switch");
+        c.True(dialog.Contains("\"silhouette-reach\"", StringComparison.Ordinal)
+                && dialog.Contains("SilhouetteRow[] rows = GroupRows(fog);", StringComparison.Ordinal)
+                && dialog.Contains("row.Key.StartsWith(\"sil-fog\", StringComparison.Ordinal) == fog", StringComparison.Ordinal),
+            "Farseer look has the reach and the look dials, Seam fog the fog dials, split by key");
+        c.True(dialog.Contains("foreach (SilhouetteRow row in GroupRows(developerGroup == SeamFogGroup))\n                    pendingSilhouettes = row.Write(pendingSilhouettes, row.Read(defaults));",
+                StringComparison.Ordinal),
+            "Defaults on Developer resets only the group on show");
+    }
+
+    static void FarseerRowOnGeneral(Check c)
+    {
+        string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
+        c.True(dialog.Contains("ComposeFarseerRow(composer);", StringComparison.Ordinal)
+                && dialog.Contains("\"silhouette-enabled\"", StringComparison.Ordinal)
+                && dialog.Contains("\"silhouette-fog\"", StringComparison.Ordinal),
+            "Farseer and the seam fog have their switches on General");
+        c.True(dialog.Contains("if (silhouettes.NoSampler())", StringComparison.Ordinal)
+                && dialog.Contains("composer.AddHoverText(NoSamplerWarning", StringComparison.Ordinal),
+            "with no sampler mod the row shows a short red note whose hover is the full warning");
+        c.True(VintageHorizonsConfigDialog.NoSamplerNote.Length <= 40,
+            "the note is short enough for the space between the two switches");
+        c.True(dialog.Contains("FogEnabled = LodSilhouetteSettings.Default.FogEnabled,", StringComparison.Ordinal),
+            "Defaults puts the seam fog back too, now that it is on General");
     }
 
     static void GenerateReadsAsAFlow(Check c)
@@ -129,8 +134,21 @@ public static class SettingsWindowChecks
     {
         c.True(VintageHorizonsConfigLayout.PausedRowY >= VintageHorizonsConfigLayout.DrawHeadingY + 34,
             "the paused-loading switch has a row of its own below the draw-distance heading");
-        c.True(VintageHorizonsConfigLayout.PausedRowY + 32 <= VintageHorizonsConfigLayout.VisualHeadingY - 4,
+        c.True(VintageHorizonsConfigLayout.FarseerRowY
+                >= VintageHorizonsConfigLayout.PausedRowY + VintageHorizonsConfigLayout.VisualRowHeight,
+            "the Farseer row follows it a full row lower");
+        c.True(VintageHorizonsConfigLayout.FarseerRowY + VintageHorizonsConfigLayout.RowSwitchSize
+                <= VintageHorizonsConfigLayout.VisualHeadingY - 4,
             "and finishes above the visual features heading");
+        // The preset drop-down hangs from the heading, 2 above it and 32 tall.
+        c.True(VintageHorizonsConfigLayout.VisualHeadingY + 30 <= VintageHorizonsConfigLayout.VisualRowsY,
+            "the preset drop-down finishes before the first feature row");
+        c.True(VintageHorizonsConfigLayout.RowSwitchSize <= VintageHorizonsConfigLayout.VisualRowHeight - 2,
+            "a row's switch fits its pitch");
+        double lastRowBottom = VintageHorizonsConfigLayout.VisualRowsY
+            + VintageHorizonsConfigLayout.VisualRowCount * VintageHorizonsConfigLayout.VisualRowHeight;
+        c.True(lastRowBottom <= VintageHorizonsConfigLayout.ButtonY - 6,
+            "the last feature row ends above the Save row");
     }
 
     static string Source(params string[] parts) => File.ReadAllText(

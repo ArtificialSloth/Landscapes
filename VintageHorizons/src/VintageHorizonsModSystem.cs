@@ -110,14 +110,6 @@ public class VintageHorizonsConfig
     public bool HideLodModNotice = false;
 
     /// <summary>
-    /// The settings window shows its tuning dials: the Anti-Aliasing tab and Farseer's
-    /// appearance and fog sliders. Off by default (owner, 2026-10-13): a player sees the
-    /// distances, the feature switches and Farseer's on/off switches, and the tuned values
-    /// stay in force whether or not they are shown.
-    /// </summary>
-    public bool ShowAdvancedSettings = false;
-
-    /// <summary>
     /// The GPU render path switches, remembered per install.
     ///
     /// **Default ON since 0.3.103**, which is the owner's product decision after the Phase 8
@@ -2798,8 +2790,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         int[] automaticThresholds = renderer.PreviewAutoThresholds();
         int farCap = renderer.FarViewDistanceCap;
 
-        // The Anti-Aliasing tab shows each slider's effect at once and puts back what was
-        // in force if the editor closes without Save.
+        // The Developer tab's dials show their effect at once and put back what was in force if
+        // the editor closes without Save.
         var taaTuning = new TaaTuning(
             renderer.TaaDials,
             renderer.TaaShowWeight,
@@ -2831,21 +2823,15 @@ public partial class VintageHorizonsModSystem : ModSystem
         var collector = new CollectorTuning(
             config.AllCoresGarbageCollection, () => GameCollectorSetting.InEffect,
             SaveAllCoresGarbageCollection);
-        var advanced = new AdvancedTuning(config.ShowAdvancedSettings, on =>
-        {
-            config.ShowAdvancedSettings = on;
-            SaveConfig();
-        });
-
         return requestRecompose != null && requestClose != null
             ? new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
                 loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, silhouetteTuning, worldGen,
-                collector, advanced, requestRecompose, requestClose, ApplyGuiConfig)
+                collector, requestRecompose, requestClose, ApplyGuiConfig)
             : new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
                 loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, silhouetteTuning, worldGen,
-                collector, advanced, ApplyGuiConfig);
+                collector, ApplyGuiConfig);
     }
 
     LodWorldGenPreferences ConfiguredWorldGenPreferences()
@@ -3041,7 +3027,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         capi.ChatCommands.Create("dlconfig")
             .WithDescription("Open the Doden's Landscapes settings window, optionally on one tab: "
-                + "general, farseer, generate, performance, or antialiasing (with Advanced settings on)")
+                + "general, generate, performance or developer")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("tab"))
             .HandleWith(args =>
             {
@@ -3053,10 +3039,8 @@ public partial class VintageHorizonsModSystem : ModSystem
                     string name = (string)args[0];
                     if (VintageHorizonsConfigDialog.TabNamed(name) is not int tab)
                         return TextCommandResult.Error("[Landscapes] no tab called '" + name
-                            + "': use general, farseer, generate, performance or antialiasing.");
-                    if (!configDialog!.ShowTab(tab))
-                        return TextCommandResult.Error(
-                            "[Landscapes] the Anti-Aliasing tab shows with Advanced settings on.");
+                            + "': use general, generate, performance or developer.");
+                    configDialog!.ShowTab(tab);
                 }
                 return TextCommandResult.Success(alreadyOpen
                     ? "[Landscapes] configuration window focused."
@@ -4916,7 +4900,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     }
 
     /// <summary>
-    /// The settings window's Anti-Aliasing tab, showing a slider's effect as it moves. Nothing is
+    /// The Developer tab's anti-aliasing dials, showing a slider's effect as it moves. Nothing is
     /// saved here; Save goes through <see cref="ApplyGuiConfig"/>, and closing without it calls
     /// this again with what was in force when the window opened. Every dial it carries is on
     /// the side panel under its own `.dltaa` name.
