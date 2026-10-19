@@ -40,6 +40,16 @@ client capture, and players without the mod are unaffected.
   terrain, not the camera, and fog left behind as the seam moves dissolves instead of vanishing. It
   is independent of the real 3D cache, and Farseer and its fog can each be switched off completely.
 
+## Recommended mods
+
+- **[Algernon's Terrain Sampler](https://github.com/Algernon733/AlgernonsTerrainSampler)**, or
+  **Watersheds** if you already use it, for Farseer. Either one lets the server work out distant
+  terrain heights directly, so Farseer builds a faster, finer horizon. Without one, it builds slowly
+  from the game's own terrain previews, which share time with world generation. Neither mod is
+  required. Install it where Doden's Landscapes runs on the server; in singleplayer, that is your own
+  game. Algernon's Terrain Sampler is required on clients too, so every player on that server
+  downloads it. When neither is found, the Farseer tab in `.dlconfig` shows a red warning.
+
 ## What it cannot do
 
 A client-side mod knows only the terrain that the server sent it. Land that you never
@@ -214,7 +224,10 @@ both. They are automatic in integrated/LAN play. A dedicated server stays off un
 The server keeps heights only and writes no terrain to the savegame. Real captured heights are best;
 selective engine previews refine them. If installed, Watersheds' sampler supplies the broad field;
 Algernon's Terrain Sampler is accepted when Watersheds is absent. Neither mod is required, and a
-sampler failure falls back to the standalone engine-preview path for that session. Silhouette tiles
+sampler failure falls back to the standalone engine-preview path for that session. When a server
+offers silhouettes from engine previews alone because it found neither mod, the Farseer tab shows a
+red warning recommending one. No warning is shown when `SilhouetteUseAccelerators` is off, because
+that is the admin's choice, or when the server runs a build too old to report this. Silhouette tiles
 have their own server store. Since 0.4.88, clients lazily keep authoritative replies in a per-world
 store for instant rejoin; switching Farseer off closes that store and clears its live state.
 

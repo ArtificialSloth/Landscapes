@@ -41,6 +41,9 @@ public class LodAssistServerSystem : ModSystem
     /// </summary>
     bool silhouettesOffered;
 
+    /// <summary>Where the silhouette heights come from, told to each player in the welcome.</summary>
+    EnumSilhouetteHeightSource silhouetteHeightSource;
+
     // Per-call attribution is populated only while the owning-thread serve callback is
     // active. Send cost is nested inside publication/admission; the other three costs
     // partition the outer callback. Collection counts are sampled only in explicit stats
@@ -200,6 +203,7 @@ public class LodAssistServerSystem : ModSystem
                 | (silhouettesOffered ? LodAssist.FeatureSilhouetteTiles : 0),
             CanControlWorldGeneration = player.HasPrivilege(Privilege.controlserver),
             CacheGeneration = generation,
+            SilhouetteHeightSource = silhouettesOffered ? (int)silhouetteHeightSource : 0,
         }, player);
 
         if (keys.Length > 0) SendManifest(player, keys);
@@ -1230,10 +1234,14 @@ public class LodAssistServerSystem : ModSystem
                 ? "Horizon silhouettes: no supported height accelerator is installed; using engine previews."
                 : "Horizon silhouettes: selected {0}; Watersheds is preferred when both supported samplers are installed.",
                 accelerator?.Name ?? "");
+            silhouetteHeightSource = accelerator == null
+                ? EnumSilhouetteHeightSource.EnginePreviews
+                : EnumSilhouetteHeightSource.Accelerator;
         }
         else
         {
             Mod.Logger.Notification("Horizon silhouettes: optional height accelerators are disabled in the server config; using engine previews.");
+            silhouetteHeightSource = EnumSilhouetteHeightSource.AcceleratorsOff;
         }
         silhouettes = new LodSilhouetteBuilder(sapi, Mod.Logger,
             () => sapi.ModLoader.GetModSystem<LodServerCaptureSystem>()?.GenerationAuthority

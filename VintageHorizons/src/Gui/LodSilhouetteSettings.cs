@@ -126,8 +126,12 @@ internal readonly record struct LodSilhouetteSettings(
         Math.Clamp(float.IsFinite(value) ? value : fallback, min, max);
 }
 
-/// <summary>Live preview and status hooks used by both settings entry points.</summary>
+/// <summary>
+/// Live preview and status hooks used by both settings entry points. NoSampler is true when the
+/// server offers silhouettes but found neither supported sampler mod, so the tab shows a warning.
+/// </summary>
 internal sealed record SilhouetteTuning(
     LodSilhouetteSettings Initial,
     Action<LodSilhouetteSettings> Preview,
-    Func<string> Status);
+    Func<string> Status,
+    Func<bool> NoSampler);

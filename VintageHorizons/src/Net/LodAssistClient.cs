@@ -67,6 +67,12 @@ public sealed class LodAssistClient
     /// <summary>True only when this server advertised silhouette tiles (plan 4.6).</summary>
     public bool SilhouettesAvailable => LodAssist.SilhouettesAvailable(serverProtocol, serverFeatures);
 
+    /// <summary>
+    /// Where this server's Farseer heights come from, from the welcome. Unknown from servers that
+    /// offer no silhouettes and from every older server.
+    /// </summary>
+    public EnumSilhouetteHeightSource SilhouetteHeightSource { get; private set; }
+
     /// <summary>Called on the network thread for each silhouette manifest chunk.</summary>
     public Action<AssistSilhouetteManifest>? SilhouetteManifestArrived { get; set; }
 
@@ -171,6 +177,7 @@ public sealed class LodAssistClient
         ServerSettings = msg.ServerSettings;
         serverFeatures = msg.Features;
         ServerCacheGeneration = msg.CacheGeneration ?? "";
+        SilhouetteHeightSource = (EnumSilhouetteHeightSource)msg.SilhouetteHeightSource;
         CanControlWorldGeneration = msg.CanControlWorldGeneration;
         string reason = msg.Status ?? "";
         string version = msg.ModVersion ?? "unknown";
@@ -731,6 +738,7 @@ public sealed class LodAssistClient
         Status = "not connected yet";
         ServerSettings = null;
         ServerCacheGeneration = "";
+        SilhouetteHeightSource = EnumSilhouetteHeightSource.Unknown;
         CanControlWorldGeneration = false;
         WorldGenStatus = null;
         LastWorldGenControlError = "";

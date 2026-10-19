@@ -2806,7 +2806,9 @@ public partial class VintageHorizonsModSystem : ModSystem
             PreviewTaaTuning,
             () => renderer.ScreenBlockScale);
         var silhouetteTuning = new SilhouetteTuning(
-            CurrentSilhouetteSettings(), PreviewSilhouetteSettings, DescribeSilhouettes);
+            CurrentSilhouetteSettings(), PreviewSilhouetteSettings, DescribeSilhouettes,
+            () => assist?.SilhouettesAvailable == true
+                && assist.SilhouetteHeightSource == EnumSilhouetteHeightSource.EnginePreviews);
         var vanilla = new VanillaDistanceTuning(
             Math.Max(1, ClientSettings.ViewDistance), ApplyVanillaViewDistance);
         bool loadWhilePaused = renderer.ContinueLoadingWhilePaused;

@@ -858,10 +858,14 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         // Without advanced settings the page is its two switches. The tuned look is the default
         // and stays in force; reach is still on the General tab's distance bar (owner,
         // 2026-10-13).
+        bool noSampler = silhouettes.NoSampler();
         if (!showAdvanced)
         {
             composer.AddStaticText(SilhouetteFooter, CairoFont.WhiteSmallText(),
                 ElementBounds.Fixed(Margin, Y(90), Width - 2 * Margin, 28));
+            if (noSampler)
+                composer.AddStaticText(NoSamplerWarning, NoSamplerFont(),
+                    ElementBounds.Fixed(Margin, Y(130), Width - 2 * Margin, 44));
             return;
         }
 
@@ -905,13 +909,24 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 ElementBounds.Fixed(x + sliderWidth + 12, Y(y + 28), readoutWidth, 22), $"{row.Key}-label");
         }
 
-        composer.AddStaticText(SilhouetteFooter,
-            CairoFont.WhiteSmallText(),
-            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY - 34), Width - 2 * Margin, 28));
+        // The dials fill the page, so the warning takes the footer's place: it matters more.
+        if (noSampler)
+            composer.AddStaticText(NoSamplerWarning, NoSamplerFont(),
+                ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY - 44), Width - 2 * Margin, 44));
+        else
+            composer.AddStaticText(SilhouetteFooter,
+                CairoFont.WhiteSmallText(),
+                ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY - 34), Width - 2 * Margin, 28));
     }
 
     const string SilhouetteFooter =
         "Changes on this tab show immediately. Off releases received tiles and all Farseer GPU meshes.";
+
+    internal const string NoSamplerWarning =
+        "Neither Algernon's Terrain Sampler nor Watersheds was found, so Farseer builds slowly from game "
+        + "previews. Install either one (on the server, in multiplayer) for a faster, finer horizon. Neither is required.";
+
+    static CairoFont NoSamplerFont() => CairoFont.WhiteSmallText().WithColor(GuiStyle.ErrorTextColor);
 
     string SilhouetteStatusTip() => silhouettes.Status() + " (.dlsilhouette stats)";
 

@@ -169,6 +169,25 @@ public class AssistWelcome
     /// empty otherwise, including from every older server. Empty means no versioned span follows.
     /// </summary>
     [ProtoMember(9)] public string CacheGeneration = "";
+
+    /// <summary>
+    /// Where the server's Farseer heights come from, an <see cref="EnumSilhouetteHeightSource"/>, so
+    /// the Farseer tab can warn when no sampler mod is installed. Every older server sends zero
+    /// (unknown), which shows no warning.
+    /// </summary>
+    [ProtoMember(10)] public int SilhouetteHeightSource;
+}
+
+/// <summary>Values of <see cref="AssistWelcome.SilhouetteHeightSource"/>; append-only.</summary>
+public enum EnumSilhouetteHeightSource
+{
+    Unknown = 0,
+    /// <summary>No supported sampler mod was found: the server builds from engine previews.</summary>
+    EnginePreviews = 1,
+    /// <summary>Algernon's Terrain Sampler or Watersheds' sampler answers.</summary>
+    Accelerator = 2,
+    /// <summary>The server config turned sampler mods off.</summary>
+    AcceleratorsOff = 3,
 }
 
 /// <summary>

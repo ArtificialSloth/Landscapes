@@ -49,8 +49,11 @@ public static class WireFormatChecks
             "4:SyncGeneration:String", "5:SyncVersion:Int64",
         }, Layout(typeof(AssistHello)), "AssistHello field numbers");
 
+        // 10 tells the Farseer tab whether a sampler mod answers; zero from older servers. Ordinal
+        // sort puts it first.
         c.SeqEq(new[]
         {
+            "10:SilhouetteHeightSource:Int32",
             "1:Protocol:Int32", "2:ModVersion:String", "3:Enabled:Boolean",
             "4:Status:String", "5:ManifestKeyCount:Int32",
             "6:ServerSettings:AssistServerSettings", "7:Features:Int32",
