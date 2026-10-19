@@ -111,11 +111,15 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
     const int VanillaMarker = LodWorld.MaxLevel;
     const int DrawMarker = LodWorld.MaxLevel + 1;
     const int SilhouetteMarker = LodWorld.MaxLevel + 2;
-    const double BandOffsetY = 88;
-    const double TopDistanceLabelOffsetY = -78;
-    const double UpperLodLabelOffsetY = -38;
-    const double LowerLodLabelOffsetY = 46;
-    const double BottomDistanceLabelOffsetY = 84;
+    // Four lanes of marker boxes around the 34-tall band: Vanilla and Cache on top, L1/L3/L5
+    // above the band, L2/L4/L6 below it, Farseer at the bottom. A two-line LOD box is about 39
+    // tall and a one-line box about 23, so each lane starts clear of the one before: at 46 and 84
+    // the L4 box sat on the Farseer box (owner screenshot, 0.4.166). The element is 220 tall.
+    const double BandOffsetY = 100;
+    const double TopDistanceLabelOffsetY = -92;
+    const double UpperLodLabelOffsetY = -46;
+    const double LowerLodLabelOffsetY = 42;
+    const double BottomDistanceLabelOffsetY = 90;
 
     public override bool Focusable => true;
 

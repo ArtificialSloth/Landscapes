@@ -238,6 +238,12 @@ public class VintageHorizonsConfig
     /// file in the game folder, it applies only from the next start, and it uses more memory.
     /// </summary>
     public bool AllCoresGarbageCollection;
+
+    /// <summary>
+    /// The settings window shows its Developer tab, with every tuning dial. Off by default
+    /// (owner, 2026-10-19); the dials' values stay in force whether or not it is shown.
+    /// </summary>
+    public bool ShowDeveloperOptions = false;
 }
 
 /// <summary>The normal 50 ms game-tick cadence, expressed over a pause-safe monotonic clock.</summary>
@@ -2823,15 +2829,20 @@ public partial class VintageHorizonsModSystem : ModSystem
         var collector = new CollectorTuning(
             config.AllCoresGarbageCollection, () => GameCollectorSetting.InEffect,
             SaveAllCoresGarbageCollection);
+        var developerOptions = new DeveloperOptionsTuning(config.ShowDeveloperOptions, on =>
+        {
+            config.ShowDeveloperOptions = on;
+            SaveConfig();
+        });
         return requestRecompose != null && requestClose != null
             ? new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
                 loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, silhouetteTuning, worldGen,
-                collector, requestRecompose, requestClose, ApplyGuiConfig)
+                collector, developerOptions, requestRecompose, requestClose, ApplyGuiConfig)
             : new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
                 loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, silhouetteTuning, worldGen,
-                collector, ApplyGuiConfig);
+                collector, developerOptions, ApplyGuiConfig);
     }
 
     LodWorldGenPreferences ConfiguredWorldGenPreferences()
@@ -3027,7 +3038,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         capi.ChatCommands.Create("dlconfig")
             .WithDescription("Open the Doden's Landscapes settings window, optionally on one tab: "
-                + "general, generate, performance or developer")
+                + "general, generate or developer (with Developer options on)")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("tab"))
             .HandleWith(args =>
             {
@@ -3039,8 +3050,10 @@ public partial class VintageHorizonsModSystem : ModSystem
                     string name = (string)args[0];
                     if (VintageHorizonsConfigDialog.TabNamed(name) is not int tab)
                         return TextCommandResult.Error("[Landscapes] no tab called '" + name
-                            + "': use general, generate, performance or developer.");
-                    configDialog!.ShowTab(tab);
+                            + "': use general, generate or developer.");
+                    if (!configDialog!.ShowTab(tab))
+                        return TextCommandResult.Error(
+                            "[Landscapes] the Developer tab shows with Developer options on, on General.");
                 }
                 return TextCommandResult.Success(alreadyOpen
                     ? "[Landscapes] configuration window focused."

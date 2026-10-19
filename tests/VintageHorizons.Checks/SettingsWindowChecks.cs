@@ -3,15 +3,15 @@ using VintageHorizons.Net;
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// The settings window has one view (owner, 2026-10-19): General, Generate, Performance and
-/// Developer. There is no Advanced switch; every tuning dial is on Developer, one group at a time,
-/// and Farseer's two switches and the no-sampler warning share one row on General.
+/// The settings window (owner, 2026-10-19): General and Generate, plus Developer while General's
+/// Developer options switch is on. Every tuning dial is on Developer, one group at a time; Farseer,
+/// the seam fog, all-cores collection and the no-sampler warning are on General, in two columns.
 /// </summary>
 public static class SettingsWindowChecks
 {
     public static void Run(Check c)
     {
-        OneViewFourTabs(c);
+        DeveloperIsOptIn(c);
         DeveloperGroupsCoverEveryDial(c);
         FarseerRowOnGeneral(c);
         GenerateReadsAsAFlow(c);
@@ -20,24 +20,34 @@ public static class SettingsWindowChecks
     }
 
 
-    static void OneViewFourTabs(Check c)
+    static void DeveloperIsOptIn(Check c)
     {
-        int[] tabs = VintageHorizonsConfigDialog.Tabs;
-        c.Eq(4, tabs.Length, "General, Generate, Performance and Developer");
-        c.Eq(VintageHorizonsConfigLayout.PlannedTabCount, tabs.Length, "the strip is sized for them");
-        c.True(tabs.Select((tab, i) => tab == i).All(x => x),
-            "a tab's id is its position in the strip");
+        int[] hidden = VintageHorizonsConfigDialog.VisibleTabs(false);
+        int[] shown = VintageHorizonsConfigDialog.VisibleTabs(true);
+        c.Eq(2, hidden.Length, "without Developer options: General and Generate");
+        c.Eq(3, shown.Length, "with them, Developer as well");
+        c.Eq(VintageHorizonsConfigLayout.PlannedTabCount, shown.Length, "the strip is sized for all three");
+        c.True(shown.Select((tab, i) => tab == i).All(x => x) && shown.Take(2).SequenceEqual(hidden),
+            "a tab's id is its position, and hiding Developer moves no other tab");
         int? general = VintageHorizonsConfigDialog.TabNamed("general");
-        c.True(general == tabs[0]
+        c.True(general == shown[0]
                 && VintageHorizonsConfigDialog.TabNamed("Farseer") == general
-                && VintageHorizonsConfigDialog.TabNamed("performance") == tabs[2]
-                && VintageHorizonsConfigDialog.TabNamed("Developer") == tabs[3]
-                && VintageHorizonsConfigDialog.TabNamed("aa") == tabs[3]
+                && VintageHorizonsConfigDialog.TabNamed("performance") == general
+                && VintageHorizonsConfigDialog.TabNamed("Developer") == shown[2]
+                && VintageHorizonsConfigDialog.TabNamed("aa") == shown[2]
                 && VintageHorizonsConfigDialog.TabNamed("nonsense") == null,
-            ".dlconfig opens a tab named in any case; Farseer opens General and AA opens Developer");
+            ".dlconfig opens a tab named in any case; Farseer and Performance open General, AA Developer");
 
+        c.False(new VintageHorizonsConfig().ShowDeveloperOptions, "a fresh install hides Developer");
         string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
         string mod = Source("VintageHorizonsModSystem.cs");
+        c.True(mod.Contains("config.ShowDeveloperOptions = on;", StringComparison.Ordinal)
+                && mod.Contains("new DeveloperOptionsTuning(config.ShowDeveloperOptions", StringComparison.Ordinal)
+                && dialog.Contains("\"developer-options\"", StringComparison.Ordinal),
+            "the Developer options switch is on General and remembered in the mod's config");
+        c.True(dialog.Contains("if (Array.IndexOf(VisibleTabs(showDeveloper), tab) < 0) return false;", StringComparison.Ordinal)
+                && mod.Contains("if (!configDialog!.ShowTab(tab))", StringComparison.Ordinal),
+            ".dlconfig developer says so instead of opening a hidden tab");
         c.False(dialog.Contains("show-advanced", StringComparison.Ordinal)
                 || mod.Contains("ShowAdvancedSettings", StringComparison.Ordinal),
             "there is no Advanced switch and nothing remembers one");
@@ -64,7 +74,7 @@ public static class SettingsWindowChecks
     static void FarseerRowOnGeneral(Check c)
     {
         string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
-        c.True(dialog.Contains("ComposeFarseerRow(composer);", StringComparison.Ordinal)
+        c.True(dialog.Contains("\"Farseer horizon terrain\", \"\", FarseerTip, OnSilhouetteEnabledChanged", StringComparison.Ordinal)
                 && dialog.Contains("\"silhouette-enabled\"", StringComparison.Ordinal)
                 && dialog.Contains("\"silhouette-fog\"", StringComparison.Ordinal),
             "Farseer and the seam fog have their switches on General");
@@ -134,19 +144,34 @@ public static class SettingsWindowChecks
     {
         c.True(VintageHorizonsConfigLayout.PausedRowY >= VintageHorizonsConfigLayout.DrawHeadingY + 34,
             "the paused-loading switch has a row of its own below the draw-distance heading");
-        c.True(VintageHorizonsConfigLayout.FarseerRowY
-                >= VintageHorizonsConfigLayout.PausedRowY + VintageHorizonsConfigLayout.VisualRowHeight,
-            "the Farseer row follows it a full row lower");
-        c.True(VintageHorizonsConfigLayout.FarseerRowY + VintageHorizonsConfigLayout.RowSwitchSize
-                <= VintageHorizonsConfigLayout.VisualHeadingY - 4,
-            "and finishes above the visual features heading");
+        c.True(VintageHorizonsConfigLayout.FarseerRowY >= VintageHorizonsConfigLayout.DrawHeadingY + 34
+                && VintageHorizonsConfigLayout.PausedRowY
+                    >= VintageHorizonsConfigLayout.FarseerRowY + VintageHorizonsConfigLayout.VisualRowHeight,
+            "the Farseer row follows the draw-distance heading, and paused loading a full row lower");
+        c.True(VintageHorizonsConfigLayout.DeveloperRowY
+                    >= VintageHorizonsConfigLayout.PausedRowY + VintageHorizonsConfigLayout.VisualRowHeight
+                && VintageHorizonsConfigLayout.DeveloperRowY + VintageHorizonsConfigLayout.RowSwitchSize
+                    <= VintageHorizonsConfigLayout.VisualHeadingY - 4,
+            "then Developer options, finishing above the visual features heading");
+        c.True(VintageHorizonsConfigLayout.HelpY >= 36 + 30
+                && VintageHorizonsConfigLayout.HelpY + 22 <= VintageHorizonsConfigLayout.ScaleY,
+            "the help line clears the distances title above it and the scale below it");
+        c.True(VintageHorizonsConfigLayout.ColumnX(1) + VintageHorizonsConfigLayout.ColumnWidth
+                == VintageHorizonsConfigLayout.SwitchX + 32
+                && VintageHorizonsConfigLayout.ColumnCostX(0) - VintageHorizonsConfigLayout.ColumnX(0) >= 250,
+            "the right column ends under the Automatic switch, and a title has 250 units before its cost");
+        c.True(VintageHorizonsConfigLayout.ColumnX(1) + 60 + 190
+                <= VintageHorizonsConfigLayout.ColumnCostX(1),
+            "the preset drop-down finishes before the right column's Cost heading");
         // The preset drop-down hangs from the heading, 2 above it and 32 tall.
         c.True(VintageHorizonsConfigLayout.VisualHeadingY + 30 <= VintageHorizonsConfigLayout.VisualRowsY,
             "the preset drop-down finishes before the first feature row");
         c.True(VintageHorizonsConfigLayout.RowSwitchSize <= VintageHorizonsConfigLayout.VisualRowHeight - 2,
             "a row's switch fits its pitch");
+        c.True(2 * VintageHorizonsConfigLayout.VisualRowsPerColumn >= VintageHorizonsConfigLayout.VisualRowCount,
+            "two columns hold every feature row");
         double lastRowBottom = VintageHorizonsConfigLayout.VisualRowsY
-            + VintageHorizonsConfigLayout.VisualRowCount * VintageHorizonsConfigLayout.VisualRowHeight;
+            + VintageHorizonsConfigLayout.VisualRowsPerColumn * VintageHorizonsConfigLayout.VisualRowHeight;
         c.True(lastRowBottom <= VintageHorizonsConfigLayout.ButtonY - 6,
             "the last feature row ends above the Save row");
     }

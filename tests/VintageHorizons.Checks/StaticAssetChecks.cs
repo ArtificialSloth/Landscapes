@@ -2595,7 +2595,8 @@ public static class StaticAssetChecks
             c.True(dialog.Contains($"\"{key}\"", StringComparison.Ordinal),
                 $"the settings window has a row for {key}");
         }
-        c.True(dialog.Contains("AddSwitch(on => OnVisualChanged(row, on)", StringComparison.Ordinal),
+        c.True(dialog.Contains("AddToggle(composer, column, y, row.Key, row.Title, row.Cost, row.Tip,", StringComparison.Ordinal)
+                && dialog.Contains("on => OnVisualChanged(row, on));", StringComparison.Ordinal),
             "each visual row is a switch bound to its own row rather than a hand-written pair");
         c.True(dialog.Contains("LodVisualSettings.Performance", StringComparison.Ordinal)
             && dialog.Contains("LodVisualSettings.Balanced", StringComparison.Ordinal)
@@ -2612,9 +2613,9 @@ public static class StaticAssetChecks
         c.True(dialog.Contains("AddHorizontalTabs(", StringComparison.Ordinal)
                 && dialog.Contains("_ => \"General\"", StringComparison.Ordinal)
                 && dialog.Contains("GenerateTab => \"Generate\"", StringComparison.Ordinal)
-                && dialog.Contains("PerformanceTab => \"Performance\"", StringComparison.Ordinal)
-                && dialog.Contains("DeveloperTab => \"Developer\"", StringComparison.Ordinal),
-            "the settings window has General, Generate, Performance and Developer tabs");
+                && dialog.Contains("DeveloperTab => \"Developer\"", StringComparison.Ordinal)
+                && !dialog.Contains("PerformanceTab", StringComparison.Ordinal),
+            "the settings window has General, Generate and Developer tabs");
         c.True(dialog.Contains("OnWorldGenPrepare", StringComparison.Ordinal)
                 && dialog.Contains("OnWorldGenConfirm", StringComparison.Ordinal)
                 && dialog.Contains("OnWorldGenPause", StringComparison.Ordinal)
@@ -2640,13 +2641,13 @@ public static class StaticAssetChecks
             "the presets are a drop-down carrying the current combination as its selection");
         c.True(dialog.Contains("composer.AddStaticText(\"Cost\", CairoFont.WhiteDetailText()",
                 StringComparison.Ordinal)
-            && dialog.Contains("ElementBounds.Fixed(SwitchX - 110,", StringComparison.Ordinal)
+            && dialog.Contains("ElementBounds.Fixed(VintageHorizonsConfigLayout.ColumnCostX(column),", StringComparison.Ordinal)
             && dialog.Contains("VintageHorizonsConfigLayout.VisualHeadingY + 10",
                 StringComparison.Ordinal),
             "the per-row cost words carry a column heading over the same box they use");
 
         double featureBottom = VintageHorizonsConfigLayout.VisualRowsY
-            + (VintageHorizonsConfigLayout.VisualRowCount - 1)
+            + (VintageHorizonsConfigLayout.VisualRowsPerColumn - 1)
                 * VintageHorizonsConfigLayout.VisualRowHeight
             + 32;
         c.True(featureBottom < VintageHorizonsConfigLayout.ButtonY,
@@ -2700,7 +2701,7 @@ public static class StaticAssetChecks
                 && dialog.Contains("collector.Save(pendingAllCores);", StringComparison.Ordinal)
                 && mod.Contains("public bool AllCoresGarbageCollection;", StringComparison.Ordinal)
                 && mod.Contains("SyncGameCollector();", StringComparison.Ordinal),
-            "the Performance page saves its all-cores switch, and each start keeps the game's file in step");
+            "General saves its all-cores switch, and each start keeps the game's file in step");
 
         c.True(dialog.Contains("\"load-while-paused\"", StringComparison.Ordinal)
                 && mod.Contains("public bool LoadWhilePaused = true;", StringComparison.Ordinal)
