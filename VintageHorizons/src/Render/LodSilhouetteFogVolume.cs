@@ -165,6 +165,15 @@ internal static class LodSilhouetteFogVolume
     public const float CurtainStepDepth = 0.6f;
 
     /// <summary>
+    /// An unseen eddy field, this many times the streams' size, falls at this share of their
+    /// speed and bends the streams by up to half this many blocks either way, so they change
+    /// shape as they fall instead of sliding down unchanged (0.4.156).
+    /// </summary>
+    public const float CurtainEddyScale = 1.5f;
+    public const float CurtainEddyFallRatio = 0.2f;
+    public const float CurtainBendBlocks = 12f;
+
+    /// <summary>
     /// Past the band the curtain frays out over this many blocks in tendrils, gone by 3.5 of
     /// them; its tongues reach out up to twice the wander and never in.
     /// </summary>

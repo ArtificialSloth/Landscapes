@@ -154,7 +154,15 @@ sealed class ShippedFog
             acrossTop = -K("CurtainTurnBlocks") * MathF.Log(1f + MathF.Exp(-acrossTop / K("CurtainTurnBlocks")));
             var along = new Vector2(fogWorld.X, fogWorld.Z) - outward * acrossTop;
             float path = K("CurtainTopSlowdown") * acrossTop - height;
-            var pathCells = new Vector3(along.X, (path - d.FallBlocks) / K("CurtainStreakStretch"), along.Y) / streakBlocks;
+            float eddyBlocks = streakBlocks * K("CurtainEddyScale");
+            Vector4 eddyNoise = Noise(new Vector3(along.X, path - d.FallBlocks * K("CurtainEddyFallRatio"),
+                    along.Y) / eddyBlocks + new Vector3(4.3f, 8.9f, 1.1f),
+                NoiseLod(pixelBlocks, 1f / eddyBlocks));
+            float eddyX = eddyNoise.X - 0.5f, eddyY = eddyNoise.Y - 0.5f;
+            float bend = K("CurtainBendBlocks");
+            var bent = new Vector3(along.X + eddyX * bend, path + eddyY * 1.5f * bend - d.FallBlocks,
+                along.Y - eddyX * bend);
+            var pathCells = new Vector3(bent.X, bent.Y / K("CurtainStreakStretch"), bent.Z) / streakBlocks;
             float fine = streakLod + 1f < K("NoiseFlatLod")
                 ? Noise(pathCells * 2.07f + new Vector3(13.3f, 6.1f, 2.9f), streakLod + 1f).Z : 0.5f;
             n.Streak = SmoothStep(K("CurtainStreakLow"), K("CurtainStreakHigh"),
@@ -168,6 +176,17 @@ sealed class ShippedFog
                 NoiseLod(pixelBlocks, 1f / K("CurtainDripBlocks"))).W);
         }
         return n;
+    }
+
+    /// <summary>The curtain's tendril value at a point beside the wall, for the morphing measure.</summary>
+    public float StreakAt(Vector3 world, Func<float, float, float> field, float pixelBlocks)
+    {
+        float signedDistance = field(world.X, world.Z);
+        var outward = new Vector2(field(world.X + 8f, world.Z) - field(world.X - 8f, world.Z),
+            field(world.X, world.Z + 8f) - field(world.X, world.Z - 8f));
+        outward = outward.Length() > 0.00001f ? Vector2.Normalize(outward) : Vector2.Zero;
+        return SampleNoise(world, pixelBlocks, false, true, outward, signedDistance,
+            world.Y - Scene.GroundY, bankless: true).Streak;
     }
 
     /// <summary>vhFogShape.</summary>

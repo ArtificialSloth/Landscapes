@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Vintagestory.API.MathTools;
 using VintageHorizons.Silhouette;
 
@@ -35,13 +36,26 @@ public partial class LodTerrainRenderer
     }
 
     /// <summary>
-    /// Tiles whose coverage is worked out again each frame, round robin. Each costs a walk over
-    /// the resident sections under it at every level. Farseer's own fog refreshes the tiles in
-    /// view every frame and eight more; with no view-dependence here, a fixed share keeps the
-    /// cost flat whichever way the camera faces, and the whole disc is fresh within about half a
-    /// second even at a 32,000-block far distance.
+    /// Tiles whose coverage is worked out again each second, round robin. Each costs a walk over
+    /// the resident sections under it at every level. With no view-dependence here, a fixed
+    /// share keeps the cost flat whichever way the camera faces. It was 16 a frame until
+    /// 0.4.156: at 400 frames a second that was over 6,000 walks a second for an outline that
+    /// moves as fast as terrain loads. Now it is the same 16 a frame at 60 frames a second, and
+    /// the whole disc is still fresh within about half a second at a 32,000-block far distance.
     /// </summary>
-    const int TerrainFogCoverageRefreshesPerFrame = 16;
+    internal const int TerrainFogCoverageRefreshesPerSecond = 960;
+
+    /// <summary>
+    /// Tiles never worked out are a hole in the outline, so up to this many a frame are done at
+    /// once whatever the budget; and no frame does more than this after a long pause.
+    /// </summary>
+    internal const int TerrainFogCoverageRefreshesPerFrameMax = 16;
+
+    /// <summary>
+    /// The disc of tiles is gathered again once the camera has moved this far, or the reach has
+    /// changed; between, the same tiles stand.
+    /// </summary>
+    internal const double TerrainFogCollectMoveBlocks = 8;
 
     /// <summary>Where cached terrain begins to fade into the sky, as a share of its far distance.</summary>
     internal const float TerrainFogReachFraction = 0.75f;
@@ -65,6 +79,14 @@ public partial class LodTerrainRenderer
     readonly Dictionary<long, float> terrainFogHeights = new();
     int terrainFogRefreshCursor;
     long terrainFogFrame;
+    double terrainFogRefreshCredit;
+    long terrainFogRefreshClock;
+    double terrainFogCollectedX = double.NaN, terrainFogCollectedZ = double.NaN;
+    float terrainFogCollectedRadius = -1f;
+
+    // Whether any tile's coverage or the set of tiles changed since the outline was last
+    // signed: until one does, the same signature would come out, so it is not worked out.
+    bool terrainFogChanged = true;
 
     /// <summary>Whether the fog last built follows the cached terrain's edge rather than Farseer's seam.</summary>
     internal bool SilhouetteFogFollowsTerrain { get; private set; }
@@ -114,8 +136,24 @@ public partial class LodTerrainRenderer
         Vec3d cam = capi.World.Player.Entity.CameraPos;
         float farDistance = EffectiveFarDistance;
         float radius = MathF.Max(LodSilhouetteTile.TileBlocks, farDistance * TerrainFogReachFraction);
+        terrainFogFrame++;
         CollectTerrainFogTiles(cam.X, cam.Z, radius);
         RefreshTerrainFogCoverage(cam.X, cam.Z, radius);
+
+        if (!terrainFogChanged)
+        {
+            if (silhouetteSeamMask.HasEdges
+                && (silhouetteFogGeometryDirty
+                    || silhouetteFogFieldTexture == 0
+                        && silhouetteFogBuildTask == null && silhouetteFogPendingBuild == null))
+            {
+                SilhouetteFogFollowsTerrain = true;
+                terrainFogHeights.Clear();
+                QueueSilhouetteFogVolume(farDistance, TerrainFogHeightAtGrid, globe: false, curtain: true);
+            }
+            return;
+        }
+        terrainFogChanged = false;
 
         int minTileX = int.MaxValue, minTileZ = int.MaxValue;
         int maxTileX = int.MinValue, maxTileZ = int.MinValue;
@@ -173,11 +211,21 @@ public partial class LodTerrainRenderer
         }
     }
 
-    /// <summary>Every tile touching the disc, kept from frame to frame; tiles that left it go.</summary>
+    /// <summary>
+    /// Every tile touching the disc, kept from frame to frame; tiles that left it go. Gathered
+    /// again only once the camera has moved or the reach changed.
+    /// </summary>
     void CollectTerrainFogTiles(double camX, double camZ, float radius)
     {
         const int tileBlocks = LodSilhouetteTile.TileBlocks;
-        terrainFogFrame++;
+        double movedX = camX - terrainFogCollectedX, movedZ = camZ - terrainFogCollectedZ;
+        if (radius == terrainFogCollectedRadius
+            && movedX * movedX + movedZ * movedZ < TerrainFogCollectMoveBlocks * TerrainFogCollectMoveBlocks)
+            return;
+        terrainFogCollectedX = camX;
+        terrainFogCollectedZ = camZ;
+        terrainFogCollectedRadius = radius;
+        int before = terrainFogFrameTiles.Count;
         terrainFogFrameTiles.Clear();
         double radiusSq = (double)radius * radius;
         int minTileX = (int)Math.Floor((camX - radius) / tileBlocks);
@@ -199,13 +247,16 @@ public partial class LodTerrainRenderer
                 {
                     tile = new TerrainFogTile { TileX = tileX, TileZ = tileZ };
                     terrainFogTiles[key] = tile;
+                    terrainFogChanged = true;
                 }
                 tile.SeenFrame = terrainFogFrame;
                 terrainFogFrameTiles.Add(tile);
             }
         }
 
+        if (terrainFogFrameTiles.Count != before) terrainFogChanged = true;
         if (terrainFogTiles.Count == terrainFogFrameTiles.Count) return;
+        terrainFogChanged = true;
         terrainFogStaleKeys.Clear();
         foreach ((long key, TerrainFogTile tile) in terrainFogTiles)
             if (tile.SeenFrame != terrainFogFrame) terrainFogStaleKeys.Add(key);
@@ -213,23 +264,33 @@ public partial class LodTerrainRenderer
     }
 
     /// <summary>
-    /// Works the coverage out again for a fixed share of the disc's tiles, never-seen tiles first.
+    /// Works the coverage out again for a share of the disc's tiles each second, never-seen
+    /// tiles first and at once.
     /// </summary>
     void RefreshTerrainFogCoverage(double camX, double camZ, float radius)
     {
         int count = terrainFogFrameTiles.Count;
+        long now = Stopwatch.GetTimestamp();
+        double seconds = terrainFogRefreshClock == 0 ? 0.0
+            : (now - terrainFogRefreshClock) / (double)Stopwatch.Frequency;
+        terrainFogRefreshClock = now;
+        terrainFogRefreshCredit = Math.Min(TerrainFogCoverageRefreshesPerFrameMax,
+            terrainFogRefreshCredit + seconds * TerrainFogCoverageRefreshesPerSecond);
         if (count == 0) return;
-        int budget = TerrainFogCoverageRefreshesPerFrame;
 
         // New ground first: a tile with no coverage is a hole in the outline.
+        int fresh = TerrainFogCoverageRefreshesPerFrameMax;
         foreach (TerrainFogTile tile in terrainFogFrameTiles)
         {
-            if (budget == 0) return;
+            if (fresh == 0) return;
             if (tile.CoverageFrame >= 0) continue;
             RefreshTerrainFogTile(tile, camX, camZ, radius);
-            budget--;
+            fresh--;
+            terrainFogRefreshCredit -= 1.0;
         }
 
+        int budget = (int)Math.Max(0.0, terrainFogRefreshCredit);
+        terrainFogRefreshCredit -= budget;
         int start = terrainFogRefreshCursor % count;
         int refreshed = 0;
         for (int i = 0; i < count && refreshed < budget; i++)
@@ -244,10 +305,18 @@ public partial class LodTerrainRenderer
 
     void RefreshTerrainFogTile(TerrainFogTile tile, double camX, double camZ, float radius)
     {
-        tile.Available = TerrainFogAvailableCells(tile.TileX, tile.TileZ, camX, camZ, radius);
-        tile.Replacements = SilhouetteStableReplacementCoverage(tile.TileX, tile.TileZ);
+        LodSilhouetteCoverage available = TerrainFogAvailableCells(tile.TileX, tile.TileZ, camX, camZ, radius);
+        LodSilhouetteCoverage replacements = SilhouetteStableReplacementCoverage(tile.TileX, tile.TileZ);
+        if (tile.CoverageFrame < 0 || !SameCoverage(available, tile.Available)
+            || !SameCoverage(replacements, tile.Replacements))
+            terrainFogChanged = true;
+        tile.Available = available;
+        tile.Replacements = replacements;
         tile.CoverageFrame = terrainFogFrame;
     }
+
+    static bool SameCoverage(LodSilhouetteCoverage a, LodSilhouetteCoverage b) =>
+        a.Word0 == b.Word0 && a.Word1 == b.Word1 && a.Word2 == b.Word2 && a.Word3 == b.Word3;
 
     /// <summary>The tile's 32-block cells whose centres lie inside the disc.</summary>
     internal static LodSilhouetteCoverage TerrainFogAvailableCells(
@@ -351,6 +420,28 @@ public partial class LodTerrainRenderer
         return null;
     }
 
+    /// <summary>The next frame gathers the disc afresh and signs the outline again.</summary>
+    void ForgetTerrainFogCollection()
+    {
+        terrainFogCollectedX = double.NaN;
+        terrainFogCollectedZ = double.NaN;
+        terrainFogCollectedRadius = -1f;
+        terrainFogChanged = true;
+    }
+
+    /// <summary>
+    /// Main-thread time per frame, averaged: Farseer's and the fog's preparation before the
+    /// terrain draws, and the fog pass's own calls. The graphics card's work is not counted.
+    /// </summary>
+    internal double SilhouettePrepareMicros { get; private set; }
+    internal double SilhouetteFogDrawMicros { get; private set; }
+
+    internal void NoteSilhouettePrepare(long ticks) =>
+        SilhouettePrepareMicros += (ticks * 1e6 / Stopwatch.Frequency - SilhouettePrepareMicros) * 0.01;
+
+    void NoteSilhouetteFogDraw(long ticks) =>
+        SilhouetteFogDrawMicros += (ticks * 1e6 / Stopwatch.Frequency - SilhouetteFogDrawMicros) * 0.01;
+
     /// <summary>
     /// Drops the fog with nothing kept: its tiles, outline and field, whichever edge built it.
     /// Switched off, the fog costs nothing (owner rule: an off switch removes the cost).
@@ -360,6 +451,7 @@ public partial class LodTerrainRenderer
         terrainFogTiles.Clear();
         terrainFogFrameTiles.Clear();
         terrainFogHeights.Clear();
+        ForgetTerrainFogCollection();
         SilhouetteFogFollowsTerrain = false;
         if (silhouetteSeamMask.Active) silhouetteSeamMask.Deactivate();
         if (silhouetteFogFieldTexture != 0 || silhouetteFogBuildTask != null

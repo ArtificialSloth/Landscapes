@@ -149,6 +149,11 @@ const float CurtainSheetInsetBlocks = 6.0;
 // Where only the curtain is, a step may cross this much optical depth: the veil is smooth
 // along a ray.
 const float CurtainStepDepth = 0.6;
+// The unseen eddies are this many times the streams' size, fall at this share of their speed,
+// and bend the streams by up to half this many blocks either way.
+const float CurtainEddyScale = 1.5;
+const float CurtainEddyFallRatio = 0.2;
+const float CurtainBendBlocks = 12.0;
 // Past the band it frays out over this many blocks in tendrils, and its tongues reach out up to
 // twice the wander, never in: only outward, so they cannot thin the band.
 const float CurtainFalloffBlocks = 6.0;
@@ -383,8 +388,18 @@ FogNoise vhFogSampleNoise(vec3 fogWorld, float pixelBlocks, bool cheap, bool ban
         // arc of points shares one nearest point (0.4.151).
         vec2 along = fogWorld.xz - outward * acrossTop;
         float path = CurtainTopSlowdown * acrossTop - height;
-        vec3 pathCells = vec3(along.x, (path - fogFallBlocks) / CurtainStreakStretch, along.y)
-            / streakBlocks;
+        // A broad, unseen eddy field falls slower than the streams and bends them as they pass,
+        // a few blocks either way: the streams stretch, merge, part and close as they fall
+        // instead of sliding down unchanged like wallpaper (owner, 0.4.155). The bend swings
+        // back and forth; it carries nothing sideways.
+        float eddyBlocks = streakBlocks * CurtainEddyScale;
+        vec2 eddy = vhFogNoise(vec3(along.x, path - fogFallBlocks * CurtainEddyFallRatio,
+                along.y) / eddyBlocks + vec3(4.3, 8.9, 1.1),
+            vhFogNoiseLod(pixelBlocks, 1.0 / eddyBlocks)).rg - 0.5;
+        vec3 bent = vec3(along.x + eddy.x * CurtainBendBlocks,
+            path + eddy.y * 1.5 * CurtainBendBlocks - fogFallBlocks,
+            along.y - eddy.x * CurtainBendBlocks);
+        vec3 pathCells = vec3(bent.x, bent.y / CurtainStreakStretch, bent.z) / streakBlocks;
         float fine = streakLod + 1.0 < NoiseFlatLod
             ? vhFogNoise(pathCells * 2.07 + vec3(13.3, 6.1, 2.9), streakLod + 1.0).b : 0.5;
         n.streak = smoothstep(CurtainStreakLow, CurtainStreakHigh,

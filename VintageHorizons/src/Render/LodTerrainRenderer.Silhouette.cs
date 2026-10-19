@@ -192,6 +192,7 @@ public partial class LodTerrainRenderer
             // Farseer's seam takes over from the cached terrain's edge.
             terrainFogTiles.Clear();
             terrainFogFrameTiles.Clear();
+            ForgetTerrainFogCollection();
         }
         // No offered/decoded tile means no Farseer compile either. The seam fog does not wait
         // for one: it follows the cached terrain's edge until Farseer's tiles arrive, and on a
@@ -676,6 +677,7 @@ public partial class LodTerrainRenderer
         terrainFogTiles.Clear();
         terrainFogFrameTiles.Clear();
         terrainFogHeights.Clear();
+        ForgetTerrainFogCollection();
         SilhouetteFogFollowsTerrain = false;
         foreach (SilhouetteGpuMesh mesh in silhouetteMeshes.Values) mesh.Dispose();
         silhouetteMeshes.Clear();

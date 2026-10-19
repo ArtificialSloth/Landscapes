@@ -16,6 +16,29 @@ public static class TerrainFogChecks
         WiringFollowsTheTerrain(c);
         CurtainHangsDownTheWall(c);
         FogColourIsSteady(c);
+        OutlineWorkIsPaced(c);
+    }
+
+    /// <summary>
+    /// The outline's main-thread work is paced by time, not by frames (0.4.156): at 400 frames a
+    /// second, 16 tile walks a frame were over 6,000 a second.
+    /// </summary>
+    static void OutlineWorkIsPaced(Check c)
+    {
+        c.Eq(960, LodTerrainRenderer.TerrainFogCoverageRefreshesPerSecond,
+            "the outline refreshes 960 tiles a second, 16 a frame at 60 frames a second");
+        c.Eq(16, LodTerrainRenderer.TerrainFogCoverageRefreshesPerFrameMax,
+            "never-seen tiles, holes in the outline, are still done 16 a frame at once");
+        string fog = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src",
+            "Render", "LodTerrainRenderer.TerrainFog.cs"));
+        c.True(fog.Contains("terrainFogRefreshCredit + seconds * TerrainFogCoverageRefreshesPerSecond",
+                    StringComparison.Ordinal)
+                && fog.Contains("< TerrainFogCollectMoveBlocks * TerrainFogCollectMoveBlocks)",
+                    StringComparison.Ordinal)
+                && fog.Contains("if (!terrainFogChanged)", StringComparison.Ordinal)
+                && fog.Contains("|| !SameCoverage(replacements, tile.Replacements))", StringComparison.Ordinal),
+            "the disc is gathered again only after the camera moves, and the outline is signed again "
+                + "only when a tile's coverage or the set of tiles changed");
     }
 
     static void EdgesFormOnlyBetweenAvailableCells(Check c)
@@ -157,9 +180,11 @@ public static class TerrainFogChecks
                 && draw.Contains("+ seconds * SilhouetteFogFallBlocksPerSecond)", StringComparison.Ordinal)
                 && draw.Contains("p.Uniform(\"fogFallBlocks\", silhouetteFogFallBlocks);",
                     StringComparison.Ordinal)
-                && shader.Contains("(path - fogFallBlocks) / CurtainStreakStretch",
-                    StringComparison.Ordinal),
-            "the tendrils flow by an integrated distance the drift dial scales, so drift 0 holds them");
+                && shader.Contains("path + eddy.y * 1.5 * CurtainBendBlocks - fogFallBlocks", StringComparison.Ordinal)
+                && shader.Contains("path - fogFallBlocks * CurtainEddyFallRatio,", StringComparison.Ordinal)
+                && LodSilhouetteFogVolume.CurtainEddyFallRatio is >= 0f and < 1f,
+            "the tendrils flow by an integrated distance the drift dial scales, so drift 0 holds them, "
+                + "and the slower eddies bend the streams so they change shape as they fall");
         // 0.4.149's tendrils rode the wind as well as falling, and were stretched four times
         // along their fall: on screen they moved only sideways. 0.4.150's two cross-faded copies
         // pulsed, tore in a line where the flow turned, and crossed the top as fast as they fell

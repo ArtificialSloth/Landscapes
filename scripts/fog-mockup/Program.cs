@@ -198,7 +198,7 @@ void RenderCliff()
     {
         ("no fog", (c, d, e, l, x, y, p) => default),
         ("0.4.148, no curtain", (c, d, e, l, x, y, p) => without.March(c, d, e, l, x, y, p, current)),
-        ("0.4.155, veil", (c, d, e, l, x, y, p) => with.March(c, d, e, l, x, y, p, current)),
+        ("0.4.156, veil", (c, d, e, l, x, y, p) => with.March(c, d, e, l, x, y, p, current)),
     };
     var page = new Image(cliffColumns.Count * tileWidth + (cliffColumns.Count + 1) * gap,
         headerHeight + cliffViews.Length * (tileHeight + labelHeight + gap) + gap, fill: 28);
@@ -290,6 +290,80 @@ void RenderCliff()
         Console.WriteLine($"motion, {view.Name}: the curtain's pattern moves {u / dt:0.0} px right and "
             + $"{v / dt:0.0} px down a second on a {w}x{h} view (pattern contrast {contrast:0.0} of 255, "
             + $"mean change {change / count:0.00} a frame)");
+    }
+
+    // Wallpaper or mist: frames a second apart, the later one slid back by the shift that matches
+    // best, and how well they then correlate. A pattern that only slides matches almost
+    // perfectly; one that changes shape as it falls matches less. The wall and sky behind the
+    // veil hold still and lift both alike.
+    {
+        const int w = 480, h = 270;
+        ShippedFog first = At(0f), later = At(1f);
+        Image a = Render(cliffViews[1], w, h, (c, d, e, l, x, y, px) => first.March(c, d, e, l, x, y, px, current), core).Picture;
+        Image b = Render(cliffViews[1], w, h, (c, d, e, l, x, y, px) => later.March(c, d, e, l, x, y, px, current), core).Picture;
+        double Luma(Image image, int x, int y)
+        {
+            int at = (y * w + x) * 3;
+            return 0.3 * image.Rgb[at] + 0.59 * image.Rgb[at + 1] + 0.11 * image.Rgb[at + 2];
+        }
+        double best = -1;
+        int bestDy = 0;
+        for (int dy = 0; dy <= 30; dy++)
+        for (int dx = -3; dx <= 3; dx++)
+        {
+            double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
+            int n = 0;
+            for (int y = h / 3; y < h * 3 / 4; y++)
+            for (int x = w / 5; x < w * 4 / 5; x++)
+            {
+                double va = Luma(a, x, y), vb = Luma(b, x + dx, y + dy);
+                sa += va; sb += vb; saa += va * va; sbb += vb * vb; sab += va * vb; n++;
+            }
+            double cov = sab / n - sa / n * (sb / n);
+            double ncc = cov / Math.Sqrt(Math.Max(1e-9, (saa / n - sa / n * (sa / n)) * (sbb / n - sb / n * (sb / n))));
+            if (ncc > best) (best, bestDy) = (ncc, dy);
+        }
+        Console.WriteLine($"morphing, {cliffViews[1].Name}: a second later the best slide ({bestDy} px down) "
+            + $"matches at correlation {best:0.00} (1 would be wallpaper)");
+    }
+
+    // The same for the tendril pattern alone, on a grid down the face of the veil a second apart:
+    // what the eye follows as the curtain falls, free of the wall, sky and lighting.
+    {
+        const int cols = 240, rows = 160;
+        ShippedFog first = At(0f), later = At(1f);
+        float[,] Grid(ShippedFog marcher)
+        {
+            var grid = new float[cols, rows];
+            for (int i = 0; i < cols; i++)
+            {
+                float x = -120f + i;
+                float z = Scene.CentreZ(x) + stripHalf + 3f;
+                for (int j = 0; j < rows; j++)
+                    grid[i, j] = marcher.StreakAt(new Vector3(x, Scene.GroundY - 20f - j * 0.5f, z),
+                        Scene.SignedNow, 0.3f);
+            }
+            return grid;
+        }
+        float[,] ga = Grid(first), gb = Grid(later);
+        double best = -1;
+        int bestShift = 0;
+        for (int shift = 0; shift <= 40; shift++)
+        {
+            double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
+            int n = 0;
+            for (int i = 0; i < cols; i++)
+            for (int j = 0; j + shift < rows; j++)
+            {
+                double va = ga[i, j], vb = gb[i, j + shift];
+                sa += va; sb += vb; saa += va * va; sbb += vb * vb; sab += va * vb; n++;
+            }
+            double cov = sab / n - sa / n * (sb / n);
+            double ncc = cov / Math.Sqrt(Math.Max(1e-12, (saa / n - sa / n * (sa / n)) * (sbb / n - sb / n * (sb / n))));
+            if (ncc > best) (best, bestShift) = (ncc, shift);
+        }
+        Console.WriteLine($"tendril morphing: a second later the pattern best matches slid {bestShift * 0.5f:0.0} blocks "
+            + $"down, at correlation {best:0.00} (1 would be wallpaper)");
     }
 
     // Pulsing: the curtain's contrast over three seconds, a quarter second apart. A pattern that

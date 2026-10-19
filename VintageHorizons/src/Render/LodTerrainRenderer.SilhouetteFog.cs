@@ -148,7 +148,7 @@ public partial class LodTerrainRenderer
     void RegisterSilhouetteFogStage()
     {
         silhouetteFogStageRenderer = new BeforeStageRenderer(
-            DrawSilhouetteFogVolume, SilhouetteFogAfterOitOrder, "silhouettefog");
+            DrawSilhouetteFogVolumeTimed, SilhouetteFogAfterOitOrder, "silhouettefog");
         capi.Event.RegisterRenderer(silhouetteFogStageRenderer, EnumRenderStage.AfterOIT,
             "dodenslandscapes-silhouettefog");
     }
@@ -574,6 +574,14 @@ public partial class LodTerrainRenderer
             + seconds * SilhouetteFogDriftBlocksPerSecond) % SilhouetteFogDriftWrapBlocks;
         silhouetteFogFallBlocks = (silhouetteFogFallBlocks
             + seconds * SilhouetteFogFallBlocksPerSecond) % SilhouetteFogDriftWrapBlocks;
+    }
+
+    /// <summary>The fog pass, its main-thread time noted for `.dlfog stats`.</summary>
+    void DrawSilhouetteFogVolumeTimed(float deltaSeconds)
+    {
+        long started = Stopwatch.GetTimestamp();
+        DrawSilhouetteFogVolume(deltaSeconds);
+        NoteSilhouetteFogDraw(Stopwatch.GetTimestamp() - started);
     }
 
     void DrawSilhouetteFogVolume(float deltaSeconds)

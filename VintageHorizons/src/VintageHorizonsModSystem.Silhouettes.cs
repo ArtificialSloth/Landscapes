@@ -136,6 +136,9 @@ public partial class VintageHorizonsModSystem
             + $"(staircase strays {renderer.SilhouetteFogStaircaseDeviation:0.0}); moved fog "
             + $"dissolves over {renderer.SilhouetteFogFadeSeconds:0.0} s; "
             + renderer.SilhouetteFogFieldSummary
+            + $"; main thread a frame: {renderer.SilhouettePrepareMicros:0} microseconds preparing Farseer "
+            + $"and the fog, {renderer.SilhouetteFogDrawMicros:0} issuing the fog pass (the graphics "
+            + "card's own time not counted)"
             + $"; game fog colour {capi.Ambient.BlendedFogColor.R:0.00},"
             + $"{capi.Ambient.BlendedFogColor.G:0.00},{capi.Ambient.BlendedFogColor.B:0.00} "
             + $"(fog brightness {capi.Ambient.BlendedFogBrightness:0.00}, "
