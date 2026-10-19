@@ -55,6 +55,16 @@ In this mod, the edge of the explored area fades into the horizon. It does not e
 cliff. The picture fills in the more you play. If you run the server, `/dlgen` builds it
 in advance.
 
+## Requirements
+
+- Vintage Story 1.22.5 or later.
+- A graphics card and driver with **OpenGL 4.3** (compute shaders and multi-draw indirect).
+  Distant terrain is drawn entirely on the graphics card, and there is no older fallback.
+  Macs do not qualify: macOS stops at OpenGL 4.1. Some older laptop graphics lack it too.
+- On a machine that fails the check, the mod says so in chat and draws no distant terrain;
+  the client log names what was missing. It keeps building its cache, so a later check that
+  passes (`.dlgpu on`, or a driver update) shows everything you explored in the meantime.
+
 ## In-game commands
 
 | Command | Purpose |
@@ -78,7 +88,7 @@ in advance.
 | `.dlgap [on\|off]` | Diagnostic. Logs every chunk the mask gives to the game while the game is not drawing it, with the reason and how long it lasted. `.dlgap release on\|off` also hands such chunks to distant terrain, as a comparison. Not saved. |
 | `.dlcoarse` | Standing where far terrain looks blockier than it should, run this. It reports which nearby detail is missing and what it is waiting for. |
 | `.dlbackface [on\|off]` | Reject back-facing cached solid terrain before shading it. On by default and not saved; water and thin surfaces remain two-sided. |
-| `.dlgpu [off\|on\|verify]` | Turn the GPU terrain renderer off or on. It is on by default and remembered. `off` releases regional buffers and returns cached terrain to the established renderer; `verify` rebuilds the selected regional representation with upload readback checks. Run it without an argument for the effective path and arena numbers. |
+| `.dlgpu [off\|on\|verify]` | Turn the GPU terrain renderer off or on. It is on by default and remembered. `off` releases regional buffers and hides cached terrain (there is no other renderer to fall back to); `on` also re-runs the graphics check; `verify` rebuilds the selected regional representation with upload readback checks. Run it without an argument for the effective path and arena numbers. |
 | `.dlhzb [on\|off]` | Build the depth pyramid used to find terrain hidden behind hills. Measurement only - it hides nothing and the picture does not change. Off by default and not saved. Run it with no argument to see its state; the `hzb:` line in the log carries what it costs. |
 | `.dlfront [on\|off]` | Submit cached solid terrain nearest first so nearer ground can hide farther ground sooner. On by default and not saved; water keeps its original order. |
 | `.dlocclusion [on\|off]` | Draw cached terrain just after vanilla so the ordinary depth test rejects pixels behind current hills. On by default and not saved; `.dlocclusion off` immediately restores the pre-vanilla order. |
