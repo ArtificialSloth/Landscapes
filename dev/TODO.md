@@ -4,12 +4,14 @@
 
 ## Start here
 
-Read [Session 115](sessions/SESSION_115.md), then [Session 114](sessions/SESSION_114.md). The mod is
+Read [Session 116](sessions/SESSION_116.md), then [Session 115](sessions/SESSION_115.md). The mod is
 **Doden's Landscapes** (mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log),
-licensed GPL-3.0 only with a Vintage Story exception. 0.4.156 is installed and owner-played ("Good
-enough"); without Farseer the seam fog hangs a falling veil of mist down the cached terrain's wall
-(decision 58) and its colour takes the player's own weather and cave darkness only in part (decision
-59). All assertions pass (26,355). The public release is next. The stutter while
+licensed GPL-3.0 only with a Vintage Story exception. 0.4.164 is installed, not yet played; it carries
+the pre-release review's fixes (Session 116): no legacy-data move, spawn-relative coordinates, request
+and hello limits, batched savegame reads and decode limits. 0.4.156 is the newest owner-played build
+("Good enough"); without Farseer the seam fog hangs a falling veil of mist down the cached terrain's
+wall (decision 58) and its colour takes the player's own weather and cave darkness only in part
+(decision 59). All assertions pass (26,408). The public release is next. The stutter while
 exploring is solved for him by the all-cores garbage collector, an opt-in switch on the settings
 editor's Performance tab (0.4.134, settled decision 54), and the game's chunk thread rests when it
 has nothing to do (0.4.132, settled decision 53).
@@ -17,10 +19,17 @@ has nothing to do (0.4.132, settled decision 53).
 ### The public release (owner's calls)
 
 - **Version:** promote the build he last played to a release number (CLAUDE.md: only he calls a
-  promotion, and the promoted build must be one somebody played). 0.4.156 is the newest played build.
+  promotion, and the promoted build must be one somebody played). 0.4.156 is the newest played build;
+  0.4.157-0.4.164 are installed but unplayed.
+- **Play 0.4.164 first.** Small observations to ask for: on the Generate page, Coordinates, type the
+  numbers off the coordinate display (one negative) and press Prepare - the reply should say "around"
+  the same numbers (do not Confirm unless he wants that terrain); `/dlgen start 4 <x> <z>` should report
+  the same numbers; distant terrain loads as before, and no "ignored without a reply" warning appears in
+  the server log. A Generate-page centre saved before 0.4.160 was an internal position and now reads
+  as a huge spawn-relative one; retype it.
 - **The game-launching check tiers** (`scripts/check.sh smoke` and `matrix`, about 25 minutes) have
   not run since the rename; the `lod-conflict` and `farseer-off` scenarios have never run. Ask first.
-- **Push:** the commits since `1bea2c1` (0.4.143-0.4.156 and the Session 114 and 115 documentation)
+- **Push:** the commits since `1bea2c1` (0.4.143-0.4.164 and the Session 114-116 documentation)
   are not on `origin`; push only with his OK.
 - **GitHub:** the full history is on `main` at `DodenGruva/Landscapes`, still private; he makes it
   public. The old fork `DodenGruva/Horizons` still shows his personal email in 91 commits; he deletes
@@ -28,7 +37,26 @@ has nothing to do (0.4.132, settled decision 53).
 - **ModDB:** the page at `mods.vintagestory.at/dodenslandscapes` (modinfo already points there), with
   GNU GPL v3 chosen as the licence. The README now tells players about the Performance tab and about
   keeping one LOD mod on. Its description should also mention the Advanced settings switch,
-  `.dlconfig <tab>`, that the seam fog works without Farseer, and the mist down the terrain's edge.
+  `.dlconfig <tab>`, that the seam fog works without Farseer, and the mist down the terrain's edge,
+  and carry the README's Requirements (OpenGL 4.3, no Macs).
+
+### What Session 116 left open
+
+- **P1, the rough first minutes:** every session in his 2026-10-18 logs loaded 150-1,000 savegame
+  columns in the server half in the first 1-3 minutes, and those minutes had the low 1% lows, the
+  360-420 ms worst frames and the full collections. Correlation only. Measure before changing code: one
+  start with `SweepSavegame: false` in that world's `dodenslandscapes-server.json` against a normal
+  start, compared by the hitch lines (then switch it back). If the sweep is the cause, candidates are
+  skipping columns the client cache already holds in singleplayer, starting after the join settles, or
+  a slower rate while joining.
+- **Section list by radius (post-release, settled decision 62, G289):** a design in which the server
+  remembers per player and across sessions the oldest change it held back, starts the next join span
+  from it, announces held-back keys as the player comes within range, and the client stops treating
+  "unlisted" as "gone" outside its radius. Old clients must keep working. Test on the sandbox dedicated
+  server with `bench/routes/section-sync.txt`; ask before launching.
+- **Unplayed and harness-tested only:** the coordinate conversion, the admission limits (no second
+  player or modified client has ever exercised them), and the batched savegame reads on a real
+  non-WAL world.
 
 ### What Session 113 left open
 
@@ -100,7 +128,8 @@ collector in force.
   it. Its memory line is now known: about 0.3-0.5 GB, 5%, from the 0.4.134 pair.
 - **The Server GC's first minute after joining** has 56-139 ms collections while the world loads
   (G267). Not investigated; the adaptive heap count growing and the startup sweep's burst are
-  candidates.
+  candidates. Session 116 found the sweep's loads in every bad first minute of his 2026-10-18 logs;
+  see P1 above for the measurement to make.
 - **Before recommending it to players:** a longer paired memory look (the 0.4.134 off session was
   about two minutes, its first stationary), and a look on a smaller machine; Linux, macOS and a
   read-only game folder are untested. The README now describes the Performance tab (Session 113);

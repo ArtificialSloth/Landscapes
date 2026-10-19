@@ -724,12 +724,29 @@ live until the exact replacement persistence revision is acknowledged.
     horizon bank grey. `LodSteadyFogColour` repeats the game's blend with those at 30% of their weight;
     time of day, the world's saved ambient and water or lava over the eyes count whole. The cached
     terrain's own haze keeps the game's colour.
+60. **The mod never reads, moves or deletes anything under its old id** (owner, 2026-10-19; 0.4.160).
+    `vintagehorizons` is the original Vintage Horizons' own folder and settings, so a take-over could
+    only ever touch another mod's data after release (G276). The id survives only to name the original
+    on the login notice. Rejected: a copy limited to files proven to be the fork's.
+61. **A client outside the protocol's bounds gets no reply** (2026-10-18; 0.4.161, 0.4.163-0.4.164).
+    The server accepts what the mod's own client can send with headroom - 64 keys per section or tile
+    request, 256 queued per player, one hello per connection, an unchanged silhouette request once per
+    5 s from the last one acted on - and ignores the rest without answering, because answering it is the
+    cost (G288). The bounds are checked on the network thread where the size alone decides.
+62. **For release, the section list and change notices cover the whole world** (owner, 2026-10-19).
+    The serve radius limits which terrain is sent, not the keys a modded player hears about. Filtering
+    the list or the notices by radius breaks section sync (G289), so it waits for a design in which the
+    server remembers held-back changes per player across sessions; the README tells admins, and
+    `EnableServing: false` stops sharing entirely. Rejected for release: filtering the list, the
+    notices, or both.
 
 ## Concurrency invariants
 
 - No worker mutates `LodWorld` or a live section.
 - No background task reads the live block registry.
 - Every asynchronous request eventually produces success, explicit failure, cancellation, or retryable state.
+  The one exception is a network request outside the protocol's bounds, which gets no reply
+  (settled decision 61); the mod's own client never sends one.
 - A completed server-assist read cannot cross player-session identity or reorder a later
   response ahead of an earlier accepted read.
 - Queue backpressure is applied before retaining large chunk, mesh, or section snapshots.

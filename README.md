@@ -169,13 +169,16 @@ has been tried on one Windows PC.
 
 ### Server commands
 
-Four server commands exist as well (`/`, not `.`). They need the controlserver
-privilege, which every singleplayer host has:
+Six server commands exist as well (`/`, not `.`). They need the controlserver
+privilege, which every singleplayer host has. Coordinates are typed as the game's coordinate display
+shows them, measured from spawn:
 
 | Command | Purpose |
 | --- | --- |
 | `/dlserver` | Server assist status: settings in force, cache size, transfer counters |
 | `/dlgen start [radius] [x z]` | Build the LOD cache around you (or around `x z`). It generates terrain that nobody visited yet. Also `stop` and `status`. See below. |
+| `/dlworldgen start [radius] [circle\|square] [here\|spawn\|coords] [x] [z]` | Permanently generate and save real terrain in a bounded area, after `confirm`. Also `pause`, `resume`, `stop` and `status`. See below. |
+| `/dlchunkrest [on\|off]` | Whether the game's chunk thread rests after a pass that found nothing to do, for this session; without an argument it reports the state. |
 | `/dlrefresh [radius]` | Reload and recapture existing vanilla terrain around you so cached snow and edits catch up. Default 32 chunks, maximum 128. Missing terrain is never generated. Also `stop` and `status`. |
 | `/dlsilhouetteserver [status\|compare\|presample]` | Silhouette builder/store/transport status, plus developer accelerator comparisons. `compare` and `presample` write measurement files; ordinary players need only `status`. |
 
@@ -332,7 +335,8 @@ The default is a circle around the player. Generation begins with the player's 1
 moves outward through circular radial bands clockwise, and handles the nearest columns first inside
 each tile. Large tiles let the distant-terrain cache save efficiently, while the overall reveal
 grows outward in the same broad shape as ordinary map exploration. Choose `square`, `spawn` or
-explicit `coords x z` when needed.
+explicit `coords x z` when needed; x and z are the numbers the game's coordinate display shows,
+measured from spawn and negative where it shows them negative.
 
 The job can pause, resume and stop, and stores durable progress so an interrupted job can be offered
 for manual resume after restart. It holds only bounded work in flight and slows itself when the
@@ -354,8 +358,9 @@ Server bounds live in `ModConfig/dodenslandscapes-server.json`:
 ### Generating the horizon (/dlgen)
 
 Sweeping and capture cover only terrain that exists. `/dlgen start [radius] [x z]` covers
-the rest. It builds the LOD picture around you, or around coordinates you give, for land
-that nobody visited yet. It writes **nothing** to the savegame.
+the rest. It builds the LOD picture around you, or around coordinates you give (as the game's
+coordinate display shows them), for land that nobody visited yet. It writes **nothing** to the
+savegame.
 
 The engine's `PeekChunkColumn` runs real worldgen from the seed and returns the column
 transiently. The mod captures it and throws the terrain away. A column that already

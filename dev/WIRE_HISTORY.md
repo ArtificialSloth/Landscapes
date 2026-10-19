@@ -160,12 +160,30 @@ id. No message, field or sequence changed, so the protocol stays `1`, but peers 
 rename never meet: a 0.4.138+ client sees a 0.4.137- server as one without the assist, and the
 reverse. Other names that left the wire or the disk with the id: the code file
 (`DodensLandscapes.dll`), the asset domain, `ModData/dodenslandscapes`, and the
-`dodenslandscapes.json` and `dodenslandscapes-server.json` settings files, to which the earlier
-names are moved once at first start (never over a newer file, and not while the old mod id is
-enabled). Names inside stored formats were kept on purpose: the cache's database type code
+`dodenslandscapes.json` and `dodenslandscapes-server.json` settings files, to which 0.4.138-0.4.159
+moved the earlier names once at first start (never over a newer file, and not while the old mod id
+was enabled). 0.4.160 removed that move: the old folder and files are also the original Vintage
+Horizons' own, so nothing under the old id is read, moved or deleted any more (G276, settled decision
+60). Names inside stored formats were kept on purpose: the cache's database type code
 `vintagehorizons lod cache`, the height-sample file headers, and the game start-up file's
 `VintageHorizons.AllCoresCollector` marker and `.vintagehorizons-backup` suffix. Blob format and
 schema meaning are unchanged, so moved caches open as they were.
+
+**Generate-page coordinates are spawn-relative (0.4.160, Session 116).** `AssistWorldGenRequest`
+gains `SpawnRelative`, field 9. True, which every 0.4.160+ client sends, says `X` and `Z` are block
+coordinates measured from the world spawn, as the game's coordinate display shows them, may be
+negative, and count only for the Coordinates centre. False, the default an older client sends, keeps
+the old meaning: the internal block position, with a negative number meaning "not given"
+(`LodSpawnCoordinates.RequestedCentre`). Append-only, so the protocol stays `1`.
+
+**A server bounds what it accepts (0.4.161, 0.4.163-0.4.164, Session 116).** No message, field or
+sequence changed, so the protocol stays `1`, but the reply rule did for clients outside the protocol's
+bounds: the server ignores, without any reply, an `AssistSectionRequest` from a connection that has not
+said hello or carrying more than 64 keys, keys past a player's 256 queued, a second `AssistHello` on one
+connection, an `AssistSilhouetteTileRequest` of more than 64 keys or past 256 queued tile keys, and an
+unchanged `AssistSilhouetteRequest` within 5 s of the last one acted on. Every client this mod has
+shipped stays within these bounds (16 keys in flight, one hello per join), so for them every request is
+still answered (`LodAssistAdmission`, `LodHelloGate`; G288, settled decision 61).
 
 ## Section blob-format ledger
 
@@ -174,6 +192,12 @@ schema meaning are unchanged, so moved caches open as they were.
 | 4 | 6 | Deflated section containing block-code palette entries, untinted colors, material flags, per-column run counts, packed runs, captured-column bits, and optional append-only observed-snow provenance/coverage bitsets. Tint and texture slots are resolved live and are not persisted. |
 
 Earlier blob formats existed in the original development history but have not yet been reconstructed from Git. Do not invent their meanings from the current reader; add rows only from source history or preserved release evidence.
+
+**Readers refuse blobs no real section could be (0.4.163, no format change).** A format-4 blob that
+unpacks to more than 64 MB, claims more than 4,096 runs in one column, or a palette block code over
+1,024 bytes is read as unusable, the same as a corrupt one; the checks run before memory is set aside
+(`LodStore.Deserialize`, `LodBoundedReadStream`; G291). Real sections come to a few MB, so no stored or
+served row is affected.
 
 **What a palette code names at a chiselled position (0.4.62, no format change).** Capture records
 a chiselled block as its most visible material, so a format-4 row written from 0.4.62 on holds, for

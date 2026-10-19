@@ -3,17 +3,45 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-10-18`
-**Mod version:** `0.4.156` - current private test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception. 0.4.149-0.4.156 were each owner-played; his verdict after 0.4.156: "Good enough". All checks pass
+**Status date:** `2026-10-19`
+**Mod version:** `0.4.164` - current private test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception. 0.4.157-0.4.164 (Session 116: release polish and the pre-release review's fixes) are installed but unplayed; 0.4.156 is the newest owner-played build ("Good enough"). All checks pass
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c` (0.4.143 onward not pushed); pushed to `main` on `DodenGruva/Landscapes` (private) on 2026-10-13, after the history was rewritten to his GitHub no-reply address
+**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00` (0.4.143 onward not pushed); pushed to `main` on `DodenGruva/Landscapes` (private) on 2026-10-13, after the history was rewritten to his GitHub no-reply address
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `150` C# files under `VintageHorizons/src`
+**Source files:** `154` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
+
+**Pre-release review and its fixes (0.4.157-0.4.164).** Session 116. Release polish first: a new
+icon from the owner's own screenshot (0.4.158, after a drawn one in 0.4.157) and a one-sentence
+description (0.4.159). Then a whole-project review in three passes (broken, security, performance),
+report-only until the owner chose; findings and progress are in `notes/pre-release-review-2026-10-19.md`
+(private). Every fix below is harness-tested only; none of these builds has been played.
+
+- **No legacy-data move (0.4.160, settled decision 60, G276):** nothing under `vintagehorizons` is read,
+  moved or deleted; it was the original Vintage Horizons' folder for anyone but the owner.
+- **Spawn-relative coordinates (0.4.160, G287):** the Generate page, `/dlworldgen` and `/dlgen` take
+  and print x z as the game's coordinate display does; request field 9 `SpawnRelative`.
+- **Admission limits (0.4.161, 0.4.163-0.4.164, settled decision 61, G288, G290):** no reply to a
+  section or tile request over 64 keys, from a connection that has not said hello, or past 256 queued;
+  one hello per connection; an unchanged silhouette request is acted on at most once per 5 s, measured
+  from the last one acted on. A moving player's silhouette reach is followed on the server and never
+  depends on the client asking again.
+- **Batched savegame reads (0.4.162, G286):** each batch is its own query, so the game can save
+  between them; a check shows a save failing during one long query and succeeding between batches.
+- **Decode limits (0.4.163, G291):** a section that unpacks past 64 MB, claims 4,096+ runs in a column
+  or a 1,024+-byte block code is refused before allocating.
+- **Smaller (0.4.163):** the request pumps skip their sort when every slot is taken and otherwise sort
+  by precomputed distance; command dials read `1.5` and `1,5`; the join line names the real cap.
+- **Documented, not built (settled decision 62, G289):** the section list and change notices cover the
+  whole world; filtering them by radius breaks section sync, so a design that keeps sync correct is a
+  post-release item. README: Requirements (OpenGL 4.3, no Macs), "Sharing the server's cache".
+- **Open:** P1 - every bad first minute in the owner's 2026-10-18 logs coincides with 150-1,000 sweep
+  loads; correlation only, to be measured with `SweepSavegame: false` (TODO).
+- **Evidence:** 26,277-26,408 assertions, 0 failures.
 
 **Mist down the cached terrain's wall, and a steadier fog colour (0.4.149-0.4.156).** Session 115.
 
@@ -66,9 +94,9 @@
 
 - **Name (0.4.138, owner):** Doden's Landscapes, id `dodenslandscapes`; `.dl` commands; `[Landscapes]`;
   the assembly, channel, asset domain, settings files and cache folder renamed with the id (G276).
-  The earlier builds' `ModData/vintagehorizons` and settings files move once at first start, never
-  over a newer file and not while the old id is enabled. Owner-played: his 7.8 GB moved in place and
-  the world drew 1,148 sections from it. Builds either side of the rename do not see each other's
+  0.4.138-0.4.159 moved the earlier builds' `ModData/vintagehorizons` and settings files once at first
+  start (owner-played: his 7.8 GB moved in place and the world drew 1,148 sections from it); 0.4.160
+  removed the move, because that folder is also the original mod's (settled decision 60). Builds either side of the rename do not see each other's
   assist (`dev/WIRE_HISTORY.md`).
 - **Other LOD mods (0.4.139, owner):** this mod always draws and keeps no switch to step aside. A
   login window names a known LOD mod that is switched on (Farseer, ChunkLOD, TopoHorizon, Distant
@@ -857,7 +885,7 @@ to the server log.
   sessions with the owner's enabled mods. `scripts/silhouette-compare-render.py` then draws the
   side-by-side. `-PlanOnly` lists the mods and launches nothing.
 - The builder logs a status line every 30 s while a player asks for silhouettes.
-- `ModConfig/vintagehorizons-server.json` owns `EnableSilhouettes`,
+- `ModConfig/dodenslandscapes-server.json` owns `EnableSilhouettes`,
   `SilhouetteUseAccelerators`, `SilhouetteReachBlocks` and `SilhouettePreviewsPerSecond`. On a
   dedicated server only explicit `EnableSilhouettes = true` offers the feature.
 
@@ -1044,11 +1072,12 @@ It covers:
 
 ## Next work
 
-Begin with [Session 114](dev/sessions/SESSION_114.md) and the top of [TODO](dev/TODO.md).
+Begin with [Session 116](dev/sessions/SESSION_116.md) and the top of [TODO](dev/TODO.md).
 
-1. **The public release, on the owner's calls:** run the game-launching check tiers first (not run
-   since the rename; ask before launching), push the six local commits with his OK, promote the
-   build he last played (0.4.148) to a release number, make `DodenGruva/Landscapes` public (the history is there; the old `DodenGruva/Horizons`
+1. **The public release, on the owner's calls:** play 0.4.164 first (the review's fixes are
+   unplayed; TODO lists the small observations), run the game-launching check tiers (not run
+   since the rename; ask before launching), push the local commits since `1bea2c1` with his OK,
+   promote the build he last played to a release number, make `DodenGruva/Landscapes` public (the history is there; the old `DodenGruva/Horizons`
    fork still exposes his personal email and is his to delete), and create the ModDB page
    at `mods.vintagestory.at/dodenslandscapes` with GNU GPL v3 as the licence. Open evidence worth
    knowing before then: the 0.4.137 preview re-issue unseen in play, running beside the original

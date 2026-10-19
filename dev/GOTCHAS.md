@@ -5244,10 +5244,18 @@ channel, Harmony ids and chat commands collide as well.
 
 **Safer action:** rename the assembly (`DodensLandscapes.dll`), channel, Harmony ids, asset domain and
 command prefix together with the mod id. Keep the names inside stored formats (the cache's DB type
-code, height-sample headers, the start-up file marker) so existing files still open, and move legacy
-data once, never over newer files and never while the old mod is enabled.
+code, height-sample headers, the start-up file marker) so existing files still open.
 
-**Found:** 2026-10-07, Session 113 (decompiled 1.22.7 `ModContainer`).
+**Reversal (Session 116, 0.4.160): never move data under the old id.** 0.4.138-0.4.159 moved
+`ModData/vintagehorizons` and its settings files once, never over newer files and not while the old mod
+was enabled. But the old id is the original mod's own, so for anyone but the fork's own tester the
+"legacy data" is the original Vintage Horizons' - installed and switched off, or left behind - and a
+moved cache whose format label differs is then emptied by the format purge. A fork whose only earlier
+user has already migrated must not touch the old folder at all; `ModIdentityChecks` now fails if any
+source spells out the old id outside `ModIdentity` and the login notice's list.
+
+**Found:** 2026-10-07, Session 113 (decompiled 1.22.7 `ModContainer`); move reversed 2026-10-19,
+Session 116.
 
 ### G277 - The engine's block colour is the "up" texture, so a log's colour is its cut end
 
@@ -5389,3 +5397,104 @@ measured.
 minute in the scene being compared, and check that the line says a field is published.
 
 **Found:** 2026-10-18, Session 115.
+
+### G286 - A SQLite query holds its read lock across pauses inside it
+
+**Trigger:** reading a database another process or connection writes - above all the game's savegame -
+in a long scan, and pacing it with sleeps.
+
+**Trap:** a statement takes its read lock at its first row and keeps it until it is reset or disposed;
+sleeping between rows gives nothing back. The game opens its savegame in WAL mode only with
+`CorruptionProtection` on (the default); with it off it sets `journal_mode=Off`, and there a writer needs
+every reader gone to commit. The sweep's whole-table scans were one query with sleeps inside, so on such
+a server the game's chunk saves waited for the whole scan and failed with "database is locked" after
+Microsoft.Data.Sqlite's 30-second default timeout. Under WAL the same scan only stalls checkpoints, which
+is why it went unnoticed.
+
+**Safer action:** end each batch by closing the query and resume from the last key seen
+(`LodSavegameReader.ReadTable`: `WHERE position > $after ORDER BY position`, position being the row id,
+so the file is still read in one sequential pass). `SavegameReaderChecks.TheGameCanSaveBetweenBatches`
+shows a write failing during one long query and succeeding between batches.
+
+**Found:** 2026-10-18, Session 116 (decompiled 1.22.7 `SQLiteDBConnection.OpenOrCreate`).
+
+### G287 - The game's coordinate display is measured from spawn
+
+**Trigger:** any command, page or message that takes or prints block coordinates.
+
+**Trap:** `HudElementCoordinates` shows the player's position minus `DefaultSpawnPosition`, so the
+numbers a player reads and types are small and often negative, while the map counts from its own corner
+(around 512,000 on a default world). The Generate page, `/dlworldgen` and `/dlgen` read typed numbers as
+the internal position: a player typing what the screen showed got a run near the map's corner or a
+refusal for a negative number, and `/dlworldgen` writes real terrain. Using -1 for "not given" also ruled
+out a real coordinate.
+
+**Safer action:** convert through `LodSpawnCoordinates` both ways, tell a missing argument by the
+parser's `IsMissing`, and floor when turning a position into a chunk, so a negative position cannot
+round into chunk 0 and pass a bounds check.
+
+**Found:** 2026-10-18, Session 116.
+
+### G288 - An answer-every-key protocol is an amplifier unless the server bounds what it accepts
+
+**Trigger:** a request/response message where the server must reply to each key, or any message a
+client can repeat.
+
+**Trap:** the assist promises one reply per requested key, because the client holds a key in flight
+until its reply. The server kept that promise for any client: past its 256-key queue it refused each
+extra key at once, on the owning thread, and it served clients that had not greeted. The game accepts a
+1 MB packet from a player (`TcpNetConnection.MaxPacketSize`), room for well over 100,000 keys, so one
+message made the server send that many replies. Every hello likewise re-sent the whole manifest and
+queued a full scan.
+
+**Safer action:** bound what is accepted at the honest client's limits with headroom and give a request
+past them no reply at all (`LodAssistAdmission`: greeted only, 64 keys, 256 queued; `LodHelloGate`:
+one hello per connection; the silhouette builder's tile limits), checked on the network thread where the
+size alone decides, and logged once per connection.
+
+**Found:** 2026-10-18, Session 116.
+
+### G289 - Filtering what a syncing client is told breaks its caught-up record
+
+**Trigger:** limiting the key manifest, new-key offers or versioned spans to part of the world (the
+serve radius, a region, a permission).
+
+**Trap:** section sync (Session 109) keeps one "caught up to version N" record per client. Leave a
+change out of a span and the record still moves past it, so the client never refetches that held
+section. Leave a key out of the join manifest and `LodAssistSync.ForgetUnlisted` drops it from the owed
+list as gone. Both fail quietly: distant terrain stays old until the player visits.
+
+**Safer action:** keep the whole-world list for now (settled decision 62) and, to filter, have the
+server remember per player and across sessions the oldest change it held back, start the next join span
+from it, and announce held-back keys as the player comes within range; the client must not treat
+"unlisted" as "gone" outside its radius.
+
+**Found:** 2026-10-19, Session 116.
+
+### G290 - A rate window restarted by ignored requests ignores a persistent sender for good
+
+**Trigger:** ignoring repeats of a request within a time window.
+
+**Trap:** 0.4.163 ignored an unchanged silhouette request within 5 s of the previous one and updated the
+"previous" time on every ignored repeat too, so a client repeating faster than every 5 s was never heard
+again.
+
+**Safer action:** measure the window from the last request acted on
+(`LodSilhouetteBuilder.IsUnchangedRepeat`), so any sender is heard within one window.
+
+**Found:** 2026-10-19, Session 116 (0.4.164).
+
+### G291 - A compressed blob states its own sizes; cap them before allocating
+
+**Trigger:** decoding data that came from another machine, or from a file another build wrote.
+
+**Trap:** the section reader allocated its run array from the blob's own per-column counts (up to
+268 million entries, 2 GB) and read palette names with `BinaryReader.ReadString`, which believes any
+length, before a byte of the data existed. A few kilobytes of crafted deflate from a hostile server
+could freeze or crash a client.
+
+**Safer action:** check each claim against what a real section can hold before allocating (4,096 runs a
+column, 1,024 bytes a block code) and read through `LodBoundedReadStream`, which refuses to unpack past
+64 MB; real sections come to a few MB.
+
+**Found:** 2026-10-18, Session 116.

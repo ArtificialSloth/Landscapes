@@ -8,6 +8,29 @@ first.
 
 ## [Unreleased]
 
+**Typed coordinates are the ones the game shows.** The Generate page, `/dlworldgen` and `/dlgen` now
+read x and z the way the game's coordinate display writes them - measured from spawn, negatives
+allowed - and print positions the same way. They used to read them as the map's internal position, so
+a player typing what the screen showed generated near the corner of the map, or was refused for a
+negative number (0.4.160).
+
+**Another mod's files are left alone.** This mod no longer moves anything from the folders and settings
+of the original Vintage Horizons, which share its old name (0.4.160).
+
+**Safer servers and clients.** A server ignores section and silhouette requests far larger than the mod
+ever sends and answers one greeting per connection, so a modified client can no longer make it send
+hundreds of thousands of replies at once (0.4.161, 0.4.163-0.4.164). A client refuses a downloaded
+section that claims to unpack to more than any real one could (0.4.163).
+
+**The savegame sweep no longer holds up the game's saves.** It reads in short batches the game can
+save between; on a server with CorruptionProtection off, a long sweep could make the game's chunk
+saves fail (0.4.162).
+
+**Smaller fixes.** Command dials accept both `1.5` and `1,5` on any PC (0.4.163). The README states the
+OpenGL 4.3 requirement (no Macs) and that `.dlgpu off` hides distant terrain rather than falling back,
+and tells server admins that the section list covers the whole world (0.4.162). A new mod icon and a
+one-sentence description (0.4.157-0.4.159).
+
 **Mist pours down the edge of the distant terrain.** Without Farseer the distant terrain ends in a
 sheer wall in empty sky. The seam fog now hangs a veil of mist down that wall, from the edge to its
 foot: it rolls over the edge, crosses the top slowly, falls in streams that change shape as they go,
@@ -34,8 +57,9 @@ Farseer off, or on a server that offers no Farseer terrain, it follows the cache
 
 **Renamed Doden's Landscapes, under GPL-3.0.** The mod is now Doden's Landscapes (mod id
 `dodenslandscapes`), founded on AliasFactory's Vintage Horizons and crediting it. Chat commands start
-with `.dl` and chat and log lines with `[Landscapes]`. Existing caches and settings move over once,
-on first start, and the owner's 7.8 GB of caches moved in place without a rebuild. It is licensed
+with `.dl` and chat and log lines with `[Landscapes]`. Builds 0.4.138-0.4.159 moved the earlier
+builds' caches and settings over once, on first start (the owner's 7.8 GB moved in place without a
+rebuild); 0.4.160 removed that move, because the old folder is also the original mod's. It is licensed
 under the GNU General Public License version 3 only, with an exception for combining it with Vintage
 Story; the MIT notices of Vintage Horizons and Farseer travel with it (0.4.138, 0.4.140).
 
@@ -159,6 +183,55 @@ read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.164] - 2026-10-19
+
+**Silhouette requests are never ignored for good.** 0.4.163 ignored an unchanged repeat of a player's
+silhouette request within five seconds, and each ignored repeat restarted the five seconds; the window
+now runs from the last request acted on. The mod itself never repeats one, and a moving player's
+horizon was never affected: the server follows each player's position on its own.
+
+## [0.4.163] - 2026-10-19
+
+**Bounded input and cheaper request ordering.** Section and silhouette tile requests far past what the
+mod sends are ignored, a player's silhouette tile queue is capped, and unchanged silhouette requests
+repeated within five seconds are ignored. A downloaded section that claims to unpack to more than
+64 MB, a column of more than 4,096 runs or a block name over 1,024 bytes is refused before memory is
+set aside. The request pumps no longer rebuild and sort their whole wanted list every tick when nothing
+can be sent. Command dials read `1.5` and `1,5` alike, and the join log line names the real render
+distance cap.
+
+## [0.4.162] - 2026-10-19
+
+**The savegame sweep reads in batches the game can save between.** It used to hold the savegame's
+read lock for a whole scan; on a server running without a journal (CorruptionProtection off) the
+game's chunk saves waited and failed after 30 seconds.
+
+## [0.4.161] - 2026-10-19
+
+**The server ignores request and greeting floods.** A section request is looked at only after the
+greeting and only up to 64 keys; keys past a player's 256-key queue get no reply instead of one refusal
+each, and one greeting is answered per connection. A single message from a modified client could
+previously make the server send over 100,000 replies at once.
+
+## [0.4.160] - 2026-10-19
+
+**Coordinates as the game shows them, and no more data move.** Typed x and z on the Generate page and in
+`/dlworldgen` and `/dlgen` are measured from spawn, as the coordinate display shows them, and may be
+negative; positions are printed the same way. The start-up move of `ModData/vintagehorizons` and its
+settings files is removed: that folder is also the original Vintage Horizons' own.
+
+## [0.4.159] - 2026-10-18
+
+**A one-sentence description** in the Mod Manager instead of a nine-sentence feature list.
+
+## [0.4.158] - 2026-10-18
+
+**A new mod icon** from a real in-game screenshot of distant terrain at sunset.
+
+## [0.4.157] - 2026-10-18
+
+**A drawn telescope icon**, replaced by 0.4.158.
 
 ## [0.4.156] - 2026-10-18
 
