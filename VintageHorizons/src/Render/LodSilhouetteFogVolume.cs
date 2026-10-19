@@ -140,18 +140,36 @@ internal static class LodSilhouetteFogVolume
 
     /// <summary>
     /// The curtain (0.4.149), with empty sky beyond the cached terrain's edge: optical depth per
-    /// block at full seam density and its thinnest billow's three quarters, over the strip's
-    /// band and its margin. The wall strays across the band, so even its outermost stretch has
-    /// the margin and the fringe in front of it (<see cref="CurtainCoverDepth"/>).
+    /// block at full seam density and its thinnest billow's three quarters. Since 0.4.155 a veil,
+    /// not a wall (owner: less coverage looks more real and costs less): a sheet from
+    /// <see cref="CurtainSheetInsetBlocks"/> behind the outermost stretch of wall out over the
+    /// band's margin and fringe, thin enough that the wall shows dimly through
+    /// (<see cref="CurtainCoverDepth"/>).
     /// </summary>
-    public const float CurtainExtinction = 0.5f;
+    public const float CurtainExtinction = 0.12f;
+
+    /// <summary>
+    /// Within this many blocks of the wall's foot the veil thickens to this many times as dense,
+    /// hiding the wall's lower edge and running on into the tendrils.
+    /// </summary>
+    public const float CurtainFootBlocks = 16f;
+    public const float CurtainFootBoost = 2f;
+
+    /// <summary>Beside the wall the dense strip ends this far below the lip.</summary>
+    public const float CurtainStripDepthBlocks = 4f;
+
+    /// <summary>The sheet's inner side lies this far behind the outermost stretch of wall.</summary>
+    public const float CurtainSheetInsetBlocks = 6f;
+
+    /// <summary>Where only the curtain is, a march step may cross this much optical depth.</summary>
+    public const float CurtainStepDepth = 0.6f;
 
     /// <summary>
     /// Past the band the curtain frays out over this many blocks in tendrils, gone by 3.5 of
     /// them; its tongues reach out up to twice the wander and never in.
     /// </summary>
-    public const float CurtainFalloffBlocks = 10f;
-    public const float CurtainWanderBlocks = 5f;
+    public const float CurtainFalloffBlocks = 6f;
+    public const float CurtainWanderBlocks = 3f;
 
     /// <summary>Where it pours over the lip it bulges out this far, settling over this depth.</summary>
     public const float CurtainLipBlocks = 10f;
@@ -176,7 +194,7 @@ internal static class LodSilhouetteFogVolume
     /// jittered depth and drew it as fine dashes (0.4.151).
     /// </summary>
     public const float CurtainStepPixels = 2f;
-    public const float CurtainMinStepBlocks = 1f;
+    public const float CurtainMinStepBlocks = 2.5f;
 
     /// <summary>
     /// Past the band by more than this, the outward direction would shift the tendrils by under
@@ -1150,8 +1168,8 @@ internal static class LodSilhouetteFogVolume
         float dropped = heightAboveGround + SpillDroop(signedDistance, stripHalfBlocks);
         if (dropped >= CurtainLipRiseBlocks + 0.5f * CurtainTopBillowBlocks) return 0f;
         float below = MathF.Max(0f, -wallDepthBlocks - heightAboveGround) / CurtainBottomFadeBlocks;
-        float innerEdge = Lerp(-stripHalfBlocks, stripHalfBlocks - StripMarginBlocks,
-            SmoothStep(0f, 0.4f, below));
+        float innerEdge = stripHalfBlocks - StripMarginBlocks
+            - CurtainSheetInsetBlocks * (1f - SmoothStep(0f, 0.4f, below));
         float lip = CurtainLipBlocks * MathF.Exp(-MathF.Max(0f, -heightAboveGround) / CurtainLipDepthBlocks);
         float rim = MathF.Max(0f, signedDistance - stripHalfBlocks - lip - MathF.Max(0f, tongueBlocks));
         float lateral = MathF.Exp(-rim / CurtainFalloffBlocks)
@@ -1164,7 +1182,9 @@ internal static class LodSilhouetteFogVolume
         vertical *= (1f - SmoothStep(hangs - 0.25f, hangs, below))
             * (1f - SmoothStep(0.4f, 1f, below));
         float w = Math.Clamp(weight, 0f, 1f);
-        return CurtainExtinction * lateral * vertical * (0.75f + 0.5f * streak) * w * w;
+        float foot = 1f - SmoothStep(0f, CurtainFootBlocks, MathF.Abs(heightAboveGround + wallDepthBlocks));
+        return CurtainExtinction * lateral * vertical * (0.35f + 1.3f * streak * streak)
+            * (1f + CurtainFootBoost * foot) * w * w;
     }
 
     /// <summary>How far out from the smoothed edge the curtain can reach.</summary>

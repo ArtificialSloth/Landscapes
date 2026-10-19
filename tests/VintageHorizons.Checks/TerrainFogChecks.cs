@@ -103,13 +103,19 @@ public static class TerrainFogChecks
         {
             const float wallDepth = 120f;
             float wall = stripHalf - LodSilhouetteFogVolume.StripMarginBlocks;
-            float thinnest = float.MaxValue;
-            foreach (float height in new[] { -1f, -10f, -40f, -80f, -wallDepth + 0.5f })
+            float thinnest = float.MaxValue, stream = float.MaxValue;
+            foreach (float height in new[] { -10f, -40f, -80f, -wallDepth + 0.5f })
+            {
                 thinnest = MathF.Min(thinnest, LodSilhouetteFogVolume.CurtainCoverDepth(
                     wall, height, stripHalf, wallDepth, streak: 0f));
-            c.True(thinnest >= 3.5f,
-                $"with a {stripHalf:0}-block band, the curtain in front of the outermost wall is at "
-                    + $"least 3.5 deep from lip to foot at its thinnest billow ({thinnest:0.00})");
+                stream = MathF.Min(stream, LodSilhouetteFogVolume.CurtainCoverDepth(
+                    wall, height, stripHalf, wallDepth, streak: 1f));
+            }
+            // A veil (owner, 2026-10-18): between its streams the outermost wall shows dimly
+            // through, and a stream all but hides it.
+            c.True(thinnest is > 0.15f and < 0.8f && stream > 1.5f,
+                $"with a {stripHalf:0}-block band, the veil in front of the outermost wall from lip to "
+                    + $"foot is {thinnest:0.00} deep between its streams and {stream:0.00} in one");
         }
 
         const float band = 20f, depth = 100f;
@@ -194,9 +200,10 @@ public static class TerrainFogChecks
         c.True(LodSilhouetteFogVolume.CurtainExtinctionAt(tendrilBand, halfway, tendrilBand, tendrilWall, 0.5f, drip: 1f) > 0.05f
                 && LodSilhouetteFogVolume.CurtainExtinctionAt(tendrilBand, halfway, tendrilBand, tendrilWall, 0.5f, drip: 0f) == 0f
                 && LodSilhouetteFogVolume.CurtainExtinctionAt(0f, halfway, tendrilBand, tendrilWall, 0.5f, drip: 1f) == 0f
-                && LodSilhouetteFogVolume.CurtainExtinctionAt(0f, -tendrilWall + 0.5f, tendrilBand, tendrilWall, 0f, drip: 0f) > 0.3f,
+                && LodSilhouetteFogVolume.CurtainExtinctionAt(tendrilBand - LodSilhouetteFogVolume.StripMarginBlocks,
+                    -tendrilWall + 0.5f, tendrilBand, tendrilWall, 0.5f, drip: 0f) > 0.04f,
             "below the wall's foot the curtain thins to the sheet off the wall's face and each column "
-                + "hangs on to its own length, while the whole wall down to its foot stays covered");
+                + "hangs on to its own length, while the veil reaches down to the wall's foot");
         c.True(shader.Contains("float extinction = bank + strip + curtain;", StringComparison.Ordinal)
                 && shader.Contains("curtain = max(curtain, oldCurtain);", StringComparison.Ordinal)
                 && shader.Contains("-vhFogFloorBelow(curtainGap, ground, bankFloor)",

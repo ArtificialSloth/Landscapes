@@ -38,7 +38,7 @@ sealed class ShippedFog
     // A cost proxy, since the mock-up cannot time a GPU: march steps, full samples, and the
     // curtain's extra lookups (its tendrils, and the outward direction's four field reads),
     // summed over every ray this marcher has drawn.
-    public long Rays, Steps, Samples, StreakLookups, OutwardLookups;
+    public long Rays, Steps, Samples, StreakLookups, OutwardLookups, BanklessSamples;
 
     public ShippedFog(string shaderSource, FogDials dials, NoiseTexture noise, float coreBlocks,
         float stripHalfBlocks, bool curtain = false)
@@ -104,33 +104,44 @@ sealed class ShippedFog
     float CurtainReachBlocks() => stripHalfBlocks + K("CurtainLipBlocks")
         + 2f * K("CurtainWanderBlocks") + 3.5f * K("CurtainFalloffBlocks");
 
+    bool Bankless(float signedDistance, float height) =>
+        curtain && height + Droop(signedDistance) < -(d.Floor + K("StripAnchorReachBlocks"));
+
     FogNoise SampleNoise(Vector3 fogWorld, float pixelBlocks, bool cheap, bool streak = false,
-        Vector2 outward = default, float signedDistance = 0f, float height = 0f)
+        Vector2 outward = default, float signedDistance = 0f, float height = 0f, bool bankless = false)
     {
         float billowBlocks = MathF.Max(1f, d.Billow);
         float cellsPerBlock = 1f / billowBlocks;
         Vector3 world = fogWorld + new Vector3(d.DriftBlocks, 0f, d.DriftBlocks * -0.67f);
         var n = new FogNoise();
-        var broadCells = world * new Vector3(cellsPerBlock * 0.55f, cellsPerBlock * 0.15f,
-            cellsPerBlock * 0.55f);
-        n.Broad = Noise(broadCells, NoiseLod(pixelBlocks, cellsPerBlock * 0.55f));
-        Vector3 wind = Vector3.Normalize(new Vector3(1f, 0f, -0.67f));
-        var crosswind = new Vector3(-wind.Z, 0f, wind.X);
-        Vector3 swirled = world + new Vector3(n.Broad.Y - 0.5f, 0f, n.Broad.Z - 0.5f) * (billowBlocks * 1.1f);
-        Vector3 q = new Vector3(Vector3.Dot(swirled, wind) * 0.5f, swirled.Y * 2.2f,
-            Vector3.Dot(swirled, crosswind)) * cellsPerBlock;
-        n.BaseLod = NoiseLod(pixelBlocks, cellsPerBlock);
-        float body = cheap ? Noise(q, n.BaseLod).X * 0.9f + 0.05f : Fbm(q, n.BaseLod);
-        n.Body = SmoothStep(0.18f, 0.82f, body);
+        n.Broad = new Vector4(0.5f);
+        n.Body = 0.5f;
         n.Thread = 0.5f;
         n.DetailWeight = 0f;
-        if (!cheap)
+        n.BaseLod = 0f;
+        if (!bankless)
         {
-            float detailLod = NoiseLod(pixelBlocks, cellsPerBlock * 3.3f);
-            n.DetailWeight = 1f - SmoothStep(-0.3f, 1.4f, detailLod);
-            if (n.DetailWeight > 0f)
-                n.Thread = Noise(q * new Vector3(3.3f, 2.7f, 3.3f) + new Vector3(5.2f, 1.7f, 9.4f),
-                    detailLod).W;
+            var broadCells = world * new Vector3(cellsPerBlock * 0.55f, cellsPerBlock * 0.15f,
+                cellsPerBlock * 0.55f);
+            n.Broad = Noise(broadCells, NoiseLod(pixelBlocks, cellsPerBlock * 0.55f));
+            Vector3 wind = Vector3.Normalize(new Vector3(1f, 0f, -0.67f));
+            var crosswind = new Vector3(-wind.Z, 0f, wind.X);
+            Vector3 swirled = world + new Vector3(n.Broad.Y - 0.5f, 0f, n.Broad.Z - 0.5f) * (billowBlocks * 1.1f);
+            Vector3 q = new Vector3(Vector3.Dot(swirled, wind) * 0.5f, swirled.Y * 2.2f,
+                Vector3.Dot(swirled, crosswind)) * cellsPerBlock;
+            n.BaseLod = NoiseLod(pixelBlocks, cellsPerBlock);
+            float body = cheap ? Noise(q, n.BaseLod).X * 0.9f + 0.05f : Fbm(q, n.BaseLod);
+            n.Body = SmoothStep(0.18f, 0.82f, body);
+            n.Thread = 0.5f;
+            n.DetailWeight = 0f;
+            if (!cheap)
+            {
+                float detailLod = NoiseLod(pixelBlocks, cellsPerBlock * 3.3f);
+                n.DetailWeight = 1f - SmoothStep(-0.3f, 1.4f, detailLod);
+                if (n.DetailWeight > 0f)
+                    n.Thread = Noise(q * new Vector3(3.3f, 2.7f, 3.3f) + new Vector3(5.2f, 1.7f, 9.4f),
+                        detailLod).W;
+            }
         }
         n.Streak = 0.5f;
         n.Drip = 1f;
@@ -216,6 +227,12 @@ sealed class ShippedFog
             * (1f - 0.4f * SmoothStep(0f, 3f * falloff, stripRim));
         float stripVertical = 1f - SmoothStep(0.55f * stripTop, 1.35f * stripTop, MathF.Max(0f, stripHeight));
         float stripUnder = SmoothStep(-d.Floor, -d.Floor + lowerFade, stripHeight);
+        if (curtain)
+        {
+            float sheetInner = stripHalfBlocks - 6f - K("CurtainSheetInsetBlocks");
+            stripUnder *= Mix(1f, SmoothStep(-K("CurtainStripDepthBlocks"), 0f, stripHeight),
+                SmoothStep(sheetInner - K("CurtainInnerFadeBlocks"), sheetInner, signedDistance));
+        }
         float stripDensity = K("StripOpticalDepth") / (K("StripColumnFraction") * stripTop)
             * stripProfile * stripUnder * (0.75f + 0.5f * n.Body)
             * weight * weight * MathF.Max(0f, d.SeamStrength);
@@ -227,7 +244,8 @@ sealed class ShippedFog
         {
             float cf = K("CurtainFalloffBlocks");
             float below = MathF.Max(0f, -wallDepth - wallHeight) / K("CurtainBottomFadeBlocks");
-            float innerEdge = Mix(-stripHalfBlocks, stripHalfBlocks - 6f, SmoothStep(0f, 0.4f, below));
+            float innerEdge = stripHalfBlocks - 6f
+                - K("CurtainSheetInsetBlocks") * (1f - SmoothStep(0f, 0.4f, below));
             float lip = K("CurtainLipBlocks") * MathF.Exp(-MathF.Max(0f, -wallHeight) / K("CurtainLipDepthBlocks"));
             float tongue = n.Tongue * 2f * K("CurtainWanderBlocks");
             float curtainRim = MathF.Max(0f, signedDistance - stripHalfBlocks - lip - tongue);
@@ -240,14 +258,16 @@ sealed class ShippedFog
             float hangs = 0.25f + 0.75f * n.Drip;
             vertical *= (1f - SmoothStep(hangs - 0.25f, hangs, below))
                 * (1f - SmoothStep(0.4f, 1f, below));
-            curtainExtinction = K("CurtainExtinction") * lateral * vertical * (0.75f + 0.5f * n.Streak)
+            float foot = 1f - SmoothStep(0f, K("CurtainFootBlocks"), MathF.Abs(wallHeight + wallDepth));
+            curtainExtinction = K("CurtainExtinction") * lateral * vertical * (0.35f + 1.3f * n.Streak * n.Streak)
+                * (1f + K("CurtainFootBoost") * foot)
                 * weight * weight * MathF.Max(0f, d.SeamStrength);
         }
     }
 
     float CurtainGap(float signedDistance, float curtainReach) => !curtain ? 1e6f
         : MathF.Max(signedDistance - curtainReach,
-            -signedDistance - stripHalfBlocks - K("CurtainInnerFadeBlocks"));
+            stripHalfBlocks - 6f - K("CurtainSheetInsetBlocks") - K("CurtainInnerFadeBlocks") - signedDistance);
 
     float FloorBelow(float curtainGap, float ground, float bankFloor) => curtainGap > 0f ? bankFloor
         : MathF.Max(bankFloor, ground - Scene.WallFootY + K("CurtainBottomFadeBlocks"));
@@ -302,7 +322,7 @@ sealed class ShippedFog
         Vector3 litColour = Scene.FogColour * 0.85f;
         int maxSteps = (int)K("MaxFogSteps");
 
-        long steps = 0, samples = 0, streaks = 0, outwards = 0;
+        long steps = 0, samples = 0, streaks = 0, outwards = 0, bankless = 0;
         for (int stepIndex = 0; stepIndex < maxSteps; stepIndex++)
         {
             steps++;
@@ -329,7 +349,8 @@ sealed class ShippedFog
             if (curtainGap > 0f) verticalSkip = MathF.Min(verticalSkip, curtainGap);
             float outside = MathF.Max(horizontalOutside, verticalSkip);
             float farStep = MathF.Max(baseStep, rayDistance * K("FarStepFraction"));
-            float stepDepth = curtain && transmittance < 0.5f ? K("CurtainHiddenStepDepth") : 0.35f;
+            float stepDepth = curtain && transmittance < 0.5f ? K("CurtainHiddenStepDepth")
+                : Bankless(signedDistance, heightAboveGround) ? K("CurtainStepDepth") : 0.35f;
             float stepBlocks = outside > 0f
                 ? Math.Clamp(outside * 0.72f, baseStep, 512f)
                 : previousExtinction > 0f
@@ -385,8 +406,10 @@ sealed class ShippedFog
                 }
                 samples++;
                 if (wantStreak) streaks++;
+                bool banklessHere = Bankless(signedDistance, heightAboveGround) && !residualActive;
+                if (banklessHere) bankless++;
                 FogNoise n = SampleNoise(fieldPosition, pixelBlocks, false, wantStreak, outward,
-                    signedDistance, heightAboveGround);
+                    signedDistance, heightAboveGround, banklessHere);
                 Shape(signedDistance, 1f, heightAboveGround, stripHeight, wallDepth, n,
                     out float bank, out float strip, out float stripAbove, out float top,
                     out float curtainHere);
@@ -414,9 +437,10 @@ sealed class ShippedFog
                         float stripShade = stripAbove * 0.5f / sunHeight * (1f - sunk);
                         float sunProbe = K("SunProbeBlocks");
                         Vector3 probe = fieldPosition + sunDirection * sunProbe;
-                        FogNoise pn = SampleNoise(probe, pixelBlocks, true);
                         float probeHeight = probe.Y - Scene.GroundY;
                         float probeSigned = fields.Current(probe.X, probe.Z);
+                        FogNoise pn = SampleNoise(probe, pixelBlocks, true,
+                            bankless: Bankless(probeSigned, probeHeight) && !residualActive);
                         Shape(probeSigned, 1f, probeHeight, probeHeight, wallDepth, pn,
                             out float probeBank, out float probeStrip, out _, out _, out float probeCurtain);
                         if (residualActive)
@@ -459,6 +483,7 @@ sealed class ShippedFog
         Interlocked.Add(ref Samples, samples);
         Interlocked.Add(ref StreakLookups, streaks);
         Interlocked.Add(ref OutwardLookups, outwards);
+        Interlocked.Add(ref BanklessSamples, bankless);
         float opacity = 1f - transmittance;
         float alpha = MathF.Min(opacity, 0.99f);
         if (alpha < 0.002f) return default;

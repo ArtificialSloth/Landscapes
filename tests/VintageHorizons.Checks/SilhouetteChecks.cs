@@ -2126,6 +2126,11 @@ public static class SilhouetteChecks
             ("CurtainMinStepBlocks", LodSilhouetteFogVolume.CurtainMinStepBlocks),
             ("CurtainOutwardReachBlocks", LodSilhouetteFogVolume.CurtainOutwardReachBlocks),
             ("CurtainHiddenStepDepth", LodSilhouetteFogVolume.CurtainHiddenStepDepth),
+            ("CurtainSheetInsetBlocks", LodSilhouetteFogVolume.CurtainSheetInsetBlocks),
+            ("CurtainStepDepth", LodSilhouetteFogVolume.CurtainStepDepth),
+            ("CurtainFootBlocks", LodSilhouetteFogVolume.CurtainFootBlocks),
+            ("CurtainFootBoost", LodSilhouetteFogVolume.CurtainFootBoost),
+            ("CurtainStripDepthBlocks", LodSilhouetteFogVolume.CurtainStripDepthBlocks),
             ("CurtainDripBlocks", LodSilhouetteFogVolume.CurtainDripBlocks),
             ("CurtainDripDrift", LodSilhouetteFogVolume.CurtainDripDrift),
             ("CurtainStreakLow", LodSilhouetteFogVolume.CurtainStreakLow),
@@ -2208,7 +2213,9 @@ public static class SilhouetteChecks
                     StringComparison.Ordinal)
                 && fogFragment.Contains("clamp(stepDepth / previousExtinction, 0.75, farStep)",
                     StringComparison.Ordinal)
-                && fogFragment.Contains("? CurtainHiddenStepDepth : 0.35;", StringComparison.Ordinal)
+                && fogFragment.Contains("? CurtainHiddenStepDepth", StringComparison.Ordinal)
+                && fogFragment.Contains(": vhFogBankless(field.r, heightAboveGround) ? CurtainStepDepth : 0.35;",
+                    StringComparison.Ordinal)
                 && fogFragment.Contains("float stepDepth = fogCurtainActive != 0 && transmittance < 0.5",
                     StringComparison.Ordinal)
                 && fogFragment.Contains("float middle = rayDistance + stepBlocks * 0.5;",
