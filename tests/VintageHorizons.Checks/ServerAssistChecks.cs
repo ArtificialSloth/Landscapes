@@ -25,6 +25,7 @@ public static class ServerAssistChecks
         ManifestDoesNotRepeatWhatItJustSent(c);
         AnEmptyCacheIsNotASwitchedOffAssist(c);
         AnUnusableArrivalCanBeAskedForAgain(c);
+        AFloodGetsNoReplies(c);
     }
 
     /// <summary>
@@ -805,5 +806,69 @@ public static class ServerAssistChecks
         c.Eq(1, client.SectionsRefused, "and ends as an ordinary refusal");
         c.Eq(0, client.SectionsPendingOnServer, "with nothing left tracked as waiting");
         c.Eq(0, client.SelectRequestBatch(offered).Length, "after which it is never asked again");
+    }
+
+    /// <summary>
+    /// Pre-release review S1 and S2. The game accepts a 1 MB packet from a player, and the server
+    /// used to refuse every key past its queue one message at a time, and to answer every hello
+    /// with the whole manifest. The honest client must never meet the new limits.
+    /// </summary>
+    static void AFloodGetsNoReplies(Check c)
+    {
+        int honest = LodAssist.MaxSectionsInFlight;
+        c.True(LodAssistAdmission.MaxKeysPerRequest >= honest,
+            "the honest client's largest request fits inside the per-message limit");
+        c.True(LodAssistAdmission.MaxQueuedPerPlayer >= honest,
+            "and its whole in-flight allowance fits inside the per-player queue");
+
+        var client = new LodAssistClient(null!, new CaptureLogger(), "0.4.161");
+        client.OnWelcome(new AssistWelcome { Protocol = LodAssist.Protocol, Enabled = true });
+        long[] offered = Enumerable.Range(0, 1000).Select(i => LodWorld.SectionKey(0, i, 3)).ToArray();
+        client.OnKeyManifest(new AssistKeyManifest { Keys = offered, Last = true });
+        client.Pump((_, _) => true);
+        c.True(client.SelectRequestBatch(offered).Length <= LodAssistAdmission.MaxKeysPerRequest,
+            "a client offered a thousand sections still asks within the limit");
+
+        c.True(LodAssistAdmission.AcceptsRequest(greeted: true, honest), "an honest request is accepted");
+        c.True(LodAssistAdmission.AcceptsRequest(greeted: true, LodAssistAdmission.MaxKeysPerRequest),
+            "up to the limit itself");
+        c.False(LodAssistAdmission.AcceptsRequest(greeted: true, LodAssistAdmission.MaxKeysPerRequest + 1),
+            "one key more is a message no honest client sends");
+        c.False(LodAssistAdmission.AcceptsRequest(greeted: true, 125_000),
+            "a 1 MB packet of keys is dropped whole, not answered key by key");
+        c.False(LodAssistAdmission.AcceptsRequest(greeted: false, honest),
+            "nothing is served before the handshake");
+        c.False(LodAssistAdmission.AcceptsRequest(greeted: true, 0), "an empty request is ignored");
+
+        c.Eq(honest, LodAssistAdmission.Admitted(honest, 0), "an honest request is queued whole");
+        c.Eq(6, LodAssistAdmission.Admitted(honest, LodAssistAdmission.MaxQueuedPerPlayer - 6),
+            "a player near the queue's bound gets only the room left");
+        c.Eq(0, LodAssistAdmission.Admitted(honest, LodAssistAdmission.MaxQueuedPerPlayer + 40),
+            "and a player past it gets nothing");
+
+        var gate = new LodHelloGate();
+        c.True(gate.TryOpen("A"), "a connection's first hello is answered");
+        c.False(gate.TryOpen("A"), "a repeat on the same connection is not");
+        c.True(gate.TryOpen("B"), "another player's hello is their own");
+        gate.Forget("A");
+        c.True(gate.TryOpen("A"), "after a disconnect the next connection greets as normal");
+
+        string server = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot,
+            "VintageHorizons", "src", "Net", "LodAssistServerSystem.cs"));
+        int request = server.IndexOf("void OnSectionRequest(", StringComparison.Ordinal);
+        int requestEnd = server.IndexOf("void WarnRequestFlood(", request, StringComparison.Ordinal);
+        string handler = request < 0 || requestEnd < 0 ? "" : server[request..requestEnd];
+        c.True(handler.Contains("LodAssistAdmission.MaxKeysPerRequest", StringComparison.Ordinal)
+                && handler.Contains("LodAssistAdmission.AcceptsRequest(ledger.HasGreeted(uid)", StringComparison.Ordinal)
+                && handler.Contains("LodAssistAdmission.Admitted(", StringComparison.Ordinal),
+            "the request handler applies all three limits");
+        c.False(handler.Contains("Refuse(", StringComparison.Ordinal),
+            "and never refuses keys one by one on arrival: refusals go out at the serving rate");
+        int hello = server.IndexOf("void OnHello(", StringComparison.Ordinal);
+        int gateAt = hello < 0 ? -1 : server.IndexOf("helloGate.TryOpen(", hello, StringComparison.Ordinal);
+        int answer = hello < 0 ? -1 : server.IndexOf("EnqueueMainThreadTask(() => Answer(", hello, StringComparison.Ordinal);
+        c.True(gateAt > hello && answer > gateAt, "a hello passes the gate before any answer is queued");
+        c.True(server.Contains("helloGate.Forget(player.PlayerUID);", StringComparison.Ordinal),
+            "and a disconnect reopens it");
     }
 }

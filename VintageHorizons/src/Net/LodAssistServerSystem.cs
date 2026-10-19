@@ -139,8 +139,20 @@ public class LodAssistServerSystem : ModSystem
             Mod.Info.Version);
     }
 
+    /// <summary>
+    /// One answered hello per connection (pre-release review S2). Each answer sends the whole key
+    /// manifest and queues a full scan of what changed, and the honest client greets once.
+    /// </summary>
+    readonly LodHelloGate helloGate = new();
+
     void OnHello(IServerPlayer fromPlayer, AssistHello msg)
     {
+        if (!helloGate.TryOpen(fromPlayer.PlayerUID))
+        {
+            WarnRequestFlood(fromPlayer, "said hello more than once on one connection; the mod greets once");
+            return;
+        }
+
         Mod.Logger.Debug("Doden's Landscapes: assist hello from {0} (client {1}, protocol {2})",
             fromPlayer.PlayerName, msg.ModVersion, msg.Protocol);
 
@@ -538,6 +550,8 @@ public class LodAssistServerSystem : ModSystem
 
     void OnPlayerDisconnect(IServerPlayer player)
     {
+        helloGate.Forget(player.PlayerUID);
+        warnedRequestFlood.TryRemove(player.PlayerUID, out _);
         ledger.Forget(player.PlayerUID);
         syncLedger.Forget(player.PlayerUID);
         silhouettes?.Forget(player.PlayerUID);
@@ -564,14 +578,30 @@ public class LodAssistServerSystem : ModSystem
 
     void OnSectionRequest(IServerPlayer fromPlayer, AssistSectionRequest msg)
     {
-        if (msg.Keys == null || msg.Keys.Length == 0) return;
+        long[] keys = msg.Keys ?? Array.Empty<long>();
+        string uid = fromPlayer.PlayerUID;
+
+        // A message larger than any honest client sends is dropped here, on the network thread,
+        // before it can become owning-thread work (LodAssistAdmission). The greeting is checked
+        // below, where the ledger lives.
+        if (keys.Length == 0) return;
+        if (keys.Length > LodAssistAdmission.MaxKeysPerRequest)
+        {
+            WarnRequestFlood(fromPlayer, $"asked for {keys.Length} sections in one message; the mod "
+                + $"never asks for more than {LodAssist.MaxSectionsInFlight}");
+            return;
+        }
 
         // Onto the main thread for the same reason as the manifest: this touches shared
         // state, and the blob read has to be ordered against the capture that writes it.
-        long[] keys = msg.Keys;
-        string uid = fromPlayer.PlayerUID;
         sapi.Event.EnqueueMainThreadTask(() =>
         {
+            if (!LodAssistAdmission.AcceptsRequest(ledger.HasGreeted(uid), keys.Length))
+            {
+                WarnRequestFlood(fromPlayer, "asked for sections before the assist handshake");
+                return;
+            }
+
             if (!sessionByPlayer.TryGetValue(uid, out long session))
                 sessionByPlayer[uid] = session = ++nextSession;
 
@@ -584,22 +614,36 @@ public class LodAssistServerSystem : ModSystem
             // depend on a client behaving.
             int held = queue.Count + (readInFlightByPlayer.TryGetValue(
                 uid, out InFlightReadBatch batch) ? batch.Count : 0);
-            int room = Math.Max(0, MaxQueuedPerPlayer - held);
+            int room = LodAssistAdmission.Admitted(keys.Length, held);
             long readyMs = sapi.World.ElapsedMilliseconds;
             foreach (long key in keys.Take(room))
                 queue.Enqueue(new PendingSection(key, readyMs, session));
 
-            // Anything past the cap is refused OUT LOUD. This used to drop silently,
-            // with a comment saying the client would re-ask - it cannot. A client marks
-            // a key in flight when it sends it and only forgets it when a reply comes
-            // back, so a dropped key is stranded for the session. With a 16-key in-flight
-            // cap that is the whole client, permanently stuck. Same rule as M7 stage 4:
-            // only keys actually answered may be forgotten.
-            foreach (long key in keys.Skip(room)) Refuse(fromPlayer, key);
+            // Every queued key is answered, refusals included, at the serving rate: a client
+            // holds a key in flight until its reply arrives, so a dropped key would strand it.
+            // Keys past the cap are the exception and go unanswered on purpose. Only a client
+            // already holding sixteen times its own limit can send them, and refusing each one
+            // at once is how a single message made the server send 100,000 replies (S1).
+            if (room < keys.Length)
+                WarnRequestFlood(fromPlayer, $"held {held} section requests, far past the mod's own limit "
+                    + $"of {LodAssist.MaxSectionsInFlight}; {keys.Length - room} more were ignored");
         }, "dodenslandscapes-request");
     }
 
-    const int MaxQueuedPerPlayer = 256;
+    /// <summary>
+    /// Players already warned about this connection, so a flood logs one line, not one per packet.
+    /// Any thread: the network handlers warn without queuing owning-thread work.
+    /// </summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> warnedRequestFlood =
+        new(StringComparer.Ordinal);
+
+    void WarnRequestFlood(IServerPlayer player, string what)
+    {
+        if (!warnedRequestFlood.TryAdd(player.PlayerUID, 0)) return;
+        Mod.Logger.Warning("Doden's Landscapes: {0} {1}. Requests like this are ignored without a reply; "
+            + "only a modified client sends them. Further ones from this connection are not logged.",
+            player.PlayerName, what);
+    }
 
     /// <summary>
     /// Tell a client we will not serve this key. An empty blob is the refusal, and the
