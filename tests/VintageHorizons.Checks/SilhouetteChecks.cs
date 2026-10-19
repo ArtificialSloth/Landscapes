@@ -2358,12 +2358,39 @@ public static class SilhouetteChecks
             "and a player's queue stops at its bound");
 
         int request = builder.IndexOf("public void Request(", StringComparison.Ordinal);
-        int repeat = request < 0 ? -1 : builder.IndexOf("RepeatRequestIgnoreMs", request, StringComparison.Ordinal);
+        int repeat = request < 0 ? -1 : builder.IndexOf("IsUnchangedRepeat(", request, StringComparison.Ordinal);
         int replan = request < 0 ? -1 : builder.IndexOf("Recentre(demand, force: true)", request, StringComparison.Ordinal);
         c.True(repeat > request && replan > repeat,
             "an unchanged repeat is turned away before the reach is re-planned");
         c.True(builder.Contains("demand.AskedReachBlocks == askedReach", StringComparison.Ordinal),
             "comparing what the client asked for, so two reaches the server clamps alike are not mistaken for a repeat");
+
+        // Nothing may be ignored for good: a client sending the same request every second is
+        // heard again once five seconds have passed since the last one acted on.
+        long actedOn = 10_000;
+        bool heardAgain = false;
+        for (long now = actedOn + 1000; now <= actedOn + 60_000; now += 1000)
+        {
+            if (LodSilhouetteBuilder.IsUnchangedRepeat(unchanged: true, actedOn, now)) continue;
+            heardAgain = now <= actedOn + LodSilhouetteBuilder.RepeatRequestIgnoreMs;
+            break;
+        }
+        c.True(heardAgain, "a repeat sent every second is acted on again within five seconds");
+        c.False(LodSilhouetteBuilder.IsUnchangedRepeat(unchanged: false, actedOn, actedOn + 1),
+            "a changed request is acted on at once");
+        c.False(LodSilhouetteBuilder.IsUnchangedRepeat(unchanged: true, long.MinValue, 0),
+            "and so is a player's first");
+        int ignored = request < 0 ? -1 : builder.IndexOf("WarnRequestFlood(player, \"repeated", request, StringComparison.Ordinal);
+        int returned = ignored < 0 ? -1 : builder.IndexOf("return;", ignored, StringComparison.Ordinal);
+        string ignoreBranch = ignored < 0 || returned < 0 ? "" : builder[(repeat < 0 ? ignored : repeat)..returned];
+        c.False(ignoreBranch.Contains("LastRequestMs = now", StringComparison.Ordinal),
+            "an ignored repeat does not restart the window");
+
+        // Movement never depends on the client asking again: every tick re-centres each demand
+        // on the player's live position and offers the tiles that came into reach.
+        c.True(Regex.IsMatch(builder,
+                @"void Tick\(\)[\s\S]*?foreach \(Demand demand in demands\.Values\) Recentre\(demand, force: false\);[\s\S]*?SendOffers\(\);"),
+            "a moving player's reach follows them on the server, then the new tiles are offered");
 
         string server = Source("src", "Net", "LodAssistServerSystem.cs");
         int handler = server.IndexOf("void OnSilhouetteTileRequest(", StringComparison.Ordinal);

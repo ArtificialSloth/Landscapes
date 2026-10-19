@@ -124,6 +124,14 @@ internal sealed class LodSilhouetteBuilder
     /// <summary>An unchanged repeat of a player's silhouette request within this long is ignored.</summary>
     internal const long RepeatRequestIgnoreMs = 5000;
 
+    /// <summary>
+    /// Whether a request is an unchanged repeat to turn away. The window runs from the last
+    /// request that was acted on, never from an ignored one, so a client repeating itself is
+    /// heard again within five seconds however often it sends: nothing is ignored for good.
+    /// </summary>
+    internal static bool IsUnchangedRepeat(bool unchanged, long lastActedOnMs, long now) =>
+        unchanged && lastActedOnMs != long.MinValue && now - lastActedOnMs < RepeatRequestIgnoreMs;
+
     /// <summary>Players warned about this connection, so a flood logs one line.</summary>
     readonly HashSet<string> warnedRequestFlood = new(StringComparer.Ordinal);
 
@@ -239,13 +247,15 @@ internal sealed class LodSilhouetteBuilder
             demands[player.PlayerUID] = demand;
             demandOrder.Add(player.PlayerUID);
         }
-        else if (demand.SessionId == request.SessionId && demand.TransportVersion == request.TransportVersion
-            && demand.AskedReachBlocks == askedReach && now - demand.LastRequestMs < RepeatRequestIgnoreMs)
+        else if (IsUnchangedRepeat(demand.SessionId == request.SessionId
+                && demand.TransportVersion == request.TransportVersion
+                && demand.AskedReachBlocks == askedReach, demand.LastRequestMs, now))
         {
             // The client sends this once and on change. An identical repeat seconds later asks for
             // nothing new, and answering it re-plans the player's whole reach and writes two log
-            // lines - per packet, for a client that sends them in a loop (review S5).
-            demand.LastRequestMs = now;
+            // lines - per packet, for a client that sends them in a loop (review S5). Nothing here
+            // is needed for a moving player: Tick re-centres every demand on the player's live
+            // position and offers the new tiles itself.
             WarnRequestFlood(player, "repeated an unchanged silhouette request");
             return;
         }
