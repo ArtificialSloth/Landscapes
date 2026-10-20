@@ -91,15 +91,20 @@ internal static class VintageHorizonsConfigLayout
     internal const double RuleHeight = 4;
 
     /// <summary>
-    /// Under the rule, three rows of two columns: Farseer beside its seam fog, paused loading
-    /// beside all-cores collection, then Developer options beside the no-sampler note. Farseer
-    /// and Performance had tabs of their own until 0.4.167.
+    /// Visual features head everything under the rule (owner, 2026-10-19): five lines of two
+    /// columns, Farseer beside its seam fog first and all-cores collection under the fog.
     /// </summary>
-    internal const double FarseerRowY = 348;
-    internal const double PausedRowY = 376;
-    internal const double DeveloperRowY = 404;
-    internal const double VisualHeadingY = 434;
-    internal const double VisualRowsY = 468;
+    internal const double VisualHeadingY = 348;
+    internal const double VisualRowsY = 382;
+    internal const int VisualLineCount = 5;
+
+    /// <summary>
+    /// Under the features, a little apart: paused loading and Developer options, which change how
+    /// the mod works rather than what it draws, with the no-sampler note beside them.
+    /// </summary>
+    internal const double TailGap = 6;
+    internal const double TailRowsY = VisualRowsY + VisualLineCount * VisualRowHeight + TailGap;
+    internal const int TailRowCount = 2;
     internal const double VisualRowHeight = 28;
 
     /// <summary>The rows' switches, sized to their 28-unit pitch.</summary>
@@ -107,8 +112,8 @@ internal static class VintageHorizonsConfigLayout
     internal const int VisualRowCount = 7;
 
     /// <summary>
-    /// The feature rows run down the left column first, then the right (owner: two columns,
-    /// 2026-10-19). Four rows a column end well above the Save row at the full 28-unit pitch.
+    /// The feature rows run down the left column under Farseer first, then the right column under
+    /// the seam fog and all-cores collection (owner: two columns, 2026-10-19).
     /// </summary>
     internal const int VisualRowsPerColumn = 4;
 
@@ -356,9 +361,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// One switchable feature: the name on the row, the tip that explains it on hover, a
     /// coarse word for what it costs, and how it reads and writes the settings value.
     ///
-    /// The cost words are deliberately coarse. What a feature actually costs depends on what
-    /// is on screen - the water terms are free with no water in view and dominate over a
-    /// coastline - so a number here would be more precise than it is true.
+    /// The cost words are deliberately coarse - Low, Moderate, High - because what a feature
+    /// costs depends on what is on screen, so a number here would be more precise than it is
+    /// true. Water used to say "Varies", which told a player nothing (owner, 2026-10-19); it is
+    /// Low, with when it costs more in its tip.
     /// </summary>
     readonly record struct VisualRow(
         string Key, string Title, string Tip, string Cost,
@@ -417,9 +423,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             v => v.HalfBlockTerrain,
             (v, on) => v with { HalfBlockTerrain = on }),
 
+        // Paid only by pixels that show water: nothing visible in the owner's own switch test
+        // (Session 77), more with a lake or coastline filling the view.
         new("water-effects", "Water Effects",
-            "Adds glint and foam to the water.",
-            "Varies",
+            "Adds glint and foam to distant water. Costs only where water is on screen, so most "
+            + "with a large lake or coastline in view.",
+            "Low",
             v => v.WaterEffects,
             (v, on) => v with { WaterEffects = on }),
 
@@ -730,32 +739,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             ctx.Fill();
         });
 
-        // The seam fog is its own switch, not Farseer's: it is also drawn with Farseer off, over
-        // the cached terrain's edge.
-        AddToggle(composer, 0, VintageHorizonsConfigLayout.FarseerRowY, "silhouette-enabled",
-            "Farseer horizon terrain", "", FarseerTip, OnSilhouetteEnabledChanged);
-        AddToggle(composer, 1, VintageHorizonsConfigLayout.FarseerRowY, "silhouette-fog",
-            "Seam fog", "", SeamFogTip, OnSilhouetteFogChanged);
-        AddToggle(composer, 0, VintageHorizonsConfigLayout.PausedRowY, "load-while-paused",
-            "Load terrain while paused", "", PausedLoadingTip, OnPausedLoadingChanged);
-        // It applies only from the next start, which the hover says along with what this session
-        // runs; Save says so in chat too.
-        AddToggle(composer, 1, VintageHorizonsConfigLayout.PausedRowY, "all-cores-gc",
-            "All-Cores Garbage Collection", "More RAM", AllCoresTipText(), OnAllCoresChanged);
-        AddToggle(composer, 0, VintageHorizonsConfigLayout.DeveloperRowY, "developer-options",
-            "Developer options", "", DeveloperOptionsTip, OnDeveloperOptionsChanged);
-        if (silhouettes.NoSampler())
-        {
-            // A short red note in the right column, its hover carrying the whole warning.
-            double noteX = VintageHorizonsConfigLayout.ColumnX(1);
-            const double noteY = VintageHorizonsConfigLayout.DeveloperRowY;
-            composer.AddStaticText(NoSamplerNote, NoSamplerFont(),
-                ElementBounds.Fixed(noteX, Y(noteY + 4), VintageHorizonsConfigLayout.ColumnWidth, 22));
-            composer.AddHoverText(NoSamplerWarning, CairoFont.WhiteSmallText(), 420,
-                ElementBounds.Fixed(noteX, Y(noteY), VintageHorizonsConfigLayout.ColumnWidth, RowHeight - 2),
-                "tip-no-sampler");
-        }
-
         composer.AddStaticText("Visual features", CairoFont.WhiteMediumText(),
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.VisualHeadingY), 230, 30));
         // The preset sits over the right column, clear of the left column's Cost heading.
@@ -778,16 +761,57 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                     VintageHorizonsConfigLayout.CostWidth, 22));
         }
 
+        // Farseer and its seam fog lead the list. The fog is its own switch, not Farseer's: it is
+        // also drawn with Farseer off, over the cached terrain's edge.
+        AddToggle(composer, 0, VisualLine(0), "silhouette-enabled",
+            "Farseer horizon terrain", FarseerCost, FarseerTip, OnSilhouetteEnabledChanged);
+        AddToggle(composer, 1, VisualLine(0), "silhouette-fog",
+            "Seam fog", SeamFogCost, SeamFogTip, OnSilhouetteFogChanged);
+        // It applies only from the next start, which the hover says along with what this session
+        // runs; Save says so in chat too.
+        AddToggle(composer, 1, VisualLine(1), "all-cores-gc",
+            "All-Cores Garbage Collection", "More RAM", AllCoresTipText(), OnAllCoresChanged);
+
+        // The feature rows: the left column's under Farseer, the rest under all-cores collection.
         for (int i = 0; i < Rows.Length; i++)
         {
             VisualRow row = Rows[i];
-            int column = i / VintageHorizonsConfigLayout.VisualRowsPerColumn;
-            double y = VintageHorizonsConfigLayout.VisualRowsY
-                + i % VintageHorizonsConfigLayout.VisualRowsPerColumn * RowHeight;
-            AddToggle(composer, column, y, row.Key, row.Title, row.Cost, row.Tip,
+            bool left = i < VintageHorizonsConfigLayout.VisualRowsPerColumn;
+            double y = left ? VisualLine(1 + i) : VisualLine(2 + i - VintageHorizonsConfigLayout.VisualRowsPerColumn);
+            AddToggle(composer, left ? 0 : 1, y, row.Key, row.Title, row.Cost, row.Tip,
                 on => OnVisualChanged(row, on));
         }
+
+        const double tail = VintageHorizonsConfigLayout.TailRowsY;
+        AddToggle(composer, 0, tail, "load-while-paused",
+            "Load terrain while paused", "", PausedLoadingTip, OnPausedLoadingChanged);
+        AddToggle(composer, 0, tail + RowHeight, "developer-options",
+            "Developer options", "", DeveloperOptionsTip, OnDeveloperOptionsChanged);
+        if (silhouettes.NoSampler())
+        {
+            // A short red note in the right column, its hover carrying the whole warning.
+            double noteX = VintageHorizonsConfigLayout.ColumnX(1);
+            composer.AddStaticText(NoSamplerNote, NoSamplerFont(),
+                ElementBounds.Fixed(noteX, Y(tail + 4), VintageHorizonsConfigLayout.ColumnWidth, 22));
+            composer.AddHoverText(NoSamplerWarning, CairoFont.WhiteSmallText(), 420,
+                ElementBounds.Fixed(noteX, Y(tail), VintageHorizonsConfigLayout.ColumnWidth, RowHeight - 2),
+                "tip-no-sampler");
+        }
     }
+
+    static double VisualLine(int line) => VintageHorizonsConfigLayout.VisualRowsY + line * RowHeight;
+
+    /// <summary>
+    /// Farseer: a few thousand coarse quads since 0.4.93's geometry cut, and the owner's 0.4.155
+    /// readings showed no visible drop with it on. An estimate, not a clean A/B.
+    /// </summary>
+    const string FarseerCost = "Low";
+
+    /// <summary>
+    /// The seam fog: measured by the owner at 0.52-0.68 ms a frame at 1440p (490 to 390 FPS in
+    /// 0.4.155, 550 to 400 in 0.4.123), the largest single switch here.
+    /// </summary>
+    const string SeamFogCost = "High";
 
     /// <summary>
     /// One switch in a column: its title on the left, an optional cost word right-aligned before
@@ -1522,8 +1546,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     }
 
     const string SeamFogTip = "Fog over the seam between Farseer and real terrain, or with Farseer "
-        + "off, over the edge of the cached terrain. Off draws no fog and builds nothing for it, so "
-        + "switching it shows its whole cost. .dlfog toggles it without saving.";
+        + "off, over the edge of the cached terrain. The most expensive switch here: about half a "
+        + "millisecond a frame at 1440p. Off draws no fog and builds nothing for it. .dlfog toggles "
+        + "it without saving.";
 
     void OnSilhouetteFogChanged(bool on)
     {

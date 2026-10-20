@@ -77,7 +77,7 @@ public static class SettingsWindowChecks
     static void FarseerRowOnGeneral(Check c)
     {
         string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
-        c.True(dialog.Contains("\"Farseer horizon terrain\", \"\", FarseerTip, OnSilhouetteEnabledChanged", StringComparison.Ordinal)
+        c.True(dialog.Contains("\"Farseer horizon terrain\", FarseerCost, FarseerTip, OnSilhouetteEnabledChanged", StringComparison.Ordinal)
                 && dialog.Contains("\"silhouette-enabled\"", StringComparison.Ordinal)
                 && dialog.Contains("\"silhouette-fog\"", StringComparison.Ordinal),
             "Farseer and the seam fog have their switches on General");
@@ -157,16 +157,12 @@ public static class SettingsWindowChecks
         c.True(VintageHorizonsConfigLayout.ScaleY + VintageHorizonsConfigLayout.ScaleHeight
                     <= VintageHorizonsConfigLayout.RuleY
                 && VintageHorizonsConfigLayout.RuleY + VintageHorizonsConfigLayout.RuleHeight
-                    <= VintageHorizonsConfigLayout.FarseerRowY,
-            "a rule sits between the bar and the switches");
-        c.True(VintageHorizonsConfigLayout.PausedRowY
-                    >= VintageHorizonsConfigLayout.FarseerRowY + VintageHorizonsConfigLayout.VisualRowHeight,
-            "the Farseer row comes first, and paused loading a full row lower");
-        c.True(VintageHorizonsConfigLayout.DeveloperRowY
-                    >= VintageHorizonsConfigLayout.PausedRowY + VintageHorizonsConfigLayout.VisualRowHeight
-                && VintageHorizonsConfigLayout.DeveloperRowY + VintageHorizonsConfigLayout.RowSwitchSize
-                    <= VintageHorizonsConfigLayout.VisualHeadingY - 4,
-            "then Developer options, finishing above the visual features heading");
+                    <= VintageHorizonsConfigLayout.VisualHeadingY - 2,
+            "a rule sits between the bar and the visual features heading");
+        c.True(VintageHorizonsConfigLayout.VisualRowsPerColumn + 1 == VintageHorizonsConfigLayout.VisualLineCount
+                && VintageHorizonsConfigLayout.VisualRowCount - VintageHorizonsConfigLayout.VisualRowsPerColumn + 2
+                    <= VintageHorizonsConfigLayout.VisualLineCount,
+            "Farseer and four features fill the left column; the fog, all-cores and three features the right");
         c.True(VintageHorizonsConfigLayout.HelpY >= VintageHorizonsConfigLayout.LodTitleY + 30
                 && VintageHorizonsConfigLayout.HelpY + 22 <= VintageHorizonsConfigLayout.ScaleY,
             "the help line clears the distances title above it and the scale below it");
@@ -182,12 +178,10 @@ public static class SettingsWindowChecks
             "the preset drop-down finishes before the first feature row");
         c.True(VintageHorizonsConfigLayout.RowSwitchSize <= VintageHorizonsConfigLayout.VisualRowHeight - 2,
             "a row's switch fits its pitch");
-        c.True(2 * VintageHorizonsConfigLayout.VisualRowsPerColumn >= VintageHorizonsConfigLayout.VisualRowCount,
-            "two columns hold every feature row");
-        double lastRowBottom = VintageHorizonsConfigLayout.VisualRowsY
-            + VintageHorizonsConfigLayout.VisualRowsPerColumn * VintageHorizonsConfigLayout.VisualRowHeight;
+        double lastRowBottom = VintageHorizonsConfigLayout.TailRowsY
+            + VintageHorizonsConfigLayout.TailRowCount * VintageHorizonsConfigLayout.VisualRowHeight;
         c.True(lastRowBottom <= VintageHorizonsConfigLayout.ButtonY - 6,
-            "the last feature row ends above the Save row");
+            "paused loading and Developer options end above the Save row");
     }
 
     static string Source(params string[] parts) => File.ReadAllText(

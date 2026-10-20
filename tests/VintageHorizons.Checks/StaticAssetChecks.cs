@@ -2597,7 +2597,7 @@ public static class StaticAssetChecks
             c.True(dialog.Contains($"\"{key}\"", StringComparison.Ordinal),
                 $"the settings window has a row for {key}");
         }
-        c.True(dialog.Contains("AddToggle(composer, column, y, row.Key, row.Title, row.Cost, row.Tip,", StringComparison.Ordinal)
+        c.True(dialog.Contains("AddToggle(composer, left ? 0 : 1, y, row.Key, row.Title, row.Cost, row.Tip,", StringComparison.Ordinal)
                 && dialog.Contains("on => OnVisualChanged(row, on));", StringComparison.Ordinal),
             "each visual row is a switch bound to its own row rather than a hand-written pair");
         c.True(dialog.Contains("LodPreset.All.Select(preset => preset.Name).Append(\"Custom\")", StringComparison.Ordinal)
@@ -2668,7 +2668,7 @@ public static class StaticAssetChecks
             "the per-row cost words carry a column heading over the same box they use");
 
         double featureBottom = VintageHorizonsConfigLayout.VisualRowsY
-            + (VintageHorizonsConfigLayout.VisualRowsPerColumn - 1)
+            + (VintageHorizonsConfigLayout.VisualLineCount - 1)
                 * VintageHorizonsConfigLayout.VisualRowHeight
             + 32;
         c.True(featureBottom < VintageHorizonsConfigLayout.ButtonY,
