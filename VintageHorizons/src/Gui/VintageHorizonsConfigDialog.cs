@@ -97,9 +97,9 @@ internal static class VintageHorizonsConfigLayout
     /// The two columns span the window from the margin to the right edge of the Automatic
     /// switch, so the right column's switches line up under it.
     /// </summary>
-    internal const double ColumnGap = 40;
+    internal const double ColumnGap = 32;
     internal const double ColumnWidth = (SwitchX + 32 - Margin - ColumnGap) / 2;
-    internal const double CostWidth = 70;
+    internal const double CostWidth = 64;
     internal static double ColumnX(int column) => Margin + column * (ColumnWidth + ColumnGap);
     internal static double ColumnSwitchX(int column) => ColumnX(column) + ColumnWidth - RowSwitchSize - 3;
     internal static double ColumnCostX(int column) => ColumnSwitchX(column) - 8 - CostWidth;
@@ -165,12 +165,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     const int MaxDrawDistance = 32768;
     const int DrawDistanceStep = 512;
 
-    /// <summary>
-    /// What Defaults restores, and the same number a fresh install starts at - see
-    /// <see cref="VintageHorizonsConfig.FarViewDistanceCap"/>. The two have to agree or
-    /// Defaults means something the mod has never done.
-    /// </summary>
-    const int DefaultDrawDistance = 4096;
 
     const double Width = VintageHorizonsConfigLayout.Width;
     const double Height = VintageHorizonsConfigLayout.Height;
@@ -412,8 +406,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             (v, on) => v with { DistantAntiAliasing = on }),
     };
 
-    static readonly string[] PresetCodes = { "performance", "balanced", "quality", "custom" };
-    static readonly string[] PresetNames = { "Performance", "Balanced", "Quality", "Custom" };
+    static readonly string[] PresetCodes =
+        LodPreset.All.Select(preset => preset.Code).Append("custom").ToArray();
+    static readonly string[] PresetNames =
+        LodPreset.All.Select(preset => preset.Name).Append("Custom").ToArray();
 
     readonly record struct SilhouetteRow(
         string Key, string Title, string Tip, int Min, int Max, int Step,
@@ -767,7 +763,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         double switchX = VintageHorizonsConfigLayout.ColumnSwitchX(column);
         double costX = VintageHorizonsConfigLayout.ColumnCostX(column);
         const double size = VintageHorizonsConfigLayout.RowSwitchSize;
-        composer.AddStaticText(title, CairoFont.WhiteSmallishText(),
+        composer.AddStaticText(title, FittedFont(title, costX - 4 - x),
             ElementBounds.Fixed(x, Y(y + 2), costX - 4 - x, 26));
         if (cost.Length > 0)
         {
@@ -810,6 +806,21 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             taa.Preview(pendingTaa, pendingShowTaa);
         }
         RequestRecompose();
+    }
+
+    /// <summary>
+    /// Smallish text, made smaller only when the title would not fit its box on one line. At GUI
+    /// scale 1.0 on 1440p "Vanilla and LOD Seam Blending" wrapped onto the row below it (owner
+    /// screenshot, 0.4.167); the label stays as written (owner: labels are fine).
+    /// </summary>
+    static CairoFont FittedFont(string text, double width)
+    {
+        CairoFont font = CairoFont.WhiteSmallishText();
+        double available = GuiElement.scaled(width) - GuiElement.scaled(2);
+        double needed = font.GetTextExtents(text).Width;
+        if (needed > available && needed > 0)
+            font.UnscaledFontsize *= available / needed;
+        return font;
     }
 
     const string FarseerTip =
@@ -1446,41 +1457,35 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             activeComposer!.GetDynamicText("silhouette-reach-label")
                 .SetNewText(SilhouetteReachLabel(), false, true, false);
         RefreshSilhouetteStatus();
+        RefreshPresetReadout();
     }
 
     /// <summary>Which preset the current combination is, or the trailing "Custom" entry.</summary>
-    int PresetIndex() => (pendingVisuals.PresetName, pendingSilhouettes.Enabled) switch
-    {
-        ("Performance", false) when !pendingSilhouettes.FogEnabled => 0,
-        ("Balanced", true) => 1,
-        ("Quality", true) => 2,
-        _ => 3,
-    };
+    int PresetIndex() => LodPreset.Matching(pendingVisuals, pendingFarCap, pendingSilhouettes) is { } preset
+        ? Array.IndexOf(LodPreset.All, preset)
+        : LodPreset.All.Length;
 
     void OnPresetSelected(string code, bool selected)
     {
-        if (!selected) return;
-        switch (code)
-        {
-            case "performance":
-                // The fog too: it no longer needs Farseer, and Performance has always meant
-                // none of Farseer's cost, the fog's included.
-                pendingVisuals = LodVisualSettings.Performance;
-                pendingSilhouettes = pendingSilhouettes with { Enabled = false, FogEnabled = false };
-                silhouettes.Preview(pendingSilhouettes);
-                break;
-            case "balanced":
-                pendingVisuals = LodVisualSettings.Balanced;
-                pendingSilhouettes = pendingSilhouettes with { Enabled = true };
-                silhouettes.Preview(pendingSilhouettes);
-                break;
-            case "quality":
-                pendingVisuals = LodVisualSettings.Quality;
-                pendingSilhouettes = pendingSilhouettes with { Enabled = true };
-                silhouettes.Preview(pendingSilhouettes);
-                break;
-            default: return;   // "Custom" is a readout, not a choice.
-        }
+        // "Custom" is a readout, not a choice.
+        if (!selected || Array.Find(LodPreset.All, preset => preset.Code == code) is not { } chosen) return;
+        ApplyPreset(chosen);
+    }
+
+    /// <summary>
+    /// A preset's switches, draw distance and Farseer reach. The Farseer switches show at once,
+    /// as they do when clicked; the rest waits for Save.
+    /// </summary>
+    void ApplyPreset(LodPreset preset)
+    {
+        pendingVisuals = preset.Visuals;
+        pendingSilhouettes = preset.ApplyTo(pendingSilhouettes);
+        silhouettes.Preview(pendingSilhouettes);
+        pendingFarCap = preset.DrawDistance;
+        scale?.SetDrawDistance(pendingFarCap);
+        if (activeComposer?.Composed == true && shownTab == GeneralTab)
+            activeComposer.GetDynamicText("draw-distance-label")
+                .SetNewText(DrawDistanceLabel(), false, true, false);
         RefreshVisuals();
     }
 
@@ -1512,7 +1517,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         scale?.SetSilhouette(pendingSilhouettes.ReachBlocks, pendingSilhouettes.Enabled);
     }
 
-    /// <summary>The preset readout after a Farseer switch, which the presets also set.</summary>
+    /// <summary>The preset readout after a Farseer switch, draw distance or reach, which the presets also set.</summary>
     void RefreshPresetReadout()
     {
         if (activeComposer?.Composed != true || shownTab != GeneralTab) return;
@@ -1587,6 +1592,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             activeComposer.GetDynamicText("draw-distance-label")
                 .SetNewText(DrawDistanceLabel(), false, true, false);
         }
+        RefreshPresetReadout();
         return true;
     }
 
@@ -1639,18 +1645,15 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             return true;
         }
 
+        // What a fresh install draws: the Quality preset (owner, 2026-10-19).
         Array.Copy(LodWorld.DefaultLevelThresholds, pendingThresholds,
             pendingThresholds.Length);
         pendingAutomatic = true;
-        pendingFarCap = DefaultDrawDistance;
+        pendingFarCap = LodPreset.Quality.DrawDistance;
         pendingLoadWhilePaused = true;
         pendingAllCores = false;
-        pendingVisuals = LodVisualSettings.Default;
-        pendingSilhouettes = pendingSilhouettes with
-        {
-            Enabled = LodSilhouetteSettings.Default.Enabled,
-            FogEnabled = LodSilhouetteSettings.Default.FogEnabled,
-        };
+        pendingVisuals = LodPreset.Quality.Visuals;
+        pendingSilhouettes = LodPreset.Quality.ApplyTo(pendingSilhouettes);
         silhouettes.Preview(pendingSilhouettes);
 
         RefreshThresholds();

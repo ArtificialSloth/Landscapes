@@ -14,13 +14,13 @@ public class VintageHorizonsConfig
     /// <summary>
     /// Hard cap on how far cached terrain is drawn, in blocks. 0 = unlimited.
     ///
-    /// A fresh install starts at 4,096 rather than unlimited. Unlimited draws every cached
-    /// section a player has ever collected, so the cost of a first launch is set by how much
-    /// world happens to be on disk rather than by anything the mod chose, and the mask's
-    /// benefit scales with the vanilla render distance underneath it. An existing config file
-    /// carries its own value - including a saved 0 - so this changes new installs only.
+    /// A fresh install starts at the Quality preset's 8,192 rather than unlimited (owner,
+    /// 2026-10-19: players should see what the mod can do; it was 4,096). Unlimited draws every
+    /// cached section a player has ever collected, so the cost of a first launch is set by how
+    /// much world happens to be on disk rather than by anything the mod chose. An existing config
+    /// file carries its own value - including a saved 0 - so this changes new installs only.
     /// </summary>
-    public int FarViewDistanceCap = 4096;
+    public int FarViewDistanceCap = 8192;
 
     /// <summary>Legacy first threshold used to migrate configs without LodThresholds.</summary>
     public int DetailDistance = 512;
@@ -145,7 +145,7 @@ public class VintageHorizonsConfig
     /// a server may refuse to supply tiles, but cannot silently turn the saved preference off.
     /// </summary>
     public bool HorizonSilhouettes = true;
-    public int SilhouetteReachBlocks = 4096;
+    public int SilhouetteReachBlocks = 8192;
     public float SilhouetteSkyTint = 2f;
     public float SilhouetteTintRed = 0.26f;
     public float SilhouetteTintGreen = 0.29f;
@@ -244,6 +244,12 @@ public class VintageHorizonsConfig
     /// (owner, 2026-10-19); the dials' values stay in force whether or not it is shown.
     /// </summary>
     public bool ShowDeveloperOptions = false;
+
+    /// <summary>
+    /// The first-run prompt has asked for a preset, answered or not. False shows it once, at the
+    /// next login (owner, 2026-10-19); existing installs see it once too.
+    /// </summary>
+    public bool PresetPromptShown = false;
 }
 
 /// <summary>The normal 50 ms game-tick cadence, expressed over a pause-safe monotonic clock.</summary>
@@ -359,7 +365,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             settingsIntegration.Dispose();
             settingsIntegration = null;
         }
-        capi.Event.LevelFinalize += ShowLodModNotice;
+        capi.Event.LevelFinalize += ShowLoginDialogs;
 
         LodWorld.SetLevelThresholds(LodWorld.NormalizeLevelThresholds(
             config.LodThresholds, config.DetailDistance));
@@ -573,8 +579,49 @@ public partial class VintageHorizonsModSystem : ModSystem
         : modId;
 
     /// <summary>
-    /// Once the world is up: the notice about other LOD mods. A listed one switched on always
-    /// shows it; otherwise it shows until the player chooses "Don't show again".
+    /// Once the world is up: the first-run preset prompt if it has never been shown, then the
+    /// notice about other LOD mods once it closes, so the two never stack.
+    /// </summary>
+    void ShowLoginDialogs()
+    {
+        if (config.PresetPromptShown)
+        {
+            ShowLodModNotice();
+            return;
+        }
+        var prompt = new LodPresetPrompt(capi, ApplyChosenPreset, () =>
+        {
+            config.PresetPromptShown = true;
+            SaveConfig();
+            // After the prompt has finished with the click that closed it.
+            capi.Event.EnqueueMainThreadTask(ShowLodModNotice, "dodenslandscapes-notice-after-preset");
+        });
+        if (!prompt.TryOpen())
+        {
+            Mod.Logger.Warning("The first-run preset prompt could not open.");
+            ShowLodModNotice();
+        }
+    }
+
+    /// <summary>
+    /// The first-run prompt's choice, applied and saved as the settings window's Save would:
+    /// the preset's switches, draw distance and Farseer reach, everything else as it is.
+    /// </summary>
+    void ApplyChosenPreset(LodPreset preset)
+    {
+        bool automatic = renderer?.AutoLodThresholds ?? config.AutoLodThresholds;
+        int[] thresholds = LodWorld.NormalizeLevelThresholds(config.LodThresholds, config.DetailDistance);
+        ApplyGuiConfig(thresholds, automatic, preset.DrawDistance,
+            renderer?.ContinueLoadingWhilePaused ?? config.LoadWhilePaused, preset.Visuals,
+            renderer?.TaaDials ?? ConfiguredTaaDials(), preset.ApplyTo(CurrentSilhouetteSettings()));
+        Mod.Logger.Notification("[Landscapes] First-run preset: {0}.", preset.Name);
+        capi.ShowChatMessage("[Landscapes] " + preset.Name
+            + " preset chosen. Change it any time in Settings > Landscapes or with .dlconfig.");
+    }
+
+    /// <summary>
+    /// The notice about other LOD mods. A listed one switched on always shows it; otherwise it
+    /// shows until the player chooses "Don't show again".
     /// </summary>
     void ShowLodModNotice()
     {
@@ -5140,7 +5187,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             capi.Event.ChunkDirty -= OnChunkDirty;
             capi.Event.LevelFinalize -= OnLevelFinalize;
             capi.Event.LevelFinalize -= RegisterAutoCommand;
-            capi.Event.LevelFinalize -= ShowLodModNotice;
+            capi.Event.LevelFinalize -= ShowLoginDialogs;
             capi.Event.LeaveWorld -= OnLeaveWorld;
 
             // Nothing to unregister if the renderer never started: no listener was registered.

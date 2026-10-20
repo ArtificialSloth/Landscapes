@@ -83,8 +83,15 @@ public static class SettingsWindowChecks
             "with no sampler mod the row shows a short red note whose hover is the full warning");
         c.True(VintageHorizonsConfigDialog.NoSamplerNote.Length <= 40,
             "the note is short enough for the space between the two switches");
-        c.True(dialog.Contains("FogEnabled = LodSilhouetteSettings.Default.FogEnabled,", StringComparison.Ordinal),
-            "Defaults puts the seam fog back too, now that it is on General");
+        c.True(dialog.Contains("pendingSilhouettes = LodPreset.Quality.ApplyTo(pendingSilhouettes);", StringComparison.Ordinal),
+            "Defaults is the Quality preset, Farseer's switches and reach included");
+        string mod = Source("VintageHorizonsModSystem.cs");
+        string prompt = Source("Gui", "LodPresetPrompt.cs");
+        c.False(new VintageHorizonsConfig().PresetPromptShown, "a fresh install asks for a preset once");
+        c.True(prompt.Contains("for (int i = 0; i < LodPreset.All.Length; i++)", StringComparison.Ordinal)
+                && prompt.Contains("closed();", StringComparison.Ordinal)
+                && mod.Contains("config.PresetPromptShown = true;", StringComparison.Ordinal),
+            "the prompt offers every preset and, however it closes, is not shown again");
     }
 
     static void GenerateReadsAsAFlow(Check c)

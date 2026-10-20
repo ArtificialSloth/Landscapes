@@ -88,13 +88,10 @@ internal readonly record struct LodVisualSettings(
         DistantAntiAliasing: false);
 
     /// <summary>
-    /// The two cheapest-per-pixel features kept, the two per-vertex ones given up.
-    ///
-    /// The split follows the measurement rather than taste: the seam band and the water terms
-    /// are paid by the fragments that show them, which is a ring and a lake surface, while the
-    /// biome colour and the block textures are paid by every vertex in the view whether or not
-    /// anything on screen ends up showing them. Distant anti-aliasing is a per-pixel pass over
-    /// distant terrain alone and stays.
+    /// Quality without seam blending's block textures and speckle, the one Moderate-cost
+    /// feature. The seam band stays: it is paid only by the ring of fragments that shows it.
+    /// Close biome colour and varied tree colours stay too (owner, 2026-10-19): the look is
+    /// worth more to him than the per-vertex cost the earlier split gave them up for.
     /// </summary>
     public static LodVisualSettings Balanced => new(
         BlendPipeline: false,
@@ -102,7 +99,7 @@ internal readonly record struct LodVisualSettings(
         BlockTextures: false,
         ClimateTint: true,
         ClimateTintRange: CloseClimateTintRange,
-        LeafSeasonColours: false,
+        LeafSeasonColours: true,
         HalfBlockTerrain: true,
         WaterEffects: true,
         DistantAntiAliasing: true);
@@ -119,4 +116,48 @@ internal readonly record struct LodVisualSettings(
         : this == Balanced ? "Balanced"
         : this == Quality ? "Quality"
         : null;
+}
+
+/// <summary>
+/// A named preset: the visual switches plus how far cached terrain is drawn, whether Farseer and
+/// its seam fog are on, and Farseer's reach (owner, 2026-10-19). The settings window's drop-down
+/// and the first-run prompt both pick from <see cref="All"/>.
+///
+/// Farseer is on in every preset, even where its reach equals the cached distance: it fills the
+/// ground nobody has explored inside that distance, which is most of it in a new world (owner).
+/// </summary>
+internal sealed record LodPreset(string Code, string Name, LodVisualSettings Visuals,
+    int DrawDistance, bool Farseer, int FarseerReach, bool SeamFog, string Summary)
+{
+    public static readonly LodPreset Performance = new("performance", "Performance",
+        LodVisualSettings.Performance, 2048, true, 4096, false,
+        "Cached terrain to 2,048 blocks and a Farseer outline to 4,096. No extra effects.");
+
+    public static readonly LodPreset Balanced = new("balanced", "Balanced",
+        LodVisualSettings.Balanced, 4096, true, 8192, true,
+        "Cached terrain to 4,096 blocks and Farseer to 8,192, with every effect but seam blending.");
+
+    /// <summary>What a fresh install draws (owner: players should see what the mod can do).</summary>
+    public static readonly LodPreset Quality = new("quality", "Quality",
+        LodVisualSettings.Quality, 8192, true, 8192, true,
+        "Cached terrain and Farseer to 8,192 blocks, with every effect but far biome colors.");
+
+    public static readonly LodPreset[] All = { Performance, Balanced, Quality };
+
+    /// <summary>The preset these values are, or null for a hand-made combination.</summary>
+    public static LodPreset? Matching(LodVisualSettings visuals, int drawDistance,
+        LodSilhouetteSettings farseer) => Array.Find(All, preset =>
+            preset.Visuals == visuals
+            && preset.DrawDistance == drawDistance
+            && preset.Farseer == farseer.Enabled
+            && preset.SeamFog == farseer.FogEnabled
+            && preset.FarseerReach == farseer.ReachBlocks);
+
+    /// <summary>Farseer's switches and reach set to this preset's; every dial left alone.</summary>
+    public LodSilhouetteSettings ApplyTo(LodSilhouetteSettings farseer) => farseer with
+    {
+        Enabled = Farseer,
+        FogEnabled = SeamFog,
+        ReachBlocks = FarseerReach,
+    };
 }

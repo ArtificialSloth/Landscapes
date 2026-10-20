@@ -1739,14 +1739,15 @@ public static class SilhouetteChecks
     static void ClientSettingsArithmetic(Check c)
     {
         LodSilhouetteSettings defaults = LodSilhouetteSettings.Default;
-        c.True(defaults.Enabled && defaults.ReachBlocks == 4096,
-            "a fresh client asks for the owner's 4,096-block silhouette reach");
+        c.True(defaults.Enabled && defaults.ReachBlocks == 8192
+                && defaults.ReachBlocks == LodPreset.Quality.FarseerReach,
+            "a fresh client asks for the Quality preset's 8,192-block silhouette reach");
         c.Eq((2f, 0.75f, 0.70f, 0.5f, 0.25f),
             (defaults.SkyTint, defaults.LightLevelBias, defaults.FadeBias, defaults.OutlineDetail,
                 defaults.HillSoftness),
             "and draws the owner's tuned look (2026-10-13)");
         var fresh = new VintageHorizonsConfig();
-        c.Eq((4096, 2f, 0.75f, 0.70f),
+        c.Eq((8192, 2f, 0.75f, 0.70f),
             (fresh.SilhouetteReachBlocks, fresh.SilhouetteSkyTint, fresh.SilhouetteLightLevelBias,
                 fresh.SilhouetteFadeBias),
             "a fresh config file starts from the same values");
@@ -2306,10 +2307,13 @@ public static class SilhouetteChecks
                     StringComparison.Ordinal)
                 && dialog.Contains("silhouettes.Preview(pendingSilhouettes);", StringComparison.Ordinal),
             "both Reach controls apply an independent Farseer distance immediately");
-        c.True(dialog.Contains("(\"Performance\", false)", StringComparison.Ordinal)
-                && dialog.Contains("(\"Balanced\", true)", StringComparison.Ordinal)
-                && dialog.Contains("(\"Quality\", true)", StringComparison.Ordinal),
-            "Performance disables silhouettes while Balanced and Quality enable them");
+        // Owner, 2026-10-19: Farseer is on in every preset, even at the cached distance, because
+        // it fills unexplored ground; Performance gives up only the seam fog and half the reach.
+        c.True(LodPreset.All.All(preset => preset.Farseer)
+                && LodPreset.Performance.FarseerReach == 4096 && !LodPreset.Performance.SeamFog
+                && LodPreset.Balanced.FarseerReach == 8192 && LodPreset.Balanced.SeamFog
+                && LodPreset.Quality.FarseerReach == 8192 && LodPreset.Quality.SeamFog,
+            "every preset has Farseer; Performance at 4,096 without fog, Balanced and Quality at 8,192 with it");
         foreach (string name in new[]
         {
             "HorizonSilhouettes", "SilhouetteReachBlocks", "SilhouetteSkyTint",

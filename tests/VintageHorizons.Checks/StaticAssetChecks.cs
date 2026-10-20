@@ -2546,10 +2546,12 @@ public static class StaticAssetChecks
         // Defaults has to restore what a fresh install actually draws. They were different
         // numbers - the button said 32,768 while a new config said unlimited - so pressing it
         // changed the setting rather than resetting it.
-        c.True(dialog.Contains("const int DefaultDrawDistance = 4096", StringComparison.Ordinal)
-            && dialog.Contains("pendingFarCap = DefaultDrawDistance;", StringComparison.Ordinal)
-            && mod.Contains("public int FarViewDistanceCap = 4096;", StringComparison.Ordinal),
-            "a new install and the Defaults button agree on a 4,096-block cached draw distance");
+        // Both are the Quality preset since 2026-10-19 (owner: players should see what the mod
+        // can do).
+        c.True(dialog.Contains("pendingFarCap = LodPreset.Quality.DrawDistance;", StringComparison.Ordinal)
+            && new VintageHorizonsConfig().FarViewDistanceCap == LodPreset.Quality.DrawDistance
+            && LodPreset.Quality.DrawDistance == 8192,
+            "a new install and the Defaults button agree on Quality's 8,192-block cached draw distance");
         c.True(dialog.Contains("ToString(\"N0\", CultureInfo.InvariantCulture)", StringComparison.Ordinal),
             "the config window displays full block values instead of abbreviated thousands");
         // Every optional visual feature has to survive a restart, which means it has to exist
@@ -2598,10 +2600,20 @@ public static class StaticAssetChecks
         c.True(dialog.Contains("AddToggle(composer, column, y, row.Key, row.Title, row.Cost, row.Tip,", StringComparison.Ordinal)
                 && dialog.Contains("on => OnVisualChanged(row, on));", StringComparison.Ordinal),
             "each visual row is a switch bound to its own row rather than a hand-written pair");
-        c.True(dialog.Contains("LodVisualSettings.Performance", StringComparison.Ordinal)
-            && dialog.Contains("LodVisualSettings.Balanced", StringComparison.Ordinal)
-            && dialog.Contains("LodVisualSettings.Quality", StringComparison.Ordinal),
+        c.True(dialog.Contains("LodPreset.All.Select(preset => preset.Name).Append(\"Custom\")", StringComparison.Ordinal)
+            && LodPreset.All.Select(preset => preset.Name).SequenceEqual(new[] { "Performance", "Balanced", "Quality" }),
             "and the three presets are offered");
+        c.True(LodPreset.Performance.DrawDistance == 2048 && LodPreset.Balanced.DrawDistance == 4096
+                && LodPreset.Quality.DrawDistance == 8192,
+            "each preset carries its cached draw distance (owner, 2026-10-19)");
+        c.True(LodVisualSettings.Balanced.LeafSeasonColours && LodVisualSettings.Balanced.ClimateTint
+                && !LodVisualSettings.Balanced.BlendPipeline,
+            "Balanced keeps close biome and varied tree colours and gives up seam blending");
+        LodSilhouetteSettings farseer = LodSilhouetteSettings.Default;
+        c.True(LodPreset.All.All(preset => LodPreset.Matching(preset.Visuals, preset.DrawDistance,
+                    preset.ApplyTo(farseer)) == preset)
+                && LodPreset.Matching(LodPreset.Quality.Visuals, 4096, LodPreset.Quality.ApplyTo(farseer)) == null,
+            "a preset reads back as itself, and a dragged draw distance reads as Custom");
 
         // The explanations live on hover. Printing them under the titles was tried and does not
         // fit: a medium-weight title is taller than the box it is given, so every row overran

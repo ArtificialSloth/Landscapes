@@ -108,8 +108,10 @@ public static class DeferralChecks
         string mod = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src", "VintageHorizonsModSystem.cs"));
         c.True(mod.Contains("if (otherLodMods.Length == 0 && config.HideLodModNotice) return;", StringComparison.Ordinal),
             "hiding the reminder never hides a conflict: a listed mod brings the notice back");
-        c.True(mod.Contains("capi.Event.LevelFinalize += ShowLodModNotice;", StringComparison.Ordinal),
-            "the notice is shown at every login, once the world is up");
+        c.True(mod.Contains("capi.Event.LevelFinalize += ShowLoginDialogs;", StringComparison.Ordinal)
+                && mod.Contains("ShowLodModNotice();", StringComparison.Ordinal)
+                && mod.Contains("capi.Event.EnqueueMainThreadTask(ShowLodModNotice,", StringComparison.Ordinal),
+            "the notice is shown at every login, once the world is up and after any first-run preset prompt");
     }
 
     static void NeverStepsAside(Check c)

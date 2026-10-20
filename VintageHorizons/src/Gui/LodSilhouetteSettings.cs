@@ -41,7 +41,8 @@ internal readonly record struct LodSilhouetteSettings(
 
     public static LodSilhouetteSettings Default => new(
         Enabled: true,
-        ReachBlocks: 4096,
+        // Quality's reach, since Quality is what a fresh install draws (owner, 2026-10-19).
+        ReachBlocks: 8192,
         SkyTint: 2f,
         TintRed: 0.26f,
         TintGreen: 0.29f,
