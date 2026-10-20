@@ -57,8 +57,11 @@ public static class SettingsWindowChecks
     {
         string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
         c.True(dialog.Contains("\"Anti-aliasing\", \"Farseer look\", \"Seam fog\"", StringComparison.Ordinal)
-                && dialog.Contains("AddDropDown(DeveloperGroupCodes, DeveloperGroupNames", StringComparison.Ordinal),
-            "Developer picks one of three groups from a drop-down");
+                && dialog.Contains("\"developer-groups\");", StringComparison.Ordinal)
+                && dialog.Contains("GetHorizontalTabs(\"developer-groups\").activeElement = developerGroup;", StringComparison.Ordinal),
+            "Developer picks one of three groups from sub-tabs at the top of the page");
+        c.False(dialog.Contains("pendingAllCores = false;", StringComparison.Ordinal),
+            "Defaults leaves the all-cores collector as it is (owner, 2026-10-19)");
         c.True(dialog.Contains("foreach (LodTaaSliders.Row row in LodTaaSliders.All)", StringComparison.Ordinal)
                 && dialog.Contains("\"taa-show\"", StringComparison.Ordinal),
             "the anti-aliasing group has every dial and the tint switch");

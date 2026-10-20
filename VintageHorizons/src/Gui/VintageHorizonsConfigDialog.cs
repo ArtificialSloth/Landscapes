@@ -183,11 +183,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     const int GenerateTab = 1;
     const int DeveloperTab = 2;
 
-    // The Developer tab's groups, one at a time from its drop-down.
+    // The Developer tab's groups, one at a time from the sub-tabs at the top of its page. Each
+    // group's id is its position in the strip.
     const int AntiAliasingGroup = 0;
     const int FarseerLookGroup = 1;
     const int SeamFogGroup = 2;
-    static readonly string[] DeveloperGroupCodes = { "antialiasing", "farseer", "fog" };
     static readonly string[] DeveloperGroupNames = { "Anti-aliasing", "Farseer look", "Seam fog" };
 
     // The anti-aliasing rows: where each slider starts, how wide it is, and the row pitch.
@@ -881,25 +881,18 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     static CairoFont NoSamplerFont() => CairoFont.WhiteSmallText().WithColor(GuiStyle.ErrorTextColor);
 
     /// <summary>
-    /// Every tuning dial, one group at a time: anti-aliasing, Farseer's look and reach, or the seam
-    /// fog. They show their effect as they move; Defaults resets only the group on show.
+    /// Every tuning dial, one group at a time from the sub-tabs at the top of the page:
+    /// anti-aliasing, Farseer's look and reach, or the seam fog (a drop-down until 0.4.170, owner).
+    /// They show their effect as they move; Defaults resets only the group on show.
     /// </summary>
     void ComposeDeveloper(GuiComposer composer)
     {
-        composer.AddStaticText("Developer", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, Y(42), 300, 30));
-        if (developerGroup == FarseerLookGroup)
-        {
-            // The report `.dlsilhouette stats` prints is several lines long, so it is a hover over
-            // the heading rather than printed, where it ran into the dials.
-            composer.AddHoverText(SilhouetteStatusTip(), CairoFont.WhiteSmallText(), 500,
-                ElementBounds.Fixed(Margin, Y(40), 300, 34), "silhouette-status");
-        }
-        composer.AddStaticText("Show", CairoFont.WhiteDetailText(), EnumTextOrientation.Right,
-            ElementBounds.Fixed(Width - Margin - 360, Y(50), 90, 22));
-        composer.AddDropDown(DeveloperGroupCodes, DeveloperGroupNames, developerGroup,
-            OnDeveloperGroupSelected,
-            ElementBounds.Fixed(Width - Margin - 260, Y(40), 260, 32), "developer-group");
+        composer.AddHorizontalTabs(
+            DeveloperGroupNames.Select((name, group) => new GuiTab { Name = name, DataInt = group }).ToArray(),
+            ElementBounds.Fixed(Margin, Y(40), Width - 2 * Margin, 30), OnDeveloperGroupClicked,
+            CairoFont.WhiteSmallishText(),
+            CairoFont.WhiteSmallishText().WithColor(GuiStyle.ActiveButtonTextColor),
+            "developer-groups");
         composer.AddStaticText(
             "Tuning dials. Changes show at once: Save keeps them, Cancel puts them back, Defaults resets this group.",
             CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(78), Width - 2 * Margin, 22));
@@ -964,6 +957,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         {
             composer.AddStaticText("Reach", CairoFont.WhiteSmallishText(),
                 ElementBounds.Fixed(Margin, Y(118), 100, 26));
+            // The report `.dlsilhouette stats` prints is several lines long, so it is a hover over
+            // the Reach title rather than printed, where it ran into the dials.
+            composer.AddHoverText(SilhouetteStatusTip(), CairoFont.WhiteSmallText(), 500,
+                ElementBounds.Fixed(Margin, Y(114), 100, 34), "silhouette-status");
             composer.AddSlider(OnSilhouetteReachSlider,
                 ElementBounds.Fixed(135, Y(114), 545, 28), "silhouette-reach");
             composer.AddDynamicText(SilhouetteReachLabel(), CairoFont.WhiteSmallText(),
@@ -998,6 +995,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     void SetDeveloperValues()
     {
         if (activeComposer?.Composed != true) return;
+        activeComposer.GetHorizontalTabs("developer-groups").activeElement = developerGroup;
         if (developerGroup == AntiAliasingGroup)
         {
             foreach (LodTaaSliders.Row row in LodTaaSliders.All)
@@ -1032,11 +1030,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         }
     }
 
-    void OnDeveloperGroupSelected(string code, bool selected)
+    void OnDeveloperGroupClicked(int group)
     {
-        if (!selected) return;
-        int group = Array.IndexOf(DeveloperGroupCodes, code);
-        if (group < 0 || group == developerGroup) return;
+        if (group < 0 || group >= DeveloperGroupNames.Length || group == developerGroup) return;
         developerGroup = group;
         RequestRecompose();
     }
@@ -1718,7 +1714,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         RefreshAutomaticValues();
         pendingFarCap = LodPreset.Quality.DrawDistance;
         pendingLoadWhilePaused = true;
-        pendingAllCores = false;
+        // Not the all-cores collector: it is how this machine runs the game, applies only after a
+        // restart, and is not part of what is drawn (owner, 2026-10-19). Developer options is left
+        // alone for the same kind of reason.
         pendingVisuals = LodPreset.Quality.Visuals;
         pendingSilhouettes = LodPreset.Quality.ApplyTo(pendingSilhouettes);
         silhouettes.Preview(pendingSilhouettes);
@@ -1730,8 +1728,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         activeComposer.GetDynamicText("draw-distance-label")
             .SetNewText(DrawDistanceLabel(), false, true, false);
         activeComposer.GetSwitch("load-while-paused").On = pendingLoadWhilePaused;
-        activeComposer.GetSwitch("all-cores-gc").On = pendingAllCores;
-        RefreshAllCoresStatus();
         RefreshVisuals();
         return true;
     }
