@@ -604,16 +604,17 @@ public partial class VintageHorizonsModSystem : ModSystem
     }
 
     /// <summary>
-    /// The first-run prompt's choice, applied and saved as the settings window's Save would:
-    /// the preset's switches, draw distance and Farseer reach, everything else as it is.
+    /// The first-run prompt's choice, applied and saved as the settings window's Save would: the
+    /// preset's switches, draw distance, Farseer reach and detail target with Automatic on, and
+    /// everything else as it is. The player's own LOD distances are kept underneath.
     /// </summary>
     void ApplyChosenPreset(LodPreset preset)
     {
-        bool automatic = renderer?.AutoLodThresholds ?? config.AutoLodThresholds;
         int[] thresholds = LodWorld.NormalizeLevelThresholds(config.LodThresholds, config.DetailDistance);
-        ApplyGuiConfig(thresholds, automatic, preset.DrawDistance,
+        ApplyGuiConfig(thresholds, true, preset.DrawDistance,
             renderer?.ContinueLoadingWhilePaused ?? config.LoadWhilePaused, preset.Visuals,
-            renderer?.TaaDials ?? ConfiguredTaaDials(), preset.ApplyTo(CurrentSilhouetteSettings()));
+            renderer?.TaaDials ?? ConfiguredTaaDials(), preset.ApplyTo(CurrentSilhouetteSettings()),
+            preset.TargetPixels);
         Mod.Logger.Notification("[Landscapes] First-run preset: {0}.", preset.Name);
         capi.ShowChatMessage("[Landscapes] " + preset.Name
             + " preset chosen. Change it any time in Settings > Landscapes or with .dlconfig.");
@@ -2856,6 +2857,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 && assist.SilhouetteHeightSource == EnumSilhouetteHeightSource.EnginePreviews);
         var vanilla = new VanillaDistanceTuning(
             Math.Max(1, ClientSettings.ViewDistance), ApplyVanillaViewDistance);
+        var detail = new DetailTuning(renderer.LodTargetPixels, renderer.PreviewAutoThresholds);
         bool loadWhilePaused = renderer.ContinueLoadingWhilePaused;
         Action<LodWorldGenPreferences>? openLiveWorldGen = requestClose == null
             ? null
@@ -2884,11 +2886,11 @@ public partial class VintageHorizonsModSystem : ModSystem
         return requestRecompose != null && requestClose != null
             ? new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
-                loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, silhouetteTuning, worldGen,
+                loadWhilePaused, CurrentVisualSettings(), vanilla, detail, taaTuning, silhouetteTuning, worldGen,
                 collector, developerOptions, requestRecompose, requestClose, ApplyGuiConfig)
             : new VintageHorizonsConfigDialog(
                 capi, thresholds, automaticThresholds, automatic, farCap,
-                loadWhilePaused, CurrentVisualSettings(), vanilla, taaTuning, silhouetteTuning, worldGen,
+                loadWhilePaused, CurrentVisualSettings(), vanilla, detail, taaTuning, silhouetteTuning, worldGen,
                 collector, developerOptions, ApplyGuiConfig);
     }
 
@@ -4925,8 +4927,11 @@ public partial class VintageHorizonsModSystem : ModSystem
 
     void ApplyGuiConfig(int[] thresholds, bool autoThresholds, int farViewDistanceCap,
         bool loadWhilePaused, LodVisualSettings visuals, LodTaaDials taaDials,
-        LodSilhouetteSettings silhouetteSettings)
+        LodSilhouetteSettings silhouetteSettings, float targetPixels)
     {
+        config.LodTargetPixels = Math.Clamp(
+            float.IsFinite(targetPixels) ? targetPixels : LodAutoThresholds.DefaultTargetPixels,
+            LodAutoThresholds.MinTargetPixels, LodAutoThresholds.MaxTargetPixels);
         // The fixed list is the player's own and is kept whichever mode is chosen; automatic mode
         // only stops it being the one in force.
         int[] normalized = LodWorld.NormalizeLevelThresholds(thresholds, config.DetailDistance);
@@ -4939,6 +4944,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         if (renderer != null)
         {
+            renderer.LodTargetPixels = config.LodTargetPixels;
             renderer.AutoLodThresholds = autoThresholds;
             if (!autoThresholds) LodWorld.SetLevelThresholds(normalized);
             renderer.FarViewDistanceCap = farViewDistanceCap;

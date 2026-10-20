@@ -20,6 +20,12 @@ internal sealed record TaaTuning(LodTaaDials Initial, bool ShowInitial,
 internal sealed record VanillaDistanceTuning(int Initial, Func<int, int[]> Apply);
 
 /// <summary>
+/// Automatic LOD distances' target: the on-screen size every level hands over at, and what the
+/// distances would be at another target, so a preset or the Developer slider can show them.
+/// </summary>
+internal sealed record DetailTuning(float InitialTarget, Func<float, int[]> Preview);
+
+/// <summary>
 /// General's all-cores garbage collection switch (<see cref="GameCollectorSetting"/>):
 /// what the settings say, whether this session runs it, and Save, which edits the game's
 /// start-up file and reports what happened.
@@ -99,7 +105,7 @@ internal static class VintageHorizonsConfigLayout
     /// </summary>
     internal const double ColumnGap = 32;
     internal const double ColumnWidth = (SwitchX + 32 - Margin - ColumnGap) / 2;
-    internal const double CostWidth = 64;
+    internal const double CostWidth = 72;
     internal static double ColumnX(int column) => Margin + column * (ColumnWidth + ColumnGap);
     internal static double ColumnSwitchX(int column) => ColumnX(column) + ColumnWidth - RowSwitchSize - 3;
     internal static double ColumnCostX(int column) => ColumnSwitchX(column) - 8 - CostWidth;
@@ -109,7 +115,8 @@ internal static class VintageHorizonsConfigLayout
     internal const double DialSliderX = 330;
     internal const double DialSliderWidth = 400;
     internal const double DialRowsY = 146;
-    internal const double DialRowHeight = 58;
+    // 52 rather than 58, so the LOD detail target fits as a seventh row above the tint switch.
+    internal const double DialRowHeight = 52;
     internal const double ShowTaaY = 510;
 
     internal const double EmbeddedTabsY = 82;
@@ -209,7 +216,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         + "sliders reach. For this session only; it is never saved. (.dltaa show)";
 
     readonly Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
-        LodSilhouetteSettings> save;
+        LodSilhouetteSettings, float> save;
+    readonly DetailTuning detail;
+    float pendingTargetPixels;
     readonly TaaTuning taa;
     readonly VanillaDistanceTuning vanilla;
     readonly WorldGenTuning worldGen;
@@ -258,12 +267,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     public VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
-        TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
+        DetailTuning detail, TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
         CollectorTuning collector, DeveloperOptionsTuning developerOptions,
         Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
-            LodSilhouetteSettings> save)
+            LodSilhouetteSettings, float> save)
         : this(capi, thresholds, automaticThresholds, automatic, farCap, loadWhilePaused,
-            visuals, vanilla, taa, silhouettes, worldGen, collector, developerOptions, false,
+            visuals, vanilla, detail, taa, silhouettes, worldGen, collector, developerOptions, false,
             null, null, save)
     {
         ComposeDialog();
@@ -276,13 +285,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     internal VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
-        TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
+        DetailTuning detail, TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
         CollectorTuning collector, DeveloperOptionsTuning developerOptions,
         Action requestRecompose, Action requestClose,
         Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
-            LodSilhouetteSettings> save)
+            LodSilhouetteSettings, float> save)
         : this(capi, thresholds, automaticThresholds, automatic, farCap, loadWhilePaused,
-            visuals, vanilla, taa, silhouettes, worldGen, collector, developerOptions, true,
+            visuals, vanilla, detail, taa, silhouettes, worldGen, collector, developerOptions, true,
             requestRecompose, requestClose, save)
     {
     }
@@ -290,14 +299,16 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     VintageHorizonsConfigDialog(ICoreClientAPI capi, IReadOnlyList<int> thresholds,
         IReadOnlyList<int> automaticThresholds, bool automatic, int farCap,
         bool loadWhilePaused, LodVisualSettings visuals, VanillaDistanceTuning vanilla,
-        TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
+        DetailTuning detail, TaaTuning taa, SilhouetteTuning silhouettes, WorldGenTuning worldGen,
         CollectorTuning collector, DeveloperOptionsTuning developerOptions, bool embedded,
         Action? requestRecompose, Action? requestClose,
         Action<int[], bool, int, bool, LodVisualSettings, LodTaaDials,
-            LodSilhouetteSettings> save) : base(capi)
+            LodSilhouetteSettings, float> save) : base(capi)
     {
         this.save = save;
         this.taa = taa;
+        this.detail = detail;
+        pendingTargetPixels = detail.InitialTarget;
         this.silhouettes = silhouettes;
         this.vanilla = vanilla;
         this.worldGen = worldGen;
@@ -763,11 +774,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         double switchX = VintageHorizonsConfigLayout.ColumnSwitchX(column);
         double costX = VintageHorizonsConfigLayout.ColumnCostX(column);
         const double size = VintageHorizonsConfigLayout.RowSwitchSize;
-        composer.AddStaticText(title, FittedFont(title, costX - 4 - x),
+        composer.AddStaticText(title, FittedFont(title, costX - 4 - x, CairoFont.WhiteSmallishText()),
             ElementBounds.Fixed(x, Y(y + 2), costX - 4 - x, 26));
         if (cost.Length > 0)
         {
-            composer.AddStaticText(cost, CairoFont.WhiteDetailText(), EnumTextOrientation.Right,
+            composer.AddStaticText(cost,
+                FittedFont(cost, VintageHorizonsConfigLayout.CostWidth, CairoFont.WhiteDetailText()),
+                EnumTextOrientation.Right,
                 ElementBounds.Fixed(costX, Y(y + 5), VintageHorizonsConfigLayout.CostWidth, 22));
         }
         composer.AddSwitch(onToggle, ElementBounds.Fixed(switchX, Y(y + 1), size, size), key, size);
@@ -809,14 +822,15 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     }
 
     /// <summary>
-    /// Smallish text, made smaller only when the title would not fit its box on one line. At GUI
-    /// scale 1.0 on 1440p "Vanilla and LOD Seam Blending" wrapped onto the row below it (owner
-    /// screenshot, 0.4.167); the label stays as written (owner: labels are fine).
+    /// The font, made smaller only when the text would not sit on one line in its box with room
+    /// to spare. At GUI scale 1.0 on 1440p "Vanilla and LOD Seam Blending" and "More RAM" wrapped
+    /// onto a second line (owner screenshots, 0.4.167 and 0.4.168); the labels stay as written
+    /// (owner: labels are fine). 0.4.168 fitted to the box exactly and still wrapped: the line
+    /// breaker counted it a pixel or two wider than the measure did, so it now aims for 92%.
     /// </summary>
-    static CairoFont FittedFont(string text, double width)
+    static CairoFont FittedFont(string text, double width, CairoFont font)
     {
-        CairoFont font = CairoFont.WhiteSmallishText();
-        double available = GuiElement.scaled(width) - GuiElement.scaled(2);
+        double available = GuiElement.scaled(width) * 0.92;
         double needed = font.GetTextExtents(text).Width;
         if (needed > available && needed > 0)
             font.UnscaledFontsize *= available / needed;
@@ -917,6 +931,18 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             y += DialRowHeight;
         }
 
+        // Not an anti-aliasing dial but the same kind of number, an on-screen size; the presets
+        // set it, and it waits for Save like the rest of General's distances.
+        composer.AddStaticText("LOD detail target", CairoFont.WhiteSmallishText(),
+            ElementBounds.Fixed(Margin, Y(y + 3), DialSliderX - Margin - 12, 26));
+        composer.AddHoverText(DetailTargetTip, CairoFont.WhiteSmallText(), 380,
+            ElementBounds.Fixed(Margin, Y(y - 2), DialSliderX - Margin - 12, 34), "tip-detail-target");
+        composer.AddSlider(OnDetailTargetChanged,
+            ElementBounds.Fixed(DialSliderX, Y(y), DialSliderWidth, 30), "detail-target");
+        composer.AddDynamicText(DetailTargetLabel(), CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(DialSliderX + DialSliderWidth + 15, Y(y + 4), 110, 22),
+            "detail-target-label");
+
         composer.AddStaticText("Show Anti-Aliased Area", CairoFont.WhiteMediumText(),
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ShowTaaY + 2), 650, 30));
         composer.AddSwitch(OnShowChanged,
@@ -981,6 +1007,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 slider.ShowTextWhenResting = false;
                 slider.OnSliderTooltip = value => row.Label(row.FromSlider(value));
             }
+            GuiElementSlider target = activeComposer.GetSlider("detail-target");
+            target.SetValues((int)MathF.Round(pendingTargetPixels * 100),
+                (int)(LodAutoThresholds.MinTargetPixels * 100), (int)(LodAutoThresholds.MaxTargetPixels * 100), 5);
+            target.ShowTextWhenResting = false;
+            target.OnSliderTooltip = value => $"{value / 100f:0.00} px";
             activeComposer.GetSwitch("taa-show").On = pendingShowTaa;
             return;
         }
@@ -1030,6 +1061,36 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 .SetNewText(ReachHelp(), false, true, false);
         }
         return true;
+    }
+
+    const string DetailTargetTip =
+        "How wide a level-0 column is on screen, in pixels, where L1 begins; every later level hands "
+        + "over at the same width. Lower keeps finer detail further out and draws more geometry. The "
+        + "presets set it: Quality 1.5, Balanced 2, Performance 3. Used while Automatic is on; Save "
+        + "keeps it. (.dldetail target)";
+
+    string DetailTargetLabel() => string.Create(CultureInfo.InvariantCulture, $"{pendingTargetPixels:0.00} px");
+
+    bool OnDetailTargetChanged(int value)
+    {
+        pendingTargetPixels = value / 100f;
+        RefreshAutomaticValues();
+        if (ShowingGroup(AntiAliasingGroup))
+            activeComposer!.GetDynamicText("detail-target-label")
+                .SetNewText(DetailTargetLabel(), false, true, false);
+        return true;
+    }
+
+    /// <summary>
+    /// What automatic distances would be at the pending target, kept for the distance bar, which
+    /// shows them while Automatic is on.
+    /// </summary>
+    void RefreshAutomaticValues()
+    {
+        int[] values = LodWorld.NormalizeLevelThresholds(
+            detail.Preview(pendingTargetPixels), LodWorld.DefaultLevelThresholds[0]);
+        Array.Copy(values, automaticThresholds, automaticThresholds.Length);
+        if (pendingAutomatic) scale?.SetValues(automaticThresholds);
     }
 
     void OnShowChanged(bool on)
@@ -1461,7 +1522,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     }
 
     /// <summary>Which preset the current combination is, or the trailing "Custom" entry.</summary>
-    int PresetIndex() => LodPreset.Matching(pendingVisuals, pendingFarCap, pendingSilhouettes) is { } preset
+    int PresetIndex() => LodPreset.Matching(pendingVisuals, pendingFarCap, pendingSilhouettes,
+            pendingAutomatic, pendingTargetPixels) is { } preset
         ? Array.IndexOf(LodPreset.All, preset)
         : LodPreset.All.Length;
 
@@ -1473,11 +1535,17 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     }
 
     /// <summary>
-    /// A preset's switches, draw distance and Farseer reach. The Farseer switches show at once,
-    /// as they do when clicked; the rest waits for Save.
+    /// A preset's switches, draw distance, Farseer reach and detail target, with Automatic on so
+    /// the target is what sets the LOD distances; the player's own distances are kept for when
+    /// Automatic goes off again. The Farseer switches show at once, as they do when clicked; the
+    /// rest waits for Save.
     /// </summary>
     void ApplyPreset(LodPreset preset)
     {
+        pendingAutomatic = true;
+        pendingTargetPixels = preset.TargetPixels;
+        RefreshAutomaticValues();
+        RefreshThresholds();
         pendingVisuals = preset.Visuals;
         pendingSilhouettes = preset.ApplyTo(pendingSilhouettes);
         silhouettes.Preview(pendingSilhouettes);
@@ -1537,6 +1605,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         pendingAutomatic = on;
         RefreshThresholds();
+        RefreshPresetReadout();
     }
 
     void RefreshThresholds()
@@ -1565,16 +1634,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         vanillaViewDistance = Math.Clamp(value,
             LodThresholdScaleLayout.MinVanillaDistance,
             LodThresholdScaleLayout.MaxVanillaDistance);
-        int[] refreshed = vanilla.Apply(vanillaViewDistance);
-        if (refreshed.Length == automaticThresholds.Length)
-        {
-            int[] normalized = LodWorld.NormalizeLevelThresholds(
-                refreshed, LodWorld.DefaultLevelThresholds[0]);
-            Array.Copy(normalized, automaticThresholds, automaticThresholds.Length);
-        }
-
+        // Applied first, so the automatic values below see the new vanilla edge.
+        vanilla.Apply(vanillaViewDistance);
         scale?.SetVanillaDistance(vanillaViewDistance);
-        if (pendingAutomatic) scale?.SetValues(automaticThresholds);
+        RefreshAutomaticValues();
         if (activeComposer?.Composed != true || shownTab != GeneralTab) return;
         activeComposer.GetDynamicText("threshold-help")
             .SetNewText(ThresholdHelp(), false, true, false);
@@ -1609,6 +1672,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             {
                 pendingTaa = LodTaaDials.Default;
                 taa.Preview(pendingTaa, pendingShowTaa);
+                pendingTargetPixels = LodPreset.Quality.TargetPixels;
+                RefreshAutomaticValues();
             }
             else
             {
@@ -1649,6 +1714,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         Array.Copy(LodWorld.DefaultLevelThresholds, pendingThresholds,
             pendingThresholds.Length);
         pendingAutomatic = true;
+        pendingTargetPixels = LodPreset.Quality.TargetPixels;
+        RefreshAutomaticValues();
         pendingFarCap = LodPreset.Quality.DrawDistance;
         pendingLoadWhilePaused = true;
         pendingAllCores = false;
@@ -1676,7 +1743,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         worldGen.Save(pendingWorldGen.Normalize(ServerWorldGenMaxRadius()));
         collector.Save(pendingAllCores);
         save(pendingThresholds, pendingAutomatic, pendingFarCap, pendingLoadWhilePaused,
-            pendingVisuals, pendingTaa, pendingSilhouettes.Normalize());
+            pendingVisuals, pendingTaa, pendingSilhouettes.Normalize(), pendingTargetPixels);
         if (embedded)
         {
             CloseSession();

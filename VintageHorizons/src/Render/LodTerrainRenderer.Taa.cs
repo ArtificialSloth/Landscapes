@@ -842,8 +842,11 @@ public partial class LodTerrainRenderer
     }
 
     /// <summary>What automatic thresholds would be right now, for the settings window.</summary>
-    public int[] PreviewAutoThresholds() => LodAutoThresholds.Compute(
-        LodScreenScale.BlockScale(screenRenderHeight, screenYScale), lodTargetPixels,
+    public int[] PreviewAutoThresholds() => PreviewAutoThresholds(lodTargetPixels);
+
+    /// <summary>What automatic thresholds would be at another target, for a preset or the slider.</summary>
+    public int[] PreviewAutoThresholds(float targetPixels) => LodAutoThresholds.Compute(
+        LodScreenScale.BlockScale(screenRenderHeight, screenYScale), targetPixels,
         AutoThresholdFloorBlocks());
 
     public string DescribeAutoThresholds() => DescribeAutoValues(PreviewAutoThresholds());

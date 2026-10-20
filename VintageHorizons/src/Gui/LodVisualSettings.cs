@@ -120,38 +120,43 @@ internal readonly record struct LodVisualSettings(
 
 /// <summary>
 /// A named preset: the visual switches plus how far cached terrain is drawn, whether Farseer and
-/// its seam fog are on, and Farseer's reach (owner, 2026-10-19). The settings window's drop-down
+/// its seam fog are on, Farseer's reach, and the on-screen size automatic LOD distances hand over
+/// at (owner, 2026-10-19). A preset keys detail to that size rather than to block distances, so it
+/// means the same at any field of view or resolution, and choosing one turns Automatic on. The settings window's drop-down
 /// and the first-run prompt both pick from <see cref="All"/>.
 ///
 /// Farseer is on in every preset, even where its reach equals the cached distance: it fills the
 /// ground nobody has explored inside that distance, which is most of it in a new world (owner).
 /// </summary>
 internal sealed record LodPreset(string Code, string Name, LodVisualSettings Visuals,
-    int DrawDistance, bool Farseer, int FarseerReach, bool SeamFog, string Summary)
+    int DrawDistance, bool Farseer, int FarseerReach, bool SeamFog, float TargetPixels,
+    string Summary)
 {
     public static readonly LodPreset Performance = new("performance", "Performance",
-        LodVisualSettings.Performance, 2048, true, 4096, false,
-        "Cached terrain to 2,048 blocks and a Farseer outline to 4,096. No extra effects.");
+        LodVisualSettings.Performance, 2048, true, 4096, false, 3f,
+        "Cached terrain to 2,048 blocks with coarser detail, and a Farseer outline to 4,096. No extra effects.");
 
     public static readonly LodPreset Balanced = new("balanced", "Balanced",
-        LodVisualSettings.Balanced, 4096, true, 8192, true,
+        LodVisualSettings.Balanced, 4096, true, 8192, true, 2f,
         "Cached terrain to 4,096 blocks and Farseer to 8,192, with every effect but seam blending.");
 
     /// <summary>What a fresh install draws (owner: players should see what the mod can do).</summary>
     public static readonly LodPreset Quality = new("quality", "Quality",
-        LodVisualSettings.Quality, 8192, true, 8192, true,
-        "Cached terrain and Farseer to 8,192 blocks, with every effect but far biome colors.");
+        LodVisualSettings.Quality, 8192, true, 8192, true, LodAutoThresholds.DefaultTargetPixels,
+        "Cached terrain and Farseer to 8,192 blocks at full detail, with every effect but far biome colors.");
 
     public static readonly LodPreset[] All = { Performance, Balanced, Quality };
 
     /// <summary>The preset these values are, or null for a hand-made combination.</summary>
     public static LodPreset? Matching(LodVisualSettings visuals, int drawDistance,
-        LodSilhouetteSettings farseer) => Array.Find(All, preset =>
+        LodSilhouetteSettings farseer, bool automatic, float targetPixels) => Array.Find(All, preset =>
             preset.Visuals == visuals
             && preset.DrawDistance == drawDistance
             && preset.Farseer == farseer.Enabled
             && preset.SeamFog == farseer.FogEnabled
-            && preset.FarseerReach == farseer.ReachBlocks);
+            && preset.FarseerReach == farseer.ReachBlocks
+            && automatic
+            && Math.Abs(preset.TargetPixels - targetPixels) < 0.01f);
 
     /// <summary>Farseer's switches and reach set to this preset's; every dial left alone.</summary>
     public LodSilhouetteSettings ApplyTo(LodSilhouetteSettings farseer) => farseer with

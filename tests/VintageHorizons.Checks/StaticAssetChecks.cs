@@ -2611,9 +2611,18 @@ public static class StaticAssetChecks
             "Balanced keeps close biome and varied tree colours and gives up seam blending");
         LodSilhouetteSettings farseer = LodSilhouetteSettings.Default;
         c.True(LodPreset.All.All(preset => LodPreset.Matching(preset.Visuals, preset.DrawDistance,
-                    preset.ApplyTo(farseer)) == preset)
-                && LodPreset.Matching(LodPreset.Quality.Visuals, 4096, LodPreset.Quality.ApplyTo(farseer)) == null,
-            "a preset reads back as itself, and a dragged draw distance reads as Custom");
+                    preset.ApplyTo(farseer), true, preset.TargetPixels) == preset)
+                && LodPreset.Matching(LodPreset.Quality.Visuals, 4096, LodPreset.Quality.ApplyTo(farseer),
+                    true, LodPreset.Quality.TargetPixels) == null
+                && LodPreset.Matching(LodPreset.Quality.Visuals, 8192, LodPreset.Quality.ApplyTo(farseer),
+                    false, LodPreset.Quality.TargetPixels) == null,
+            "a preset reads back as itself; a dragged draw distance or Automatic off reads as Custom");
+        c.True(LodPreset.Quality.TargetPixels == LodAutoThresholds.DefaultTargetPixels
+                && LodPreset.Balanced.TargetPixels == 2f && LodPreset.Performance.TargetPixels == 3f,
+            "presets hand LOD levels over at 1.5, 2 and 3 px on screen (owner, 2026-10-19)");
+        c.True(dialog.Replace("\r\n", "\n").Contains("pendingAutomatic = true;\n        pendingTargetPixels = preset.TargetPixels;", StringComparison.Ordinal)
+                && dialog.Contains("\"detail-target\"", StringComparison.Ordinal),
+            "a preset turns Automatic on and sets the target, which Developer also offers as a slider");
 
         // The explanations live on hover. Printing them under the titles was tried and does not
         // fit: a medium-weight title is taller than the box it is given, so every row overran

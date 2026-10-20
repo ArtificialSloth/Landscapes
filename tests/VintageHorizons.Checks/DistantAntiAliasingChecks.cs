@@ -175,7 +175,11 @@ public static class DistantAntiAliasingChecks
 
         int[] held = LodAutoThresholds.Compute(scale, 1.5f, 1000);
         c.True(held[0] >= 1000, "level 0 is held out past a far vanilla edge and its blend band");
-        c.Eq(held[0] * 2, held[1], "and the levels after it still double");
+        c.SeqEq(owner.Skip(1).ToArray(), held.Skip(1).ToArray(),
+            "and every later level keeps its own on-screen size (owner, 2026-10-19)");
+        int[] overtaken = LodAutoThresholds.Compute(scale, 1.5f, 1400);
+        c.True(overtaken[0] >= 1400 && overtaken[1] > overtaken[0] && overtaken[2] == owner[2],
+            "a vanilla edge past L2 moves L2 just beyond L1 and leaves the rest alone");
 
         c.Eq(LodWorld.MinDetailDistance, LodAutoThresholds.Compute(1f, 1.5f, 0)[0],
             "a degenerate scale cannot pull L1 below the configurable minimum");

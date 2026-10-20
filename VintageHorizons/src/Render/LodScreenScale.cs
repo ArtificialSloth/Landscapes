@@ -240,7 +240,10 @@ internal static class LodAutoThresholds
 
     /// <summary>
     /// A doubling sequence whose first step puts a level-0 column at targetPixels on screen,
-    /// held at or beyond floorBlocks, inside the limits every threshold is kept to.
+    /// inside the limits every threshold is kept to. floorBlocks - the vanilla edge and its blend
+    /// band - holds L1 alone: every later level still hands over at its own on-screen size, and
+    /// moves only where L1 would otherwise reach past it. Until 0.4.169 the floor started the
+    /// doubling, so a far vanilla edge pushed L2-L6 out with it (owner, 2026-10-19).
     /// </summary>
     public static int[] Compute(float blockScale, float targetPixels, int floorBlocks)
     {
@@ -256,12 +259,14 @@ internal static class LodAutoThresholds
             * RoundingBlocks);
         int floor = (int)(Math.Ceiling(Math.Clamp(floorBlocks, 0, LodWorld.MaxLevelThreshold)
             / (double)RoundingBlocks) * RoundingBlocks);
-        rounded = Math.Clamp(Math.Max(rounded, floor),
-            LodWorld.MinDetailDistance, LodWorld.MaxLevelThreshold);
+        rounded = Math.Clamp(rounded, LodWorld.MinDetailDistance, LodWorld.MaxLevelThreshold);
 
         int[] values = new int[LodWorld.MaxLevel];
         for (int i = 0; i < values.Length; i++)
             values[i] = (int)Math.Min((long)rounded << i, int.MaxValue);
+        values[0] = Math.Clamp(Math.Max(values[0], floor),
+            LodWorld.MinDetailDistance, LodWorld.MaxLevelThreshold);
+        // Normalising keeps each later level past the one before it.
         return LodWorld.NormalizeLevelThresholds(values, LodWorld.DefaultLevelThresholds[0]);
     }
 }
