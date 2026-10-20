@@ -2682,8 +2682,8 @@ public static class StaticAssetChecks
             "long anti-aliasing labels get a wide single-line smallish-text column");
         c.True(VintageHorizonsConfigLayout.ScaleHeight >= 200
                 && VintageHorizonsConfigLayout.ScaleY + VintageHorizonsConfigLayout.ScaleHeight
-                    < VintageHorizonsConfigLayout.DrawHeadingY,
-            "the distance map has four clear marker lanes and finishes above the next heading");
+                    <= VintageHorizonsConfigLayout.RuleY,
+            "the distance map has four clear marker lanes and finishes above the rule");
 
         c.True(settings.Contains(
                 "internal const string HarmonyId = \"dodenslandscapes.settingstab\"",

@@ -152,18 +152,22 @@ public static class SettingsWindowChecks
 
     static void LayoutStaysClear(Check c)
     {
-        c.True(VintageHorizonsConfigLayout.PausedRowY >= VintageHorizonsConfigLayout.DrawHeadingY + 34,
-            "the paused-loading switch has a row of its own below the draw-distance heading");
-        c.True(VintageHorizonsConfigLayout.FarseerRowY >= VintageHorizonsConfigLayout.DrawHeadingY + 34
-                && VintageHorizonsConfigLayout.PausedRowY
+        c.True(VintageHorizonsConfigLayout.DrawHeadingY + 30 <= VintageHorizonsConfigLayout.LodTitleY,
+            "the draw distance heads the page, above the distances title (owner, 2026-10-19)");
+        c.True(VintageHorizonsConfigLayout.ScaleY + VintageHorizonsConfigLayout.ScaleHeight
+                    <= VintageHorizonsConfigLayout.RuleY
+                && VintageHorizonsConfigLayout.RuleY + VintageHorizonsConfigLayout.RuleHeight
+                    <= VintageHorizonsConfigLayout.FarseerRowY,
+            "a rule sits between the bar and the switches");
+        c.True(VintageHorizonsConfigLayout.PausedRowY
                     >= VintageHorizonsConfigLayout.FarseerRowY + VintageHorizonsConfigLayout.VisualRowHeight,
-            "the Farseer row follows the draw-distance heading, and paused loading a full row lower");
+            "the Farseer row comes first, and paused loading a full row lower");
         c.True(VintageHorizonsConfigLayout.DeveloperRowY
                     >= VintageHorizonsConfigLayout.PausedRowY + VintageHorizonsConfigLayout.VisualRowHeight
                 && VintageHorizonsConfigLayout.DeveloperRowY + VintageHorizonsConfigLayout.RowSwitchSize
                     <= VintageHorizonsConfigLayout.VisualHeadingY - 4,
             "then Developer options, finishing above the visual features heading");
-        c.True(VintageHorizonsConfigLayout.HelpY >= 36 + 30
+        c.True(VintageHorizonsConfigLayout.HelpY >= VintageHorizonsConfigLayout.LodTitleY + 30
                 && VintageHorizonsConfigLayout.HelpY + 22 <= VintageHorizonsConfigLayout.ScaleY,
             "the help line clears the distances title above it and the scale below it");
         c.True(VintageHorizonsConfigLayout.ColumnX(1) + VintageHorizonsConfigLayout.ColumnWidth

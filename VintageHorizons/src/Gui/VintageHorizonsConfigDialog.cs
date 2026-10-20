@@ -63,11 +63,18 @@ internal static class VintageHorizonsConfigLayout
     internal const int PlannedTabCount = 3;
 
     /// <summary>
-    /// The help line under the distances title. At 62 the title's descenders ran into it
-    /// (owner screenshot, 2026-10-19).
+    /// The cached draw distance heads the page, above the distances it caps (owner, 2026-10-19:
+    /// it sat between the bar and the switches until 0.4.171).
     /// </summary>
-    internal const double HelpY = 70;
-    internal const double ScaleY = 96;
+    internal const double DrawHeadingY = 36;
+    internal const double LodTitleY = 68;
+
+    /// <summary>
+    /// The help line under the distances title, 34 below it: at 26 the title's descenders ran
+    /// into it (owner screenshot, 2026-10-19).
+    /// </summary>
+    internal const double HelpY = 102;
+    internal const double ScaleY = 124;
 
     /// <summary>
     /// 214 so each lane of marker boxes has a gap to the next: at 200 the Farseer box sat on the
@@ -75,18 +82,24 @@ internal static class VintageHorizonsConfigLayout
     /// in <see cref="LodThresholdScaleElement"/>; the lowest box ends at 213.
     /// </summary>
     internal const double ScaleHeight = 214;
-    internal const double DrawHeadingY = 314;
 
     /// <summary>
-    /// Under the draw distance, three rows of two columns: Farseer beside its seam fog, paused
-    /// loading beside all-cores collection, then Developer options beside the no-sampler note.
-    /// Farseer and Performance had tabs of their own until 0.4.167.
+    /// A horizontal rule under the bar parts the distances from the switches (owner, 2026-10-19),
+    /// where the draw distance heading used to be.
+    /// </summary>
+    internal const double RuleY = 340;
+    internal const double RuleHeight = 4;
+
+    /// <summary>
+    /// Under the rule, three rows of two columns: Farseer beside its seam fog, paused loading
+    /// beside all-cores collection, then Developer options beside the no-sampler note. Farseer
+    /// and Performance had tabs of their own until 0.4.167.
     /// </summary>
     internal const double FarseerRowY = 348;
     internal const double PausedRowY = 376;
     internal const double DeveloperRowY = 404;
-    internal const double VisualHeadingY = 436;
-    internal const double VisualRowsY = 470;
+    internal const double VisualHeadingY = 434;
+    internal const double VisualRowsY = 468;
     internal const double VisualRowHeight = 28;
 
     /// <summary>The rows' switches, sized to their 28-unit pitch.</summary>
@@ -669,16 +682,25 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void ComposeGeneral(GuiComposer composer)
     {
+        composer.AddStaticText("Cached terrain draw distance", CairoFont.WhiteMediumText(),
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.DrawHeadingY), 500, 30));
+        composer.AddDynamicText(DrawDistanceLabel(),
+            CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Right),
+            ElementBounds.Fixed(Width - Margin - 120,
+                Y(VintageHorizonsConfigLayout.DrawHeadingY + 8), 120, 22),
+            "draw-distance-label");
+
+        const double titleY = VintageHorizonsConfigLayout.LodTitleY;
         composer.AddStaticText("LOD transition distances",
-            CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, Y(36), 480, 30));
+            CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, Y(titleY), 480, 30));
         composer.AddStaticText("Automatic", CairoFont.WhiteSmallText(),
-            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 190, Y(42), 180, 22));
+            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 190, Y(titleY + 6), 180, 22));
         composer.AddSwitch(OnAutomaticChanged,
-            ElementBounds.Fixed(SwitchX, Y(36), 32, 32), "auto-thresholds");
+            ElementBounds.Fixed(SwitchX, Y(titleY), 32, 32), "auto-thresholds");
         // Over the label and the switch alike. GuiElementHoverText handles no mouse-down, so it
         // cannot swallow the click on the switch underneath it.
         composer.AddHoverText(AutomaticTip, CairoFont.WhiteSmallText(), 380,
-            ElementBounds.Fixed(SwitchX - 190, Y(34), 222, 36), "tip-auto-thresholds");
+            ElementBounds.Fixed(SwitchX - 190, Y(titleY - 2), 222, 36), "tip-auto-thresholds");
         composer.AddDynamicText(ThresholdHelp(), CairoFont.WhiteSmallText(),
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.HelpY), Width - 2 * Margin, 22),
             "threshold-help");
@@ -694,13 +716,19 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         };
         composer.AddInteractiveElement(scale, "lod-threshold-scale");
 
-        composer.AddStaticText("Cached terrain draw distance", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.DrawHeadingY), 500, 30));
-        composer.AddDynamicText(DrawDistanceLabel(),
-            CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Right),
-            ElementBounds.Fixed(Width - Margin - 120,
-                Y(VintageHorizonsConfigLayout.DrawHeadingY + 8), 120, 22),
-            "draw-distance-label");
+        // The rule: a dark line over a faint light one, the groove look of the game's own insets.
+        composer.AddStaticCustomDraw(ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.RuleY),
+            Width - 2 * Margin, VintageHorizonsConfigLayout.RuleHeight), (ctx, surface, bounds) =>
+        {
+            double line = Math.Max(1, Math.Round(GuiElement.scaled(1)));
+            double y = Math.Round(bounds.drawY + bounds.InnerHeight / 2 - line);
+            ctx.SetSourceRGBA(0, 0, 0, 0.45);
+            ctx.Rectangle(bounds.drawX, y, bounds.InnerWidth, line);
+            ctx.Fill();
+            ctx.SetSourceRGBA(1, 1, 1, 0.16);
+            ctx.Rectangle(bounds.drawX, y + line, bounds.InnerWidth, line);
+            ctx.Fill();
+        });
 
         // The seam fog is its own switch, not Farseer's: it is also drawn with Farseer off, over
         // the cached terrain's edge.
