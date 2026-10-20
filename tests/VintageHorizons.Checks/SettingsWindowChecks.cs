@@ -152,8 +152,19 @@ public static class SettingsWindowChecks
 
     static void LayoutStaysClear(Check c)
     {
-        c.True(VintageHorizonsConfigLayout.DrawHeadingY + 30 <= VintageHorizonsConfigLayout.LodTitleY,
-            "the draw distance heads the page, above the distances title (owner, 2026-10-19)");
+        c.True(VintageHorizonsConfigLayout.LodTitleY + 34 <= VintageHorizonsConfigLayout.ScaleY,
+            "one title heads the page, clear of the bar (owner, 2026-10-19)");
+        string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
+        c.True(dialog.Contains("\"LOD Thresholds (Drag to adjust)\"", StringComparison.Ordinal)
+                && !dialog.Contains("draw-distance-label", StringComparison.Ordinal)
+                && !dialog.Contains("threshold-help", StringComparison.Ordinal)
+                && dialog.Contains("composer.AddHoverText(ScaleHelp,", StringComparison.Ordinal),
+            "the draw-distance readout and help line are gone; the help is the title's hover");
+        c.True(dialog.Contains("ComposeFooterToggles(composer);", StringComparison.Ordinal)
+                && VintageHorizonsConfigLayout.FooterLeft >= VintageHorizonsConfigLayout.Margin + 140
+                && VintageHorizonsConfigLayout.FooterRight
+                    <= VintageHorizonsConfigLayout.Width - VintageHorizonsConfigLayout.Margin - 275,
+            "paused loading and Developer options sit in the action row between Defaults and Cancel");
         c.True(VintageHorizonsConfigLayout.ScaleY + VintageHorizonsConfigLayout.ScaleHeight
                     <= VintageHorizonsConfigLayout.RuleY
                 && VintageHorizonsConfigLayout.RuleY + VintageHorizonsConfigLayout.RuleHeight
@@ -163,9 +174,6 @@ public static class SettingsWindowChecks
                 && VintageHorizonsConfigLayout.VisualRowCount - VintageHorizonsConfigLayout.VisualRowsPerColumn + 2
                     <= VintageHorizonsConfigLayout.VisualLineCount,
             "Farseer and four features fill the left column; the fog, all-cores and three features the right");
-        c.True(VintageHorizonsConfigLayout.HelpY >= VintageHorizonsConfigLayout.LodTitleY + 30
-                && VintageHorizonsConfigLayout.HelpY + 22 <= VintageHorizonsConfigLayout.ScaleY,
-            "the help line clears the distances title above it and the scale below it");
         c.True(VintageHorizonsConfigLayout.ColumnX(1) + VintageHorizonsConfigLayout.ColumnWidth
                 == VintageHorizonsConfigLayout.SwitchX + 32
                 && VintageHorizonsConfigLayout.ColumnCostX(0) - VintageHorizonsConfigLayout.ColumnX(0) >= 250,
@@ -178,10 +186,9 @@ public static class SettingsWindowChecks
             "the preset drop-down finishes before the first feature row");
         c.True(VintageHorizonsConfigLayout.RowSwitchSize <= VintageHorizonsConfigLayout.VisualRowHeight - 2,
             "a row's switch fits its pitch");
-        double lastRowBottom = VintageHorizonsConfigLayout.TailRowsY
-            + VintageHorizonsConfigLayout.TailRowCount * VintageHorizonsConfigLayout.VisualRowHeight;
-        c.True(lastRowBottom <= VintageHorizonsConfigLayout.ButtonY - 6,
-            "paused loading and Developer options end above the Save row");
+        c.True(VintageHorizonsConfigLayout.NoteY + VintageHorizonsConfigLayout.VisualRowHeight
+                <= VintageHorizonsConfigLayout.ButtonY - 6,
+            "the features and the no-sampler note end above the action row");
     }
 
     static string Source(params string[] parts) => File.ReadAllText(

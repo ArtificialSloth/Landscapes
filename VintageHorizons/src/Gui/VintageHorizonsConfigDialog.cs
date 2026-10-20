@@ -63,18 +63,13 @@ internal static class VintageHorizonsConfigLayout
     internal const int PlannedTabCount = 3;
 
     /// <summary>
-    /// The cached draw distance heads the page, above the distances it caps (owner, 2026-10-19:
-    /// it sat between the bar and the switches until 0.4.171).
+    /// One title over the bar, "LOD Thresholds (Drag to adjust)", beside the Automatic switch
+    /// (owner, 2026-10-19). Until 0.4.173 a draw-distance heading with its readout, a distances
+    /// title and a help line stood here; the bar's Cache box already shows the draw distance, and
+    /// the help line is the title's hover.
     /// </summary>
-    internal const double DrawHeadingY = 36;
-    internal const double LodTitleY = 68;
-
-    /// <summary>
-    /// The help line under the distances title, 34 below it: at 26 the title's descenders ran
-    /// into it (owner screenshot, 2026-10-19).
-    /// </summary>
-    internal const double HelpY = 102;
-    internal const double ScaleY = 124;
+    internal const double LodTitleY = 36;
+    internal const double ScaleY = 80;
 
     /// <summary>
     /// 214 so each lane of marker boxes has a gap to the next: at 200 the Farseer box sat on the
@@ -87,25 +82,28 @@ internal static class VintageHorizonsConfigLayout
     /// A horizontal rule under the bar parts the distances from the switches (owner, 2026-10-19),
     /// where the draw distance heading used to be.
     /// </summary>
-    internal const double RuleY = 340;
+    internal const double RuleY = 304;
     internal const double RuleHeight = 4;
 
     /// <summary>
     /// Visual features head everything under the rule (owner, 2026-10-19): five lines of two
-    /// columns, Farseer beside its seam fog first and all-cores collection under the fog.
+    /// columns, Farseer beside its seam fog first and all-cores collection under the fog, at a
+    /// roomier 30-unit pitch now that the page has the space.
     /// </summary>
-    internal const double VisualHeadingY = 348;
-    internal const double VisualRowsY = 382;
+    internal const double VisualHeadingY = 318;
+    internal const double VisualRowsY = 354;
     internal const int VisualLineCount = 5;
+    internal const double VisualRowHeight = 30;
+
+    /// <summary>The no-sampler note, a line under the features.</summary>
+    internal const double NoteY = VisualRowsY + VisualLineCount * VisualRowHeight + 6;
 
     /// <summary>
-    /// Under the features, a little apart: paused loading and Developer options, which change how
-    /// the mod works rather than what it draws, with the no-sampler note beside them.
+    /// Paused loading and Developer options sit in the action row between Defaults and Cancel
+    /// (owner, 2026-10-19): they change how the mod works rather than what it draws.
     /// </summary>
-    internal const double TailGap = 6;
-    internal const double TailRowsY = VisualRowsY + VisualLineCount * VisualRowHeight + TailGap;
-    internal const int TailRowCount = 2;
-    internal const double VisualRowHeight = 28;
+    internal const double FooterLeft = Margin + 140 + 20;
+    internal const double FooterRight = Width - Margin - 275 - 16;
 
     /// <summary>The rows' switches, sized to their 28-unit pitch.</summary>
     internal const double RowSwitchSize = 26;
@@ -623,6 +621,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddButton("Defaults", OnDefaults,
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY), 140, 38),
             EnumButtonStyle.Normal, "defaults");
+        ComposeFooterToggles(composer);
         composer.AddButton("Cancel", OnCancel,
             ElementBounds.Fixed(Width - Margin - 275, Y(VintageHorizonsConfigLayout.ButtonY), 130, 38),
             EnumButtonStyle.Normal, "cancel");
@@ -685,23 +684,18 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (shownTab == GenerateTab) SetGenerateValues();
         else if (shownTab == DeveloperTab) SetDeveloperValues();
         else SetGeneralValues();
+        SetFooterValues();
     }
 
     double Y(double y) => contentTop + y;
 
     void ComposeGeneral(GuiComposer composer)
     {
-        composer.AddStaticText("Cached terrain draw distance", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.DrawHeadingY), 500, 30));
-        composer.AddDynamicText(DrawDistanceLabel(),
-            CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Right),
-            ElementBounds.Fixed(Width - Margin - 120,
-                Y(VintageHorizonsConfigLayout.DrawHeadingY + 8), 120, 22),
-            "draw-distance-label");
-
         const double titleY = VintageHorizonsConfigLayout.LodTitleY;
-        composer.AddStaticText("LOD transition distances",
-            CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, Y(titleY), 480, 30));
+        composer.AddStaticText("LOD Thresholds (Drag to adjust)",
+            CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, Y(titleY), 560, 30));
+        composer.AddHoverText(ScaleHelp, CairoFont.WhiteSmallText(), 420,
+            ElementBounds.Fixed(Margin, Y(titleY - 2), 560, 34), "tip-scale-help");
         composer.AddStaticText("Automatic", CairoFont.WhiteSmallText(),
             EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 190, Y(titleY + 6), 180, 22));
         composer.AddSwitch(OnAutomaticChanged,
@@ -710,9 +704,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         // cannot swallow the click on the switch underneath it.
         composer.AddHoverText(AutomaticTip, CairoFont.WhiteSmallText(), 380,
             ElementBounds.Fixed(SwitchX - 190, Y(titleY - 2), 222, 36), "tip-auto-thresholds");
-        composer.AddDynamicText(ThresholdHelp(), CairoFont.WhiteSmallText(),
-            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.HelpY), Width - 2 * Margin, 22),
-            "threshold-help");
 
         scale = new LodThresholdScaleElement(capi, DisplayedThresholds(),
             vanillaViewDistance, pendingFarCap, pendingSilhouettes.ReachBlocks,
@@ -782,21 +773,59 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 on => OnVisualChanged(row, on));
         }
 
-        const double tail = VintageHorizonsConfigLayout.TailRowsY;
-        AddToggle(composer, 0, tail, "load-while-paused",
-            "Load terrain while paused", "", PausedLoadingTip, OnPausedLoadingChanged);
-        AddToggle(composer, 0, tail + RowHeight, "developer-options",
-            "Developer options", "", DeveloperOptionsTip, OnDeveloperOptionsChanged);
         if (silhouettes.NoSampler())
         {
-            // A short red note in the right column, its hover carrying the whole warning.
-            double noteX = VintageHorizonsConfigLayout.ColumnX(1);
+            // A short red note under the features, its hover carrying the whole warning.
+            const double noteY = VintageHorizonsConfigLayout.NoteY;
+            double noteWidth = VintageHorizonsConfigLayout.ColumnWidth;
             composer.AddStaticText(NoSamplerNote, NoSamplerFont(),
-                ElementBounds.Fixed(noteX, Y(tail + 4), VintageHorizonsConfigLayout.ColumnWidth, 22));
+                ElementBounds.Fixed(Margin, Y(noteY + 4), noteWidth, 22));
             composer.AddHoverText(NoSamplerWarning, CairoFont.WhiteSmallText(), 420,
-                ElementBounds.Fixed(noteX, Y(tail), VintageHorizonsConfigLayout.ColumnWidth, RowHeight - 2),
-                "tip-no-sampler");
+                ElementBounds.Fixed(Margin, Y(noteY), noteWidth, RowHeight - 2), "tip-no-sampler");
         }
+    }
+
+    /// <summary>
+    /// Paused loading and Developer options in the action row, on General and Developer alike, so
+    /// Developer options can hide the tab from the tab itself. Small text, each label shrinking
+    /// if it would not fit beside its switch.
+    /// </summary>
+    void ComposeFooterToggles(GuiComposer composer)
+    {
+        const double size = VintageHorizonsConfigLayout.RowSwitchSize;
+        const double left = VintageHorizonsConfigLayout.FooterLeft;
+        const double right = VintageHorizonsConfigLayout.FooterRight;
+        const double gap = 16;
+        const string paused = "Load terrain while paused";
+        const string developer = "Developer options";
+        double y = VintageHorizonsConfigLayout.ButtonY + 6;
+        // The room split in proportion to each label's own width, so neither shrinks before it must.
+        double pausedText = CairoFont.WhiteSmallText().GetTextExtents(paused).Width;
+        double developerText = CairoFont.WhiteSmallText().GetTextExtents(developer).Width;
+        double labels = right - left - gap - 2 * (size + 8);
+        double pausedWidth = labels * pausedText / Math.Max(1, pausedText + developerText) + size + 8;
+        AddFooterToggle(composer, left, pausedWidth, y, "load-while-paused", paused,
+            PausedLoadingTip, OnPausedLoadingChanged);
+        AddFooterToggle(composer, left + pausedWidth + gap, right - left - pausedWidth - gap, y,
+            "developer-options", developer, DeveloperOptionsTip, OnDeveloperOptionsChanged);
+
+        void AddFooterToggle(GuiComposer c, double x, double width, double top, string key, string title,
+            string tip, Action<bool> onToggle)
+        {
+            double labelWidth = width - size - 8;
+            c.AddStaticText(title, FittedFont(title, labelWidth, CairoFont.WhiteSmallText()),
+                ElementBounds.Fixed(x, Y(top + 4), labelWidth, 22));
+            c.AddSwitch(onToggle, ElementBounds.Fixed(x + width - size, Y(top), size, size), key, size);
+            c.AddHoverText(tip, CairoFont.WhiteSmallText(), 380,
+                ElementBounds.Fixed(x, Y(top - 2), width, size + 4), $"tip-{key}");
+        }
+    }
+
+    void SetFooterValues()
+    {
+        if (activeComposer?.Composed != true || shownTab == GenerateTab) return;
+        activeComposer.GetSwitch("load-while-paused").On = pendingLoadWhilePaused;
+        activeComposer.GetSwitch("developer-options").On = showDeveloper;
     }
 
     static double VisualLine(int line) => VintageHorizonsConfigLayout.VisualRowsY + line * RowHeight;
@@ -844,11 +873,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         if (activeComposer?.Composed != true) return;
         activeComposer.GetSwitch("auto-thresholds").On = pendingAutomatic;
-        activeComposer.GetSwitch("load-while-paused").On = pendingLoadWhilePaused;
         activeComposer.GetSwitch("silhouette-enabled").On = pendingSilhouettes.Enabled;
         activeComposer.GetSwitch("silhouette-fog").On = pendingSilhouettes.FogEnabled;
         activeComposer.GetSwitch("all-cores-gc").On = pendingAllCores;
-        activeComposer.GetSwitch("developer-options").On = showDeveloper;
         foreach (VisualRow row in Rows)
         {
             activeComposer.GetSwitch(row.Key).On = row.Read(pendingVisuals);
@@ -864,12 +891,14 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (on == showDeveloper) return;
         showDeveloper = on;
         developerOptions.Remember(on);
-        // The tint's only switch is on Developer, so hiding the tab puts it away too.
+        // The tint's only switch is on Developer, so hiding the tab puts it away too, and a window
+        // showing Developer moves to General.
         if (!on && pendingShowTaa)
         {
             pendingShowTaa = false;
             taa.Preview(pendingTaa, pendingShowTaa);
         }
+        if (!on && shownTab == DeveloperTab) shownTab = GeneralTab;
         RequestRecompose();
     }
 
@@ -1600,9 +1629,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         silhouettes.Preview(pendingSilhouettes);
         pendingFarCap = preset.DrawDistance;
         scale?.SetDrawDistance(pendingFarCap);
-        if (activeComposer?.Composed == true && shownTab == GeneralTab)
-            activeComposer.GetDynamicText("draw-distance-label")
-                .SetNewText(DrawDistanceLabel(), false, true, false);
         RefreshVisuals();
     }
 
@@ -1644,11 +1670,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// <summary>What the scale shows: automatic's live values, or the player's own.</summary>
     int[] DisplayedThresholds() => pendingAutomatic ? automaticThresholds : pendingThresholds;
 
-    // One line at this width. The automatic text ran on past the window's edge and was cut off
-    // at "Cache" (owner screenshot, 2026-10-13).
-    string ThresholdHelp() => pendingAutomatic
-        ? "Drag Vanilla (applies immediately), Cache or Farseer. Grey is vanilla; L1-L6 are automatic."
-        : "Drag Vanilla (applies immediately), L1-L6, Cache or Farseer. Blue is Farseer reach.";
+    /// <summary>The help line that used to stand under the title, now its hover.</summary>
+    const string ScaleHelp =
+        "Drag Vanilla (it applies immediately), Cache for how far cached terrain is drawn, or Farseer "
+        + "for its reach. L1-L6 can be dragged while Automatic is off. Grey is vanilla; blue is "
+        + "Farseer's reach.";
 
     void OnAutomaticChanged(bool on)
     {
@@ -1665,8 +1691,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             scale.ReadOnly = pendingAutomatic;
             scale.SetValues(DisplayedThresholds());
         }
-        activeComposer.GetDynamicText("threshold-help")
-            .SetNewText(ThresholdHelp(), false, true, false);
         GuiElementSwitch automatic = activeComposer.GetSwitch("auto-thresholds");
         if (automatic.On != pendingAutomatic) automatic.On = pendingAutomatic;
     }
@@ -1687,9 +1711,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         vanilla.Apply(vanillaViewDistance);
         scale?.SetVanillaDistance(vanillaViewDistance);
         RefreshAutomaticValues();
-        if (activeComposer?.Composed != true || shownTab != GeneralTab) return;
-        activeComposer.GetDynamicText("threshold-help")
-            .SetNewText(ThresholdHelp(), false, true, false);
     }
 
     void OnPausedLoadingChanged(bool on) => pendingLoadWhilePaused = on;
@@ -1699,11 +1720,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         pendingFarCap = Math.Clamp(blocks, MinDrawDistance, MaxDrawDistance);
         scale?.SetDrawDistance(pendingFarCap);
         scale?.SetSilhouette(pendingSilhouettes.ReachBlocks, pendingSilhouettes.Enabled);
-        if (activeComposer?.Composed == true && shownTab == GeneralTab)
-        {
-            activeComposer.GetDynamicText("draw-distance-label")
-                .SetNewText(DrawDistanceLabel(), false, true, false);
-        }
         RefreshPresetReadout();
         return true;
     }
@@ -1778,8 +1794,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (activeComposer?.Composed != true) return true;
         scale?.SetDrawDistance(pendingFarCap);
         scale?.SetSilhouette(pendingSilhouettes.ReachBlocks, pendingSilhouettes.Enabled);
-        activeComposer.GetDynamicText("draw-distance-label")
-            .SetNewText(DrawDistanceLabel(), false, true, false);
         activeComposer.GetSwitch("load-while-paused").On = pendingLoadWhilePaused;
         RefreshVisuals();
         return true;
@@ -1849,8 +1863,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (!saved) taa.Preview(taa.Initial, taa.ShowInitial);
         if (!saved) silhouettes.Preview(silhouettes.Initial);
     }
-
-    string DrawDistanceLabel() => $"{FormatBlocks(pendingFarCap)} blocks";
 
     static string FormatBlocks(int blocks) => blocks.ToString("N0", CultureInfo.InvariantCulture);
 }
