@@ -2869,6 +2869,14 @@ public partial class VintageHorizonsModSystem : ModSystem
                 requestClose();
                 capi.Event.EnqueueMainThreadTask(() =>
                 {
+                    // Settings sits inside the pause menu, and leaving it returns there with the
+                    // game still paused, so the integrated server cannot generate. The menu
+                    // unpauses the game as it closes (GuiDialogEscapeMenu.OnGuiClosed, 1.22.7);
+                    // close it before the live window opens (owner, 2026-10-19).
+                    foreach (GuiDialog dialog in capi.Gui.OpenedGuis.ToArray())
+                    {
+                        if (dialog.GetType().Name == "GuiDialogEscapeMenu") dialog.TryClose();
+                    }
                     if (!OpenStandaloneConfigDialog())
                         capi.ShowChatMessage(
                             "[Landscapes] The live configuration window could not open; use .dlconfig.");

@@ -2646,7 +2646,8 @@ public static class StaticAssetChecks
         c.True(dialog.Contains("controlserver permission is required", StringComparison.Ordinal)
                 && dialog.Contains("This permanently adds terrain to the savegame", StringComparison.Ordinal),
             "the Generate page states its permission boundary and permanent-save warning");
-        c.True(dialog.Contains("Open live controls", StringComparison.Ordinal)
+        c.True(dialog.Contains("\"Open Live Controls + Unpause\"", StringComparison.Ordinal)
+                && mod.Contains("dialog.GetType().Name == \"GuiDialogEscapeMenu\") dialog.TryClose();", StringComparison.Ordinal)
                 && dialog.Contains("capi.IsSinglePlayer, capi.IsGamePaused", StringComparison.Ordinal)
                 && dialog.Contains("worldGen.OpenLive", StringComparison.Ordinal),
             "paused singleplayer Settings hands generation to a live non-pausing window");

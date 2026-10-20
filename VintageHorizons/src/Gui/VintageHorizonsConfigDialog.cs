@@ -73,8 +73,8 @@ internal static class VintageHorizonsConfigLayout
     /// <summary>
     /// A small line under the title saying why Automatic is recommended (owner, 2026-10-19).
     /// </summary>
-    internal const double AutoNoteY = 68;
-    internal const double ScaleY = 96;
+    internal const double AutoNoteY = 72;
+    internal const double ScaleY = 104;
 
     /// <summary>
     /// 214 so each lane of marker boxes has a gap to the next: at 200 the Farseer box sat on the
@@ -87,7 +87,7 @@ internal static class VintageHorizonsConfigLayout
     /// A horizontal rule under the bar parts the distances from the switches (owner, 2026-10-19),
     /// where the draw distance heading used to be.
     /// </summary>
-    internal const double RuleY = 316;
+    internal const double RuleY = 324;
     internal const double RuleHeight = 4;
 
     /// <summary>
@@ -95,8 +95,8 @@ internal static class VintageHorizonsConfigLayout
     /// columns, Farseer beside its seam fog first and all-cores collection under the fog, at a
     /// roomier 30-unit pitch now that the page has the space.
     /// </summary>
-    internal const double VisualHeadingY = 330;
-    internal const double VisualRowsY = 366;
+    internal const double VisualHeadingY = 340;
+    internal const double VisualRowsY = 378;
     internal const int VisualLineCount = 5;
     internal const double VisualRowHeight = 30;
 
@@ -704,14 +704,17 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddStaticText(AutoNote,
             FittedFont(AutoNote, Width - 2 * Margin, CairoFont.WhiteSmallText()),
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.AutoNoteY), Width - 2 * Margin, 22));
-        composer.AddStaticText("Automatic (Recommended)", CairoFont.WhiteSmallText(),
-            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 190, Y(titleY + 6), 180, 22));
+        // One line, shrinking if it must: at 180 wide it wrapped onto the line under the title
+        // (owner screenshot, 0.4.174).
+        const string automaticLabel = "Automatic (Recommended)";
+        composer.AddStaticText(automaticLabel, FittedFont(automaticLabel, 240, CairoFont.WhiteSmallText()),
+            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 250, Y(titleY + 6), 240, 22));
         composer.AddSwitch(OnAutomaticChanged,
             ElementBounds.Fixed(SwitchX, Y(titleY), 32, 32), "auto-thresholds");
         // Over the label and the switch alike. GuiElementHoverText handles no mouse-down, so it
         // cannot swallow the click on the switch underneath it.
         composer.AddHoverText(AutomaticTip, CairoFont.WhiteSmallText(), 380,
-            ElementBounds.Fixed(SwitchX - 190, Y(titleY - 2), 222, 36), "tip-auto-thresholds");
+            ElementBounds.Fixed(SwitchX - 250, Y(titleY - 2), 282, 36), "tip-auto-thresholds");
 
         scale = new LodThresholdScaleElement(capi, DisplayedThresholds(),
             vanillaViewDistance, pendingFarCap, pendingSilhouettes.ReachBlocks,
@@ -1297,8 +1300,18 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddDynamicText(WorldGenLastMessage(), CairoFont.WhiteSmallText(),
             ElementBounds.Fixed(Margin, Y(messageY), Width - 2 * Margin, 66), "wg-message");
 
-        composer.AddButton(NeedsLiveWorldGenWindow() ? "Open live controls" : "Prepare",
-            OnWorldGenPrepare,
+        // Paused in Settings, the page's one action is to leave for the live window, unpausing the
+        // game on the way (owner, 2026-10-19); the generation buttons could do nothing here, and
+        // the longer label needs their room.
+        if (NeedsLiveWorldGenWindow())
+        {
+            composer.AddButton(LiveControlsLabel, OnWorldGenPrepare,
+                ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY), 420, 38),
+                EnumButtonStyle.Normal, "wg-prepare");
+            worldGen.Client?.SetWorldGenPageOpen(false);
+            return;
+        }
+        composer.AddButton("Prepare", OnWorldGenPrepare,
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY), 170, 38), EnumButtonStyle.Normal, "wg-prepare");
         composer.AddButton("Confirm", OnWorldGenConfirm,
             ElementBounds.Fixed(Margin + 180, Y(VintageHorizonsConfigLayout.ButtonY), 170, 38), EnumButtonStyle.Normal, "wg-confirm");
@@ -1309,8 +1322,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddButton("Stop", OnWorldGenStop,
             ElementBounds.Fixed(Margin + 650, Y(VintageHorizonsConfigLayout.ButtonY), 135, 38), EnumButtonStyle.Normal, "wg-stop");
 
-        worldGen.Client?.SetWorldGenPageOpen(!NeedsLiveWorldGenWindow());
+        worldGen.Client?.SetWorldGenPageOpen(true);
     }
+
+    internal const string LiveControlsLabel = "Open Live Controls + Unpause";
 
     void SetGenerateValues()
     {
@@ -1353,7 +1368,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (client == null || !client.WorldGenerationAvailable)
             return "Unavailable: load a world on a server running a current Doden's Landscapes build.";
         if (NeedsLiveWorldGenWindow())
-            return "Singleplayer is paused in Settings. Open live controls to start or manage generation.";
+            return "Singleplayer is paused in Settings. " + LiveControlsLabel + " to start or manage generation.";
         if (client.WorldGenStatus?.Available == false)
             return "Temporarily unavailable: " + client.WorldGenStatus.Message;
         return client.CanControlWorldGeneration
@@ -1373,7 +1388,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (!string.IsNullOrWhiteSpace(client?.LastWorldGenControlError))
             return client.LastWorldGenControlError;
         if (NeedsLiveWorldGenWindow())
-            return "Opening the live window leaves Settings so the integrated server can run; the mod does not force-unpause it.";
+            return "The button below leaves Settings, unpauses the game so the world can generate, and opens the live window.";
         AssistWorldGenStatus? status = client?.WorldGenStatus;
         if (status == null) return "Open this tab after joining a world to request server status.";
         return WorldGenPageMessage(status.State, status.Message);
@@ -1446,16 +1461,21 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         activeComposer.GetSlider("wg-radius").Enabled = canControl && !areaLocked;
         activeComposer.GetNumberInput("wg-x").Enabled = canControl && !areaLocked && coordinates;
         activeComposer.GetNumberInput("wg-z").Enabled = canControl && !areaLocked && coordinates;
-        activeComposer.GetButton("wg-prepare").Enabled = canControl && (openLive
-            || (!areaLocked && status?.PendingConfirmation != true));
-        activeComposer.GetButton("wg-confirm").Enabled = !openLive && canControl
-            && status?.PendingConfirmation == true;
-        activeComposer.GetButton("wg-pause").Enabled = !openLive && canControl
-            && state == EnumWorldGenRemoteState.Running;
-        activeComposer.GetButton("wg-resume").Enabled = !openLive && canControl
-            && state is EnumWorldGenRemoteState.Paused or EnumWorldGenRemoteState.Interrupted;
-        activeComposer.GetButton("wg-stop").Enabled = !openLive && canControl
-            && areaLocked;
+        // The generation buttons are not on the page while it offers only the live window.
+        SetButtonEnabled("wg-prepare", canControl && (openLive
+            || (!areaLocked && status?.PendingConfirmation != true)));
+        SetButtonEnabled("wg-confirm", !openLive && canControl
+            && status?.PendingConfirmation == true);
+        SetButtonEnabled("wg-pause", !openLive && canControl
+            && state == EnumWorldGenRemoteState.Running);
+        SetButtonEnabled("wg-resume", !openLive && canControl
+            && state is EnumWorldGenRemoteState.Paused or EnumWorldGenRemoteState.Interrupted);
+        SetButtonEnabled("wg-stop", !openLive && canControl && areaLocked);
+    }
+
+    void SetButtonEnabled(string key, bool enabled)
+    {
+        if (activeComposer?.GetElement(key) is GuiElementTextButton button) button.Enabled = enabled;
     }
 
     internal static bool NeedsLiveWorldGenWindow(
