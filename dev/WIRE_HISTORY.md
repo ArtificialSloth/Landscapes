@@ -185,6 +185,21 @@ unchanged `AssistSilhouetteRequest` within 5 s of the last one acted on. Every c
 shipped stays within these bounds (16 keys in flight, one hello per join), so for them every request is
 still answered (`LodAssistAdmission`, `LodHelloGate`; G288, settled decision 61).
 
+**The welcome says where Farseer's heights come from (0.4.165, Session 117).** `AssistWelcome` gains
+`SilhouetteHeightSource`, field 10, an `EnumSilhouetteHeightSource` sent as an int: 1 the server builds
+from engine previews because it found neither supported sampler mod, 2 an accelerator (Algernon's
+Terrain Sampler or Watersheds) answers, 3 the server config turned accelerators off. 0, which every
+older server sends and every server that offers no silhouettes sends, means unknown. The client shows
+its red no-sampler note only for 1 while the server offers silhouettes. Append-only, so the protocol
+stays `1`; an older client ignores the field.
+
+**Client settings file (Session 117, 0.4.166-0.4.168).** `dodenslandscapes.json` gains
+`ShowDeveloperOptions` (false: the settings window hides its Developer tab) and `PresetPromptShown`
+(false: the first-run preset prompt shows once at the next login, existing installs included), and no
+longer uses `ShowAdvancedSettings`, which an older file keeps harmlessly. A new install starts at the
+Quality preset: `FarViewDistanceCap` and `SilhouetteReachBlocks` default to 8,192 (both were 4,096); an
+existing file keeps its own values. No dial's meaning or range changed.
+
 ## Section blob-format ledger
 
 | Blob format | Current schema | Meaning |

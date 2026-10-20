@@ -5498,3 +5498,73 @@ column, 1,024 bytes a block code) and read through `LodBoundedReadStream`, which
 64 MB; real sections come to a few MB.
 
 **Found:** 2026-10-18, Session 116.
+
+### G292 - The game's line breaker wraps text that its own measure says fits
+
+**Trigger:** shrinking a label's font so it fits its box on one line.
+
+**Trap:** 0.4.168 scaled a title's font down whenever `CairoFont.GetTextExtents` said it was wider than
+its box, and "Vanilla and LOD Seam Blending" still wrapped onto the row below: the measure put it a
+pixel or two inside the box, while `TextDrawUtil.Lineize` breaks a line once its width reaches the box
+width, and counted it as reaching it.
+
+**Safer action:** aim for about 92% of the box (`VintageHorizonsConfigDialog.FittedFont`), and apply it to
+every label that can be long, cost words included ("More RAM" wrapped too).
+
+**Found:** 2026-10-19, Session 117 (0.4.168; fixed 0.4.169).
+
+### G293 - Leaving vanilla Settings returns to a pause menu that keeps the game paused
+
+**Trigger:** handing off from the in-game Settings page to something that needs the world running, such
+as the live Generate window.
+
+**Trap:** `IGameSettingsHandler.LeaveSettingsMenu` returns to the pause menu, and in singleplayer the
+game stays paused while that menu is open, so the integrated server generated nothing behind the live
+window. The client API exposes `IsGamePaused` but no way to unpause.
+
+**Safer action:** after leaving Settings, close `GuiDialogEscapeMenu` (found by type name among
+`capi.Gui.OpenedGuis`); its `OnGuiClosed` calls `PauseGame(false)`, exactly as "Back to game" does
+(decompiled 1.22.7). Queue it after the leave, which is itself queued.
+
+**Found:** 2026-10-19, Session 117 (fixed 0.4.175).
+
+### G294 - A floor that starts a doubling sequence moves every level with it
+
+**Trigger:** holding the first value of a derived sequence at a minimum.
+
+**Trap:** automatic LOD thresholds held L1 at the vanilla view distance plus the blend band and a
+section, then doubled from L1. Once that floor passed the pixel-based L1 (vanilla above about 464 on the
+owner's screen), every level moved out with it, though their on-screen sizes had not changed.
+
+**Safer action:** compute every level from its own on-screen size, apply the floor to L1 alone, and let
+normalisation push a later level just past L1 only when L1 overtakes it
+(`LodAutoThresholds.Compute`).
+
+**Found:** 2026-10-19, Session 117 (fixed 0.4.169).
+
+### G295 - A source-text check spanning two lines never matches a CRLF file
+
+**Trigger:** a fast check that reads a source file and looks for text across a line break with `\n`.
+
+**Trap:** the repository's source files have CRLF line endings on Windows, so the pattern never matches
+and the check fails although the code is right (or, negated, passes although it is wrong).
+
+**Safer action:** normalise with `.Replace("\r\n", "\n")` before matching, as `SettingsWindowChecks.Source`
+does, or match a single line.
+
+**Found:** 2026-10-19, Session 117.
+
+### G296 - At login the seam fog's edge starts at the player
+
+**Trigger:** entering a world with the seam fog on.
+
+**Trap:** the fog follows the edge of the ready cached terrain, and just after login almost none of it
+near the player has loaded, so the edge runs close around the player and the fog stands over the
+character and fills the screen.
+
+**Safer action:** hold the fog from the moment the player enters the world (`LevelFinalize`, not mod
+start, which a long loading screen would use up) and fade it in by scaling its densities
+(`LodSilhouetteFogVolume.LoginFade`: 5 s, then 2 s); its field still builds meanwhile. Nothing signals
+that the first load is done, so the hold is time.
+
+**Found:** 2026-10-19, Session 117 (0.4.174).

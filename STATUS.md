@@ -4,16 +4,42 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-10-19`
-**Mod version:** `0.4.164` - current private test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception. 0.4.157-0.4.164 (Session 116: release polish and the pre-release review's fixes) are installed but unplayed; 0.4.156 is the newest owner-played build ("Good enough"). All checks pass
+**Mod version:** `0.4.175` - current private test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception. 0.4.165-0.4.175 (Session 117: the settings window, presets and the no-sampler warning) are installed and owner-played; they carry Session 116's review fixes. All checks pass
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00` (0.4.143 onward not pushed); pushed to `main` on `DodenGruva/Landscapes` (private) on 2026-10-13, after the history was rewritten to his GitHub no-reply address
+**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083` (0.4.143 onward not pushed); pushed to `main` on `DodenGruva/Landscapes` (private) on 2026-10-13, after the history was rewritten to his GitHub no-reply address
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `154` C# files under `VintageHorizons/src`
+**Source files:** `155` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
+
+**The settings window, presets that set detail, and the no-sampler warning (0.4.165-0.4.175).**
+Session 117, built from the owner's screenshots; every build owner-played.
+
+- **No-sampler warning (0.4.165):** sampler mods stay optional (silhouette plan D13). The server tells
+  each player where Farseer's heights come from (`AssistWelcome` field 10); with silhouettes offered and
+  neither Algernon's Terrain Sampler nor Watersheds found, General shows a short red note, full text on
+  hover. Never seen in game yet. README: Recommended mods.
+- **Window (settled decision 64):** tabs General and Generate, plus Developer while the remembered
+  Developer options switch is on. Developer holds every dial in Anti-aliasing (with an LOD detail target
+  slider), Farseer look and Seam fog sub-tabs. General: "LOD Thresholds (Drag to adjust)", Automatic
+  (Recommended) and a line on why, the distance bar, a rule, Visual features in two columns with cost
+  words (Seam fog High, measured 0.52-0.68 ms; Farseer and Water Effects Low, estimates), and paused
+  loading and Developer options in the action row. Labels shrink to 92% of their box when long (G292).
+  Defaults leaves all-cores and Developer options alone.
+- **Presets (settled decision 63):** a preset sets the seven switches, draw distance, Farseer and its
+  reach, the seam fog and the automatic target, and turns Automatic on: Performance 2,048 / Farseer 4,096
+  / no fog / 3 px; Balanced 4,096 / 8,192 / fog / 2 px; Quality 8,192 / 8,192 / fog / 1.5 px. Quality is
+  the new-install default and Defaults; a first-run prompt asks once. The owner found the feature
+  switches barely move his frame rate; distances and the target are the real levers. Geometry savings
+  (about 56% and 25% of Quality) are arithmetic.
+- **Automatic thresholds (decision 35, G294):** the vanilla floor holds L1 only.
+- **Fog at login (G296):** held 5 s from entering the world, then a 2 s fade. Harness-tested only.
+- **Generate from Settings (G293):** "Open Live Controls + Unpause" closes the pause menu, unpausing the
+  game, then opens the live window. Harness-tested only.
+- **Evidence:** 26,432 assertions, 0 failures; unseen items and estimates are in TODO.
 
 **Pre-release review and its fixes (0.4.157-0.4.164).** Session 116. Release polish first: a new
 icon from the owner's own screenshot (0.4.158, after a drawn one in 0.4.157) and a one-sentence
@@ -76,10 +102,10 @@ report-only until the owner chose; findings and progress are in `notes/pre-relea
   colour: block table rows 8-9 and snapshot wall colours.
 - **Branchy leaves (0.4.144, owner-confirmed):** tinted inside their shape, not on the block, they drew
   untinted; they are drawn as the plain leaves of the same tree.
-- **Settings window (0.4.145-0.4.148, owner: "It looks good"):** a remembered **Advanced settings**
-  switch (default off) hides the Anti-Aliasing tab and every Farseer slider, whose values stay in
-  force; Generate works through its own buttons; the login notice has **Open settings**;
-  `.dlconfig <tab>`; the window is 640 units tall so it fits 1080p at GUI 1.5 (it was 820).
+- **Settings window (0.4.145-0.4.148, owner: "It looks good"; superseded by Session 117):** an
+  Advanced settings switch hid the dials; Generate works through its own buttons; the login notice has
+  **Open settings**; `.dlconfig <tab>`; the window is 640 units tall so it fits 1080p at GUI 1.5 (it was
+  820).
 - **Farseer defaults (0.4.146):** the owner's look (reach 4,096, sky tint 2.0, light bias 0.75, far
   fade 0.70, geometry 50%, hill softness 25%); LOD edge depth/width fixed at 0/32 and removed.
 - **Seam fog without Farseer (0.4.146, decision 57):** with Farseer off or offering no tiles, the fog
@@ -162,8 +188,8 @@ a fresh world on 2026-10-07; the temporary recorder was removed in 0.4.136.** Se
   (adaptive heap count), collections fell to 25-38 a minute, time frozen from 2.5-5.2 s to 0.26-0.40 s
   a minute, the longest freeze from 35-40 to 22-23 ms and the 1% low to 92-138 FPS. The owner:
   "Felt MUCH smoother." It costs about 0.3-0.5 GB (whole game 9.3-9.5 GB against 8.8-9.2), and the
-  first minute after joining has 56-139 ms collections (G267). The Performance tab's switch, off by
-  default, edits `Vintagestory.runtimeconfig.json` with a backup and applies from the next start.
+  first minute after joining has 56-139 ms collections (G267). The switch, on General since 0.4.167
+  (a Performance tab before) and off by default, edits `Vintagestory.runtimeconfig.json` with a backup and applies from the next start.
 - **Recorder:** `.dlhitch` names the collector at start, writes its minute report in the background,
   and each minute gives the longest freeze in one frame, frames held 10 ms or more, memory, exact
   allocation (G264), allocation by thread and type, and this mod's jobs. The chunk thread rest adds
@@ -627,8 +653,8 @@ earlier frames, so the pixel settles on the average of what it covers.
 | Memory when still | `.dltaa still` | 0.99 | 0-0.99 | 0.97 |
 | Smear guard | `.dltaa clip` | 2.25 | 0.5-4 | 1.25 |
 
-- **Saved and on sliders.** All the dials are saved and have sliders on the `.dlconfig`
-  Anti-Aliasing tab. `.dltaa reset` restores the defaults.
+- **Saved and on sliders.** All the dials are saved and have sliders in the `.dlconfig` Developer
+  tab's Anti-aliasing group (Developer options on). `.dltaa reset` restores the defaults.
 - **Ranges kept.** The owner kept these ranges on 2026-09-12, although sharpen and both memories
   sit at their tops.
 - **Reporting.** `.dltaa` with no argument reports, in chat and the client log: the state, the reach
@@ -651,9 +677,11 @@ earlier frames, so the pixel settles on the average of what it covers.
 
 With **Automatic** on (the default), each level hands over at the same on-screen size (settled
 decision 35).
-- **Where levels start.** L1 is where a level-0 column reaches 1.5 px on screen
-  (`.dldetail target`), and each later level doubles it.
-- **Level 0** is held past the vanilla view distance, the blend band and one section.
+- **Where levels start.** L1 is where a level-0 column reaches the target on screen (1.5 px for
+  Quality, 2 for Balanced, 3 for Performance; `.dldetail target` or the Developer slider), and each
+  later level doubles it.
+- **Level 0** is held past the vanilla view distance, the blend band and one section. Since 0.4.169
+  that floor holds L1 alone; before, it started the doubling and moved every level (G294).
 - **At the owner's settings** (60 degrees, 1,080 rendered rows, view distance 128, band 128) that
   gives 624 / 1,248 / 2,496 / 4,992 / 9,984 / 19,968 blocks. His own list stays in the file for
   `.dldetail manual`.
@@ -674,23 +702,22 @@ read "Horizons" until then).
 - **One editor.** Both entries compose one stateful editor (settled decision 37), so behaviour
   cannot drift between two implementations.
 
-- **The pages.** **General** holds automatic/manual LOD distances, the far draw cap, silhouette
-  reach, the saved **Load terrain while paused** switch, and visual features with presets.
-  **Anti-Aliasing** holds every TAA dial; **Farseer** holds its saved switch, reach, status,
-  Outline detail, Hill softness and classic-look dials; **Generate** holds permanent
-  world-generation controls; **Performance** holds the opt-in **All-Cores Garbage Collection**
-  switch (0.4.134, decision 54), which applies from the next start and says what the current
-  session runs. The tab strip is 760 px for five tabs.
-  - **Simple and advanced views (0.4.145, owner).** By default Anti-Aliasing is hidden and Farseer
-    shows only its two switches; the remembered **Advanced settings** switch in the action row shows
-    every dial, and reads "(changed)" when a hidden value differs from its default. Generate has no
-    Save/Cancel/Defaults. The window is 640 units tall (0.4.148; 718 inside vanilla Settings).
-    `.dlconfig <tab>` opens it on a tab (0.4.147).
-  - Descriptions appear on hover.
-  - Secondary tabs sit below the vanilla header.
-  - Compact rows and independently placed actions keep text and controls inside the page.
-  - Defaults resets the current page. Save keeps mod changes; Cancel or closing restores live
-    anti-aliasing and silhouette previews.
+- **The pages (Session 117, settled decision 64).** **General**: the title "LOD Thresholds (Drag to
+  adjust)" (the old help line is its hover) beside **Automatic (Recommended)**, a line on why Automatic
+  is recommended, the distance map, a rule, then **Visual features** with the preset drop-down and two
+  columns of switches with cost words: Farseer and its Seam fog first, All-Cores Garbage Collection
+  (0.4.134, decision 54; applies from the next start, its hover says what this session runs), then the
+  seven features. The red no-sampler note sits under them when it applies. **Load terrain while
+  paused** and **Developer options** sit in the action row between Defaults and Cancel. **Generate**
+  holds permanent world-generation controls; paused in Settings it offers only **Open Live Controls +
+  Unpause**. **Developer** (while Developer options is on) holds every tuning dial in Anti-aliasing,
+  Farseer look and Seam fog sub-tabs.
+  - The window is 640 units tall (718 inside vanilla Settings). `.dlconfig <tab>` opens a tab; the old
+    names `farseer` and `performance` open General, `aa` opens Developer.
+  - Descriptions appear on hover. Labels too long for their box shrink to fit (G292).
+  - Defaults on General restores the Quality preset, Automatic and the default LOD distances, and
+    leaves all-cores and Developer options alone; on Developer it resets the sub-tab on show. Save
+    keeps mod changes; Cancel or closing restores live anti-aliasing, Farseer and fog previews.
 - **Distance map.** A logarithmic map begins at 32 blocks.
   - Vanilla's range is neutral grey. The coloured and labelled L0-L6 spans begin at its edge, and
     each L1-L6 marker frame matches the region it introduces.
@@ -708,9 +735,11 @@ read "Horizons" until then).
     LOD work at 50 ms cadence. It neither unpauses nor advances simulation.
   - Source and harness verification are complete; a direct runtime progress observation remains
     open.
-- **Presets.** Quality equals the deliberate default visual set and leaves costly Far Biome Colors
-  off. Performance disables silhouettes; Balanced and Quality enable them. Players may change a
-  feature individually, producing a Custom configuration.
+- **Presets (decision 63).** A preset sets the seven switches, the draw distance, Farseer and its
+  reach, the seam fog and the automatic target, and turns Automatic on (see Current result). Quality is
+  the default and leaves costly Far Biome Colors off, as every preset does. Changing any of them reads
+  as Custom. A first-run prompt (`PresetPromptShown`) asks every player once, before the LOD-mod
+  notice.
 
 The owner's first 0.4.63 screenshots exposed the remaining tab, colour and Vanilla/L0 separation
 defects. He reviewed the corrected 0.4.64 window and said, "This looked good." Session 97 then
@@ -1072,10 +1101,10 @@ It covers:
 
 ## Next work
 
-Begin with [Session 116](dev/sessions/SESSION_116.md) and the top of [TODO](dev/TODO.md).
+Begin with [Session 117](dev/sessions/SESSION_117.md) and the top of [TODO](dev/TODO.md).
 
-1. **The public release, on the owner's calls:** play 0.4.164 first (the review's fixes are
-   unplayed; TODO lists the small observations), run the game-launching check tiers (not run
+1. **The public release, on the owner's calls:** 0.4.175 is played; the review's small observations
+   and Session 117's unseen items are in TODO, run the game-launching check tiers (not run
    since the rename; ask before launching), push the local commits since `1bea2c1` with his OK,
    promote the build he last played to a release number, make `DodenGruva/Landscapes` public (the history is there; the old `DodenGruva/Horizons`
    fork still exposes his personal email and is his to delete), and create the ModDB page
@@ -1086,7 +1115,7 @@ Begin with [Session 116](dev/sessions/SESSION_116.md) and the top of [TODO](dev/
    - **The bug report** to the game's developers is drafted; the owner sends it.
    - **The Server GC's first-minute collections** (56-139 ms while the world loads, G267).
    - **Before recommending it to players:** a longer paired memory look, a smaller machine, Linux and
-     macOS; the README now describes the Performance tab, the ModDB description should at release.
+     macOS; the README now describes the all-cores switch, the ModDB description should at release.
    - **The next slowest frames:** entity ticking and this mod's `vh:prepare`, 2-4 ms spikes.
    - **This mod's remaining garbage:** 55-70 MB/s of large `UInt64[]` from the capture rebuild.
    - **The installed-off headless run was 20% faster**; repeat each mode before claiming speed.

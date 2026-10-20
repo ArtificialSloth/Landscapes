@@ -526,8 +526,10 @@ live until the exact replacement persistence revision is acknowledged.
 35. **Automatic LOD thresholds follow the screen.** L1 is where a level-0 column reaches the target
     on-screen width (1.5 px by default) and each later threshold doubles it, so every level hands
     over at the same size on screen. Level 0 is held past the vanilla view distance, the blend band
-    and one section, because band textures exist only on level-0 quads. The player's own
-    thresholds stay in the file for when automatic is off.
+    and one section, because band textures exist only on level-0 quads; that floor holds L1 alone,
+    and a later level moves only where L1 would otherwise pass it (0.4.169, G294: until then the
+    floor started the doubling and moved every level). The presets set the target (decision 63).
+    The player's own thresholds stay in the file for when automatic is off.
 36. **A block is recorded as what it shows.** A block whose look lives in its block entity has no
     type-level colour, so capture reads the entity where the job is created and records a chisel as
     its most visible material: the eligible material with the most exposed voxel faces, summed per
@@ -537,7 +539,7 @@ live until the exact replacement persistence revision is acknowledged.
     grey, never the missing-texture image; a plain block whose own answer is that image (a removed
     mod's block) keeps it, matching what the game draws up close (G180-G182).
 37. **Settings has one editor and each setting keeps its real owner.** The guarded in-game
-    **Horizons** tab and `.dlconfig` compose the same editor; the command remains the fallback if
+    **Landscapes** tab and `.dlconfig` compose the same editor; the command remains the fallback if
     Vintage Story's private Settings header seam moves. The Vanilla distance marker writes the
     actual game setting with the game's range, step, mouse-up commit and Custom-preset side effect,
     so mod Cancel never rolls it back. Its neutral visual band ends before the coloured L0 band.
@@ -739,6 +741,27 @@ live until the exact replacement persistence revision is acknowledged.
     server remembers held-back changes per player across sessions; the README tells admins, and
     `EnableServing: false` stops sharing entirely. Rejected for release: filtering the list, the
     notices, or both.
+63. **A preset sets the whole picture, keyed to the screen; Quality is the default** (owner,
+    2026-10-19; 0.4.168-0.4.169). A preset (`LodPreset`) sets the seven feature switches, the cached
+    draw distance, Farseer and its reach, the seam fog and the automatic LOD target, and switches
+    Automatic on; the player's own distances stay underneath. Performance: 2,048, Farseer to 4,096,
+    no fog, 3 px. Balanced: 4,096, Farseer to 8,192, fog, 2 px, every feature but seam blending and far
+    biome colours. Quality: 8,192, Farseer to 8,192, fog, 1.5 px, every feature but far biome colours,
+    which stay an opt-in everywhere. Farseer stays on in every preset, even at the cached distance,
+    because it fills the unexplored ground inside it. Quality is what a new install draws and what
+    General's Defaults restores (all-cores collection and Developer options excepted), so players see
+    what the mod can do; a first-run prompt asks every player once. Rejected: presets storing block
+    distances (they would mean something different at every field of view and resolution); Quality's
+    reach at 16,384; Balanced as the default.
+64. **The settings window keeps every dial, out of the way** (owner, 2026-10-19; 0.4.166-0.4.175).
+    Tabs are General and Generate, plus Developer while General's remembered Developer options switch
+    is on; Developer holds every tuning dial in Anti-aliasing, Farseer look and Seam fog sub-tabs.
+    General is one title over the distance bar, a rule, and the visual features in two columns with a
+    coarse cost word each (Low, Moderate, High; never "Varies"); paused loading and Developer options
+    sit in the action row. The window stays 640 tall; labels shrink to fit on one line (G292).
+    Rejected: deleting the dials (asked for, then reversed), the Advanced switch, a taller or
+    scrolling window. Sampler mods stay optional (silhouette plan D13); the window warns in red when
+    the server found neither.
 
 ## Concurrency invariants
 

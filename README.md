@@ -48,7 +48,8 @@ client capture, and players without the mod are unaffected.
   from the game's own terrain previews, which share time with world generation. Neither mod is
   required. Install it where Doden's Landscapes runs on the server; in singleplayer, that is your own
   game. Algernon's Terrain Sampler is required on clients too, so every player on that server
-  downloads it. When neither is found, the Farseer tab in `.dlconfig` shows a red warning.
+  downloads it. When neither is found, the settings window's General page shows a short red note
+  (hover it for the full warning).
 
 ## What it cannot do
 
@@ -75,18 +76,36 @@ in advance.
   the client log names what was missing. It keeps building its cache, so a later check that
   passes (`.dlgpu on`, or a driver update) shows everything you explored in the meantime.
 
+## Settings and presets
+
+Open the settings from the game's Settings, on the **Landscapes** page, or type `.dlconfig` in chat.
+The first time you join a world, a window asks you to pick a preset; Quality is the default.
+
+- **Presets.** Performance, Balanced and Quality each set how far cached terrain is drawn (2,048,
+  4,096, 8,192 blocks), Farseer and its reach (4,096, 8,192, 8,192), the seam fog (off, on, on), the
+  visual features, and how much detail the distance levels keep, and switch Automatic on. Changing any
+  of them shows "Custom". Your own LOD distances are kept for when Automatic is off.
+- **General** shows the LOD distances as a bar you can drag (hover the title for what each handle
+  does), the **Automatic (Recommended)** switch, and the visual features in two columns, each with a
+  rough cost (Low, Moderate, High). Most of what distant terrain costs is how much is drawn, so the
+  draw distance and the preset matter more than any single feature. **Load terrain while paused** and
+  **Developer options** sit beside Defaults. Defaults restores Quality.
+- **Generate** builds real terrain into the savegame (see below).
+- **Developer** appears while Developer options is on and holds every tuning dial: distant
+  anti-aliasing and the LOD detail target, Farseer's look and reach, and the seam fog.
+
 ## In-game commands
 
 | Command | Purpose |
 | --- | --- |
 | `.dlinfo` | Status: cached/resident sections, meshes, current far edge, settings |
 | `.dldiag [on\|off]` | Show or hide the diagnostics side panel for this session. Off by default. |
-| `.dlconfig` | Open the settings window. **General** holds distance and visual settings; **Anti-Aliasing** holds every `.dltaa` dial; **Farseer** holds reach, outline, hill-softness, edge-apron, classic-look and seam-fog controls; **Generate** prepares and controls permanent world generation. Changes preview live where applicable, Save keeps them and Cancel restores the previous values. If ordinary in-game Settings has paused an integrated server, Generate offers **Open live controls** and hands off to this standalone window before sending server actions. |
-| `.dldetail [auto\|manual\|target <px>\|<blocks>]` | Without an argument, report the six transition distances and where they come from. `auto` (the default) chooses them from your field of view and render resolution so every level hands over at the same size on screen, and `target <px>` sets that size (1.5 by default); `manual` returns to your own distances; a number sets a doubling sequence beginning there and switches automatic off. Saved; `.dlconfig` edits them individually. |
-| `.dlfar <blocks>` | Cap the LOD render distance. `0` means unlimited, which is the default. |
-| `.dltaa [on\|off\|show\|reach\|nudge\|sharpen\|blend\|still\|clip\|reset]` | Distant anti-aliasing: stops distant terrain shimmering as you move by nudging it a fraction of a pixel each frame and blending frames together, on cached terrain only. On by default and saved; also a switch in `.dlconfig`. `reach <px>` sets where it begins as the on-screen width of one block; `nudge`, `sharpen`, `blend` (memory while turning), `still` (memory when still) and `clip` (how strictly old frames must match) tune it. All are saved and all are sliders on the `.dlconfig` Anti-Aliasing tab; `reset` restores the defaults, `show` tints what it touches for the session. With no argument it reports its settings and GPU cost to chat and the client log. |
-| `.dlsilhouette [on\|off\|log\|stats]` | Session-only Farseer override and status. The saved enable switch, 1,024–32,768-block reach, outline, hill-softness, edge-apron, colour/look, the Seam fog switch and twelve seam-fog dials are on `.dlconfig`'s Farseer tab. `off` drops the server demand and releases client tile, worker and GPU state; it does not rewrite the saved choice. |
-| `.dlfog [on\|off\|stats]` | Session-only seam fog switch; no argument toggles it. Off draws no fog pass and builds nothing for it, so comparing frame rates on and off in one scene shows the fog's whole cost. The Farseer tab's Seam fog switch saves the choice. |
+| `.dlconfig [general\|generate\|developer]` | Open the settings window, optionally on a tab (see Settings and presets). Changes preview live where applicable, Save keeps them and Cancel restores the previous values. In singleplayer the game's own Settings pauses the world, so its Generate tab offers **Open Live Controls + Unpause**, which leaves Settings, unpauses and opens this window. |
+| `.dldetail [auto\|manual\|target <px>\|<blocks>]` | Without an argument, report the six transition distances and where they come from. `auto` (the default) chooses them from your field of view and render resolution so every level hands over at the same size on screen, and `target <px>` sets that size (1.5 by default); `manual` returns to your own distances; a number sets a doubling sequence beginning there and switches automatic off. The presets set the target (Quality 1.5, Balanced 2, Performance 3), as does the Developer tab's slider. Saved; `.dlconfig` edits them individually. |
+| `.dlfar <blocks>` | Cap the LOD render distance. `0` means unlimited. A new install starts at 8,192, the Quality preset. |
+| `.dltaa [on\|off\|show\|reach\|nudge\|sharpen\|blend\|still\|clip\|reset]` | Distant anti-aliasing: stops distant terrain shimmering as you move by nudging it a fraction of a pixel each frame and blending frames together, on cached terrain only. On by default and saved; also a switch in `.dlconfig`. `reach <px>` sets where it begins as the on-screen width of one block; `nudge`, `sharpen`, `blend` (memory while turning), `still` (memory when still) and `clip` (how strictly old frames must match) tune it. All are saved and all are sliders on the `.dlconfig` Developer tab; `reset` restores the defaults, `show` tints what it touches for the session. With no argument it reports its settings and GPU cost to chat and the client log. |
+| `.dlsilhouette [on\|off\|log\|stats]` | Session-only Farseer override and status. The saved enable and Seam fog switches are on `.dlconfig`'s General page; the 1,024–32,768-block reach is a handle on its distance bar and, with outline, hill softness, colour/look and the twelve seam-fog dials, on the Developer tab. `off` drops the server demand and releases client tile, worker and GPU state; it does not rewrite the saved choice. |
+| `.dlfog [on\|off\|stats]` | Session-only seam fog switch; no argument toggles it. Off draws no fog pass and builds nothing for it, so comparing frame rates on and off in one scene shows the fog's whole cost. The Seam fog switch on General saves the choice. |
 | `.dlmask [on\|off]` | Hand each loaded vanilla chunk its own ground instead of using one distance, and skip cached terrain that is entirely replaced. On by default since 0.3.17; the setting is saved. Turn it off to fall back to a single measured distance. |
 | `.dlpaint [on\|off]` | Diagnostic. Paints the terrain the mask is hiding magenta instead of hiding it. A gap that turns magenta is the mask's doing; a gap that stays empty is not. Magenta can also show where distant terrain stands in front of the game's own, which is harmless. |
 | `.dlskip [on\|off]` | Only matters with `.dlmask on`. On (the default) lets the mod drop a whole cached piece when the game covers all of it. Off keeps the per-pixel masking but never drops a whole piece. |
@@ -166,10 +185,11 @@ dialog (Ctrl+Shift+F) and it no longer counts. Without a known LOD mod switched 
 reminder shows at login until you choose "Don't show again". The client log names the same
 mods, which is where a dedicated-server admin sees them.
 
-### Smoother exploring: the Performance tab
+### Smoother exploring: All-Cores Garbage Collection
 
-The small freezes while exploring new terrain are .NET garbage collections. The settings'
-**Performance** tab has one switch, off by default, that makes the game use every core for
+The small freezes while exploring new terrain are .NET garbage collections. The **All-Cores
+Garbage Collection** switch on the settings' General page, off by default and left alone by
+Defaults, that makes the game use every core for
 them (.NET's Server GC): on the owner's PC they ran 15-25 times less often and the 1% low rose
 from about 40-57 to 92-138 FPS. It costs about 0.3-0.5 GB of memory, and the first minute
 after joining has a few longer pauses while the world loads. Saving it adds one line to the
@@ -225,8 +245,8 @@ The server keeps heights only and writes no terrain to the savegame. Real captur
 selective engine previews refine them. If installed, Watersheds' sampler supplies the broad field;
 Algernon's Terrain Sampler is accepted when Watersheds is absent. Neither mod is required, and a
 sampler failure falls back to the standalone engine-preview path for that session. When a server
-offers silhouettes from engine previews alone because it found neither mod, the Farseer tab shows a
-red warning recommending one. No warning is shown when `SilhouetteUseAccelerators` is off, because
+offers silhouettes from engine previews alone because it found neither mod, the General page shows a
+red note recommending one. No warning is shown when `SilhouetteUseAccelerators` is off, because
 that is the admin's choice, or when the server runs a build too old to report this. Silhouette tiles
 have their own server store. Since 0.4.88, clients lazily keep authoritative replies in a per-world
 store for instant rejoin; switching Farseer off closes that store and clears its live state.
@@ -247,9 +267,10 @@ sun lights it: brighter tops, cool grey undersides, never brighter than the hori
 built from all Farseer terrain within reach, so turning the camera does not move it. When cached
 terrain loads in and the seam moves on, the fog it leaves behind thins and frays away over the fade
 time while fog over the new seam appears at once. It is marched at half resolution and rebuilt at
-full resolution without spreading across near objects. The Farseer tab has a Seam fog switch and
-exposes Seam strip density and height, Fog density, coverage, spread, height, floor depth, billow
-size, drift speed, Fog fade time, Fog quality and edge softness.
+full resolution without spreading across near objects. It waits 5 seconds after you enter a world,
+while the terrain around you loads, then fades in. General has the Seam fog switch; the Developer
+tab's Seam fog group has Seam strip density and height, Fog density, coverage, spread, height, floor
+depth, billow size, drift speed, Fog fade time, Fog quality and edge softness.
 
 ## Building
 
@@ -355,7 +376,7 @@ The job can pause, resume and stop, and stores durable progress so an interrupte
 for manual resume after restart. It holds only bounded work in flight and slows itself when the
 engine queue, capture path, distant-terrain saves, server load or free disk space require it. The
 Generate tab shows progress and the active gate. In integrated singleplayer, ordinary Settings
-pauses the server; use its **Open live controls** handoff or open `.dlconfig` directly.
+pauses the server; use its **Open Live Controls + Unpause** button or open `.dlconfig` directly.
 
 Only the Balanced behavior is exposed. Vintage Story's optional multi-thread pipeline was tested
 with its real `MaxWorldgenThreads` setting and named threads, but it gave no material speedup and

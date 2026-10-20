@@ -8,6 +8,37 @@ first.
 
 ## [Unreleased]
 
+**A simpler settings window.** General now opens with one title over the distance bar, a line saying
+why Automatic is recommended, and below a rule the visual features in two columns, each with a cost
+word (Low, Moderate, High) - Farseer, the seam fog and all-cores garbage collection among them. Load
+terrain while paused and Developer options sit beside Defaults. The Advanced switch and the
+Anti-Aliasing, Farseer and Performance tabs are gone: every tuning dial is on a Developer tab, in
+Anti-aliasing, Farseer look and Seam fog sub-tabs, shown while Developer options is on. Names too long
+for their column shrink to fit instead of wrapping onto the next row (0.4.166-0.4.175).
+
+**Presets set the whole picture.** Performance, Balanced and Quality now also set how far cached terrain
+is drawn, Farseer and its reach, the seam fog, and how much detail the LOD levels keep (the on-screen
+size each level hands over at), and switch Automatic on; your own LOD distances are kept. Quality is
+what a new install draws, and the first time you join a world a window asks which preset you want
+(0.4.168-0.4.169).
+
+**Automatic LOD distances no longer move with the vanilla view distance.** A far vanilla view distance
+pushed every level out; now it holds back only the first, and the rest keep their on-screen size
+(0.4.169). The Developer tab has an LOD detail target slider.
+
+**Farseer tells you when a terrain sampler would help.** If the server found neither Algernon's Terrain
+Sampler nor Watersheds, the settings window shows a red note: Farseer then builds slowly from the game's
+own previews. Neither mod is required; the README's new Recommended mods section explains (0.4.165).
+
+**No fog over your character at login.** The seam fog waits 5 seconds after you enter a world, while the
+terrain around you loads, then fades in (0.4.174).
+
+**Generate works from the game's Settings.** Its button is now "Open Live Controls + Unpause": it leaves
+Settings, unpauses the game so the world can generate, and opens the live window. Before, the game
+stayed paused behind it (0.4.175).
+
+**Defaults leaves all-cores garbage collection alone** (0.4.170).
+
 **Typed coordinates are the ones the game shows.** The Generate page, `/dlworldgen` and `/dlgen` now
 read x and z the way the game's coordinate display writes them - measured from spawn, negatives
 allowed - and print positions the same way. They used to read them as the map's internal position, so
@@ -183,6 +214,70 @@ read-back and dedicated multiplayer.
 The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
 fresh-start recovery received the owner's “Success” report, but not the full completion/restart
 matrix.
+
+## [0.4.175] - 2026-10-19
+
+**Generate from the game's Settings unpauses.** The Generate tab's button is now "Open Live Controls +
+Unpause": it leaves Settings, closes the pause menu so the world can generate, and opens the live
+window. Paused, the tab shows only that button. On General, "Automatic (Recommended)" fits on one line
+and the top has more room.
+
+## [0.4.174] - 2026-10-19
+
+**No fog over your character at login.** The seam fog waits 5 seconds after you enter a world, while the
+terrain around you loads, then fades in over 2. The Automatic switch reads "Automatic (Recommended)",
+with a line under the title saying why.
+
+## [0.4.173] - 2026-10-19
+
+**One title over the distance bar.** General opens with "LOD Thresholds (Drag to adjust)"; the separate
+draw-distance heading and its readout (the bar's Cache box shows it) and the help line (now the title's
+hover) are gone. Load terrain while paused and Developer options moved beside Defaults.
+
+## [0.4.172] - 2026-10-19
+
+**Visual features lead under the rule, with real costs.** Farseer and the seam fog head the feature list,
+all-cores collection beside them. Farseer reads Low, the seam fog High, and Water Effects Low instead of
+"Varies".
+
+## [0.4.171] - 2026-10-19
+
+**The draw distance heads General, and a rule parts the bar from the switches.**
+
+## [0.4.170] - 2026-10-19
+
+**Developer sub-tabs.** The Developer tab picks Anti-aliasing, Farseer look or Seam fog from tabs at the
+top of the page. Defaults no longer switches all-cores garbage collection off.
+
+## [0.4.169] - 2026-10-19
+
+**Presets set detail too.** Each preset sets how much detail the LOD levels keep (the on-screen size they
+hand over at: Quality 1.5 px, Balanced 2, Performance 3) and switches Automatic on. A far vanilla view
+distance no longer moves every automatic level, only the first. The Developer tab has an LOD detail
+target slider. Long labels shrink further so they no longer wrap.
+
+## [0.4.168] - 2026-10-19
+
+**Presets set the draw distance and Farseer, and Quality is the default.** Performance draws cached
+terrain to 2,048 with Farseer to 4,096 and no seam fog, Balanced to 4,096 with Farseer to 8,192, Quality
+to 8,192 with Farseer to 8,192. A new install starts at Quality, Defaults restores it, and the first time
+you join a world a window asks which preset you want. Balanced gains varied tree colours.
+
+## [0.4.167] - 2026-10-19
+
+**Two columns, and a Developer options switch.** General's switches sit in two columns at the larger
+text again; all-cores collection moved here from the Performance tab, which is gone; the Developer tab
+shows only while Developer options is on. The distance bar's label boxes no longer touch.
+
+## [0.4.166] - 2026-10-19
+
+**A Developer tab replaces the Advanced switch.** Every tuning dial moved from the Anti-Aliasing and
+Farseer tabs to one Developer tab; Farseer's two switches are on General.
+
+## [0.4.165] - 2026-10-19
+
+**A warning when Farseer has no terrain sampler.** If the server found neither Algernon's Terrain Sampler
+nor Watersheds, the settings show a red warning; neither is required. README: Recommended mods.
 
 ## [0.4.164] - 2026-10-19
 

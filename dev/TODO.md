@@ -4,24 +4,24 @@
 
 ## Start here
 
-Read [Session 116](sessions/SESSION_116.md), then [Session 115](sessions/SESSION_115.md). The mod is
+Read [Session 117](sessions/SESSION_117.md), then [Session 116](sessions/SESSION_116.md). The mod is
 **Doden's Landscapes** (mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log),
-licensed GPL-3.0 only with a Vintage Story exception. 0.4.164 is installed, not yet played; it carries
-the pre-release review's fixes (Session 116): no legacy-data move, spawn-relative coordinates, request
-and hello limits, batched savegame reads and decode limits. 0.4.156 is the newest owner-played build
-("Good enough"); without Farseer the seam fog hangs a falling veil of mist down the cached terrain's
-wall (decision 58) and its colour takes the player's own weather and cave darkness only in part
-(decision 59). All assertions pass (26,408). The public release is next. The stutter while
-exploring is solved for him by the all-cores garbage collector, an opt-in switch on the settings
-editor's Performance tab (0.4.134, settled decision 54), and the game's chunk thread rests when it
-has nothing to do (0.4.132, settled decision 53).
+licensed GPL-3.0 only with a Vintage Story exception. 0.4.175 is installed and owner-played: Session 117
+rebuilt the settings window from his screenshots (one General page, every dial on a Developer tab shown
+by Developer options, settled decision 64), made presets set draw distance, Farseer, the seam fog and
+the automatic LOD target with Quality as the default and a first-run prompt (decision 63), let the
+vanilla floor hold only L1 (decision 35), held the seam fog for 5 s at login, and made Generate's
+Settings button unpause the game. It carries the pre-release review's fixes (Session 116), whose own
+small observations are still unasked. All assertions pass (26,432). The public release is next. The
+stutter while exploring is solved for him by the all-cores garbage collector, an opt-in switch on
+General (0.4.134, settled decision 54), and the game's chunk thread rests when it has nothing to do
+(0.4.132, settled decision 53).
 
 ### The public release (owner's calls)
 
 - **Version:** promote the build he last played to a release number (CLAUDE.md: only he calls a
-  promotion, and the promoted build must be one somebody played). 0.4.156 is the newest played build;
-  0.4.157-0.4.164 are installed but unplayed.
-- **Play 0.4.164 first.** Small observations to ask for: on the Generate page, Coordinates, type the
+  promotion, and the promoted build must be one somebody played). 0.4.175 is the newest played build.
+- **The review's observations, still unasked** (they ride in every build since 0.4.164): on the Generate page, Coordinates, type the
   numbers off the coordinate display (one negative) and press Prepare - the reply should say "around"
   the same numbers (do not Confirm unless he wants that terrain); `/dlgen start 4 <x> <z>` should report
   the same numbers; distant terrain loads as before, and no "ignored without a reply" warning appears in
@@ -29,16 +29,31 @@ has nothing to do (0.4.132, settled decision 53).
   as a huge spawn-relative one; retype it.
 - **The game-launching check tiers** (`scripts/check.sh smoke` and `matrix`, about 25 minutes) have
   not run since the rename; the `lod-conflict` and `farseer-off` scenarios have never run. Ask first.
-- **Push:** the commits since `1bea2c1` (0.4.143-0.4.164 and the Session 114-116 documentation)
+- **Push:** the commits since `1bea2c1` (0.4.143-0.4.175 and the Session 114-117 documentation)
   are not on `origin`; push only with his OK.
 - **GitHub:** the full history is on `main` at `DodenGruva/Landscapes`, still private; he makes it
   public. The old fork `DodenGruva/Horizons` still shows his personal email in 91 commits; he deletes
   it (a public fork cannot be made private).
 - **ModDB:** the page at `mods.vintagestory.at/dodenslandscapes` (modinfo already points there), with
-  GNU GPL v3 chosen as the licence. The README now tells players about the Performance tab and about
-  keeping one LOD mod on. Its description should also mention the Advanced settings switch,
-  `.dlconfig <tab>`, that the seam fog works without Farseer, and the mist down the terrain's edge,
+  GNU GPL v3 chosen as the licence. The README now tells players about the all-cores switch and about
+  keeping one LOD mod on. Its description should also mention the presets and first-run prompt, the
+  Recommended mods (Algernon's Terrain Sampler or Watersheds), that the seam fog works without Farseer,
+  and the mist down the terrain's edge,
   and carry the README's Requirements (OpenGL 4.3, no Macs).
+
+### What Session 117 left open
+
+- **Unseen in game:** the red no-sampler note (needs a world whose server has neither Algernon's
+  Terrain Sampler nor Watersheds); the seam fog's 5 s login hold and fade (log in several times, one on
+  a slow load); Open Live Controls + Unpause from the game's Settings, Generate tab; the first-run
+  prompt and General at GUI scale 1.5 on 1080p.
+- **Cost words that are estimates:** Farseer Low and Water Effects Low. A timed on/off pair for each
+  in one scene, Water with a large lake in view, would settle them (bench run, about 15-20 min; ask
+  before launching). Seam fog High is the owner's measurement.
+- **Presets' geometry savings** (Balanced about 56%, Performance about 25% of Quality's triangles) are
+  arithmetic; measure each preset's frame time in one scene before quoting them.
+- **The login hold is a fixed 5 s.** If it proves short on slow machines, a real load signal (the
+  ready cached terrain around the player) would beat a longer timer.
 
 ### What Session 116 left open
 
@@ -132,7 +147,7 @@ collector in force.
   see P1 above for the measurement to make.
 - **Before recommending it to players:** a longer paired memory look (the 0.4.134 off session was
   about two minutes, its first stationary), and a look on a smaller machine; Linux, macOS and a
-  read-only game folder are untested. The README now describes the Performance tab (Session 113);
+  read-only game folder are untested. The README now describes the all-cores switch, on General since 0.4.167 (Session 113);
   the ModDB description should mention it at release.
 - **The next slowest frames** are 2-4 ms spikes in the game's entity ticking (`tick-gtentity`) and
   this mod's `vh:prepare`, with occasional 16-23 ms `vh:lod` frames. Not examined.
