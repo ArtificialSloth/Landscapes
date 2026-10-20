@@ -152,8 +152,9 @@ public static class SettingsWindowChecks
 
     static void LayoutStaysClear(Check c)
     {
-        c.True(VintageHorizonsConfigLayout.LodTitleY + 34 <= VintageHorizonsConfigLayout.ScaleY,
-            "one title heads the page, clear of the bar (owner, 2026-10-19)");
+        c.True(VintageHorizonsConfigLayout.LodTitleY + 30 <= VintageHorizonsConfigLayout.AutoNoteY
+                && VintageHorizonsConfigLayout.AutoNoteY + 22 <= VintageHorizonsConfigLayout.ScaleY,
+            "one title heads the page, with the line on Automatic between it and the bar (owner, 2026-10-19)");
         string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
         c.True(dialog.Contains("\"LOD Thresholds (Drag to adjust)\"", StringComparison.Ordinal)
                 && !dialog.Contains("draw-distance-label", StringComparison.Ordinal)

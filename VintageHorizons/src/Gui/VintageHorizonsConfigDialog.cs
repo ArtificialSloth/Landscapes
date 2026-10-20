@@ -69,7 +69,12 @@ internal static class VintageHorizonsConfigLayout
     /// the help line is the title's hover.
     /// </summary>
     internal const double LodTitleY = 36;
-    internal const double ScaleY = 80;
+
+    /// <summary>
+    /// A small line under the title saying why Automatic is recommended (owner, 2026-10-19).
+    /// </summary>
+    internal const double AutoNoteY = 68;
+    internal const double ScaleY = 96;
 
     /// <summary>
     /// 214 so each lane of marker boxes has a gap to the next: at 200 the Farseer box sat on the
@@ -82,7 +87,7 @@ internal static class VintageHorizonsConfigLayout
     /// A horizontal rule under the bar parts the distances from the switches (owner, 2026-10-19),
     /// where the draw distance heading used to be.
     /// </summary>
-    internal const double RuleY = 304;
+    internal const double RuleY = 316;
     internal const double RuleHeight = 4;
 
     /// <summary>
@@ -90,8 +95,8 @@ internal static class VintageHorizonsConfigLayout
     /// columns, Farseer beside its seam fog first and all-cores collection under the fog, at a
     /// roomier 30-unit pitch now that the page has the space.
     /// </summary>
-    internal const double VisualHeadingY = 318;
-    internal const double VisualRowsY = 354;
+    internal const double VisualHeadingY = 330;
+    internal const double VisualRowsY = 366;
     internal const int VisualLineCount = 5;
     internal const double VisualRowHeight = 30;
 
@@ -696,7 +701,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, Y(titleY), 560, 30));
         composer.AddHoverText(ScaleHelp, CairoFont.WhiteSmallText(), 420,
             ElementBounds.Fixed(Margin, Y(titleY - 2), 560, 34), "tip-scale-help");
-        composer.AddStaticText("Automatic", CairoFont.WhiteSmallText(),
+        composer.AddStaticText(AutoNote,
+            FittedFont(AutoNote, Width - 2 * Margin, CairoFont.WhiteSmallText()),
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.AutoNoteY), Width - 2 * Margin, 22));
+        composer.AddStaticText("Automatic (Recommended)", CairoFont.WhiteSmallText(),
             EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 190, Y(titleY + 6), 180, 22));
         composer.AddSwitch(OnAutomaticChanged,
             ElementBounds.Fixed(SwitchX, Y(titleY), 32, 32), "auto-thresholds");
@@ -1669,6 +1677,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     /// <summary>What the scale shows: automatic's live values, or the player's own.</summary>
     int[] DisplayedThresholds() => pendingAutomatic ? automaticThresholds : pendingThresholds;
+
+    /// <summary>Why Automatic is recommended, in one line under the title.</summary>
+    internal const string AutoNote =
+        "Automatic sets each level by how big its blocks look on your screen, keeping detail where you can see it.";
 
     /// <summary>The help line that used to stand under the title, now its hover.</summary>
     const string ScaleHelp =

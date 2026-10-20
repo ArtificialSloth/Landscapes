@@ -1738,6 +1738,14 @@ public static class SilhouetteChecks
 
     static void ClientSettingsArithmetic(Check c)
     {
+        c.Eq(0f, LodSilhouetteFogVolume.LoginFade(0), "no fog at the moment of entering a world");
+        c.Eq(0f, LodSilhouetteFogVolume.LoginFade(LodSilhouetteFogVolume.LoginHoldSeconds),
+            "nor through the whole hold");
+        c.Near(0.5, LodSilhouetteFogVolume.LoginFade(
+                LodSilhouetteFogVolume.LoginHoldSeconds + LodSilhouetteFogVolume.LoginFadeSeconds / 2), 1e-4,
+            "then it fades in");
+        c.Eq(1f, LodSilhouetteFogVolume.LoginFade(60), "and is at full strength after it");
+        c.Eq(1f, LodSilhouetteFogVolume.LoginFade(double.NaN), "a broken clock never hides the fog");
         LodSilhouetteSettings defaults = LodSilhouetteSettings.Default;
         c.True(defaults.Enabled && defaults.ReachBlocks == 8192
                 && defaults.ReachBlocks == LodPreset.Quality.FarseerReach,

@@ -118,6 +118,15 @@ public partial class LodTerrainRenderer
     internal bool SilhouetteFogEnabled = true;
     internal float SilhouetteFogCoreBlocks => silhouetteFogCoreBlocks;
     internal float SilhouetteFogStaircaseDeviation => silhouetteFogStaircaseDeviation;
+    /// <summary>When the player entered the world, while the login hold lasts; 0 when none applies.</summary>
+    long silhouetteFogLoginStarted;
+
+    /// <summary>
+    /// The player has just entered a world: hold the seam fog back, then fade it in
+    /// (<see cref="LodSilhouetteFogVolume.LoginFade"/>). Its field still builds meanwhile.
+    /// </summary>
+    public void HoldSilhouetteFogForLogin() => silhouetteFogLoginStarted = Stopwatch.GetTimestamp();
+
     internal float SilhouetteFogStrength = LodSilhouetteFogVolume.DefaultStrength;
     internal float SilhouetteFogSeamStrength = LodSilhouetteFogVolume.DefaultSeamStrength;
     internal float SilhouetteFogCoverage = LodSilhouetteFogVolume.DefaultCoverage;
@@ -594,6 +603,14 @@ public partial class LodTerrainRenderer
             || silhouetteFogVolumeProg == null || silhouetteFogVolumeProg.LoadError
             || silhouetteFogUpsampleProg == null || silhouetteFogUpsampleProg.LoadError
             || SilhouetteFogStrength <= 0f && SilhouetteFogSeamStrength <= 0f) return;
+        float loginFade = 1f;
+        if (silhouetteFogLoginStarted != 0)
+        {
+            loginFade = LodSilhouetteFogVolume.LoginFade(
+                (Stopwatch.GetTimestamp() - silhouetteFogLoginStarted) / (double)Stopwatch.Frequency);
+            if (loginFade <= 0f) return;
+            if (loginFade >= 1f) silhouetteFogLoginStarted = 0;
+        }
         FrameBufferRef? primary = PrimaryFrameBuffer();
         if (primary == null) return;
 
@@ -725,8 +742,8 @@ public partial class LodTerrainRenderer
             p.Uniform("fogStripHeightBlocks", SilhouetteFogStripHeightBlocks);
             p.Uniform("fogResidualActive", residualActive ? 1 : 0);
             p.Uniform("fogResidualElapsed", residualActive ? residualElapsed : 0f);
-            p.Uniform("fogStrength", SilhouetteFogStrength);
-            p.Uniform("fogSeamStrength", SilhouetteFogSeamStrength);
+            p.Uniform("fogStrength", SilhouetteFogStrength * loginFade);
+            p.Uniform("fogSeamStrength", SilhouetteFogSeamStrength * loginFade);
             p.Uniform("fogCoverage", SilhouetteFogCoverage);
             p.Uniform("fogSpillBlocks", SilhouetteFogSpillBlocks);
             p.Uniform("fogHeightBlocks", SilhouetteFogHeightBlocks);

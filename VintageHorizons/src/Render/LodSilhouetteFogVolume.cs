@@ -375,6 +375,22 @@ internal static class LodSilhouetteFogVolume
     public const float MaxLayerDetail = 1f;
     public const float DefaultLayerDetail = 0.52f;
 
+    /// <summary>
+    /// Seconds after the player enters a world before the seam fog shows, then the seconds it
+    /// takes to fade in (owner, 2026-10-19). Until the cached terrain around the player has
+    /// loaded, the edge the fog follows runs close around the player, and the fog stood over the
+    /// character and filled the screen. The hold is time, not a load signal: nothing tells when
+    /// that first load is done, and the join fill-in measured about 6.6 s (Session 31).
+    /// </summary>
+    public const float LoginHoldSeconds = 5f;
+    public const float LoginFadeSeconds = 2f;
+
+    /// <summary>0 through the hold, rising to 1 over the fade; what the fog's densities are scaled by.</summary>
+    public static float LoginFade(double secondsSinceEntering) =>
+        double.IsFinite(secondsSinceEntering)
+            ? Math.Clamp((float)((secondsSinceEntering - LoginHoldSeconds) / LoginFadeSeconds), 0f, 1f)
+            : 1f;
+
     const int InfiniteCellDistance = 1_000_000_000;
 
     readonly record struct GridPoint(int X, int Z);

@@ -584,6 +584,8 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// </summary>
     void ShowLoginDialogs()
     {
+        // The world is up and its terrain is only starting to load: keep the fog off the player.
+        renderer?.HoldSilhouetteFogForLogin();
         if (config.PresetPromptShown)
         {
             ShowLodModNotice();
