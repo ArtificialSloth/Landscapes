@@ -8,6 +8,15 @@ first.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-20
+
+**The first public release, as Doden's Landscapes.** 0.5.0 is build 0.4.175, the last build the owner
+played, renumbered and otherwise unchanged: the zip holds the same 47 files, and only the version in
+`modinfo.json` and the version stamped into the DLL differ. The fast checks pass with 0 failures (26,432
+assertions). It needs Vintage Story 1.22.5 or later and a graphics card with OpenGL 4.3 (no Macs).
+The entries below gather what changed since the project's earlier summaries, newest first; each
+build's own entry follows further down.
+
 **A simpler settings window.** General now opens with one title over the distance bar, a line saying
 why Automatic is recommended, and below a rule the visual features in two columns, each with a cost
 word (Low, Moderate, High) - Farseer, the seam fog and all-cores garbage collection among them. Load
@@ -78,7 +87,8 @@ the bark - redwood trunks were about 2.5 times as bright as the game's (0.4.143)
 drew as dark grey-brown cubes, where the game shows ordinary green foliage (0.4.144).
 
 **A settings window for players.** Distances, the feature switches and Farseer's two switches show by
-default; an Advanced settings switch reveals the tuning dials, whose values stay in force when hidden.
+default; an Advanced settings switch reveals the tuning dials, whose values stay in force when hidden
+(the Advanced switch was replaced by the Developer tab in 0.4.166-0.4.175, above).
 The window fits a 1080p screen at GUI scale 1.5, the login notice opens it, and `.dlconfig <tab>` opens
 it on a tab (0.4.145-0.4.148).
 
@@ -128,7 +138,8 @@ GC): every core works on each collection, and they run 15-25 times less often. I
 minute; he said it felt much smoother. It costs about 0.3-0.5 GB of memory, and the first minute
 after joining a world has a few longer freezes (59-139 ms) while the world loads. A mod cannot
 switch the collector inside a running game, so 0.4.134 offers it as a switch on a new Performance
-tab that adds one line to the game's start-up file and applies from the next start. A report to the
+tab (on General since 0.4.167) that adds one line to the game's start-up file and applies from the next
+start. A report to the
 game's developers has been drafted.
 
 **A player returning to a dedicated server now gets the distant terrain that changed while they
@@ -195,25 +206,14 @@ changed thousands of chunk rows that agreed between the one-thread controls. The
 therefore keeps only its Balanced behavior and does not expose thread controls or Fast/Maximum
 presets.
 
-**Known open:** the owner's exploring test of 0.4.135's stand-in fix, then removing its temporary
-log lines, and the held chunk-edge walls; the all-cores collector's first-minute freezes after
-joining, its memory cost beyond one short pair of sessions, and its behaviour on smaller machines,
-Linux and macOS; the next slowest frames (the game's entity ticking and this mod's `vh:prepare`, 2-4 ms each); the seam fog's
-`.vhfog` on/off cost; human-check 0.4.111's player-aware sweep behavior and run the sustained
-virgin-frontier three-way comparison; play section sync (0.4.127) on a dedicated server with a
-second player; complete
-the rapid-loading/excavation/weather Farseer matrix; measure controlled Farseer/fog GPU cost and
-reach/shape hitching; finish the deliberate player-facing Farseer rename and bundle its MIT
-license; let a
-small `/vhworldgen` job reach final durable completion; exercise offered resume
-across a real server restart; check dedicated-server permissions and long-run memory/disk behavior;
-make the fixed 15-second shutdown-save deadline configurable; run the P3 after-comparison; winter
-temporal convergence. The owner deferred overlap/speed
-optimization on 2026-09-14. Farseer P3/P4 runtime debt remains: GPU/off A/B, cold restart/full-disc
-read-back and dedicated multiplayer.
-The last accepted baseline remains 0.4.64; 0.4.76's core start, pause/resume, stop, reopen and
-fresh-start recovery received the owner's “Success” report, but not the full completion/restart
-matrix.
+**Known open at release.** The client log carries the once-a-minute frame-time and memory report and
+the server log a once-a-minute cache line for the whole session; a player-facing release would hide
+them, which needs a new build. The shipped zip has not been launched as a smoke test, and the
+game-launching check tiers have not run since the rename. The pre-release review's small in-game
+checks (typed coordinates on the Generate page) are still to do; the coordinate conversion, the
+admission limits and the batched savegame reads are harness-tested only; section sync has not had a
+second player; the all-cores collector has been tried on one Windows PC; the chunk-edge coarse walls
+are held. Linux and smaller machines are untested, and macOS is unsupported (OpenGL 4.1).
 
 ## [0.4.175] - 2026-10-19
 

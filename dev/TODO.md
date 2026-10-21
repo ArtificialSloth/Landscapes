@@ -4,42 +4,52 @@
 
 ## Start here
 
-Read [Session 117](sessions/SESSION_117.md), then [Session 116](sessions/SESSION_116.md). The mod is
+Read [Session 118](sessions/SESSION_118.md), then [Session 117](sessions/SESSION_117.md). The mod is
 **Doden's Landscapes** (mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log),
-licensed GPL-3.0 only with a Vintage Story exception. 0.4.175 is installed and owner-played: Session 117
-rebuilt the settings window from his screenshots (one General page, every dial on a Developer tab shown
-by Developer options, settled decision 64), made presets set draw distance, Farseer, the seam fog and
-the automatic LOD target with Quality as the default and a first-run prompt (decision 63), let the
-vanilla floor hold only L1 (decision 35), held the seam fog for 5 s at login, and made Generate's
-Settings button unpause the game. It carries the pre-release review's fixes (Session 116), whose own
-small observations are still unasked. All assertions pass (26,432). The public release is next. The
-stutter while exploring is solved for him by the all-cores garbage collector, an opt-in switch on
-General (0.4.134, settled decision 54), and the game's chunk thread rests when it has nothing to do
-(0.4.132, settled decision 53).
+licensed GPL-3.0 only with a Vintage Story exception. **0.5.0 is the release version**: build 0.4.175,
+which the owner played, promoted on 2026-10-20 with only the two version strings changed (commit
+`2826b2e`, tag `v0.5.0`), copy-installed, and pushed with all 0.4.143-0.4.175 history to
+`DodenGruva/Landscapes`. Session 117 rebuilt the settings window from his screenshots (one General page,
+every dial on a Developer tab shown by Developer options, settled decision 64), made presets set draw
+distance, Farseer, the seam fog and the automatic LOD target with Quality as the default and a first-run
+prompt (decision 63), let the vanilla floor hold only L1 (decision 35), held the seam fog for 5 s at
+login, and made Generate's Settings button unpause the game; it carries Session 116's review fixes. The
+fast tier passes (26,432 assertions; the count varies between runs on the same source: 26,377 then 26,432, suite not identified).
+Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
+is solved for him by the all-cores garbage collector, an opt-in switch on General (0.4.134, settled
+decision 54), and the game's chunk thread rests when it has nothing to do (0.4.132, settled decision 53).
 
-### The public release (owner's calls)
+### Publishing 0.5.0 (owner's calls)
 
-- **Version:** promote the build he last played to a release number (CLAUDE.md: only he calls a
-  promotion, and the promoted build must be one somebody played). 0.4.175 is the newest played build.
-- **The review's observations, still unasked** (they ride in every build since 0.4.164): on the Generate page, Coordinates, type the
-  numbers off the coordinate display (one negative) and press Prepare - the reply should say "around"
-  the same numbers (do not Confirm unless he wants that terrain); `/dlgen start 4 <x> <z>` should report
-  the same numbers; distant terrain loads as before, and no "ignored without a reply" warning appears in
-  the server log. A Generate-page centre saved before 0.4.160 was an internal position and now reads
-  as a huge spawn-relative one; retype it.
-- **The game-launching check tiers** (`scripts/check.sh smoke` and `matrix`, about 25 minutes) have
-  not run since the rename; the `lod-conflict` and `farseer-off` scenarios have never run. Ask first.
-- **Push:** the commits since `1bea2c1` (0.4.143-0.4.175 and the Session 114-117 documentation)
-  are not on `origin`; push only with his OK.
-- **GitHub:** the full history is on `main` at `DodenGruva/Landscapes`, still private; he makes it
-  public. The old fork `DodenGruva/Horizons` still shows his personal email in 91 commits; he deletes
-  it (a public fork cannot be made private).
-- **ModDB:** the page at `mods.vintagestory.at/dodenslandscapes` (modinfo already points there), with
-  GNU GPL v3 chosen as the licence. The README now tells players about the all-cores switch and about
-  keeping one LOD mod on. Its description should also mention the presets and first-run prompt, the
-  Recommended mods (Algernon's Terrain Sampler or Watersheds), that the seam fog works without Farseer,
-  and the mist down the terrain's edge,
-  and carry the README's Requirements (OpenGL 4.3, no Macs).
+- **ModDB:** upload `dist/dodenslandscapes_0.5.0.zip` to `mods.vintagestory.at/dodenslandscapes` (GNU
+  GPL v3 as the licence) and paste the `[0.5.0]` changelog entry, or a shortened one, into its changelog
+  field. The description is the card page from `notes/moddb/` ("Copy all cards for ModDB", pasted
+  through the Source code view); its 12 pictures are on ImgBB at full size, addresses in
+  `notes/moddb/images.json`. Check ModDB's own preview for the dark fade behind each photo card's text
+  (G297). Gallery pictures, resized to 1920x1080 and under 2 MB, are in `Pictures\moddb\1080p`; the
+  card image (picture B, 480x320) is `Pictures\moddb\B-22-27-41-480x320.png`.
+- **GitHub:** `DodenGruva/Landscapes` is still private; the page's open invitation says the source is
+  available, so he makes it public first and adds the link to the page. The old fork
+  `DodenGruva/Horizons` still shows his personal email in 91 commits; he deletes it (a public fork
+  cannot be made private).
+- **Log noise found at release (step 4b):** in his 2026-10-20 session the client log held 414 of the
+  mod's lines in about 30 minutes, nearly all the once-a-minute hitch report (frames, allocation,
+  collections, worst frames), and the server log a "Cache work" line every minute all session, even
+  idle. No errors. Hiding them from players (behind a switch or `VINTAGEHORIZONS_STATS`) needs a code
+  change and a new build; his decision. Startup also logs a dozen technical lines (shader readiness,
+  GPU probe, arenas, a missing-texture note for `game:water-still-7`).
+- **Not run for 0.5.0:** the smoke test of the shipped zip (release step 8) and the game-launching
+  check tiers (`scripts/check.sh smoke` and `matrix`, about 25 minutes; not run since the rename; the
+  `lod-conflict` and `farseer-off` scenarios have never run). Ask before launching anything.
+- **The review's observations, still unasked** (they ride in every build since 0.4.164): on the
+  Generate page, Coordinates, type the numbers off the coordinate display (one negative) and press
+  Prepare - the reply should say "around" the same numbers (do not Confirm unless he wants that
+  terrain); `/dlgen start 4 <x> <z>` should report the same numbers; distant terrain loads as before, and
+  no "ignored without a reply" warning appears in the server log. A Generate-page centre saved before
+  0.4.160 was an internal position and now reads as a huge spawn-relative one; retype it.
+- **The fast tier's assertion count varies between runs** on the same source (26,377, then 26,432 twice,
+  0 failures each). Not a lost test, but the varying suite is not identified; the ModDB testing card's
+  26,432 is a count actually seen.
 
 ### What Session 117 left open
 

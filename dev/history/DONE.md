@@ -2,6 +2,20 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-10-20 - The 0.5.0 release and its ModDB page
+
+- **Version:** the owner called the promotion; 0.4.175, his newest played build, became 0.5.0 with only
+  the two version strings changed (`2826b2e`). The zip holds the same 47 files as 0.4.175 (modinfo.json
+  and the version-stamped DLL differ), with LICENSE, NOTICE and THIRD-PARTY-NOTICES and no .pdb; fast
+  tier 0 failures (26,377 and later 26,432 assertions on the same source); copy-installed to his Mods folder.
+- **Push:** with his OK, all 40 waiting commits (0.4.143-0.5.0 and the Session 114-117 documentation)
+  went to `DodenGruva/Landscapes` `main`, every author and committer his no-reply address, no
+  CLAUDE.md or AGENTS.md.
+- **ModDB description written** as click-to-open cards (Session 118), with real numbers on the
+  testing card, pictures on ImgBB at full size, and the recommended-mods box and requirements in the
+  always-open introduction.
+- **Release step 4b done** (log read through a player's eyes); its findings stay open in TODO.
+
 ## 2026-10-18 - Mist down the cached terrain's wall, and a steadier fog colour (0.4.149-0.4.156)
 
 - **Fog without Farseer seen in his own world** (Session 114's open item): it covered only the top of

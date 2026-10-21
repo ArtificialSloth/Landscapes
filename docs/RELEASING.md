@@ -40,8 +40,12 @@ Two places carry a description of what the mod does, and neither updates itself:
 
 - **`VintageHorizons/modinfo.json`**, the `"description"` field - shown in-game on the
   mod list and read by ModDB's own listing.
-- **The ModDB page itself** (mods.vintagestory.at/vintagehorizons) - a separate, manual
-  edit; there is no API or script for this repo to reach it.
+- **The ModDB page itself** (mods.vintagestory.at/dodenslandscapes) - a separate, manual
+  edit; there is no API or script for this repo to reach it. Since 0.5.0 the page's description is
+  a set of click-to-open cards built by the private tooling in `notes/moddb/` (git-ignored): edit
+  `moddb-cards.docx` or the card editor, then paste the generated code through ModDB's Source code
+  view. ModDB rewrites what is pasted, and its pictures live on an external image host; read G297
+  before changing either.
 
 Re-read the current text against what the release actually does before assuming it still
 holds. It has gone stale before. The description said "fully client-side" from 0.1.0 on,
@@ -59,7 +63,9 @@ server admin who has never seen the source would.
   These are at most one line a minute, only while work is running, and they stop by themselves.
 - **Hide** per-interval numeric dumps - microsecond percentiles, allocation figures, tick
   histograms. These already require `VINTAGEHORIZONS_STATS=1` and are off unless it is set, so
-  the usual answer is "nothing to do"; confirm rather than assume.
+  the usual answer is "nothing to do"; confirm rather than assume. The exception found at 0.5.0: the
+  once-a-minute hitch report (frame times, allocation, collections; client log) and the server's
+  once-a-minute "Cache work" line are always on.
 - **Check the wording of anything that survives.** A status number that pairs badly with its
   neighbour reads as a fault report: the cache-work line printed a continuously-changing
   section's age beside a pending count and looked like a stalled writer for weeks (G238).
@@ -91,8 +97,8 @@ seconds. No need to repeat smoke/matrix for a version-only change.
 scripts/package.sh
 ```
 
-Produces `dist/vintagehorizons_X.Y.Z.zip` from a Release build. Spot-check the zip before
-trusting it - `unzip -l dist/vintagehorizons_X.Y.Z.zip`:
+Produces `dist/dodenslandscapes_X.Y.Z.zip` from a Release build. Spot-check the zip before
+trusting it - `unzip -l dist/dodenslandscapes_X.Y.Z.zip`:
 
 - `LICENSE`, `NOTICE` and `THIRD-PARTY-NOTICES` are present (0.1.0 shipped without its
   licence - this is the regression check for that; the MIT notices of the work this mod
@@ -108,8 +114,8 @@ coverage of its own. Unzip it into a scratch mods folder, not the dev symlink. L
 it against a vanilla server at least once before publishing:
 
 ```sh
-mkdir -p /tmp/vh-release-check && cd /tmp/vh-release-check
-unzip -o ~/Projects/VintageHorizons/dist/vintagehorizons_X.Y.Z.zip -d vintagehorizons
+mkdir -p /tmp/dl-release-check && cd /tmp/dl-release-check
+unzip -o <repo>/dist/dodenslandscapes_X.Y.Z.zip -d dodenslandscapes
 # point a throwaway client's addModPath here and confirm it loads and captures
 ```
 
@@ -122,7 +128,7 @@ and why it is shaped this way, not a changelog copy-paste:
 ```sh
 git add VintageHorizons/modinfo.json VintageHorizons/VintageHorizons.csproj CHANGELOG.md
 git commit -m "Release X.Y.Z"
-git tag -a vX.Y.Z -m "Vintage Horizons X.Y.Z"
+git tag -a vX.Y.Z -m "Doden's Landscapes X.Y.Z"
 ```
 
 ## 10. Push
@@ -140,7 +146,7 @@ repo.
 
 Manual, on mods.vintagestory.at:
 
-- Upload `dist/vintagehorizons_X.Y.Z.zip`.
+- Upload `dist/dodenslandscapes_X.Y.Z.zip`.
 - Paste the new `CHANGELOG.md` entry into the version's changelog field.
 - Update the page description if step 4 changed it.
 

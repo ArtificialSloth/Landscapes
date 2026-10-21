@@ -5568,3 +5568,35 @@ start, which a long loading screen would use up) and fade it in by scaling its d
 that the first load is done, so the hold is time.
 
 **Found:** 2026-10-19, Session 117 (0.4.174).
+
+### G297 - ModDB rewrites a pasted description: empty elements, stylesheets and CSS images vanish
+
+**Trigger:** writing or changing the ModDB page's description HTML (release step 11).
+
+**Trap:** the page editor (TinyMCE 5) and the server's sanitiser (htmLawed) both rewrite what is pasted.
+Empty elements are dropped, so an empty `<span>` used as an overlay (a colour fade over a header
+picture) disappears on the live page while every local preview shows it. `<style>`, `<script>` and
+`url(...)` inside `style` are removed, so a CSS background picture never shows; classes only work if
+they match the site's own stylesheet. A description over 65,535 characters is refused. Image hosts add
+their own trap: ImgBB's embed codes, "HTML full linked" included, point at a 640-pixel copy, and the
+full-size original sits behind a different address on the image's viewer page.
+
+**Safer action:** inline styles only; no empty elements (put a fade on the box that holds the text);
+pictures as real `<img>` with absolute https addresses on an external host, checked by loading each one
+and comparing its size with the local file; `<details>`/`<summary>` for click-to-open cards; paste
+through the editor's Source code view, never the visual view. The page tooling that applies all of this
+lives in the private `notes/moddb/` (git-ignored).
+
+**Found:** 2026-10-20, Session 118 (the 0.5.0 ModDB page).
+
+### G298 - A build from the Bash tool cannot find the game unless VINTAGE_STORY is set
+
+**Trigger:** `dotnet build` or `scripts/package.sh` run from the agent's Bash shell on the owner's PC.
+
+**Trap:** the shell does not carry the variable that points the project at the game, so every game type
+is missing: 892 errors such as `ICoreServerAPI could not be found`, which look like a broken tree.
+
+**Safer action:** `export VINTAGE_STORY="$APPDATA/Vintagestory"` before building (the game install, not
+`VintagestoryData`).
+
+**Found:** 2026-10-20, Session 118 (packaging 0.5.0).
