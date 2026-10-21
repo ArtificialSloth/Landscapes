@@ -116,6 +116,9 @@ public class LodServerCaptureSystem : ModSystem
     /// <summary>Progress line for /dlserver, or null when no sweep is running.</summary>
     public string? SweepStatus => sweep?.Status;
 
+    /// <summary>The savegame sweep, for the per-player import status; null when it is off.</summary>
+    internal LodSavegameSweep? Sweep => sweep;
+
     /// <summary>Progress line for /dlserver, or null when /dlgen never ran.</summary>
     public string? GenerateStatus => generate?.Status;
 
@@ -276,8 +279,7 @@ public class LodServerCaptureSystem : ModSystem
                 savegameIndex = index;
             }
 
-            sweep = new LodSavegameSweep(sapi, Mod.Logger,
-                Config.SweepRadiusChunks, Config.SweepColumnsPerSecond,
+            sweep = new LodSavegameSweep(sapi, Mod.Logger, Config.SweepColumnsPerSecond,
                 Config.RefreshColumnsPerSecond, weather, pipeline!.QueueColumn,
                 () => pipeline?.CaptureBacklogTotal ?? 0,
                 index,

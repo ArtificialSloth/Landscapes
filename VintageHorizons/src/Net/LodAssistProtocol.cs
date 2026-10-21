@@ -88,6 +88,13 @@ public static class LodAssist
     public const int SectionSyncVersion = 1;
 
     /// <summary>
+    /// Append-only import-status generation a client advertises in <see cref="AssistHello.ImportStatus"/>.
+    /// Zero, which every client before 0.5.1 sends, means it never hears an
+    /// <see cref="AssistImportStatus"/>: it did not register the message, so one would fail there.
+    /// </summary>
+    public const int ImportStatusVersion = 1;
+
+    /// <summary>
     /// Append-only capabilities advertised by <see cref="AssistWelcome.Features"/>. An older
     /// server sends zero; an older client ignores the field. Capability and terrain serving are
     /// separate so an admin may disable map sharing while still allowing explicit generation.
@@ -126,6 +133,42 @@ public class AssistHello
 
     /// <summary>The version this client caught up to in that generation.</summary>
     [ProtoMember(5)] public long SyncVersion;
+
+    /// <summary><see cref="LodAssist.ImportStatusVersion"/>, or 0 from a client that shows no import status.</summary>
+    [ProtoMember(6)] public int ImportStatus;
+}
+
+/// <summary>
+/// Server -> client, every few seconds while the savegame sweep imports explored land, and once
+/// more when it finishes. Only to a client whose hello asked for it.
+///
+/// The server does not know the player's Cache distance and does not need to: it reports what is
+/// left by distance from that player, and the client adds up the bands inside its own distance.
+/// So the figure follows the setting the moment the player changes it, with no message back.
+/// </summary>
+[ProtoContract]
+public class AssistImportStatus
+{
+    /// <summary>The sweep's load pass is importing.</summary>
+    [ProtoMember(1)] public bool Active;
+
+    /// <summary>The import has finished; the last status a player is sent.</summary>
+    [ProtoMember(2)] public bool Finished;
+
+    /// <summary>Width of each band in blocks, <see cref="LodImportStatusBands.BandBlocks"/>.</summary>
+    [ProtoMember(3)] public int BandBlocks;
+
+    /// <summary>
+    /// Columns still to import by distance from this player, nearest band first; the last band
+    /// holds everything further out.
+    /// </summary>
+    [ProtoMember(4, IsPacked = true)] public int[] PendingByBand = Array.Empty<int>();
+
+    /// <summary>Measured import pace in columns per second, or 0 before one is measured.</summary>
+    [ProtoMember(5)] public double ColumnsPerSecond;
+
+    /// <summary>Columns still to import across the whole world.</summary>
+    [ProtoMember(6)] public int PendingTotal;
 }
 
 /// <summary>
@@ -204,6 +247,7 @@ public class AssistServerSettings
     [ProtoMember(4)] public int MaxSectionsPerSecondPerPlayer;
     [ProtoMember(5)] public int MaxSectionsPerSecondTotal;
     [ProtoMember(6)] public bool SweepSavegame;
+    /// <summary>Retired in 0.5.1: the sweep covers all explored land. Sent as 0; kept for the wire.</summary>
     [ProtoMember(7)] public int SweepRadiusChunks;
     [ProtoMember(8)] public int SweepColumnsPerSecond;
     [ProtoMember(9)] public bool EnableGenerateCommand;
@@ -233,7 +277,6 @@ public class AssistServerSettings
         MaxSectionsPerSecondPerPlayer = config.MaxSectionsPerSecondPerPlayer,
         MaxSectionsPerSecondTotal = config.MaxSectionsPerSecondTotal,
         SweepSavegame = config.SweepSavegame,
-        SweepRadiusChunks = config.SweepRadiusChunks,
         SweepColumnsPerSecond = config.SweepColumnsPerSecond,
         EnableGenerateCommand = config.EnableGenerateCommand,
         GenerateMaxRadiusChunks = config.GenerateMaxRadiusChunks,

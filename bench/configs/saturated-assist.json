@@ -5,7 +5,6 @@
   "MaxSectionsPerSecondPerPlayer": 64,
   "MaxSectionsPerSecondTotal": 64,
   "SweepSavegame": false,
-  "SweepRadiusChunks": 0,
   "SweepColumnsPerSecond": 16,
   "EnableGenerateCommand": false,
   "GenerateMaxRadiusChunks": 0,

@@ -77,6 +77,9 @@ public class LodAssistServerSystem : ModSystem
             .RegisterMessageType<AssistSilhouetteManifest>()
             .RegisterMessageType<AssistSilhouetteTileRequest>()
             .RegisterMessageType<AssistSilhouetteTile>()
+            // Last, always: message types are numbered in registration order, and every type an
+            // older client knows must keep its number.
+            .RegisterMessageType<AssistImportStatus>()
             .SetMessageHandler<AssistHello>(OnHello)
             .SetMessageHandler<AssistSectionRequest>(OnSectionRequest)
             .SetMessageHandler<AssistWorldGenRequest>(OnWorldGenRequest)
@@ -96,6 +99,7 @@ public class LodAssistServerSystem : ModSystem
         // and this walks the complete key set on the server thread; scanning every five
         // seconds only created a periodic tick spike and advertised not-yet-durable rows.
         api.Event.RegisterGameTickListener(_ => MeasureOfferNewKeys(), 30000);
+        api.Event.RegisterGameTickListener(_ => SendImportStatus(), ImportStatusIntervalMs);
         if (allocationTelemetryEnabled)
             api.Event.RegisterGameTickListener(_ => LogStats(), 15000);
 
@@ -205,6 +209,12 @@ public class LodAssistServerSystem : ModSystem
             CacheGeneration = generation,
             SilhouetteHeightSource = silhouettesOffered ? (int)silhouetteHeightSource : 0,
         }, player);
+
+        // Import status for any client that shows it, while the sweep has not finished. Joined
+        // here even while the savegame is still being read: the status starts once there is
+        // something to count.
+        if (hello.ImportStatus >= LodAssist.ImportStatusVersion && capture?.Sweep is { ImportFinished: false })
+            importStatusPlayers.Add(player.PlayerUID);
 
         if (keys.Length > 0) SendManifest(player, keys);
 
@@ -571,6 +581,48 @@ public class LodAssistServerSystem : ModSystem
         serveAllowanceByPlayer.Remove(player.PlayerUID);
         sessionByPlayer.Remove(player.PlayerUID);
         readInFlightByPlayer.Remove(player.PlayerUID);
+        importStatusPlayers.Remove(player.PlayerUID);
+    }
+
+    /// <summary>Players whose client shows the import status and has not been told it finished.</summary>
+    readonly HashSet<string> importStatusPlayers = new();
+    const int ImportStatusIntervalMs = 5000;
+
+    /// <summary>
+    /// Tells each player how much explored land is still to import, by distance from them, and
+    /// then once that it finished. A few hundred bytes a player every five seconds, and only while
+    /// the sweep's load pass runs; the tally it reads is a few hundred cells even for a large world.
+    /// </summary>
+    void SendImportStatus()
+    {
+        if (importStatusPlayers.Count == 0) return;
+        LodSavegameSweep? sweep = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>()?.Sweep;
+        if (sweep == null)
+        {
+            importStatusPlayers.Clear();
+            return;
+        }
+
+        bool finished = sweep.ImportFinished;
+        if (!finished && !sweep.ImportActive) return;
+
+        foreach (string uid in importStatusPlayers)
+        {
+            if (sapi.World.PlayerByUid(uid) is not IServerPlayer player) continue;
+            if (!finished && player.Entity == null) continue;
+            channel.SendPacket(new AssistImportStatus
+            {
+                Active = !finished,
+                Finished = finished,
+                BandBlocks = LodImportStatusBands.BandBlocks,
+                PendingByBand = finished
+                    ? Array.Empty<int>()
+                    : sweep.ImportHistogram(player.Entity!.Pos.X, player.Entity.Pos.Z),
+                ColumnsPerSecond = sweep.ImportColumnsPerSecond,
+                PendingTotal = finished ? 0 : sweep.ImportPending,
+            }, player);
+        }
+        if (finished) importStatusPlayers.Clear();
     }
 
     /// <summary>

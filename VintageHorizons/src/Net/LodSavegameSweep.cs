@@ -36,7 +36,6 @@ public class LodSavegameSweep
 {
     readonly ICoreServerAPI sapi;
     readonly ILogger logger;
-    readonly int radiusChunks;
     readonly int perSecond;
     readonly int refreshPerSecond;
     readonly Action<int, int> queueColumn;
@@ -85,7 +84,6 @@ public class LodSavegameSweep
 
     int probeIndex;
     int probesInFlight;
-    int loadIndex;
     int reported;
     int nextCanaryRegion;
     int otherGenerationQueuePeak;
@@ -99,14 +97,63 @@ public class LodSavegameSweep
     int spawnCx;
     int spawnCz;
 
+    /// <summary>Every explored column, nearest a player first. See <see cref="LodSweepOrder"/>.</summary>
+    readonly LodSweepOrder loadOrder = new();
+    long nextResortCheckMs;
+
+    /// <summary>How often the load pass asks whether the players have moved enough to re-sort.</summary>
+    const long ResortCheckMs = 5_000;
+
     /// <summary>
-    /// Probing reaches past the load area by the neighbourhood width, so a column on the
-    /// edge of the sweep still has known neighbours rather than being skipped for want of
-    /// information about positions nobody looked at.
+    /// How far a player must be from every position the order was sorted for before it is
+    /// sorted again. Eight chunks is 256 blocks: much less and a walking player would keep a
+    /// sort running all the time, for an order that barely changes.
     /// </summary>
-    int ProbeRadius => radiusChunks + LodColumnMap.SafeNeighbourhood;
-    int ProbeTotal => (2 * ProbeRadius + 1) * (2 * ProbeRadius + 1);
-    int LoadTotal => (2 * radiusChunks + 1) * (2 * radiusChunks + 1);
+    const int ResortMoveChunks = 8;
+
+    /// <summary>Frontier columns the load pass skipped; the absence check samples beside them.</summary>
+    readonly List<long> frontierSeen = new();
+
+    /// <summary>What is still to import, by area, for each player's import status.</summary>
+    readonly LodImportTally importTally = new();
+    readonly LodRateMeter importRate = new();
+
+    /// <summary>True while the load pass is importing: after its first order, until it finishes.</summary>
+    public bool ImportActive => !Probing && !AwaitingSavegameIndex && !Done && !verifying
+        && importTally.Started > 0;
+
+    /// <summary>True once the load pass has finished, for the last status a player is sent.</summary>
+    public bool ImportFinished => Done || verifying;
+
+    /// <summary>Columns still to import across the whole world.</summary>
+    public int ImportPending => importTally.Pending;
+
+    /// <summary>Measured import pace in columns per second, or 0 before one is measured.</summary>
+    public double ImportColumnsPerSecond => importRate.PerSecond;
+
+    /// <summary>Columns still to import by distance from a block position, in status bands.</summary>
+    public int[] ImportHistogram(double x, double z) => importTally.Histogram(x, z);
+
+    /// <summary>
+    /// The probe fallback's reach, in chunks: 4,096 blocks. The savegame read lists the whole
+    /// world, but the fallback can only ask the engine one position at a time, so it needs a
+    /// square to ask about. It is centred on the first player to join rather than on spawn,
+    /// because that is where somebody is actually looking.
+    /// </summary>
+    internal const int FallbackRadiusChunks = 128;
+
+    int probeCx;
+    int probeCz;
+    bool probeCentreChosen;
+    string probeCentreName = "";
+
+    /// <summary>
+    /// Probing reaches past the fallback square by the neighbourhood width, so a column on its
+    /// edge still has known neighbours rather than being skipped for want of information about
+    /// positions nobody looked at.
+    /// </summary>
+    static int ProbeRadius => FallbackRadiusChunks + LodColumnMap.SafeNeighbourhood;
+    static int ProbeTotal => (2 * ProbeRadius + 1) * (2 * ProbeRadius + 1);
 
     public bool Probing { get; private set; } = true;
     public bool Done { get; private set; }
@@ -284,7 +331,7 @@ public class LodSavegameSweep
     /// <summary>Claims that fell back to the index-time fingerprint because the session ended.</summary>
     public long ClaimsCommittedUnsettled { get; private set; }
 
-    public LodSavegameSweep(ICoreServerAPI sapi, ILogger logger, int radiusChunks, int perSecond,
+    public LodSavegameSweep(ICoreServerAPI sapi, ILogger logger, int perSecond,
         int refreshPerSecond, WeatherSystemBase? weather, Action<int, int> queueColumn,
         Func<int> captureBacklog, LodSavegameIndex? savegameIndex = null,
         Dictionary<long, ulong>? capturedFingerprints = null,
@@ -298,7 +345,6 @@ public class LodSavegameSweep
         this.auditPerSecond = Math.Max(0, auditPerSecond);
         this.sapi = sapi;
         this.logger = logger;
-        this.radiusChunks = radiusChunks;
         this.perSecond = Math.Max(1, perSecond);
         this.refreshPerSecond = Math.Max(0, refreshPerSecond);
         this.weather = weather;
@@ -342,11 +388,13 @@ public class LodSavegameSweep
             auditOrder = ledger.CapturedKeys();
             auditCursor = 0;
 
+            BeginLoadOrder();
+
             logger.Notification(
                 "Savegame sweep: {0} columns hold generated terrain, read from the savegame "
                 + "itself rather than by probing the engine. {1} carry a fingerprint this cache "
                 + "already matches and will be skipped. Loading the rest with a complete "
-                + "neighbourhood.{2}",
+                + "neighbourhood, nearest a player first.{2}",
                 exists.Count, ledger.AlreadyCapturedCount,
                 auditPerSecond > 0
                     ? $" Afterwards {auditPerSecond} columns/s are re-read in the background and "
@@ -357,13 +405,50 @@ public class LodSavegameSweep
 
         if (!savegameIndex.Finished) return;
 
-        // Failed. Everything below this point behaves exactly as it did before the read path
-        // existed, which is the point of it being an accelerator.
+        // Failed. The probe pass below is what every build did before the read path existed,
+        // which is the point of it being an accelerator - except for where it is centred.
         AwaitingSavegameIndex = false;
         Probing = true;
         logger.Notification(
             "Savegame sweep: reading the savegame directly was not available, so the engine is "
-            + "probed for {0} positions as before.", ProbeTotal);
+            + "asked about each position instead. That can only cover a bounded area: {0} blocks "
+            + "around the first player to join.", FallbackRadiusChunks * GlobalConstants.ChunkSize);
+    }
+
+    /// <summary>
+    /// Where the load pass should start from: every online player, or spawn while nobody is
+    /// online. Allocates, so it is called every few seconds rather than every tick.
+    /// </summary>
+    (int Cx, int Cz)[] LoadTargets()
+    {
+        var targets = new List<(int, int)>();
+        foreach (IPlayer player in sapi.World.AllOnlinePlayers)
+        {
+            if (player.Entity == null) continue;
+            targets.Add((
+                (int)Math.Floor(player.Entity.Pos.X / GlobalConstants.ChunkSize),
+                (int)Math.Floor(player.Entity.Pos.Z / GlobalConstants.ChunkSize)));
+        }
+        if (targets.Count == 0) targets.Add((spawnCx, spawnCz));
+        return targets.ToArray();
+    }
+
+    /// <summary>Hands every known explored column to the load pass, ordered off-thread.</summary>
+    void BeginLoadOrder()
+    {
+        long[] keys = exists.KeysSnapshot();
+
+        // Counted before the sorting thread takes the array. Two dictionary lookups a column, once:
+        // a few milliseconds even for a world of a few hundred thousand columns.
+        importTally.Clear();
+        foreach (long key in keys)
+        {
+            if (!ledger.AlreadyCaptured(key)) importTally.Add(key);
+        }
+        importRate.Clear();
+
+        loadOrder.Begin(keys, LoadTargets());
+        nextResortCheckMs = sapi.World.ElapsedMilliseconds + ResortCheckMs;
     }
 
     /// <summary>
@@ -629,14 +714,21 @@ public class LodSavegameSweep
             AwaitingSavegameIndex = true;
             savegameIndex.Start();
         }
+        else
+        {
+            logger.Notification(
+                "Savegame sweep: this world's savegame file could not be named, so the engine is "
+                + "asked about each position instead. That can only cover a bounded area: {0} "
+                + "blocks around the first player to join.",
+                FallbackRadiusChunks * GlobalConstants.ChunkSize);
+        }
 
         logger.Notification(
-            "Sweeping the savegame for terrain that already exists, out to {0} blocks around "
-            + "spawn ({1} positions to examine). Nothing is generated: columns that were never "
-            + "visited are skipped, and so are columns on the edge of explored terrain, "
-            + "because loading those would make the engine generate their missing neighbours. "
-            + "Set SweepSavegame to false to disable. Progress every 10%. Afterward, {2}.",
-            radiusChunks * GlobalConstants.ChunkSize, ProbeTotal,
+            "Sweeping the savegame for terrain that already exists: every explored column, "
+            + "nearest a player first, or nearest spawn while nobody is online. Nothing is "
+            + "generated: columns on the edge of explored terrain are skipped, because loading "
+            + "those would make the engine generate their missing neighbours. Set SweepSavegame "
+            + "to false to disable. Progress every 10%. Afterward, {0}.",
             AutomaticSnowRefresh
                 ? $"snow changes will start finite regional refreshes at up to {refreshPerSecond}/s"
                 : "automatic snow refresh is disabled");
@@ -699,8 +791,33 @@ public class LodSavegameSweep
         }
     }
 
+    /// <summary>
+    /// Centres the probe fallback on the first online player. False while nobody is online:
+    /// a dedicated server can sit empty for hours, and probing around spawn in the meantime
+    /// would spend the whole bounded square somewhere nobody may ever look.
+    /// </summary>
+    bool TryChooseProbeCentre()
+    {
+        if (probeCentreChosen) return true;
+        foreach (IPlayer player in sapi.World.AllOnlinePlayers)
+        {
+            if (player.Entity == null) continue;
+            probeCx = (int)Math.Floor(player.Entity.Pos.X / GlobalConstants.ChunkSize);
+            probeCz = (int)Math.Floor(player.Entity.Pos.Z / GlobalConstants.ChunkSize);
+            probeCentreName = player.PlayerName;
+            probeCentreChosen = true;
+            logger.Notification(
+                "Savegame sweep: probing {0} positions within {1} blocks of {2}.",
+                ProbeTotal, FallbackRadiusChunks * GlobalConstants.ChunkSize, probeCentreName);
+            return true;
+        }
+        return false;
+    }
+
     void StepProbe()
     {
+        if (!TryChooseProbeCentre()) return;
+
         // Refill the outstanding cap in small pieces. The old one-second callback could
         // issue all 256 probes together and their main-thread publications could land as
         // the same periodic burst.
@@ -710,8 +827,8 @@ public class LodSavegameSweep
             && issued < MaxProbeIssuesPerTick && !tickBudget.Expired)
         {
             (int dx, int dz) = LodColumnMap.SpiralAt(probeIndex++);
-            int cx = spawnCx + dx;
-            int cz = spawnCz + dz;
+            int cx = probeCx + dx;
+            int cz = probeCz + dz;
 
             probesInFlight++;
             issued++;
@@ -740,9 +857,10 @@ public class LodSavegameSweep
 
         Probing = false;
         reported = 0;
+        BeginLoadOrder();
         logger.Notification(
             "Savegame sweep: {0} of {1} positions hold generated terrain. Loading those with a "
-            + "complete neighbourhood.", exists.Count, ProbeTotal);
+            + "complete neighbourhood, nearest a player first.", exists.Count, ProbeTotal);
     }
 
     void StepLoad(long now)
@@ -766,21 +884,42 @@ public class LodSavegameSweep
                 floorAllowance.Available(now, FloorPerSecond(perSecond)));
         }
 
+        loadOrder.Collect();
+        if (loadOrder.LastError is { } sortError)
+        {
+            logger.Warning("Savegame sweep: re-sorting by player distance failed ({0}); the "
+                + "sweep carries on in its previous order.", sortError.Message);
+            loadOrder.ClearError();
+        }
+        if (now >= nextResortCheckMs)
+        {
+            nextResortCheckMs = now + ResortCheckMs;
+            (int Cx, int Cz)[] targets = LoadTargets();
+            if (loadOrder.WantsResort(targets, ResortMoveChunks)) loadOrder.Resort(targets);
+        }
+
         var tickBudget = new LodWorkBudget(TickWorkBudgetMs);
         int loaded = 0;
         // The rate allowance bounds loads, not decisions. Deciding that a column needs
         // nothing costs a dictionary lookup, and gating that behind the load rate would
-        // leave a world where nothing changed still crawling through its spiral one
+        // leave a world where nothing changed still crawling through its order one
         // allowance at a time - which is the whole cost this is meant to remove.
-        while (loadIndex < LoadTotal && !tickBudget.Expired)
+        while (!tickBudget.Expired && loadOrder.TryPeek(out long key))
         {
-            (int dx, int dz) = LodColumnMap.SpiralAt(loadIndex++);
-            int cx = spawnCx + dx;
-            int cz = spawnCz + dz;
-
-            long key = LodColumnMap.Key(cx, cz);
+            int cx = LodColumnMap.KeyCx(key);
+            int cz = LodColumnMap.KeyCz(key);
             EnumSweepColumnAction action = LodSweepDecision.Decide(
                 exists.Classify(cx, cz), ledger.AlreadyCaptured(key));
+
+            if (LodSweepDecision.CostsAllowance(action) && loaded >= allowance)
+            {
+                // This column needs a real load and the rate has none left. Leave it unvisited
+                // so the next tick starts here, and stop: everything after it is further from
+                // the players and can wait its turn.
+                break;
+            }
+            loadOrder.Advance();
+            if (action != EnumSweepColumnAction.AlreadyCaptured) importTally.Remove(key);
 
             // One registration for every outcome that owns real terrain, driven by the rule
             // rather than repeated down each branch. A branch that forgot it would silently
@@ -798,6 +937,7 @@ public class LodSavegameSweep
             if (action == EnumSweepColumnAction.Frontier)
             {
                 SkippedEdge++;
+                frontierSeen.Add(key);
                 continue;
             }
 
@@ -810,17 +950,8 @@ public class LodSavegameSweep
                 continue;
             }
 
-            if (loaded >= allowance)
-            {
-                // This column needs a real load and the rate has none left. Put it back so
-                // the next tick starts here rather than past it, and stop: everything after
-                // it is further out on the spiral and can wait its turn.
-                loadIndex--;
-                break;
-            }
-
             // Not KeepLoaded: each column needs to pass through capture once, not stay
-            // resident. A radius worth sweeping is far more terrain than fits in memory.
+            // resident. A world worth sweeping is far more terrain than fits in memory.
             issuedSweepLoad = true;
             sapi.WorldManager.LoadChunkColumnPriority(cx, cz);
             LodHitchActivity.CountSweepLoad();
@@ -829,6 +960,7 @@ public class LodSavegameSweep
             loaded++;
         }
         loadAllowance.Spend(loaded);
+        importRate.Note(now, Loaded);
         // Only a held tick draws on the floor. Leaving it untouched otherwise keeps its own
         // credit capped at one tick's share, so resuming after a long hold cannot burst.
         if (playerHeld)
@@ -837,7 +969,7 @@ public class LodSavegameSweep
             PlayerHoldFloorLoads += loaded;
         }
 
-        int percent = loadIndex * 100 / LoadTotal;
+        int percent = loadOrder.Total == 0 ? 100 : loadOrder.Visited * 100 / loadOrder.Total;
         if (percent >= reported + 10)
         {
             reported = percent - percent % 10;
@@ -845,13 +977,15 @@ public class LodSavegameSweep
                 reported, Loaded, SkippedEdge);
         }
 
-        if (loadIndex < LoadTotal) return;
+        if (!loadOrder.Finished) return;
 
         // The promise gets measured before it gets announced: re-probe a sample of the
-        // positions that did not exist, and report the result on the finish line.
+        // positions that did not exist, and report the result on the finish line. The sample
+        // sits beside the frontier, which is where a load that reached too far would show.
         verifying = true;
         new LodAbsenceVerifier(sapi,
-            exists.AbsentSample(spawnCx, spawnCz, ProbeRadius, LodAbsenceVerifier.MaxSample, LodAbsenceVerifier.AwayFromPlayers(sapi)),
+            exists.AbsentBesideFrontier(frontierSeen, LodAbsenceVerifier.MaxSample,
+                LodAbsenceVerifier.AwayFromPlayers(sapi)),
             Finish).Start();
     }
 
@@ -929,14 +1063,14 @@ public class LodSavegameSweep
     /// <summary>
     /// Learn about terrain generated or loaded after the initial probe. Chunk-load events are
     /// on the server thread, the same owner as Step, so both collections stay single-threaded.
-    /// The wider probe bound is retained because an edge column can complete the safety proof
-    /// for a refresh candidate just inside the configured radius.
+    /// Unbounded since the sweep stopped being a square around spawn: a loaded column exists
+    /// wherever it is, and the safety rule still treats any neighbour nobody has seen as missing.
     /// </summary>
     public void ObserveLoadedColumn(int cx, int cz)
     {
-        if (!active || !Within(cx, cz, ProbeRadius)) return;
+        if (!active) return;
         exists.Add(cx, cz);
-        if (Within(cx, cz, radiusChunks)) snowRefresh.Add(cx, cz, chunksPerRegion);
+        snowRefresh.Add(cx, cz, chunksPerRegion);
         if (Done && weather != null)
         {
             QueueWeatherPoll(LodColumnMap.Key(
@@ -1172,9 +1306,6 @@ public class LodSavegameSweep
         if (active) queueColumn(cx, cz);
     }
 
-    bool Within(int cx, int cz, int radius) =>
-        Math.Abs((long)cx - spawnCx) <= radius && Math.Abs((long)cz - spawnCz) <= radius;
-
     static int FloorDiv(int value, int divisor)
     {
         int quotient = value / divisor;
@@ -1226,8 +1357,12 @@ public class LodSavegameSweep
         : verifying
             ? $"savegame sweep verifying: re-probing {Loaded} loads' surroundings"
         : Probing
-            ? $"sweeping savegame: examined {probeIndex}/{ProbeTotal}, {exists.Count} hold terrain"
-            : $"sweeping savegame: loaded {Loaded}, {SkippedUnchanged} already captured, {SkippedEdge} skipped on the frontier; "
+            ? probeCentreChosen
+                ? $"sweeping savegame: examined {probeIndex}/{ProbeTotal} around {probeCentreName}, {exists.Count} hold terrain"
+                : "sweeping savegame: the savegame cannot be read directly, so the engine will be "
+                    + "probed around the first player to join; waiting for one"
+            : $"sweeping savegame: {loadOrder.Visited}/{loadOrder.Total} explored columns examined, nearest a player first "
+                + $"({loadOrder.Sorts} orderings); loaded {Loaded}, {SkippedUnchanged} already captured, {SkippedEdge} skipped on the frontier; "
                 + $"held {PlayerActivityYieldTicks} ticks for player movement "
                 + $"({PlayerHoldFloorLoads} columns still loaded at the "
                 + $"{FloorPerSecond(perSecond)}/s floor) and "
@@ -1451,6 +1586,175 @@ internal sealed class LodCaptureLedger
     {
         savegame[key] = print;
         captured[key] = print;
+    }
+}
+
+/// <summary>
+/// The order the sweep's load pass visits explored columns in: nearest an online player first,
+/// or nearest spawn while nobody is online, re-sorted as players move.
+///
+/// Until 0.5.1 the pass walked a fixed square around spawn, 4,096 blocks out, and stopped at its
+/// edge - so land explored further away never reached the cache at all, however long the server
+/// ran (a player report, 2026-10-21). It now visits every column the savegame holds, and the
+/// order is what keeps that useful: the land somebody can see arrives first.
+///
+/// The sort runs off the server thread. A world played for years can hold hundreds of thousands
+/// of columns, and sorting that many is tens of milliseconds the tick cannot spare. While a sort
+/// is running the pass carries on in the old order; whatever it visits in the meantime is
+/// remembered and skipped when the new order arrives, so nothing is visited twice. Game-free so
+/// that rule can be checked without a game process.
+/// </summary>
+internal sealed class LodSweepOrder
+{
+    long[] order = Array.Empty<long>();
+    int cursor;
+
+    /// <summary>Visited before the current order was swapped in; read by the sorting thread too.</summary>
+    HashSet<long>? skip;
+    HashSet<long>? visitedWhileSorting;
+    Task<long[]>? sorting;
+    (int Cx, int Cz)[] sortedFor = Array.Empty<(int, int)>();
+
+    /// <summary>Columns in the pass when it started.</summary>
+    public int Total { get; private set; }
+
+    /// <summary>Columns the pass has decided about so far.</summary>
+    public int Visited { get; private set; }
+
+    /// <summary>Orders swapped in, the first one included.</summary>
+    public long Sorts { get; private set; }
+
+    /// <summary>Why the last sort failed, if one did; the pass then keeps its previous order.</summary>
+    public Exception? LastError { get; private set; }
+
+    /// <summary>Marks <see cref="LastError"/> as reported.</summary>
+    public void ClearError() => LastError = null;
+
+    /// <summary>True when nothing is left to visit and no sort is still running.</summary>
+    public bool Finished => sorting == null && !TryPeek(out _);
+
+    /// <summary>Starts the pass over <paramref name="keys"/>, which the sorting thread then owns.</summary>
+    public void Begin(long[] keys, (int Cx, int Cz)[] targets)
+    {
+        Total = keys.Length;
+        Visited = 0;
+        order = Array.Empty<long>();
+        cursor = 0;
+        skip = null;
+        StartSort(keys, 0, null, targets);
+    }
+
+    /// <summary>
+    /// True when the targets have changed enough to be worth a new order: someone joined or
+    /// left, or someone is now more than <paramref name="moveChunks"/> from every position the
+    /// current order was sorted for.
+    /// </summary>
+    public bool WantsResort((int Cx, int Cz)[] targets, int moveChunks)
+    {
+        if (sorting != null) return false;
+        if (targets.Length != sortedFor.Length) return true;
+        foreach ((int cx, int cz) in targets)
+        {
+            bool near = false;
+            foreach ((int sx, int sz) in sortedFor)
+            {
+                if (Math.Abs((long)cx - sx) <= moveChunks && Math.Abs((long)cz - sz) <= moveChunks)
+                {
+                    near = true;
+                    break;
+                }
+            }
+            if (!near) return true;
+        }
+        return false;
+    }
+
+    /// <summary>Sorts what is left for new targets; the current order serves until it is ready.</summary>
+    public void Resort((int Cx, int Cz)[] targets)
+    {
+        if (sorting != null) return;
+        StartSort(order, cursor, skip, targets);
+    }
+
+    void StartSort(long[] from, int start, HashSet<long>? alreadyVisited, (int Cx, int Cz)[] targets)
+    {
+        sortedFor = targets;
+        visitedWhileSorting = new HashSet<long>();
+        sorting = Task.Run(() => SortRemaining(from, start, alreadyVisited, targets));
+    }
+
+    /// <summary>Swaps in a finished sort. Call once per tick, before visiting anything.</summary>
+    public void Collect()
+    {
+        if (sorting == null || !sorting.IsCompleted) return;
+
+        if (sorting.IsCompletedSuccessfully)
+        {
+            order = sorting.Result;
+            cursor = 0;
+            skip = visitedWhileSorting;
+            Sorts++;
+        }
+        else
+        {
+            LastError = sorting.Exception?.GetBaseException();
+        }
+        sorting = null;
+        visitedWhileSorting = null;
+    }
+
+    /// <summary>The next column to decide about, without consuming it.</summary>
+    public bool TryPeek(out long key)
+    {
+        while (cursor < order.Length)
+        {
+            key = order[cursor];
+            if (skip == null || !skip.Contains(key)) return true;
+            cursor++;
+        }
+        key = 0;
+        return false;
+    }
+
+    /// <summary>Consumes the column <see cref="TryPeek"/> returned.</summary>
+    public void Advance()
+    {
+        visitedWhileSorting?.Add(order[cursor]);
+        cursor++;
+        Visited++;
+    }
+
+    /// <summary>
+    /// What is left of <paramref name="from"/> after <paramref name="start"/>, without the
+    /// already-visited columns, nearest a target first. Distance is to the nearest target, so
+    /// with several players online each is served from their own surroundings outwards.
+    /// </summary>
+    internal static long[] SortRemaining(long[] from, int start, HashSet<long>? alreadyVisited,
+        (int Cx, int Cz)[] targets)
+    {
+        var keys = new List<long>(Math.Max(0, from.Length - start));
+        for (int i = start; i < from.Length; i++)
+        {
+            if (alreadyVisited == null || !alreadyVisited.Contains(from[i])) keys.Add(from[i]);
+        }
+
+        long[] sorted = keys.ToArray();
+        if (targets.Length == 0) return sorted;
+
+        var distance = new long[sorted.Length];
+        for (int i = 0; i < sorted.Length; i++)
+        {
+            long cx = LodColumnMap.KeyCx(sorted[i]), cz = LodColumnMap.KeyCz(sorted[i]);
+            long nearest = long.MaxValue;
+            foreach ((int tx, int tz) in targets)
+            {
+                long dx = cx - tx, dz = cz - tz;
+                nearest = Math.Min(nearest, dx * dx + dz * dz);
+            }
+            distance[i] = nearest;
+        }
+        Array.Sort(distance, sorted);
+        return sorted;
     }
 }
 

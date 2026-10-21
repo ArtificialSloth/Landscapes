@@ -295,7 +295,10 @@ public partial class VintageHorizonsModSystem
         Entry(lines, "serve/player/sec", server.MaxSectionsPerSecondPerPlayer.ToString(CultureInfo.InvariantCulture));
         Entry(lines, "serve total/sec", server.MaxSectionsPerSecondTotal.ToString(CultureInfo.InvariantCulture));
         Entry(lines, "savegame sweep", server.SweepSavegame);
-        Entry(lines, "sweep radius", server.SweepRadiusChunks + " chunks");
+        // A server before 0.5.1 still sends its square; a newer one sends 0 and sweeps everything.
+        Entry(lines, "sweep reach", server.SweepRadiusChunks > 0
+            ? server.SweepRadiusChunks + " chunks around spawn"
+            : "all explored land");
         Entry(lines, "sweep columns/sec", server.SweepColumnsPerSecond.ToString(CultureInfo.InvariantCulture));
         Entry(lines, "snow campaign columns/sec", server.RefreshColumnsPerSecond.ToString(CultureInfo.InvariantCulture));
         Entry(lines, "generate command", server.EnableGenerateCommand);

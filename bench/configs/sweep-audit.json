@@ -2,7 +2,6 @@
   "EnableCapture": true,
   "EnableServing": false,
   "SweepSavegame": true,
-  "SweepRadiusChunks": 8,
   "SweepColumnsPerSecond": 16,
   "RefreshColumnsPerSecond": 1,
   "AuditColumnsPerSecond": 32,

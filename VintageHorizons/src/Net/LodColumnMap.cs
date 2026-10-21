@@ -82,6 +82,17 @@ public class LodColumnMap
     public bool Contains(int cx, int cz) => exists.Contains(Key(cx, cz));
 
     /// <summary>
+    /// Every recorded position, copied. The map itself is owned by the server thread and keeps
+    /// growing as columns load; a copy is what another thread may read.
+    /// </summary>
+    public long[] KeysSnapshot()
+    {
+        var keys = new long[exists.Count];
+        exists.CopyTo(keys);
+        return keys;
+    }
+
+    /// <summary>
     /// True when every position within <see cref="SafeNeighbourhood"/> of this column
     /// is on disk. Loading such a column cannot make the engine generate anything.
     /// </summary>
@@ -141,6 +152,48 @@ public class LodColumnMap
 
         var sample = new List<long>(Math.Min(max, preferred.Count + fallback.Count));
         if (max <= 0) return sample;
+
+        Take(preferred, max, sample);
+        if (sample.Count < max) Take(fallback, max - sample.Count, sample);
+        return sample;
+    }
+
+    /// <summary>
+    /// Up to <paramref name="max"/> positions NOT in the map, each the nearest absent position
+    /// beside one of <paramref name="frontier"/>'s columns, spread evenly along it.
+    ///
+    /// For a pass with no fixed square, which is what the savegame sweep has been since it
+    /// stopped being centred on spawn. A frontier column is one with a missing neighbour, so
+    /// the absent position beside it is exactly where a load that reached too far would have
+    /// generated terrain - a better place to look than a uniform square, most of which can be
+    /// far from anything the pass loaded.
+    /// </summary>
+    /// <param name="eligible">As for <see cref="AbsentSample"/>: preferred, not required.</param>
+    public List<long> AbsentBesideFrontier(IReadOnlyList<long> frontier, int max,
+        Func<int, int, bool>? eligible = null)
+    {
+        var sample = new List<long>();
+        if (max <= 0 || frontier.Count == 0) return sample;
+
+        var preferred = new List<long>();
+        var fallback = new List<long>();
+        var seen = new HashSet<long>();
+        int neighbourhood = (2 * SafeNeighbourhood + 1) * (2 * SafeNeighbourhood + 1);
+        int stride = Math.Max(1, frontier.Count / max);
+
+        for (int i = 0; i < frontier.Count; i += stride)
+        {
+            int fx = KeyCx(frontier[i]), fz = KeyCz(frontier[i]);
+            for (int s = 1; s < neighbourhood; s++)
+            {
+                (int dx, int dz) = SpiralAt(s);
+                int cx = fx + dx, cz = fz + dz;
+                if (Contains(cx, cz)) continue;
+                if (seen.Add(Key(cx, cz)))
+                    (eligible == null || eligible(cx, cz) ? preferred : fallback).Add(Key(cx, cz));
+                break;
+            }
+        }
 
         Take(preferred, max, sample);
         if (sample.Count < max) Take(fallback, max - sample.Count, sample);

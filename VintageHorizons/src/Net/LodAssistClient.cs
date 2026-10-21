@@ -117,12 +117,34 @@ public sealed class LodAssistClient
             .RegisterMessageType<AssistSilhouetteManifest>()
             .RegisterMessageType<AssistSilhouetteTileRequest>()
             .RegisterMessageType<AssistSilhouetteTile>()
+            // Last, as on the server: older types keep their numbers.
+            .RegisterMessageType<AssistImportStatus>()
             .SetMessageHandler<AssistWelcome>(OnWelcome)
             .SetMessageHandler<AssistKeyManifest>(OnKeyManifest)
             .SetMessageHandler<AssistSection>(OnSection)
             .SetMessageHandler<AssistWorldGenStatus>(OnWorldGenStatus)
             .SetMessageHandler<AssistSilhouetteManifest>(OnSilhouetteManifest)
-            .SetMessageHandler<AssistSilhouetteTile>(OnSilhouetteTile);
+            .SetMessageHandler<AssistSilhouetteTile>(OnSilhouetteTile)
+            .SetMessageHandler<AssistImportStatus>(OnImportStatus);
+    }
+
+    AssistImportStatus? importStatus;
+
+    /// <summary>
+    /// The newest import status from the server, or null when none has arrived this session. Set
+    /// by the network handler and read by the main thread; each status replaces the last whole.
+    /// </summary>
+    public AssistImportStatus? ImportStatus => Volatile.Read(ref importStatus);
+
+    /// <summary>When <see cref="ImportStatus"/> arrived, in <see cref="Environment.TickCount64"/> milliseconds.</summary>
+    public long ImportStatusReceivedMs => Volatile.Read(ref importStatusReceivedMs);
+    long importStatusReceivedMs;
+
+    internal void OnImportStatus(AssistImportStatus status)
+    {
+        status.PendingByBand ??= Array.Empty<int>();
+        Volatile.Write(ref importStatusReceivedMs, Environment.TickCount64);
+        Volatile.Write(ref importStatus, status);
     }
 
     /// <summary>
@@ -162,6 +184,7 @@ public sealed class LodAssistClient
                 SectionSync = sync != null ? LodAssist.SectionSyncVersion : 0,
                 SyncGeneration = sync?.Generation ?? "",
                 SyncVersion = sync?.Version ?? LodAssistSync.NoRecord,
+                ImportStatus = LodAssist.ImportStatusVersion,
             });
         }
         catch (Exception e)
@@ -740,6 +763,7 @@ public sealed class LodAssistClient
         ServerCacheGeneration = "";
         SilhouetteHeightSource = EnumSilhouetteHeightSource.Unknown;
         CanControlWorldGeneration = false;
+        Volatile.Write(ref importStatus, null);
         WorldGenStatus = null;
         LastWorldGenControlError = "";
         worldGenPageOpen = false;

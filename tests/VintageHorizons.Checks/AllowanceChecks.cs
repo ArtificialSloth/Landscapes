@@ -103,8 +103,252 @@ public static class AllowanceChecks
 
         CaptureLedger(c);
         SweepDecision(c);
+        SweepOrder(c);
+        SweepAbsenceSample(c);
+        ImportProgress(c);
         AuditRules(c);
         SettledClaims(c);
+    }
+
+    /// <summary>
+    /// The load pass covers every explored column, nearest a player first.
+    ///
+    /// Until 0.5.1 it walked a fixed square 4,096 blocks around spawn, so explored land further
+    /// out never reached the cache however long the server ran (a player report, 2026-10-21).
+    /// </summary>
+    static void SweepOrder(Check c)
+    {
+        (int, int)[] spawn = { (0, 0) };
+        long near = LodColumnMap.Key(2, 1);
+        long middle = LodColumnMap.Key(-40, 30);
+        long far = LodColumnMap.Key(10_000, -10_000);   // 320,000 blocks out
+
+        long[] sorted = LodSweepOrder.SortRemaining(
+            new[] { far, middle, near }, 0, null, spawn);
+        c.Eq(3, sorted.Length, "nothing is dropped for being far away: there is no limit");
+        c.Eq(near, sorted[0], "the column nearest the target comes first");
+        c.Eq(far, sorted[2], "the farthest column comes last, but it comes");
+
+        // Two players: each is served from their own surroundings outwards, so a column beside
+        // the second player goes ahead of one halfway between them.
+        (int, int)[] two = { (0, 0), (10_000, -10_000) };
+        long besideSecond = LodColumnMap.Key(10_001, -10_000);
+        long between = LodColumnMap.Key(5_000, -5_000);
+        sorted = LodSweepOrder.SortRemaining(new[] { between, besideSecond }, 0, null, two);
+        c.Eq(besideSecond, sorted[0], "distance is to the nearest player, not to one of them");
+
+        // What came before the cursor, or was already visited, is not sorted back in.
+        sorted = LodSweepOrder.SortRemaining(
+            new[] { near, middle, far }, 1, new HashSet<long> { far }, spawn);
+        c.Eq(1, sorted.Length, "a re-sort keeps only what is left to visit");
+        c.Eq(middle, sorted[0], "and that is the unvisited remainder");
+
+        // A re-sort while the pass carries on visits every column exactly once. The swap only
+        // happens at Collect, so the visits between Resort and Collect are the ones that ran
+        // while the sort did - deterministically, however fast the sorting thread is.
+        var keys = new List<long>();
+        for (int x = -6; x <= 6; x++)
+        for (int z = -6; z <= 6; z++)
+            keys.Add(LodColumnMap.Key(x * 7, z * 7));
+
+        var order = new LodSweepOrder();
+        order.Begin(keys.ToArray(), spawn);
+        c.False(order.Finished, "a pass is not finished while its first sort runs");
+        WaitForSort(order);
+        c.Eq(LodColumnMap.Key(0, 0), Peek(order), "the first order starts at the target");
+
+        var visited = new List<long>();
+        for (int i = 0; i < 5; i++) Visit(order, visited);
+        order.Resort(new[] { (42, 42) });
+        for (int i = 0; i < 7; i++) Visit(order, visited);
+        WaitForSort(order);
+        c.Eq(LodColumnMap.Key(42, 42), Peek(order),
+            "after the swap the pass continues from the new target");
+        while (order.TryPeek(out _)) Visit(order, visited);
+
+        c.True(order.Finished, "the pass finishes once everything is visited");
+        c.Eq(keys.Count, visited.Count, "every column is visited");
+        c.Eq(keys.Count, visited.Distinct().Count(), "and none twice across the re-sort");
+        c.Eq(keys.Count, order.Visited, "the progress count matches");
+        c.Eq(2L, order.Sorts, "both orders were swapped in");
+
+        // Re-sorting is for real movement, not every step.
+        c.False(order.WantsResort(new[] { (42 + 8, 42 - 8) }, 8),
+            "a player within the move distance of the last sort does not re-sort");
+        c.True(order.WantsResort(new[] { (42 + 9, 42) }, 8),
+            "a player past it does");
+        c.True(order.WantsResort(new[] { (42, 42), (0, 0) }, 8),
+            "a join re-sorts at once, wherever the newcomer is");
+    }
+
+    /// <summary>
+    /// What a player is told about the import (owner, 2026-10-21): everyone affected, but only
+    /// about land inside their own Cache distance, and only when it is worth telling.
+    /// </summary>
+    static void ImportProgress(Check c)
+    {
+        // The tally, in a world whose spawn is chunk 8000 (block 256,000), like the test world.
+        var tally = new LodImportTally();
+        for (int i = 0; i < 100; i++) tally.Add(LodColumnMap.Key(8000 + i % 10, 8000 + i / 10));
+        for (int i = 0; i < 50; i++) tally.Add(LodColumnMap.Key(8500 + i, 8000));   // 16 km east
+        tally.Add(LodColumnMap.Key(-3, -3));                                       // negative cells
+        c.Eq(151, tally.Pending, "every counted column is pending");
+        int[] bands = tally.Histogram(256_000, 256_000);
+        c.Eq(LodImportStatusBands.Count, bands.Length, "one count per band");
+        c.Eq(151, bands.Sum(), "the bands account for every pending column");
+        c.Eq(100, bands[0] + bands[1], "the land around the player sits in the nearest bands");
+        c.Eq(51, LodImportView.PendingWithin(bands, 0) - LodImportView.PendingWithin(bands, 8192),
+            "land 16 km away, and the far-off corner, are outside an 8,192-block Cache distance");
+        c.Eq(150, LodImportView.PendingWithin(bands, 32768),
+            "a 32,768-block Cache distance reaches the land 16 km away");
+        tally.Remove(LodColumnMap.Key(8000, 8000));
+        tally.Remove(LodColumnMap.Key(123, 456));   // never counted
+        c.Eq(150, tally.Pending, "a column the pass reaches stops counting; an uncounted one is ignored");
+
+        // The bands a Cache distance takes: those that start inside it.
+        int[] simple = new int[LodImportStatusBands.Count];
+        simple[0] = 10; simple[1] = 20; simple[2] = 30; simple[^1] = 1000;
+        c.Eq(10, LodImportView.PendingWithin(simple, 512), "a 512-block distance takes the first band");
+        c.Eq(30, LodImportView.PendingWithin(simple, 1000), "a band that starts inside the distance counts");
+        c.Eq(1060, LodImportView.PendingWithin(simple, 0), "an unlimited distance takes everything");
+        c.Eq(1060, LodImportView.PendingWithin(simple, 40_000),
+            "a distance past the last band's start takes the far band too");
+
+        c.Eq("under a minute", LodImportView.Describe(30), "short imports are not given false precision");
+        c.Eq("about 10 min", LodImportView.Describe(600), "minutes under an hour");
+        c.Eq("about 1 h", LodImportView.Describe(3600), "a whole hour");
+        c.Eq("about 1 h 20 min", LodImportView.Describe(4790), "hours in five-minute steps");
+
+        // The pace is measured, never assumed once it can be.
+        var meter = new LodRateMeter();
+        meter.Note(0, 0);
+        meter.Note(2_000, 999);   // within five seconds of the last sample: ignored
+        for (long t = 5_000; t <= 25_000; t += 5_000) meter.Note(t, t / 1000 * 8);
+        c.Eq(0.0, meter.PerSecond, "no pace is claimed from under 30 seconds");
+        meter.Note(30_000, 240);
+        c.Near(8.0, meter.PerSecond, 1e-9, "the pace is loads over the measured window");
+
+        // The presenter, one step a second.
+        AssistImportStatus Status(int nearby, double pace) => new()
+        {
+            Active = true, BandBlocks = LodImportStatusBands.BandBlocks,
+            PendingByBand = new[] { nearby }.Concat(new int[LodImportStatusBands.Count - 1]).ToArray(),
+            ColumnsPerSecond = pace,
+        };
+        var view = new LodImportPresenter();
+        view.Step(null, 8192, 0);
+        c.True(view.OverlayText == null && !view.PopupDue, "nothing shows before the server reports");
+        view.Step(Status(100, 0), 8192, 1_000);
+        c.True(view.OverlayText == null && !view.PopupDue,
+            "a few seconds' import nearby bothers nobody");
+
+        var farOnly = Status(0, 8);
+        farOnly.PendingByBand[40] = 50_000;   // 20 km away
+        view.Step(farOnly, 8192, 2_000);
+        c.True(view.OverlayText == null && !view.PopupDue,
+            "land outside the player's Cache distance does not count for them");
+
+        view.Step(Status(6000, 0), 8192, 3_000);
+        c.True(view.PopupDue, "an import of ten minutes or more nearby brings the popup");
+        c.True(view.OverlayText?.Contains("working out the time left") == true,
+            "the overlay does not claim a time before the pace is measured");
+        c.Near(LodImportPresenter.GhostAlpha, view.OverlayAlpha, 1e-6, "and it is faint");
+        view.PopupShown();
+        view.Step(Status(3000, 5), 8192, 4_000);
+        c.False(view.PopupDue, "the popup shows once a session");
+        c.Eq("Importing explored land: 50% · about 10 min left", view.OverlayText,
+            "progress against the most seen nearby, and the measured time left");
+
+        view.Step(Status(0, 5), 8192, 5_000);
+        c.Eq("Explored land nearby is imported", view.OverlayText, "done is said, not just vanished");
+        view.Step(Status(0, 5), 8192, 5_000 + LodImportPresenter.DoneHoldMs + LodImportPresenter.FadeMs / 2);
+        c.True(view.OverlayAlpha > 0 && view.OverlayAlpha < LodImportPresenter.GhostAlpha,
+            "then it fades");
+        view.Step(Status(0, 5), 8192, 5_000 + LodImportPresenter.DoneHoldMs + LodImportPresenter.FadeMs);
+        c.True(view.OverlayText == null, "and is gone");
+
+        c.True(LodImportNotice.Text(12345, 8192, "about 1 h 20 min", true, false).StartsWith(
+                "This world has explored land that is not in your distant view yet: your Cache distance "
+                + "is set to 8,192 blocks - about 12,345 chunks within that distance need to be imported.",
+                StringComparison.Ordinal),
+            "the popup opens with the owner's wording (2026-10-21)");
+        c.True(LodImportNotice.Text(5, 0, "under a minute", false, true)
+                .Contains("your Cache distance is unlimited - about 5 chunks across the world", StringComparison.Ordinal)
+                && LodImportNotice.Text(5, 0, "under a minute", false, true)
+                    .Contains("shared by everyone online", StringComparison.Ordinal),
+            "the unlimited and server forms say so");
+
+        var finished = new LodImportPresenter();
+        finished.Step(Status(2000, 8), 8192, 0);
+        finished.Step(new AssistImportStatus { Finished = true }, 8192, 1_000);
+        c.Eq("Explored land nearby is imported", finished.OverlayText,
+            "the server's last status ends the line the same way");
+    }
+
+    static long Peek(LodSweepOrder order) => order.TryPeek(out long key) ? key : long.MinValue;
+
+    static void Visit(LodSweepOrder order, List<long> visited)
+    {
+        if (!order.TryPeek(out long key)) return;
+        visited.Add(key);
+        order.Advance();
+    }
+
+    static void WaitForSort(LodSweepOrder order)
+    {
+        // The swap happens in Collect; the sort itself is on the thread pool.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        long sorts = order.Sorts;
+        while (order.Sorts == sorts && DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(1);
+            order.Collect();
+        }
+    }
+
+    /// <summary>
+    /// With no square to sample from, the absence check samples beside the frontier, which is
+    /// where a load that reached too far would have generated terrain.
+    /// </summary>
+    static void SweepAbsenceSample(Check c)
+    {
+        const int R = 12;
+        var map = new LodColumnMap();
+        var frontier = new List<long>();
+        for (int x = -R; x <= R; x++)
+        for (int z = -R; z <= R; z++)
+            map.Add(x, z);
+        for (int x = -R; x <= R; x++)
+        for (int z = -R; z <= R; z++)
+        {
+            if (map.Classify(x, z) == EnumColumnAction.SkipFrontier)
+                frontier.Add(LodColumnMap.Key(x, z));
+        }
+
+        List<long> sample = map.AbsentBesideFrontier(frontier, 64);
+        bool onlyAbsent = true, beside = true;
+        foreach (long key in sample)
+        {
+            int cx = LodColumnMap.KeyCx(key), cz = LodColumnMap.KeyCz(key);
+            onlyAbsent &= !map.Contains(cx, cz);
+            int outside = Math.Max(Math.Abs(cx), Math.Abs(cz)) - R;
+            beside &= outside >= 1 && outside <= LodColumnMap.SafeNeighbourhood;
+        }
+        c.True(sample.Count > 0, "an explored area with an edge yields a sample");
+        c.True(sample.Count <= 64, "the sample respects its cap");
+        c.True(onlyAbsent, "the sample holds only positions absent from the map");
+        c.True(beside, "every sampled position is just past the explored edge");
+        c.Eq(sample.Count, sample.Distinct().Count(), "no position is sampled twice");
+
+        Func<int, int, bool> eastOnly = (cx, _) => cx > R;
+        List<long> filtered = map.AbsentBesideFrontier(frontier, 8, eastOnly);
+        bool East(long k) => eastOnly(LodColumnMap.KeyCx(k), LodColumnMap.KeyCz(k));
+        c.True(filtered.Any(East), "the filter's preferred positions are sampled");
+        c.True(filtered.SkipWhile(East).All(k => !East(k)),
+            "and taken before the fallback tops the sample up");
+
+        c.Eq(0, map.AbsentBesideFrontier(new List<long>(), 64).Count,
+            "no frontier, nothing to sample");
     }
 
     /// <summary>

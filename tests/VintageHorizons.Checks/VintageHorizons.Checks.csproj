@@ -58,6 +58,10 @@
     <Reference Include="protobuf-net">
       <HintPath>$(GamePath)/Lib/protobuf-net.dll</HintPath>
     </Reference>
+    <!-- The game reads and writes mod config files with it; ConfigChecks round-trips through it. -->
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(GamePath)/Lib/Newtonsoft.Json.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
 </Project>

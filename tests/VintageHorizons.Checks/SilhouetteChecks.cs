@@ -1831,7 +1831,9 @@ public static class SilhouetteChecks
             "AssistHello", "AssistWelcome", "AssistKeyManifest", "AssistSectionRequest", "AssistSection",
             "AssistWorldGenRequest", "AssistWorldGenStatus", "AssistSilhouetteRequest",
             "AssistSilhouetteManifest", "AssistSilhouetteTileRequest", "AssistSilhouetteTile",
-        }, client, "the silhouette messages are appended after the world-generation pair, in the plan's order");
+            "AssistImportStatus",
+        }, client, "the silhouette messages are appended after the world-generation pair, in the plan's "
+            + "order, and the 0.5.1 import status after them");
     }
 
     static void PreviewsNeverReachCapture(Check c)

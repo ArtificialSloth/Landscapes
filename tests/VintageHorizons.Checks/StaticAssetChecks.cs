@@ -1071,9 +1071,15 @@ public static class StaticAssetChecks
                 $"the established {stage} wrapper is only a version, an extension and an include");
             c.Eq(4, CodeLines(indirect),
                 $"the indirect {stage} wrapper adds only the define");
-            c.Eq(4, CodeLines(packed),
+            // The packed fragment stage is 3.30 with the extension line, like the others:
+            // under 4.x NVIDIA 617.42 rejects the vanilla includes' int/float clamp calls.
+            c.Eq(stage == "fsh" ? 5 : 4, CodeLines(packed),
                 $"the packed {stage} wrapper is version, two defines, and the shared include");
         }
+
+        c.True(File.ReadAllText(Path.Combine(shaders, "lodterrainpacked.fsh"))
+                .StartsWith("#version 330 core", StringComparison.Ordinal),
+            "the packed fragment stage stays at GLSL 3.30, where the vanilla includes compile on every driver");
 
         string vertex = ShaderBody("vsh");
         string fragment = ShaderBody("fsh");

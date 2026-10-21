@@ -41,15 +41,12 @@ public static class ConfigChecks
         // Sweeping is not, and the asymmetry is the point: it loads terrain that already
         // exists, so it costs no worldgen and reveals nowhere a player has not been.
         c.True(config.SweepSavegame, "savegame sweeping is on by default");
-        c.True(config.SweepRadiusChunks > 0, "the default sweep radius actually sweeps something");
         c.True(config.SweepEnabled, "the defaults leave sweeping enabled");
         c.Eq(1, config.RefreshColumnsPerSecond,
             "existing terrain refreshes at one column per second by default");
         c.True(config.RefreshEnabled, "the defaults leave automatic snow refresh enabled");
         c.False(new LodServerConfig { SweepSavegame = false }.SweepEnabled,
             "clearing the flag disables sweeping");
-        c.False(new LodServerConfig { SweepRadiusChunks = 0 }.SweepEnabled,
-            "a zero radius disables sweeping as surely as the flag does");
         c.False(new LodServerConfig { SweepSavegame = false }.RefreshEnabled,
             "snow campaigns cannot run without the safe sweep map");
         c.False(new LodServerConfig { RefreshColumnsPerSecond = 0 }.RefreshEnabled,
@@ -144,13 +141,6 @@ public static class ConfigChecks
         c.Eq(1, Sanitized(cfg => cfg.PregenColumnsPerSecond = 0).PregenColumnsPerSecond,
             "a zero pre-generation rate becomes one");
 
-        // A wider sweep ceiling than pregen's, because the cost tracks terrain that exists
-        // rather than the radius: examining a position that was never generated is an index
-        // lookup, so a large radius over a small world is nearly free.
-        c.Eq(512, Sanitized(cfg => cfg.SweepRadiusChunks = 99999).SweepRadiusChunks,
-            "sweep radius is capped at 512 chunks");
-        c.Eq(0, Sanitized(cfg => cfg.SweepRadiusChunks = -1).SweepRadiusChunks,
-            "a negative sweep radius means off, never negative");
         c.Eq(64, Sanitized(cfg => cfg.SweepColumnsPerSecond = 1000).SweepColumnsPerSecond,
             "sweep rate is capped");
         c.Eq(1, Sanitized(cfg => cfg.SweepColumnsPerSecond = 0).SweepColumnsPerSecond,
@@ -161,8 +151,7 @@ public static class ConfigChecks
             "a negative refresh rate disables the rolling pass");
         c.Eq(0, Sanitized(cfg => cfg.RefreshColumnsPerSecond = 0).RefreshColumnsPerSecond,
             "zero remains the explicit rolling-refresh off switch");
-        c.Eq(48, Sanitized(cfg => cfg.SweepRadiusChunks = 48).SweepRadiusChunks,
-            "an in-range sweep radius is preserved exactly");
+        RetiredSweepRadius(c);
 
         c.Eq(256, Sanitized(cfg => cfg.GenerateMaxRadiusChunks = 99999).GenerateMaxRadiusChunks,
             "the generate ceiling is capped at 256 chunks");
@@ -265,7 +254,7 @@ public static class ConfigChecks
         c.True(off.Describe().Contains("capture off"), "capture off is described");
         c.True(off.Describe().Contains("serving off"), "serving off is described");
 
-        c.True(text.Contains("sweep 128 chunks"), "the description reports the sweep radius");
+        c.True(text.Contains("sweep all explored land"), "the description reports the sweep's reach");
         c.True(text.Contains("refresh 1/s"), "the description reports the snow campaign rate");
         c.True(new LodServerConfig { SweepSavegame = false }.Describe().Contains("sweep off"),
             "a disabled sweep is described as off");
@@ -281,6 +270,39 @@ public static class ConfigChecks
         c.True(new LodServerConfig { EnableWorldGeneration = false }.Describe()
                 .Contains("world generation off"),
             "disabled real generation is described as off");
+    }
+
+    /// <summary>
+    /// The sweep's radius setting, retired in 0.5.1, through the same Newtonsoft calls the game
+    /// uses to load and store mod configs. Every server that ever ran the mod has 128 written in
+    /// its file, so a radius that was still honoured would keep "all explored land" from ever
+    /// reaching them; and 0 was a documented off switch, so it must stay off.
+    /// </summary>
+    static void RetiredSweepRadius(Check c)
+    {
+        LodServerConfig Loaded(string json)
+        {
+            LodServerConfig config = Newtonsoft.Json.JsonConvert.DeserializeObject<LodServerConfig>(json)!;
+            config.Sanitize();
+            return config;
+        }
+
+        c.True(Loaded("{\"SweepSavegame\": true, \"SweepRadiusChunks\": 128}").SweepEnabled,
+            "an old file's saved radius no longer limits or disables the sweep");
+        c.False(Loaded("{\"SweepSavegame\": true, \"SweepRadiusChunks\": 0}").SweepEnabled,
+            "an old file that switched the sweep off with a zero radius keeps it off");
+        c.False(Loaded("{\"SweepSavegame\": true, \"SweepRadiusChunks\": 0}").SweepSavegame,
+            "that off switch moves onto SweepSavegame, so it survives the setting's removal");
+        c.True(Loaded("{\"SweepSavegame\": true}").SweepEnabled,
+            "a file without the old setting sweeps");
+
+        string stored = Newtonsoft.Json.JsonConvert.SerializeObject(
+            Loaded("{\"SweepSavegame\": true, \"SweepRadiusChunks\": 64}"),
+            Newtonsoft.Json.Formatting.Indented);
+        c.False(stored.Contains("SweepRadiusChunks", StringComparison.Ordinal),
+            "the retired setting is not written back to the file");
+        c.True(stored.Contains("\"SweepSavegame\": true", StringComparison.Ordinal),
+            "the on/off switch still is");
     }
 
     static LodServerConfig Sanitized(Action<LodServerConfig> setup)

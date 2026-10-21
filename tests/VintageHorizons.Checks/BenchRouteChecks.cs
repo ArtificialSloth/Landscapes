@@ -35,8 +35,9 @@ public static class BenchRouteChecks
         JsonElement sweepRoot = sweepConfig.RootElement;
         c.True(sweepRoot.GetProperty("SweepSavegame").GetBoolean(),
             "completed-sweep config enables savegame sweeping");
-        c.Eq(24, sweepRoot.GetProperty("SweepRadiusChunks").GetInt32(),
-            "completed-sweep config pins a non-trivial radius");
+        // Since 0.5.1 the sweep covers all explored land; a radius here would be silently ignored.
+        c.False(sweepRoot.TryGetProperty("SweepRadiusChunks", out _),
+            "completed-sweep config does not pin the retired sweep radius");
         c.Eq(32, sweepRoot.GetProperty("SweepColumnsPerSecond").GetInt32(),
             "completed-sweep config pins the measured tick allowance");
         c.False(sweepRoot.GetProperty("EnableServing").GetBoolean(),

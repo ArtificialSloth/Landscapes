@@ -43,11 +43,17 @@ public static class WireFormatChecks
     {
         // Section sync (terrain-change plan Phase B) appended 3-5 here, 9 on the welcome, 5-7 on
         // the manifest and 4 on the section. An older peer reads none of them.
+        // 0.5.1 appended 6, the import-status generation; an older server ignores it.
         c.SeqEq(new[]
         {
             "1:Protocol:Int32", "2:ModVersion:String", "3:SectionSync:Int32",
-            "4:SyncGeneration:String", "5:SyncVersion:Int64",
+            "4:SyncGeneration:String", "5:SyncVersion:Int64", "6:ImportStatus:Int32",
         }, Layout(typeof(AssistHello)), "AssistHello field numbers");
+        c.SeqEq(new[]
+        {
+            "1:Active:Boolean", "2:Finished:Boolean", "3:BandBlocks:Int32",
+            "4:PendingByBand:Int32[]", "5:ColumnsPerSecond:Double", "6:PendingTotal:Int32",
+        }, Layout(typeof(AssistImportStatus)), "AssistImportStatus field numbers");
 
         // 10 tells the Farseer row whether a sampler mod answers; zero from older servers. Ordinal
         // sort puts it first.
@@ -380,6 +386,24 @@ public static class WireFormatChecks
             "silhouette tile identity survives");
         c.True(silhouetteTile.Retryable && silhouetteTile.Payload.SequenceEqual(new byte[] { 1, 2, 3 }),
             "silhouette tile payload and retry state survive");
+
+        // 0.5.1's import status. A hello from an older client carries no field 6, which must read
+        // as 0: the server then never sends a message that client did not register.
+        c.Eq(0, Roundtrip(new AssistHello { Protocol = 1 }).ImportStatus,
+            "an older client's hello asks for no import status");
+        c.Eq(LodAssist.ImportStatusVersion,
+            Roundtrip(new AssistHello { ImportStatus = LodAssist.ImportStatusVersion }).ImportStatus,
+            "a 0.5.1 client's request for it survives");
+        var import = Roundtrip(new AssistImportStatus
+        {
+            Active = true, BandBlocks = LodImportStatusBands.BandBlocks,
+            PendingByBand = new[] { 5, 0, 1200, 7 }, ColumnsPerSecond = 7.5, PendingTotal = 1212,
+        });
+        c.True(import.Active && !import.Finished && import.ColumnsPerSecond == 7.5
+                && import.PendingTotal == 1212 && import.BandBlocks == 512,
+            "import status flags, pace and totals survive");
+        c.True(import.PendingByBand.SequenceEqual(new[] { 5, 0, 1200, 7 }),
+            "the per-band counts survive in order, zero bands included");
     }
 
     static T Roundtrip<T>(T value)

@@ -44,7 +44,7 @@ public class LodServerConfig
 
     /// <summary>
     /// Build the cache from terrain the world already has, by loading every chunk column
-    /// around spawn that was generated in some earlier session.
+    /// that was generated in some earlier session, nearest a player first.
     ///
     /// On by default, which <see cref="PregenRadiusChunks"/> deliberately is not, because
     /// the two do different things. Sweeping generates nothing - it indexes terrain that
@@ -56,11 +56,16 @@ public class LodServerConfig
     public bool SweepSavegame = true;
 
     /// <summary>
-    /// How far out to look, in chunks. Every position inside it is examined; positions with
-    /// no generated terrain are skipped, so a small world costs little regardless of this.
-    /// 0 disables the sweep as surely as SweepSavegame false does.
+    /// Retired in 0.5.1, when the sweep stopped being a square around spawn and began covering
+    /// all explored land. Read once so a file that used 0 to switch the sweep off keeps it off
+    /// (<see cref="Sanitize"/> moves that onto <see cref="SweepSavegame"/>), and never written
+    /// back, so the old limit disappears from the file. Any other value is ignored: a saved
+    /// 128 would otherwise go on limiting every server that ever ran the old default.
     /// </summary>
-    public int SweepRadiusChunks = 128;
+    public int? SweepRadiusChunks;
+
+    /// <summary>Newtonsoft's naming convention: keeps the retired setting out of the file.</summary>
+    public bool ShouldSerializeSweepRadiusChunks() => false;
 
     /// <summary>
     /// Generated columns loaded per second. Higher than the pre-generation rate because the
@@ -252,10 +257,8 @@ public class LodServerConfig
         // an admin can absorb by accident.
         PregenRadiusChunks = Math.Clamp(PregenRadiusChunks, 0, 256);
         PregenColumnsPerSecond = Math.Clamp(PregenColumnsPerSecond, 1, 64);
-        // A wider ceiling than pregen's, because the cost scales with terrain that exists
-        // rather than with the radius: examining a position that was never generated is an
-        // index lookup, so a large radius over a small world is nearly free.
-        SweepRadiusChunks = Math.Clamp(SweepRadiusChunks, 0, 512);
+        if (SweepRadiusChunks is <= 0) SweepSavegame = false;
+        SweepRadiusChunks = null;
         SweepColumnsPerSecond = Math.Clamp(SweepColumnsPerSecond, 1, 64);
         // Snow campaigns get a lower ceiling than the finite startup pass. Sixteen is the
         // already-tested startup cadence; the ordinary background default remains one.
@@ -296,7 +299,7 @@ public class LodServerConfig
     }
 
     /// <summary>True when the sweep is configured to actually do something.</summary>
-    public bool SweepEnabled => SweepSavegame && SweepRadiusChunks > 0;
+    public bool SweepEnabled => SweepSavegame;
 
     /// <summary>Snow campaigns depend on the generated-column map built by the sweep.</summary>
     public bool RefreshEnabled => SweepEnabled && RefreshColumnsPerSecond > 0;
@@ -314,7 +317,7 @@ public class LodServerConfig
         $"capture {(EnableCapture ? "on" : "off")}, serving {(EnableServing ? "on" : "off")}, "
         + $"radius {(ServeRadiusBlocks > 0 ? ServeRadiusBlocks + " blocks" : "unlimited")}, "
         + $"{MaxSectionsPerSecondPerPlayer}/s per player, {MaxSectionsPerSecondTotal}/s total, "
-        + $"sweep {(SweepEnabled ? SweepRadiusChunks + " chunks" : "off")}, "
+        + $"sweep {(SweepEnabled ? "all explored land" : "off")}, "
         + $"refresh {(RefreshEnabled ? RefreshColumnsPerSecond + "/s" : "off")}, "
         + $"audit {(AuditEnabled ? AuditColumnsPerSecond + "/s" : "off")}, "
         + $"generate {(GenerateEnabled ? "on request up to " + GenerateMaxRadiusChunks + " chunks" : "off")}, "

@@ -36,7 +36,7 @@ stopping it, for acceptance test 5 (crash mid-session, restart, converge):
 param(
     [ValidatePattern('^[A-Za-z0-9_-]+$')]
     [string]$Profile = 'claim-reread',
-    [ValidatePattern('^\d+\.\d+\.\d+$')]
+    [ValidatePattern('^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$')]
     [string]$Version,
     [ValidateRange(1, 60)]
     [int]$Minutes = 12,

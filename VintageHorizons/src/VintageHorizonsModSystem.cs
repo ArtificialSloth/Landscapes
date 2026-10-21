@@ -492,6 +492,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         tickListenerId = capi.Event.RegisterGameTickListener(
             LodHitchActivity.Measured("client tick", OnGameTick), 50);
+        capi.Event.RegisterGameTickListener(_ => UpdateImportProgress(), 1000);
 
         // On by default while the 1% low is being chased: the owner cannot keep count of
         // hitches by eye, and a report he had to remember to start would miss the ones
@@ -646,6 +647,64 @@ public partial class VintageHorizonsModSystem : ModSystem
         {
             Mod.Logger.Warning("The login notice about other LOD mods could not open.");
         }
+    }
+
+    LodImportPresenter importPresenter = new();
+    LodImportHud? importHud;
+    const long ImportStatusStaleMs = 30_000;
+
+    /// <summary>
+    /// Once a second: the faint import line, and the import popup when it is due. Both come from
+    /// the server's newest report and this player's own Cache distance; nothing shows on a server
+    /// without the mod or once the import is done.
+    /// </summary>
+    void UpdateImportProgress()
+    {
+        int cacheBlocks = renderer?.FarViewDistanceCap ?? config.FarViewDistanceCap;
+        long now = Environment.TickCount64;
+        // A server sends one every five seconds while it imports. One much older than that means
+        // it stopped - a stuck number in the corner would be worse than none.
+        AssistImportStatus? status = assist?.ImportStatus;
+        if (status != null && !status.Finished && now - assist!.ImportStatusReceivedMs > ImportStatusStaleMs)
+            status = null;
+        importPresenter.Step(status, cacheBlocks, now);
+
+        if (importPresenter.OverlayText is string line)
+        {
+            importHud ??= new LodImportHud(capi);
+            if (!importHud.IsOpened()) importHud.TryOpen();
+            importHud.Show(line, importPresenter.OverlayAlpha);
+        }
+        else if (importHud?.IsOpened() == true)
+        {
+            importHud.TryClose();
+        }
+
+        // Not over the login notices: wait until no other window of this mod is open.
+        if (!importPresenter.PopupDue || AnyLoginDialogOpen()) return;
+        importPresenter.PopupShown();
+        var notice = new LodImportNotice(capi, LodImportNotice.Text(
+            importPresenter.PendingNearby, cacheBlocks,
+            LodImportView.Describe(importPresenter.SecondsNearby),
+            importPresenter.PaceMeasured, !capi.IsSinglePlayer));
+        if (!notice.TryOpen()) Mod.Logger.Warning("The import notice could not open.");
+        Mod.Logger.Notification(
+            "[Landscapes] Explored land still to import within this player's Cache distance: about {0} "
+            + "chunks, {1} at {2} pace.", importPresenter.PendingNearby,
+            LodImportView.Describe(importPresenter.SecondsNearby),
+            importPresenter.PaceMeasured ? "the measured" : "an assumed");
+    }
+
+    bool AnyLoginDialogOpen()
+    {
+        foreach (object gui in capi.OpenedGuis)
+        {
+            if (gui is GuiDialog dialog && dialog != importHud
+                && dialog.DebugName.StartsWith("dodenslandscapes-", StringComparison.Ordinal)
+                && dialog.DialogType == EnumDialogType.Dialog)
+                return true;
+        }
+        return false;
     }
 
     /// <summary>Reads another mod's own switch. Null means "could not tell", which counts as on.</summary>
@@ -2747,6 +2806,9 @@ public partial class VintageHorizonsModSystem : ModSystem
         settingsIntegration?.CancelActivePage();
         configDialog?.TryClose();
         assist?.Reset();
+        importHud?.TryClose();
+        importHud = null;
+        importPresenter = new LodImportPresenter();
         ResetSilhouettes();
         // Belongs to the world being left: the next one is a different savegame with a
         // different sibling cache, and holding this open would keep a file handle on a
