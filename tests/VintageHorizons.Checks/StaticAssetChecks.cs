@@ -1555,6 +1555,12 @@ public static class StaticAssetChecks
                 && fragment.Contains("vec2 tile = !vhWall", StringComparison.Ordinal),
             "the band's wall rows and tiling plane follow the exact face");
 
+        // A clear texel stores a colour the game never shows; cattails' is pure white over a
+        // dark cob mean, which blew the cube out to a glowing lime (2026-10-22). The band reads
+        // clear texels as the mean, so they carry no pattern.
+        c.True(fragment.Contains("vec3 texel = mix(vhBlockMean, baseTexel.rgb, baseTexel.a);", StringComparison.Ordinal),
+            "see-through texels read as the texture's own mean in the band");
+
         // Never finer than one world block. A ramp below the world's own grid reads as a GPU
         // effect painted over the terrain rather than as terrain, which is what sank the
         // earlier smooth radial transition.

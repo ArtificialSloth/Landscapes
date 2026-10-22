@@ -103,7 +103,15 @@ void main()
                 // boundary and draws a grid of grey lines; and the whole point here is to
                 // choose a level sharper than the footprint asks for anyway.
                 float sampleLod = max(mipWanted - blockTextureDetail, 0.0);
-                vec3 texel = textureLod(blockAtlas, blockUv, sampleLod).rgb;
+                // A see-through texel shows nothing in the game, but it still stores a colour,
+                // and dividing that by the mean is not variation - it is whatever the file kept.
+                // Cattails' block-colour texture is 97% clear pixels stored as pure white over a
+                // dark-brown cob mean, so the cube blew out to a glowing lime, day and night
+                // (owner screenshots, 2026-10-22). Read clear texels as the mean itself: no
+                // pattern where the game draws nothing. Leaves and crops store about their mean
+                // there already, and opaque ground is untouched.
+                vec4 baseTexel = textureLod(blockAtlas, blockUv, sampleLod);
+                vec3 texel = mix(vhBlockMean, baseTexel.rgb, baseTexel.a);
 
                 // Grass over soil, composited exactly the way the engine's own top-soil
                 // shader does it: soil * (1 - grass.a) + grass * grass.a, per pixel. The
