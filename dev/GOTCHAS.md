@@ -5600,3 +5600,111 @@ is missing: 892 errors such as `ICoreServerAPI could not be found`, which look l
 `VintagestoryData`).
 
 **Found:** 2026-10-20, Session 118 (packaging 0.5.0).
+
+### G299 - At GLSL 4.x the game's own includes hold calls NVIDIA 617 calls ambiguous
+
+**Trigger:** a mod shader stage declaring `#version 4xx` that `#include`s the game's `fogandlight.fsh` or
+`skycolor.fsh`.
+
+**Trap:** those files call `clamp(x, 0, 0.9)`, `clamp(x, 0.09, 1)` and `clamp(x, 0, 0.5)`, mixing int and
+float literals. From GLSL 4.00 the fp64 overloads of `clamp` join the candidates, and NVIDIA 617.42
+rejects the calls as ambiguous (`error C1101`), so the whole program fails to link. The packed terrain
+stage was the only `#version 430` one, and on an RTX 5090 every cached opaque section was suppressed.
+The error line numbers count the expanded source, includes and all.
+
+**Safer action:** keep fragment stages that include game shader code at `#version 330 core` (with
+`GL_ARB_explicit_attrib_location`); a 4.30 vertex stage links with a 3.30 fragment stage. A static check
+holds the packed fragment stage at 3.30.
+
+**Found:** 2026-10-21, Session 119 (RTX 5090 player log); fixed in 0.5.1-dev.2.
+
+### G300 - NVIDIA hands a face's own plane coordinate back a hair below the whole number
+
+**Trigger:** `floor()` on an interpolated coordinate that is constant across a face - a top's height, a
+wall's X or Z - to choose a cell, a block or a step.
+
+**Trap:** AMD returns 87.0 for a top at 87; NVIDIA returns 86.9999 at some pixels and 87.0 at others. The
+seam speckle hashed `floor(terrainPos)`, so neighbouring pixels of one top flipped between two blocks'
+brightness, which the owner read as two meshes fighting; the band's 8-block steps flickered on walls
+standing on a step line the same way. The ownership test had met this at chunk planes already.
+
+**Safer action:** snap the face's own plane first - `snapToPlane(local, spacing)` within
+`MASK_PLANE_SLACK` - and address cells from the integer section origin plus section-local coordinates,
+never a summed world coordinate.
+
+**Found:** 2026-10-21, Session 119 (`.dlband speckle 0` stopped it on the owner's NVIDIA machine); fixed
+in 0.5.1-dev.3.
+
+### G301 - A fresh install's block atlas is 4096 x 2048, not square
+
+**Trigger:** comparing a texture's width and height in atlas UV, or scaling atlas UV by one size.
+
+**Trap:** the engine's `ClientSettings` default `maxTextureAtlasWidth/Height` to 4096 x 2048 and raise the
+height to 4096 only in the settings 1.5 -> 1.6 migration, so an upgraded install has a square atlas and a
+fresh one (settings 1.16) a 2:1 atlas. On 2:1, a 64 x 32 strip spans the same fraction both ways.
+`IsTwoTileStrip` read the TopSoil overlay as square, never cut out the top tile, and every grass top in
+the seam drew the whole strip: three quarters grass, a quarter of the fringe's bare soil - G140's symptom,
+returned on the second machine only.
+
+**Safer action:** scale U by `BlockTextureAtlas.Size.Width` and V by `.Height` before any comparison;
+pass the size to shaders as a vec2.
+
+**Found:** 2026-10-22, Session 119 (owner's description, then engine source); fixed in 0.5.1-dev.5.
+
+### G302 - A see-through texel stores a colour the game never shows
+
+**Trigger:** using a texture's RGB where its alpha may be zero, especially divided by an alpha-weighted
+mean, as the seam band's `texel / mean` does.
+
+**Trap:** the file keeps whatever colour its author's tool left in clear pixels. The cattail cob sheet
+(`reeds/lod2-1`) is 97% clear and stores pure white there over a dark-brown mean of rgb(56,34,17), so the
+band multiplied the albedo by 4.6x, 7.4x and 15x: a glowing lime cube, as bright at night as at noon.
+Leaves and crops happen to store about their mean in clear pixels, which is why they looked right.
+
+**Safer action:** read clear texels as the mean - `mix(mean, texel.rgb, texel.a)` - so they carry no
+pattern; measure a texture's clear-pixel colour before trusting it.
+
+**Found:** 2026-10-22, Session 119 (owner screenshots, `.dltint`); fixed in 0.5.1-dev.7.
+
+### G303 - Plants that tint per model part name no colour map on the block
+
+**Trigger:** deciding a block's tint from `ClimateColorMap`/`SeasonColorMap` on the block.
+
+**Trap:** cattails, flowers, lupines, herbs, saplings, berry bushes, bamboo, water lilies, some seaweed,
+ferns and sod roofing tint only some elements of their model (`ShapeElement.ClimateColorMap`, which the
+engine's `ShapeTesselator` uses, falling back to the block's maps; children do not inherit a parent's).
+The block-level maps are empty, so the fern fallback lent such plants the whole plant tint - cattails'
+brown cobs and tan tips included - and sod roofing drew untinted grey.
+
+**Safer action:** read the model when a part is tinted: average each face over its UV area, weight by
+face area times coverage, store the composite and treat the untinted parts as the share
+(`LodModelParts`, the `LodTopSoil` identity generalised). Cache per model file; most blocks share a few
+cube models.
+
+**Found:** 2026-10-22, Session 119; fixed in 0.5.1-dev.6.
+
+### G304 - The engine rejects a four-part mod version
+
+**Trigger:** numbering a development build `0.5.1.2`.
+
+**Trap:** `ProperVersion.SemVer.TryParse` takes three numbers and an optional `-pre-release` or
+`+build`; a fourth dot part logs "Expected PRE_RELEASE or BUILD_METADATA" on every load and is only
+best-guessed, which matters because the game picks the highest version among copies of one mod.
+
+**Safer action:** `0.5.1-dev.N`: valid, ordered dev.1 < dev.2 < 0.5.1, and the release always wins. Both
+version files carry it; the sandbox script accepts the suffix.
+
+**Found:** 2026-10-21, Session 119 (engine decompilation, before the first dev build).
+
+### G305 - A new assist message must be registered last and sent only to a client that asked
+
+**Trigger:** adding a message type to the `dodenslandscapes` channel.
+
+**Trap:** message types are numbered by registration order, and a client that never registered a type
+fails on receiving it. A type inserted mid-list renumbers every later one for older peers.
+
+**Safer action:** register it after every existing type on both sides (a check compares the two orders),
+and send it only to a client whose hello advertised it (`AssistHello.ImportStatus` for
+`AssistImportStatus`) or behind a welcome feature bit for client-sent messages.
+
+**Found:** 2026-10-21, Session 119 (the import status, following the silhouette precedent).

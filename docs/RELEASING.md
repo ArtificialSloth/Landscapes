@@ -15,15 +15,17 @@ it is a bet.
 
 ## 2. Decide the version
 
-Every new playable, packaged, or installed build advances the existing patch component by
-exactly one before it is built: `0.3.40` becomes `0.3.41`. Changed binaries must never reuse
-an already-used version, even for a private playtest, because logs, screenshots, installed
-archives, and bug reports need one unambiguous artifact identity. Ordinary compile and test
-runs do not consume a version number.
+Since 0.5.0, release numbers stay consecutive (`0.5.0`, `0.5.1`, `0.5.2`) and every new playable,
+packaged, or installed development build takes the next development label of the coming release
+instead: `0.5.1-dev.1`, then `0.5.1-dev.2`. Changed binaries must never reuse an already-used
+version, even for a private playtest, because logs, screenshots, installed archives, and bug reports
+need one unambiguous artifact identity. Ordinary compile and test runs do not consume a version
+number. Not `0.5.1.2`: the game's version parser rejects a fourth part (G304), while `-dev.N` is
+valid and sorts below the release.
 
-This smallest-increment rule takes precedence over choosing a larger semver-shaped feature
-bump. Larger minor or major jumps happen only when the owner explicitly decides to make one;
-otherwise increment the patch by one.
+A release is a development build the owner played, promoted to the plain release number with only
+the two version strings changed, and only on his explicit approval. Larger minor or major jumps
+happen only when the owner decides to make one.
 
 ## 3. Update CHANGELOG.md
 
@@ -154,5 +156,5 @@ Manual, on mods.vintagestory.at:
 
 No automated publish to ModDB. It has no API for this, and an upload to a public listing
 stays a deliberate human action regardless. Development source may remain at its current
-version while it is only being compiled or checked, but the version must advance by one
+version while it is only being compiled or checked, but it must take a new development label
 before any changed playable artifact is packaged or installed.

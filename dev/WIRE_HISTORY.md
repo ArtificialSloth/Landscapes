@@ -27,6 +27,7 @@ Current message types:
 - `AssistSilhouetteManifest`
 - `AssistSilhouetteTileRequest`
 - `AssistSilhouetteTile`
+- `AssistImportStatus` (0.5.1; sent only to a client that asked)
 
 Protobuf fields are append-compatible. Bump the protocol when an existing message or field changes meaning, required sequencing changes, or old peers would interpret a valid exchange incorrectly.
 
@@ -199,6 +200,23 @@ stays `1`; an older client ignores the field.
 longer uses `ShowAdvancedSettings`, which an older file keeps harmlessly. A new install starts at the
 Quality preset: `FarViewDistanceCap` and `SilhouetteReachBlocks` default to 8,192 (both were 4,096); an
 existing file keeps its own values. No dial's meaning or range changed.
+
+**Append-compatible protocol-1 additions for the import status (0.5.1, Session 119).** No existing
+message or field changed meaning:
+- `AssistHello` field 6 `ImportStatus`: `LodAssist.ImportStatusVersion` (1) from a client that shows the
+  import status; every older client sends 0.
+- `AssistImportStatus`, a new server-to-client message type registered after `AssistSilhouetteTile` on
+  both sides (G305), sent only to a client whose hello asked: field 1 `Active`, 2 `Finished`, 3
+  `BandBlocks` (512), 4 `PendingByBand` (packed int32, 65 bands nearest first, the last holding
+  everything from 32,768 blocks out), 5 `ColumnsPerSecond` (0 before 30 s are measured), 6
+  `PendingTotal`. Every 5 s while the sweep's load pass runs, then once with `Finished`.
+- `AssistServerSettings` field 7 `SweepRadiusChunks` is retired: a 0.5.1 server sends 0 because the
+  sweep covers all explored land. An older client's diagnostics window then shows "0 chunks"; a 0.5.1
+  client shows "all explored land" for 0 and the old square for anything else.
+
+**Server settings file (0.5.1).** `dodenslandscapes-server.json` no longer carries `SweepRadiusChunks`.
+An existing file's value is read once: 0 (the documented off switch) becomes `SweepSavegame: false`,
+anything else is ignored, and the key is not written back. `SweepSavegame` alone switches the sweep.
 
 ## Section blob-format ledger
 

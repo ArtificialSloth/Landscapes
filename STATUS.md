@@ -3,17 +3,44 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-10-20`
-**Mod version:** `0.5.0` - **the release version** of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception. 0.5.0 is the owner-played 0.4.175 renumbered (commit `2826b2e`, tag `v0.5.0`); fast tier 26,432 assertions, 0 failures
+**Status date:** `2026-10-22`
+**Mod version:** `0.5.1` - **the release version** of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception. 0.5.1 is the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged); fast tier 26,512 assertions, 0 failures. 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `0.5.1-dev.N`; promotion to a release number is the owner's call
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083`, 0.5.0 `2826b2e`; everything through 0.5.0 pushed to `main` on `DodenGruva/Landscapes` (still private) on 2026-10-20; the history was rewritten to his GitHub no-reply address on 2026-10-13
+**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083`, 0.5.0 `2826b2e`, 0.5.1-dev.2 `621ac7c`, 0.5.1-dev.3 `6b46739`, 0.5.1-dev.4 `102d1e1`, 0.5.1-dev.5 `939af75`, 0.5.1-dev.6 `4421cc3`, 0.5.1-dev.7 `9fa0026`, 0.5.1 `7959339`; everything through 0.5.1 pushed to `main` on `DodenGruva/Landscapes` (still private) on 2026-10-22; the history was rewritten to his GitHub no-reply address on 2026-10-13
 **Target:** Vintage Story 1.22.5+, .NET 10
-**Source files:** `155` C# files under `VintageHorizons/src`
+**Source files:** `157` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
+
+**0.5.1, the release (2026-10-22).** Session 119. The owner played 0.5.1-dev.7 and promoted it; only the
+two version strings changed, and the zip matches dev.7's 47 files apart from `modinfo.json` and the DLL's
+version stamp. Copy-installed and pushed; not tagged, not on ModDB.
+
+- **Packed shader on NVIDIA 617 (G299):** the packed fragment stage is GLSL 3.30 again; at 4.30 the game's
+  own `fogandlight`/`skycolor` int/float `clamp` calls were ambiguous and an RTX 5090 drew no cached land.
+  The fix is source-traced against that player's log (the indirect stage, identical now, compiled there);
+  the owner's NVIDIA machine draws the packed path on dev.2 onwards.
+- **Whole-world sweep:** every explored column, nearest an online player first (spawn while empty),
+  re-sorted off-thread as players move; the probe fallback keeps 4,096 blocks around the first player;
+  `SweepRadiusChunks` retired (a saved 0 keeps the sweep off). Sandbox: 60 minutes on a bodanboys copy,
+  nothing generated, 17,410 proven captures, but it never reached land past the old square; its slowdown
+  from about 8 to 2.7 columns/s after 35 minutes is unexplained.
+- **Import status:** every affected player gets a once-a-session popup (ten minutes or more of land left
+  within their own Cache distance) and a faint bottom-right progress line (one minute or more), fed by
+  `AssistImportStatus` every 5 s. Harness-tested only; never seen in game.
+- **NVIDIA and fresh-install seam fixes:** the speckle and the band's steps snap a face's plane (G300,
+  owner-confirmed on NVIDIA); the two-tile grass strip test reads a fresh install's 4096 x 2048 atlas in
+  pixels (G301; the owner reports the NVIDIA machine "much better" on dev.5); band textures follow the
+  packed quad's exact face (dev.4, not the cause, kept).
+- **Part-tinted plants (G303) and clear texels (G302):** cattails, flowers and the rest are coloured from
+  their model's parts with their leaves' own maps; sod roofing is green; the band reads see-through texels
+  as the mean, which ended the glowing lime cattails (owner on dev.7: "the color is correct").
+- **Open:** cattails not under a leaf block never render; the NVIDIA camera-motion warble is watched,
+  unexplained; tint-slot pressure on modded worlds unmeasured (all in TODO).
+- **Evidence:** 26,453-26,512 assertions, 0 failures per build (the count still varies between runs).
 
 **0.5.0, the release (2026-10-20).** Session 118. The owner promoted his newest played build, 0.4.175,
 to 0.5.0; only `modinfo.json` and the project file's version changed, and the zip matches 0.4.175 file
@@ -1117,14 +1144,14 @@ It covers:
 
 ## Next work
 
-Begin with [Session 117](dev/sessions/SESSION_117.md) and the top of [TODO](dev/TODO.md).
+Begin with [Session 119](dev/sessions/SESSION_119.md) and the top of [TODO](dev/TODO.md).
 
-1. **The public release, on the owner's calls:** 0.4.175 is played; the review's small observations
-   and Session 117's unseen items are in TODO, run the game-launching check tiers (not run
-   since the rename; ask before launching), push the local commits since `1bea2c1` with his OK,
-   promote the build he last played to a release number, make `DodenGruva/Landscapes` public (the history is there; the old `DodenGruva/Horizons`
+1. **Publishing 0.5.1, on the owner's calls:** 0.5.1 is played, promoted and pushed; the review's small
+   observations and the unseen items of Sessions 117 and 119 are in TODO; run the game-launching check
+   tiers (not run since the rename; ask before launching), tag 0.5.1 if he wants it, make
+   `DodenGruva/Landscapes` public (the history is there; the old `DodenGruva/Horizons`
    fork still exposes his personal email and is his to delete), and create the ModDB page
-   at `mods.vintagestory.at/dodenslandscapes` with GNU GPL v3 as the licence. Open evidence worth
+   at `mods.vintagestory.at/dodenslandscapes` with GNU GPL v3 as the licence, its sweep text updated. Open evidence worth
    knowing before then: the 0.4.137 preview re-issue unseen in play, running beside the original
    Vintage Horizons untested, and the notice's layout at other GUI scales unseen.
 2. **Ask the owner what comes next.** The stutter is solved for him; what it left:

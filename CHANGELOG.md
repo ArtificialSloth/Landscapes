@@ -8,6 +8,46 @@ first.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-22
+
+**A fix for distant terrain on newer NVIDIA drivers, explored land everywhere, and fixes for new
+installs.** 0.5.1 is the owner-played 0.5.1-dev.7 renumbered; only the version stamps differ. The fast
+checks pass with 0 failures (26,512 assertions). Development builds are now numbered `0.5.1-dev.N`, and
+release numbers stay consecutive.
+
+**Distant terrain draws on NVIDIA driver 617.** The main distant-terrain shader failed to compile there,
+so only distant water showed (an RTX 5090 report). The game's own fog and sky shader code, which the mod
+includes, holds `clamp` calls that mix whole numbers and decimals, and at the newer shader language
+version the driver called them ambiguous. The colouring half of that shader now uses the same version
+as the others.
+
+**Land you explored before installing the mod now appears, wherever it is.** The startup sweep used to
+cover a square 4,096 blocks around spawn and stop there. It now imports every explored column in the
+save, nearest a player first (spawn while nobody is online), and re-sorts as players move. If the save
+file cannot be read directly, the fallback still covers 4,096 blocks, now around the first player to
+join. The server setting `SweepRadiusChunks` is gone; a file that set it to 0 to switch the sweep off
+keeps the sweep off. Nothing is generated: the edge of explored land is still skipped.
+
+**You are told when explored land is being imported.** When a world has explored land within your Cache
+distance that would take ten minutes or more to import, a window explains once a session, with an
+estimate. A faint line in the bottom-right corner shows progress while there is land left nearby, then
+fades out. On a server every affected player sees it; land outside your own Cache distance never counts.
+
+**New installs: grass tops in the seam no longer show a quarter of bare dirt.** A fresh install of the
+game builds its block texture atlas 4096 x 2048, where an upgraded one is square, and the mod's test for
+the grass overlay's two-tile image assumed square. Distant grass colour was affected the same way.
+
+**No more flickering speckle in the seam on NVIDIA.** The per-block brightness variation could flip
+between neighbouring blocks pixel by pixel, which looked like two surfaces fighting.
+
+**Cattails, flowers and other partly tinted plants are coloured like the game colours them.** Their
+leaves take their own seasonal tint and their stems, petals and cobs keep their own colour, instead of
+the whole block taking a borrowed plant green. Sod roofing is green at distance instead of grey. Near the
+seam, see-through parts of a texture no longer brighten a block: cattails there had glowed lime, even at
+night.
+
+**Known:** cattails that are not under a leaf block are not drawn at distance (they never were).
+
 ## [0.5.0] - 2026-10-20
 
 **The first public release, as Doden's Landscapes.** 0.5.0 is build 0.4.175, the last build the owner

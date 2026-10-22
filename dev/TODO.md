@@ -4,9 +4,14 @@
 
 ## Start here
 
-Read [Session 118](sessions/SESSION_118.md), then [Session 117](sessions/SESSION_117.md). The mod is
+Read [Session 119](sessions/SESSION_119.md), then [Session 118](sessions/SESSION_118.md). **0.5.1 is
+the release version**: the owner-played 0.5.1-dev.7, promoted on 2026-10-22 with only the two version
+strings changed (commit `7959339`, not tagged) and pushed. It fixes the packed shader on NVIDIA 617,
+sweeps all explored land nearest a player first, adds the import popup and progress line, and fixes the
+seam on NVIDIA and on fresh installs (a 4096 x 2048 atlas) and part-tinted plants. Development builds are
+`0.5.1-dev.N` from now on; the owner approves every promotion to a release number. The mod is
 **Doden's Landscapes** (mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log),
-licensed GPL-3.0 only with a Vintage Story exception. **0.5.0 is the release version**: build 0.4.175,
+licensed GPL-3.0 only with a Vintage Story exception. **0.5.0** was build 0.4.175,
 which the owner played, promoted on 2026-10-20 with only the two version strings changed (commit
 `2826b2e`, tag `v0.5.0`), copy-installed, and pushed with all 0.4.143-0.4.175 history to
 `DodenGruva/Landscapes`. Session 117 rebuilt the settings window from his screenshots (one General page,
@@ -19,11 +24,12 @@ Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The 
 is solved for him by the all-cores garbage collector, an opt-in switch on General (0.4.134, settled
 decision 54), and the game's chunk thread rests when it has nothing to do (0.4.132, settled decision 53).
 
-### Publishing 0.5.0 (owner's calls)
+### Publishing (owner's calls)
 
-- **ModDB:** upload `dist/dodenslandscapes_0.5.0.zip` to `mods.vintagestory.at/dodenslandscapes` (GNU
-  GPL v3 as the licence) and paste the `[0.5.0]` changelog entry, or a shortened one, into its changelog
-  field. The description is the card page from `notes/moddb/` ("Copy all cards for ModDB", pasted
+- **ModDB:** upload `dist/dodenslandscapes_0.5.1.zip` (0.5.1 supersedes 0.5.0, which was never
+  uploaded) to `mods.vintagestory.at/dodenslandscapes` (GNU GPL v3 as the licence) and paste the
+  `[0.5.1]` and `[0.5.0]` changelog entries, or shortened ones, into its changelog field. The page's
+  text still says the startup sweep works around spawn; since 0.5.1 it covers all explored land. The description is the card page from `notes/moddb/` ("Copy all cards for ModDB", pasted
   through the Source code view); its 12 pictures are on ImgBB at full size, addresses in
   `notes/moddb/images.json`. Check ModDB's own preview for the dark fade behind each photo card's text
   (G297). Gallery pictures, resized to 1920x1080 and under 2 MB, are in `Pictures\moddb\1080p`; the
@@ -60,6 +66,22 @@ decision 54), and the game's chunk thread rests when it has nothing to do (0.4.1
   (`FlagCutout`). So they are dropped somewhere between capture and the screen; where has not been
   investigated. The ones under leaves now draw the right colour: dev.6 colours part-tinted models from
   their parts (`LodModelParts`), and dev.7 stops the seam band reading see-through texels as colour.
+- **The NVIDIA warble, watched:** distant ground near the seam jittered briefly while the camera turned,
+  then settled, on the owner's NVIDIA machine. Not distant anti-aliasing (`.dltaa off`), not depth
+  fighting (`.dlband sink 8` changed nothing), not speckle or textures; gone with seam blending off. On
+  dev.5 after a restart he saw little of it. Cause unknown; he keeps an eye on it.
+- **Never seen in game:** the import popup and the faint progress line (its corner, faintness, the
+  ten-minute and one-minute thresholds are the owner's to judge); the sweep reaching land beyond the old
+  4,096-block square (the Session 119 sandbox run stopped at 89 of the 129 chunks needed); the absence
+  check sampling beside the frontier.
+- **The sandbox sweep slowed down unexplained:** about 8 columns/s, then about 2.7 after 35 minutes, as
+  "held for engine terrain demand" climbed by roughly 3,300 ticks every 6 minutes with no player and no
+  new columns. A second start on `.testdata/claim-reread/sweep-all` (kept, 3.3 GB) would also show how
+  fast a repeat start skips what is captured; ask before launching.
+- **Tint slots:** each part-tinted plant with its own untinted share takes one of the 64 slots; a full
+  table falls back to the block's old slot. Not measured on a large modded world.
+- **Bench:** `completed-sweep` no longer pins a radius, so it now sweeps its whole frozen world and takes
+  longer.
 
 ### What Session 117 left open
 

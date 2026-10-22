@@ -304,9 +304,11 @@ blocks changed. `fingerprint-dump` writes the mod's own column fingerprints by c
 `LodSavegameScan` itself rather than copying its rule, and `claim-check.py` compares that dump
 against the claims stored in a cache's `ColumnFingerprint` table - which is exactly what the
 background audit does in game.
-Before creating or installing any changed playable artifact, increment the patch version
-by exactly one in both `modinfo.json` and the project file. Ordinary compile and check runs
-do not consume a version number.
+Before creating or installing any changed playable artifact, give it a new development
+number in both `modinfo.json` and the project file: `0.5.1-dev.1`, `0.5.1-dev.2`, and so on
+(the game rejects a four-part version such as `0.5.1.2`). Release numbers stay consecutive,
+and a development build becomes a release only when the owner promotes it, changing the
+version alone. Ordinary compile and check runs do not consume a version number.
 
 ```sh
 scripts/dev-run.sh              # opens/creates the "vhsurvival" test world
@@ -320,9 +322,17 @@ the part that streamed past a player who ran this mod. The sweep loads those col
 that capture sees them. You get a horizon over every place that you visited before, and
 you do not fly back over it.
 
-Sweeping is on by default, in singleplayer too. The settings are `SweepSavegame`,
-`SweepRadiusChunks`, `SweepColumnsPerSecond` and `RefreshColumnsPerSecond`, in
-`ModConfig/dodenslandscapes-server.json`.
+Sweeping is on by default, in singleplayer too. It covers every explored column in the
+save, nearest a player first (nearest spawn while nobody is online), and re-sorts as players
+move; land already captured is skipped on later starts. The settings are `SweepSavegame`,
+`SweepColumnsPerSecond` and `RefreshColumnsPerSecond`, in
+`ModConfig/dodenslandscapes-server.json`. The old `SweepRadiusChunks` is gone since 0.5.1: a
+file that set it to 0 keeps the sweep off, any other value is ignored. If the save file cannot
+be read directly, the sweep falls back to asking the game position by position, which covers
+4,096 blocks around the first player to join.
+
+While it imports land within a player's Cache distance, that player sees a faint progress line
+in the bottom-right corner, and a one-time window when it would take ten minutes or more.
 
 The default is safe because the sweep **generates nothing**. The sweep skips a position
 that nobody visited. It also skips a border around the explored terrain, because a
