@@ -151,7 +151,16 @@ void main()
         // terrainPos runs to hundreds of thousands of blocks, where a float hash loses its
         // low bits and collapses into visible banding, and a 256-block repeat of random
         // per-block speckle is not something an eye can find.
-        vec3 speckleCell = mod(floor(terrainPos), 256.0);
+        //
+        // Addressed like ownership, from the integer section origin plus the section-local
+        // position, with the face's own plane snapped (see snapToPlane): the same block as
+        // floor(terrainPos) everywhere, except that a top or wall can no longer flicker
+        // between the block it belongs to and its neighbour.
+        ivec3 speckleBlock = ivec3(
+            maskSectionOriginX * 32 + int(floor(snapToPlane(sectionLocal.x, 1.0))),
+            int(floor(snapToPlane(sectionLocal.y, 1.0))),
+            maskSectionOriginZ * 32 + int(floor(snapToPlane(sectionLocal.z, 1.0))));
+        vec3 speckleCell = vec3(speckleBlock & ivec3(255));
         float speckle = fract(
             sin(dot(speckleCell, vec3(127.1, 311.7, 74.7))) * 43758.5453);
         albedo *= 1.0 + bandSpeckle * (speckle - 0.5) * 2.0 * bandAmount;

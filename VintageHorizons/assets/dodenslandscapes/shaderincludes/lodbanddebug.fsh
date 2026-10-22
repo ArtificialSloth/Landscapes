@@ -1,8 +1,10 @@
     float bandWeight = 0.0;
     if (bandEnabled == 1)
     {
-        int fieldX = maskSectionOriginX * 4 + int(floor(sectionLocal.x / 8.0));
-        int fieldZ = maskSectionOriginZ * 4 + int(floor(sectionLocal.z / 8.0));
+        // Snapped first: a wall standing on an 8-block line otherwise flickers between the two
+        // steps either side of it (see snapToPlane).
+        int fieldX = maskSectionOriginX * 4 + int(floor(snapToPlane(sectionLocal.x, 8.0) / 8.0));
+        int fieldZ = maskSectionOriginZ * 4 + int(floor(snapToPlane(sectionLocal.z, 8.0) / 8.0));
         if (fieldX >= bandMinCellX && fieldX < bandMinCellX + bandWidthCells
             && fieldZ >= bandMinCellZ && fieldZ < bandMinCellZ + bandDepthCells)
         {

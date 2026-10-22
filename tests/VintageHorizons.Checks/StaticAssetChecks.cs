@@ -1531,8 +1531,17 @@ public static class StaticAssetChecks
         c.Eq(8, VanillaSeamDistanceField.CellBlocks, "field cells are eight blocks");
         c.True(fragment.Contains("maskSectionOriginX * 4 +", StringComparison.Ordinal),
             "the fragment shader scales the section origin by cells per chunk");
-        c.True(fragment.Contains("sectionLocal.x / 8.0", StringComparison.Ordinal),
+        c.True(fragment.Contains("snapToPlane(sectionLocal.x, 8.0) / 8.0", StringComparison.Ordinal),
             "the fragment shader divides by the field's own cell size");
+
+        // NVIDIA interpolates a face's own plane coordinate to within a last bit of it, so a
+        // plain floor() flickered the band's steps and its speckle between neighbouring cells
+        // pixel by pixel (2026-10-21). Both must snap that plane first.
+        c.True(fragment.Contains("snapToPlane(sectionLocal.z, 8.0) / 8.0", StringComparison.Ordinal),
+            "the band's 8-block steps snap a wall onto its plane on both axes");
+        c.True(fragment.Contains("int(floor(snapToPlane(sectionLocal.y, 1.0)))", StringComparison.Ordinal)
+                && !fragment.Contains("mod(floor(terrainPos), 256.0)", StringComparison.Ordinal),
+            "the seam speckle addresses its block with the face's plane snapped");
 
         // Never finer than one world block. A ramp below the world's own grid reads as a GPU
         // effect painted over the terrain rather than as terrain, which is what sank the

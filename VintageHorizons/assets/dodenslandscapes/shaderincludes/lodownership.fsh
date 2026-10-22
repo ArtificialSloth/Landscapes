@@ -12,6 +12,18 @@ float maskPlaneOffset(float localBlocks)
     return localBlocks - 32.0 * floor(localBlocks / 32.0 + 0.5);
 }
 
+// A section-local coordinate moved exactly onto the nearest multiple of spacing when it lies
+// within MASK_PLANE_SLACK of one, and otherwise left alone, so floor() files a face lying in
+// that plane under the same cell at every pixel. The seam's per-block speckle and its 8-block
+// steps floored the raw value; a block top at 87 arrives on NVIDIA as 86.9999 at some pixels
+// and 87.0 at others, so the speckle flipped between two blocks' brightness pixel by pixel,
+// reported as z-fighting (2026-10-21, NVIDIA only; AMD interpolates it exactly).
+float snapToPlane(float localBlocks, float spacing)
+{
+    float offset = localBlocks - spacing * floor(localBlocks / spacing + 0.5);
+    return abs(offset) < MASK_PLANE_SLACK ? localBlocks - offset : localBlocks;
+}
+
 // Whether vanilla owns one ownership cell, for the band this fragment belongs to.
 //
 // Every address outside the tracked window, or above or below the world, answers no, so an
