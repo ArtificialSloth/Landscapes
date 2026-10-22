@@ -51,6 +51,16 @@ decision 54), and the game's chunk thread rests when it has nothing to do (0.4.1
   0 failures each). Not a lost test, but the varying suite is not identified; the ModDB testing card's
   26,432 is a count actually seen.
 
+### Left for after 0.5.1 (owner, 2026-10-22)
+
+- **Cattails that are not underneath a leaf block never render at distance** - and never did, the
+  owner says; only cattails with a leaf block directly above them draw. Owner-observed in play on
+  0.5.1-dev.7. The cache says they ARE captured: the owner's client caches hold about 3,300 level-0
+  `tallplant-coopersreed-*` runs with no leaf above (and a few hundred under leaves), palette flag 4
+  (`FlagCutout`). So they are dropped somewhere between capture and the screen; where has not been
+  investigated. The ones under leaves now draw the right colour: dev.6 colours part-tinted models from
+  their parts (`LodModelParts`), and dev.7 stops the seam band reading see-through texels as colour.
+
 ### What Session 117 left open
 
 - **Unseen in game:** the red no-sampler note (needs a world whose server has neither Algernon's
