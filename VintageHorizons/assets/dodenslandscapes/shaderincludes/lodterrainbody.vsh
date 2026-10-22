@@ -14,6 +14,7 @@ void main()
     float vhZ0 = float((vhGeometry >> 14u) & 127u) * vhRecordNoise.z;
     float vhZ1 = float((vhGeometry >> 21u) & 127u) * vhRecordNoise.z;
     uint vhFace = (vhGeometry >> 28u) & 7u;
+    vhFaceAxis = vhFace < 2u ? 1 : (vhFace < 4u ? 2 : 3);
     float vhY0 = float(vhHeights & 65535u) * 0.25;
     float vhY1 = float(vhHeights >> 16u) * 0.25;
 
@@ -112,6 +113,7 @@ void main()
 #ifndef VH_PACKED
     int vhEncodedAlpha = int(vertexColorIn.a * 255.0 + 0.5);
     vhBlockSlot = -1;
+    vhFaceAxis = 0;
     if (vhEncodedAlpha >= 192)
     {
         ivec3 vhSlotBytes = ivec3(vertexColorIn.rgb * 255.0 + 0.5);

@@ -92,6 +92,14 @@ uniform sampler2D blockTable;
 // of the quad needs it, band or no band.
 flat out int vhBlockSlot;
 
+// Which plane the quad lies in, where the vertex stage knows it exactly: 1 a top or bottom,
+// 2 a wall along X (West, East), 3 a wall along Z (North, South), 0 not known. Packed quads
+// carry their face; every other mesh says 0 and the band falls back to the screen-derivative
+// normal. The band chooses a block's top or wall texture, and the plane to tile it on, from
+// this - it used to guess from the derivative normal alone, and on NVIDIA grass tops came out
+// wearing the side texture laid along the block (2026-10-21).
+flat out int vhFaceAxis;
+
 // ---- Per-section facts ------------------------------------------------------
 //
 // Everything in this block describes the SECTION being drawn rather than the vertex.

@@ -31,14 +31,19 @@ void main()
         // albedo already.
         vec4 vhBlockRect = texelFetch(blockTable, ivec2(vhBlockSlot, 0), 0);
         int vhMeanRowIndex = 2;
+        // Which face this is: the vertex stage's exact answer for packed quads, the derivative
+        // normal's guess otherwise. A wrong guess here puts the side texture on a top, laid
+        // along the block, which is what NVIDIA showed on grass (2026-10-21).
+        bool vhWall = vhFaceAxis != 0 ? vhFaceAxis != 1 : abs(normal.y) <= 0.5;
+        bool vhAlongX = vhFaceAxis != 0 ? vhFaceAxis == 2 : abs(normal.x) > 0.5;
         // Walls read their own rectangle and mean: rows 4 and 5 for faces along X, rows 6 and
         // 7 for faces along Z. The engine draws a cube's sides from the textures named for
         // them - bark on a standing log, whose top and bottom are the cut end - and one
         // texture for every face put rings up the side of every trunk. A block that names
         // nothing different for its sides has the top's rows copied there.
-        if (abs(normal.y) <= 0.5)
+        if (vhWall)
         {
-            int vhWallRow = abs(normal.x) > 0.5 ? 4 : 6;
+            int vhWallRow = vhAlongX ? 4 : 6;
             vhBlockRect = texelFetch(blockTable, ivec2(vhBlockSlot, vhWallRow), 0);
             vhMeanRowIndex = vhWallRow + 1;
         }
@@ -59,10 +64,10 @@ void main()
             // Tile the block's own texture once per world block, on whichever plane this face
             // lies in. terrainPos is the stable world position, so the pattern is anchored to
             // the ground rather than to the camera.
-            vec2 tile = abs(normal.y) > 0.5
+            vec2 tile = !vhWall
                 ? terrainPos.xz
-                : (abs(normal.x) > 0.5 ? vec2(terrainPos.z, -terrainPos.y)
-                                       : vec2(terrainPos.x, -terrainPos.y));
+                : (vhAlongX ? vec2(terrainPos.z, -terrainPos.y)
+                            : vec2(terrainPos.x, -terrainPos.y));
             vec2 rectSize = vhBlockRect.zw - vhBlockRect.xy;
             vec2 blockUv = vhBlockRect.xy + fract(tile) * rectSize;
             vec2 duvdx = dFdx(tile) * rectSize;

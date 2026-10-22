@@ -6,5 +6,6 @@ void main()
     // normalized colour and texture selector that terrain now prepares explicitly.
     vec4 vhSurfaceColor = vertexColorIn;
     vhBlockSlot = -1;
+    vhFaceAxis = 0;
 #include lodvertexsurface.vsh
 }

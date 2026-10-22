@@ -1543,6 +1543,18 @@ public static class StaticAssetChecks
                 && !fragment.Contains("mod(floor(terrainPos), 256.0)", StringComparison.Ordinal),
             "the seam speckle addresses its block with the face's plane snapped");
 
+        // The band picks top or wall texture, and the plane to tile it on, from the quad's
+        // exact face where the packed vertex stage knows it; the derivative normal is only the
+        // fallback. On NVIDIA the guess put side grass on tops (2026-10-21).
+        string vertexBody = ShaderBody("vsh");
+        c.True(vertexBody.Contains("vhFaceAxis = vhFace < 2u ? 1 : (vhFace < 4u ? 2 : 3);", StringComparison.Ordinal)
+                && vertexBody.Contains("vhFaceAxis = 0;", StringComparison.Ordinal),
+            "packed quads hand the band their exact face; other meshes say unknown");
+        c.True(fragment.Contains("bool vhWall = vhFaceAxis != 0 ? vhFaceAxis != 1 : abs(normal.y) <= 0.5;", StringComparison.Ordinal)
+                && fragment.Contains("int vhWallRow = vhAlongX ? 4 : 6;", StringComparison.Ordinal)
+                && fragment.Contains("vec2 tile = !vhWall", StringComparison.Ordinal),
+            "the band's wall rows and tiling plane follow the exact face");
+
         // Never finer than one world block. A ramp below the world's own grid reads as a GPU
         // effect painted over the terrain rather than as terrain, which is what sank the
         // earlier smooth radial transition.
@@ -1624,7 +1636,7 @@ public static class StaticAssetChecks
         // Walls have rows of their own. The engine draws a cube's sides from the textures
         // named for them, so a standing log is bark on its sides and the cut end on its top;
         // one texture for every face put rings up the side of every distant trunk.
-        c.True(fragment.Contains("int vhWallRow = abs(normal.x) > 0.5 ? 4 : 6;", StringComparison.Ordinal)
+        c.True(fragment.Contains("int vhWallRow = vhAlongX ? 4 : 6;", StringComparison.Ordinal)
             && fragment.Contains("texelFetch(blockTable, ivec2(vhBlockSlot, vhWallRow), 0)",
                 StringComparison.Ordinal)
             && fragment.Contains("texelFetch(blockTable, ivec2(vhBlockSlot, vhMeanRowIndex), 0)",

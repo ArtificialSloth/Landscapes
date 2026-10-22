@@ -279,6 +279,8 @@ uniform float blockTextureDetail;
 // fetches belong on the side that actually asks. -1 in the slot means the quad carries a
 // plain colour and there is nothing to read.
 flat in int vhBlockSlot;
+// The quad's plane where the vertex stage knows it (see lodvertexinputs.vsh), 0 where it does not.
+flat in int vhFaceAxis;
 // ------------------------------------------------------------------------------
 
 // 1 applies vanilla's own rule that an up-facing surface never darkens with the sun.
