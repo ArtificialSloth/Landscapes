@@ -1296,6 +1296,14 @@ public partial class VintageHorizonsModSystem : ModSystem
             return composite;
         }
 
+        // A model that tints some parts and not others - cattails - is the composite of those
+        // parts, and TintSlotOf hands the tint the share it must leave alone.
+        if (TryModelPartColor(block, out ModelPartColor partColor))
+        {
+            stableColorByBlockId[block.BlockId] = partColor.Composite;
+            return partColor.Composite;
+        }
+
         colorProbePos.Set(0, capi.World.BlockAccessor.MapSizeY - 1, 0);
         int color = block.GetColorWithoutTint(capi, colorProbePos);
 
@@ -1413,6 +1421,13 @@ public partial class VintageHorizonsModSystem : ModSystem
     int TintSlotOf(Block block)
     {
         block = AppearanceOf(block);
+        if (!TryTopSoilColor(block, out _, out _) && TryModelPartColor(block, out ModelPartColor parts))
+        {
+            // Each exact share is a slot of 64. Should the table fill before anything on these
+            // maps registers, the answer is untinted; the block's old slot beats grey.
+            int slot = tints.SlotFor(parts.TintFrom, parts.Share);
+            if (slot != LodTintRegistry.SlotNone) return slot;
+        }
         return tints.SlotFor(block, TryTopSoilColor(block, out _, out LodUntintedShare share)
             ? share
             : LodUntintedShare.None);
@@ -1788,7 +1803,261 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// there should barely count, and the pair (alpha-weighted colour, mean alpha) is exactly
     /// what averaging vanilla's per-pixel blend over the whole face reduces to.
     /// </summary>
-    readonly record struct TextureMean(float R, float G, float B, float Coverage);
+    internal readonly record struct TextureMean(float R, float G, float B, float Coverage);
+
+    /// <summary>
+    /// A part-tinted block's distant colour: the composite of its model's parts, the share the
+    /// live tint must leave alone, and a block whose own colour maps are the ones its tinted
+    /// parts use - a slot reads its live colour from its representative block's maps, and the
+    /// part-tinted block names none. See <see cref="LodModelParts"/>.
+    /// </summary>
+    readonly record struct ModelPartColor(int Composite, LodUntintedShare Share, Block TintFrom);
+
+    readonly Dictionary<int, ModelPartColor?> modelPartColors = new();
+    readonly Dictionary<(string? Climate, string? Season), Block?> blocksByColorMaps = new();
+
+    /// <summary>Whether this block tints some model parts and not others; cached per block id.</summary>
+    bool TryModelPartColor(Block block, out ModelPartColor result)
+    {
+        if (!modelPartColors.TryGetValue(block.BlockId, out ModelPartColor? found))
+        {
+            found = ReadModelPartColor(block);
+            modelPartColors[block.BlockId] = found;
+        }
+        result = found ?? default;
+        return found != null;
+    }
+
+    ModelPartColor? ReadModelPartColor(Block block)
+    {
+        // A colour map on the block tints every part alike, which is what the game does with it,
+        // so only a block naming none can be tinting part by part.
+        if (block.ClimateColorMapResolved != null || block.SeasonColorMapResolved != null) return null;
+        if (block.Textures == null || block.Textures.Count == 0) return null;
+
+        try
+        {
+            Shape? shape = TintedShapeOf(block);
+            if (shape?.Elements == null) return null;
+
+            var parts = new List<LodModelParts.Part>();
+            var tintedWeight = new Dictionary<(string? Climate, string? Season), float>();
+            var pixels = new Dictionary<AssetLocation, TexturePixels?>();
+            AddModelParts(block, shape, shape.Elements, parts, tintedWeight, pixels);
+
+            if (tintedWeight.Count == 0
+                || !LodModelParts.TryCompose(parts, out float r, out float g, out float b,
+                    out LodUntintedShare share))
+                return null;
+
+            // The maps that tint most of the block. Cattails use one pair for every leaf.
+            (string? climate, string? season) = tintedWeight.MaxBy(pair => pair.Value).Key;
+            Block? tintFrom = BlockWithColorMaps(climate, season)
+                ?? BlockWithColorMaps(climate, null)
+                ?? tints.PlantTintFallback;
+            if (tintFrom == null) return null;
+
+            return new ModelPartColor(PackMean(new TextureMean(r, g, b, 1f)), share, tintFrom);
+        }
+        catch (Exception e)
+        {
+            Mod.Logger.Notification(
+                "Could not read the model of '{0}' to colour its tinted and untinted parts; it keeps "
+                + "the ordinary colour. {1}", block.Code, e.Message);
+            return null;
+        }
+    }
+
+    /// <summary>Models by path that tint at least one part; null for the rest, which is nearly all.</summary>
+    readonly Dictionary<AssetLocation, Shape?> tintedShapes = new();
+
+    /// <summary>
+    /// The block's model if any of its parts names a colour map, else null. Every block without a
+    /// colour map of its own asks - stone, soil, ore - and thousands share a handful of cube
+    /// models, so the answer is kept per model and no texture is read until a part is tinted.
+    /// </summary>
+    Shape? TintedShapeOf(Block block)
+    {
+        AssetLocation? baseShape = block.Shape?.Base;
+        if (baseShape == null) return null;
+        if (tintedShapes.TryGetValue(baseShape, out Shape? known)) return known;
+
+        Shape? shape = LoadBlockShape(baseShape);
+        Shape? tinted = shape?.Elements != null && AnyTintedPart(shape.Elements) ? shape : null;
+        tintedShapes[baseShape.Clone()] = tinted;
+        return tinted;
+    }
+
+    static bool AnyTintedPart(ShapeElement[] elements)
+    {
+        foreach (ShapeElement element in elements)
+        {
+            if (element == null) continue;
+            if (!string.IsNullOrEmpty(element.ClimateColorMap) || !string.IsNullOrEmpty(element.SeasonColorMap))
+                return true;
+            if (element.Children != null && AnyTintedPart(element.Children)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>The model at this path, or its first alternate where the path ends in a wildcard.</summary>
+    Shape? LoadBlockShape(AssetLocation baseShape)
+    {
+        AssetLocation path = baseShape.Clone().WithPathPrefixOnce("shapes/");
+        int star = path.Path.IndexOf('*');
+        if (star < 0) return Shape.TryGet(capi, path.WithPathAppendixOnce(".json"));
+
+        AssetLocation? first = capi.Assets.GetMany(path.Path[..star], path.Domain, loadAsset: false)
+            .Select(asset => asset.Location)
+            .Where(location => location.Path.EndsWith(".json", StringComparison.Ordinal))
+            .OrderBy(location => location.Path, StringComparer.Ordinal)
+            .FirstOrDefault();
+        return first == null ? null : Shape.TryGet(capi, first);
+    }
+
+    /// <summary>
+    /// One part per textured face, weighted by the face's area times its texture's coverage over
+    /// the area that face draws. A part is tinted when the element names a colour map: with none
+    /// on the block, that is the game's own rule (ShapeTesselator falls back to the block's maps,
+    /// and children do not inherit their parent's).
+    /// </summary>
+    void AddModelParts(Block block, Shape shape, ShapeElement[] elements,
+        List<LodModelParts.Part> parts, Dictionary<(string?, string?), float> tintedWeight,
+        Dictionary<AssetLocation, TexturePixels?> pixels)
+    {
+        foreach (ShapeElement element in elements)
+        {
+            if (element == null) continue;
+            if (element.From is { Length: 3 } from && element.To is { Length: 3 } to
+                && element.FacesResolved != null)
+            {
+                double dx = Math.Abs(to[0] - from[0]);
+                double dy = Math.Abs(to[1] - from[1]);
+                double dz = Math.Abs(to[2] - from[2]);
+                string? climate = string.IsNullOrEmpty(element.ClimateColorMap) ? null : element.ClimateColorMap;
+                string? season = string.IsNullOrEmpty(element.SeasonColorMap) ? null : element.SeasonColorMap;
+                bool tinted = climate != null || season != null;
+
+                for (int i = 0; i < element.FacesResolved.Length && i < 6; i++)
+                {
+                    ShapeElementFace? face = element.FacesResolved[i];
+                    if (face == null || !face.Enabled || string.IsNullOrEmpty(face.Texture)) continue;
+
+                    // BlockFacing order: north, east, south, west, up, down.
+                    double area = i switch { 0 or 2 => dx * dy, 1 or 3 => dz * dy, _ => dx * dz };
+                    if (area <= 0) continue;
+                    if (!block.Textures.TryGetValue(face.Texture, out CompositeTexture? texture)
+                        || texture?.Base == null) continue;
+
+                    AssetLocation location = texture.Base.Clone()
+                        .WithPathPrefixOnce("textures/").WithPathAppendixOnce(".png");
+                    if (!pixels.TryGetValue(location, out TexturePixels? read))
+                    {
+                        read = ReadTexturePixels(location);
+                        pixels[location] = read;
+                    }
+                    if (read == null) continue;
+
+                    (int textureWidth, int textureHeight) =
+                        shape.TextureSizes != null
+                        && shape.TextureSizes.TryGetValue(face.Texture, out int[]? size)
+                        && size is { Length: 2 }
+                            ? (size[0], size[1])
+                            : (shape.TextureWidth, shape.TextureHeight);
+                    TextureMean mean = RegionMean(read.Argb, read.Width, read.Height,
+                        face.Uv, textureWidth, textureHeight);
+                    if (mean.Coverage <= 0f) continue;
+
+                    float weight = (float)(area * mean.Coverage);
+                    parts.Add(new LodModelParts.Part(mean.R, mean.G, mean.B, weight, tinted));
+                    if (tinted)
+                        tintedWeight[(climate, season)] = tintedWeight.GetValueOrDefault((climate, season)) + weight;
+                }
+            }
+
+            if (element.Children != null)
+                AddModelParts(block, shape, element.Children, parts, tintedWeight, pixels);
+        }
+    }
+
+    sealed record TexturePixels(int Width, int Height, int[] Argb);
+
+    TexturePixels? ReadTexturePixels(AssetLocation location)
+    {
+        try
+        {
+            IAsset? asset = capi.Assets.TryGet(location);
+            if (asset?.Data == null) return null;
+            using BitmapExternal bmp = capi.Render.BitmapCreateFromPng(asset.Data);
+            int[] argb = bmp.Pixels;
+            if (argb == null || bmp.Width <= 0 || bmp.Height <= 0
+                || argb.Length != bmp.Width * bmp.Height) return null;
+            return new TexturePixels(bmp.Width, bmp.Height, (int[])argb.Clone());
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Alpha-weighted mean and coverage over the area a face's UV draws, the UV given in the
+    /// model's texture units and scaled to the file's pixels; null UV is the whole texture.
+    /// Pixels are 0xAARRGGBB as BitmapExternal hands them over (see TryReadTextureMean).
+    /// </summary>
+    internal static TextureMean RegionMean(int[] argb, int width, int height,
+        float[]? uv, int textureWidth, int textureHeight)
+    {
+        int x0 = 0, x1 = width, y0 = 0, y1 = height;
+        if (uv is { Length: >= 4 } && textureWidth > 0 && textureHeight > 0)
+        {
+            float scaleX = (float)width / textureWidth;
+            float scaleY = (float)height / textureHeight;
+            x0 = Math.Clamp((int)MathF.Floor(MathF.Min(uv[0], uv[2]) * scaleX), 0, width - 1);
+            x1 = Math.Clamp((int)MathF.Ceiling(MathF.Max(uv[0], uv[2]) * scaleX), x0 + 1, width);
+            y0 = Math.Clamp((int)MathF.Floor(MathF.Min(uv[1], uv[3]) * scaleY), 0, height - 1);
+            y1 = Math.Clamp((int)MathF.Ceiling(MathF.Max(uv[1], uv[3]) * scaleY), y0 + 1, height);
+        }
+
+        double r = 0, g = 0, b = 0, alpha = 0;
+        for (int y = y0; y < y1; y++)
+        {
+            for (int x = x0; x < x1; x++)
+            {
+                int p = argb[y * width + x];
+                double a = ((p >> 24) & 0xFF) / 255.0;
+                r += ((p >> 16) & 0xFF) * a;
+                g += ((p >> 8) & 0xFF) * a;
+                b += (p & 0xFF) * a;
+                alpha += a;
+            }
+        }
+        if (alpha <= 0) return default;
+        long count = (long)(x1 - x0) * (y1 - y0);
+        return new TextureMean((float)(r / alpha), (float)(g / alpha), (float)(b / alpha),
+            (float)(alpha / count));
+    }
+
+    /// <summary>
+    /// A block whose own colour maps are exactly these, so a slot can read its live colour from
+    /// them. Cached; null where no block in the game names that pair.
+    /// </summary>
+    Block? BlockWithColorMaps(string? climate, string? season)
+    {
+        if (blocksByColorMaps.TryGetValue((climate, season), out Block? cached)) return cached;
+        Block? found = null;
+        foreach (Block candidate in capi.World.Blocks)
+        {
+            if (candidate?.Code == null) continue;
+            if (candidate.ClimateColorMap != climate || candidate.SeasonColorMap != season) continue;
+            if ((climate != null && candidate.ClimateColorMapResolved == null)
+                || (season != null && candidate.SeasonColorMapResolved == null)) continue;
+            found = candidate;
+            break;
+        }
+        blocksByColorMaps[(climate, season)] = found;
+        return found;
+    }
 
     readonly Dictionary<(AssetLocation Location, bool RightHalf), TextureMean> textureMeans = new();
 
@@ -3457,7 +3726,12 @@ public partial class VintageHorizonsModSystem : ModSystem
                     return TextCommandResult.Error("[Landscapes] no block there to describe.");
 
                 bool topSoil = TryTopSoilColor(block, out int composite, out LodUntintedShare share);
-                int slot = tints.PeekSlot(block, topSoil ? share : LodUntintedShare.None);
+                ModelPartColor partColor = default;
+                bool modelParts = !topSoil && TryModelPartColor(AppearanceOf(block), out partColor);
+                if (modelParts) share = partColor.Share;
+                int slot = modelParts
+                    ? tints.PeekSlot(partColor.TintFrom, share)
+                    : tints.PeekSlot(block, topSoil ? share : LodUntintedShare.None);
                 int stored = StableColorOf(block);
                 (float sr, float sg, float sb) = LodBlockTextureRegistry.Channels(stored);
 
@@ -3467,10 +3741,13 @@ public partial class VintageHorizonsModSystem : ModSystem
                     + (topSoil
                         ? $" (grass-over-soil composite {composite & 0xFF},{(composite >> 8) & 0xFF},"
                           + $"{(composite >> 16) & 0xFF})"
-                        : " (no grass overlay)"),
+                        : modelParts
+                            ? $" (its model's tinted and untinted parts, tinted with {partColor.TintFrom.Code}'s maps)"
+                            : " (no grass overlay)"),
                 };
                 lines.AddRange(tints.Describe(
-                    capi.World, block, slot, topSoil ? share : LodUntintedShare.None, at.X, at.Y, at.Z));
+                    capi.World, block, slot, topSoil || modelParts ? share : LodUntintedShare.None,
+                    at.X, at.Y, at.Z));
                 if (renderer != null)
                     lines.AddRange(renderer.DescribeClimateTint(at.X, at.Y, at.Z, slot));
 

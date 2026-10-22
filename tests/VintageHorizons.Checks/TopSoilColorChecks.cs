@@ -19,6 +19,78 @@ public static class TopSoilColorChecks
         FullCoverageIsTheOrdinaryCase(c);
         Degenerate(c);
         TheTopTileIsTakenFromATwoTileStripAndNothingElse(c);
+        PartTintedModelsMixLikeTheGame(c);
+        FacesAverageTheAreaTheyDraw(c);
+    }
+
+    /// <summary>
+    /// A model that tints some parts and not others - cattails: tinted leaves and stems, brown
+    /// cobs and tan tips the game leaves alone (owner report 2026-10-22: distant cattails went
+    /// neon green). The stored colour and share must reproduce the parts drawn the game's way,
+    /// (own + tinted * tint) / weight, for any tint.
+    /// </summary>
+    static void PartTintedModelsMixLikeTheGame(Check c)
+    {
+        // Cattail-like: the measured leaf, stem and cob means, roughly in cattails' proportions.
+        var parts = new[]
+        {
+            new LodModelParts.Part(107f, 107f, 107f, 0.69f, Tinted: true),
+            new LodModelParts.Part(138f, 138f, 138f, 0.14f, Tinted: true),
+            new LodModelParts.Part(131f, 71f, 21f, 0.165f, Tinted: false),
+            new LodModelParts.Part(198f, 173f, 91f, 0.005f, Tinted: false),
+            new LodModelParts.Part(255f, 0f, 0f, 0f, Tinted: false),   // no weight: ignored
+        };
+        c.True(LodModelParts.TryCompose(parts, out float r, out float g, out float b,
+            out LodUntintedShare share), "a model with tinted parts composes");
+
+        float worst = 0f;
+        foreach (float tint in new[] { 0.05f, 0.42f, 0.62f, 1f })
+        {
+            double weight = 0, drawnR = 0, drawnG = 0, drawnB = 0;
+            foreach (LodModelParts.Part part in parts)
+            {
+                float t = part.Tinted ? tint : 1f;
+                weight += part.Weight;
+                drawnR += part.Weight * part.R * t;
+                drawnG += part.Weight * part.G * t;
+                drawnB += part.Weight * part.B * t;
+            }
+            worst = Math.Max(worst, Math.Abs(r * LodTopSoil.Dilute(share.R, tint) - (float)(drawnR / weight)));
+            worst = Math.Max(worst, Math.Abs(g * LodTopSoil.Dilute(share.G, tint) - (float)(drawnG / weight)));
+            worst = Math.Max(worst, Math.Abs(b * LodTopSoil.Dilute(share.B, tint) - (float)(drawnB / weight)));
+        }
+        c.True(worst < 0.01f, $"stored colour and share reproduce the game's mix of parts (worst {worst:0.0000})");
+        c.True(share.R > share.B,
+            "the brown cob is the untinted share, and it carries red rather than blue");
+
+        c.False(LodModelParts.TryCompose(new[] { new LodModelParts.Part(100f, 100f, 100f, 1f, Tinted: false) },
+            out _, out _, out _, out _), "a model with nothing tinted stays on the ordinary path");
+        c.False(LodModelParts.TryCompose(new[] { new LodModelParts.Part(100f, 100f, 100f, 0f, Tinted: true) },
+            out _, out _, out _, out _), "tinted parts with no weight are nothing to tint");
+    }
+
+    /// <summary>
+    /// Each face is averaged over the area of the texture its UV draws, scaled from the model's
+    /// texture units to the file's pixels, and covers as much of the block as that area is
+    /// opaque. A cattail leaf face draws one blade out of a mostly empty texture.
+    /// </summary>
+    static void FacesAverageTheAreaTheyDraw(Check c)
+    {
+        // A 4 x 2 file: left half transparent, right half opaque red (0xAARRGGBB).
+        const int clear = 0, red = unchecked((int)0xFFFF0000);
+        int[] argb = { clear, clear, red, red, clear, clear, red, red };
+
+        var whole = VintageHorizonsModSystem.RegionMean(argb, 4, 2, null, 16, 16);
+        c.Near(255f, whole.R, 1e-3, "the whole texture averages its opaque pixels");
+        c.Near(0.5f, whole.Coverage, 1e-6, "and covers as much as is opaque");
+
+        // The model's texture is 16 units wide; the right half is u 8..16.
+        var right = VintageHorizonsModSystem.RegionMean(argb, 4, 2, new[] { 8f, 0f, 16f, 16f }, 16, 16);
+        c.Near(1f, right.Coverage, 1e-6, "a face drawing the opaque half covers its whole face");
+        var flipped = VintageHorizonsModSystem.RegionMean(argb, 4, 2, new[] { 16f, 16f, 8f, 0f }, 16, 16);
+        c.Near(1f, flipped.Coverage, 1e-6, "a mirrored UV reads the same area");
+        var left = VintageHorizonsModSystem.RegionMean(argb, 4, 2, new[] { 0f, 0f, 8f, 16f }, 16, 16);
+        c.Near(0f, left.Coverage, 1e-6, "a face drawing only empty texture covers nothing");
     }
 
     /// <summary>

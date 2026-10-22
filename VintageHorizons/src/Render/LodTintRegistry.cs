@@ -107,6 +107,70 @@ public static class LodTopSoil
     public static float Dilute(float share, float tint) => share + (1f - share) * tint;
 }
 
+/// <summary>
+/// A block whose model tints some of its parts and leaves the rest their own colour, as one
+/// stored colour and an untinted share - the same pair <see cref="LodTopSoil"/> makes for grass
+/// over soil, generalised to any number of parts.
+///
+/// Cattails are the case that needed it (owner, 2026-10-22: distant cattails sometimes drew a
+/// neon green). They name no colour map on the block; the game tints only their leaves, part
+/// by part in the model, and leaves the stems grey, the cobs brown and the tips tan. The mod
+/// read "a plant with no colour map", lent it the full plant tint meant for ferns, and greened
+/// the whole block - vividly so in the warm, wet places cattails grow.
+///
+/// Each part is weighted by how much of the block it covers: its face area times the texture's
+/// coverage over the area that face draws. Then
+///   composite = sum(w * colour) / sum(w), share = sum over untinted parts / sum over all,
+/// per channel, and composite * (share + (1 - share) * tint) equals
+///   (untinted + tinted * tint) / sum(w), which is the parts drawn as the game draws them.
+/// </summary>
+public static class LodModelParts
+{
+    /// <summary>One textured face of the model, averaged over the area it draws.</summary>
+    public readonly record struct Part(float R, float G, float B, float Weight, bool Tinted);
+
+    /// <summary>
+    /// The composite colour and untinted share, or false when there is nothing to tint - no
+    /// tinted part with any weight - which leaves the block on its ordinary path.
+    /// </summary>
+    public static bool TryCompose(IEnumerable<Part> parts,
+        out float r, out float g, out float b, out LodUntintedShare share)
+    {
+        double weight = 0, tintedWeight = 0;
+        double allR = 0, allG = 0, allB = 0, ownR = 0, ownG = 0, ownB = 0;
+        foreach (Part part in parts)
+        {
+            if (!(part.Weight > 0f)) continue;
+            weight += part.Weight;
+            allR += part.Weight * part.R;
+            allG += part.Weight * part.G;
+            allB += part.Weight * part.B;
+            if (part.Tinted)
+            {
+                tintedWeight += part.Weight;
+            }
+            else
+            {
+                ownR += part.Weight * part.R;
+                ownG += part.Weight * part.G;
+                ownB += part.Weight * part.B;
+            }
+        }
+
+        r = g = b = 0f;
+        share = LodUntintedShare.None;
+        if (weight <= 0 || tintedWeight <= 0) return false;
+
+        r = (float)(allR / weight);
+        g = (float)(allG / weight);
+        b = (float)(allB / weight);
+        share = new LodUntintedShare(Share(ownR, allR), Share(ownG, allG), Share(ownB, allB));
+        return true;
+    }
+
+    static float Share(double own, double all) => all <= 0 ? 0f : (float)Math.Clamp(own / all, 0, 1);
+}
+
 public class LodTintRegistry
 {
     /// <summary>Slot 0 is the identity tint, used by everything with no colour map.</summary>
