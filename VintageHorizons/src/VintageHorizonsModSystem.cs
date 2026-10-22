@@ -1659,12 +1659,20 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// by implication - `chunktopsoil.fsh` shifts the top face one tile right, which is only
     /// meaningful when there is a second tile to shift into.
     ///
-    /// Compared in atlas UV, which is why this is a ratio and not a pixel count; the block
-    /// atlas is square, so the two axes are the same scale. 1.5 rather than 2.0 leaves room
-    /// for a rectangle trimmed by padding without letting a square texture through.
+    /// Compared in pixels, scaling each axis of the atlas UV by that axis's own size. The block
+    /// atlas is NOT always square: a fresh install's settings start it at 4096 x 2048, and only
+    /// installs upgraded through settings version 1.5 had the height raised to 4096. Compared in
+    /// raw UV as this was until 0.5.1, a 64 x 32 strip on the 2:1 atlas measured square, the top
+    /// tile was never cut out, and every grass top drew the whole strip - three quarters grass
+    /// and a quarter of the fringe's bare soil (owner's second machine, 2026-10-21). 1.5 rather
+    /// than 2.0 leaves room for a rectangle trimmed by padding without letting a square through.
     /// </summary>
-    internal static bool IsTwoTileStrip(TextureAtlasPosition position) =>
-        position.x2 - position.x1 >= (position.y2 - position.y1) * 1.5f;
+    internal static bool IsTwoTileStrip(TextureAtlasPosition position, int atlasWidth, int atlasHeight) =>
+        (position.x2 - position.x1) * Math.Max(1, atlasWidth)
+            >= (position.y2 - position.y1) * Math.Max(1, atlasHeight) * 1.5f;
+
+    bool IsTwoTileStrip(TextureAtlasPosition position) => IsTwoTileStrip(position,
+        capi.BlockTextureAtlas.Size.Width, capi.BlockTextureAtlas.Size.Height);
 
     static bool TryTopSoilOverlay(
         Block block, out CompositeTexture? texture, out bool rightHalf)

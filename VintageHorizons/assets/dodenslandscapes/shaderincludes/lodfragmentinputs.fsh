@@ -257,7 +257,8 @@ uniform int bandDebug;
 // block, and a GPU left to infer the derivative from it picks the coarsest mip on every
 // block boundary and draws a grid of grey lines.
 uniform sampler2D blockAtlas;
-uniform float blockAtlasSize;
+// Width and height in pixels. Not one number: a fresh install's block atlas is 4096 x 2048.
+uniform vec2 blockAtlasSize;
 uniform sampler2D blockTable;
 
 uniform int blockTextureEnabled;

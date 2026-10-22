@@ -103,19 +103,30 @@ public static class TopSoilColorChecks
     /// </summary>
     static void TheTopTileIsTakenFromATwoTileStripAndNothingElse(Check c)
     {
-        c.True(VintageHorizonsModSystem.IsTwoTileStrip(Rect(0.5f, 0.25f)),
-            "a two-tile strip takes its top tile");
-        c.True(!VintageHorizonsModSystem.IsTwoTileStrip(Rect(0.25f, 0.25f)),
-            "a square texture is used whole");
-        c.True(!VintageHorizonsModSystem.IsTwoTileStrip(Rect(0.25f, 0.5f)),
-            "a tall texture is used whole");
+        // On the square atlas an upgraded install has.
+        static bool Square(TextureAtlasPosition rect) =>
+            VintageHorizonsModSystem.IsTwoTileStrip(rect, 4096, 4096);
+        c.True(Square(Rect(0.5f, 0.25f)), "a two-tile strip takes its top tile");
+        c.True(!Square(Rect(0.25f, 0.25f)), "a square texture is used whole");
+        c.True(!Square(Rect(0.25f, 0.5f)), "a tall texture is used whole");
 
         // Padding trims the rectangle, so the ratio is never exactly two; the rule has to
         // survive that without letting a square through.
-        c.True(VintageHorizonsModSystem.IsTwoTileStrip(Rect(0.4980f, 0.2500f)),
+        c.True(Square(Rect(0.4980f, 0.2500f)),
             "a strip trimmed by atlas padding still takes its top tile");
-        c.True(!VintageHorizonsModSystem.IsTwoTileStrip(Rect(0.2480f, 0.2500f)),
+        c.True(!Square(Rect(0.2480f, 0.2500f)),
             "a square trimmed by atlas padding still does not");
+
+        // A fresh install's atlas is 4096 x 2048, so in atlas fractions a 64 x 32 strip spans
+        // 64/4096 by 32/2048 - the same fraction both ways. Judged in raw fractions it looked
+        // square, the top tile was never cut out, and grass tops drew the whole strip: three
+        // quarters grass, a quarter bare soil (2026-10-21).
+        TextureAtlasPosition wideAtlasStrip = Rect(64f / 4096f, 32f / 2048f);
+        TextureAtlasPosition wideAtlasSquare = Rect(32f / 4096f, 32f / 2048f);
+        c.True(VintageHorizonsModSystem.IsTwoTileStrip(wideAtlasStrip, 4096, 2048),
+            "on a fresh install's 2:1 atlas a two-tile strip still takes its top tile");
+        c.True(!VintageHorizonsModSystem.IsTwoTileStrip(wideAtlasSquare, 4096, 2048),
+            "and a square texture there is still used whole");
 
         // The arithmetic the split feeds, on the real measured numbers: full grass over
         // fertmedium soil. The whole strip is what the mod used to read, the top tile is

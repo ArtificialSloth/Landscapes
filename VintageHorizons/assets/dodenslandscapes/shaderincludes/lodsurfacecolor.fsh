@@ -94,7 +94,7 @@
             // Keep both samples one atlas texel inside the tile, matching vanilla's clamp.
             // Explicit gradients come from the unwrapped world coordinate so fract() cannot
             // choose a coarse mip at every block edge.
-            vec2 atlasPixel = vec2(1.0 / max(blockAtlasSize, 1.0));
+            vec2 atlasPixel = 1.0 / max(blockAtlasSize, vec2(1.0));
             vec2 inset = min(atlasPixel / max(rectSize, atlasPixel), vec2(0.49));
             localUv = clamp(localUv, inset, vec2(1.0) - inset);
             vec2 dx = dFdx(tile) * rectSize;

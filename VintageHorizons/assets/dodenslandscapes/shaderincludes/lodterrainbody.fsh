@@ -83,6 +83,7 @@ void main()
             // block covers a few pixels and a 32-pixel tile is already asking for mip three
             // or four, so a low limit would remove the texture at exactly the distance it
             // exists for.
+            // Each axis in its own pixels: U by the atlas width, V by its height.
             vec2 footprint = max(abs(duvdx), abs(duvdy)) * blockAtlasSize;
             float mipWanted = log2(max(max(footprint.x, footprint.y), 1.0));
             float mipFade = clamp(blockTextureMipLimit - mipWanted, 0.0, 1.0);

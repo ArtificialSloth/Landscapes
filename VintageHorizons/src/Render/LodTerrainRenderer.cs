@@ -6187,7 +6187,9 @@ public partial class LodTerrainRenderer : IRenderer
         prog.Uniform("blockTextureEnabled", blockTexturesOn ? 1 : 0);
         if (blockTexturesOn || waterSurfaceTextureOn)
         {
-            prog.Uniform("blockAtlasSize", (float)capi.BlockTextureAtlas.Size.Width);
+            // Both axes: the atlas is 4096 x 2048 on a fresh install, square only on upgraded ones.
+            prog.Uniform("blockAtlasSize",
+                (float)capi.BlockTextureAtlas.Size.Width, (float)capi.BlockTextureAtlas.Size.Height);
             prog.BindTexture2D("blockAtlas", blockTextures!.AtlasTextureId, BlockAtlasUnit);
         }
         if (blockTexturesOn)
