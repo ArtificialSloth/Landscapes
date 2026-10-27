@@ -2,7 +2,7 @@
   "type": "code",
   "modid": "dodenslandscapes",
   "name": "Doden's Landscapes",
-  "version": "0.5.1",
+  "version": "0.5.2-dev.1",
   "side": "Universal",
   "requiredOnClient": false,
   "requiredOnServer": false,
@@ -12,6 +12,6 @@
   ],
   "website": "https://mods.vintagestory.at/dodenslandscapes",
   "dependencies": {
-    "game": "1.22.5"
+    "game": "1.22.0"
   }
 }
