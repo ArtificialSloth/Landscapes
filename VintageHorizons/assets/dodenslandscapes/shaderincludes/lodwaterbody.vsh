@@ -8,6 +8,5 @@ void main()
     vhBlockSlot = -1;
     vhFaceAxis = 0;
     vhPlaneUv = vec2(0.0);
-    vhFarTexture = 0;
 #include lodvertexsurface.vsh
 }

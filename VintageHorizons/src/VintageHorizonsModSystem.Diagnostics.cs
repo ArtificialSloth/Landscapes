@@ -151,7 +151,6 @@ public partial class VintageHorizonsModSystem
 
         Heading(lines, "TEXTURE / TINT");
         Entry(lines, ".dltexture", renderer.BlockTexturesEnabled);
-        Entry(lines, ".dltexture leaves", renderer.FarLeafTexturesEnabled);
         Entry(lines, ".dltexture strength", Number(renderer.BlockTextureStrength, "0.00"));
         Entry(lines, ".dltexture detail", Number(renderer.BlockTextureDetail, "0.0"));
         Entry(lines, ".dltexture mips", Number(renderer.BlockTextureMipLimit, "0.0"));

@@ -4144,7 +4144,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         capi.ChatCommands.Create("dltexture")
             .WithDescription("Draw distant ground with the game's own block textures inside the "
                 + "blending band, instead of one flat colour per block. "
-                + "on | off | strength | detail | mips | leaves.")
+                + "on | off | strength | detail | mips.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
                       capi.ChatCommands.Parsers.OptionalWord("value"))
             .HandleWith(args =>
@@ -4162,13 +4162,6 @@ public partial class VintageHorizonsModSystem : ModSystem
                         return TextCommandResult.Success(
                             $"[Landscapes] block textures {part}. "
                             + renderer.DescribeBlockTextures());
-
-                    case "leaves":
-                        string leaves = args.Parsers[1].IsMissing ? "" : ((string)args[1]).ToLowerInvariant();
-                        if (leaves is "on" or "off") renderer.FarLeafTexturesEnabled = leaves == "on";
-                        return TextCommandResult.Success(
-                            $"[Landscapes] leaf textures past the band {(renderer.FarLeafTexturesEnabled ? "on" : "off")}, "
-                            + "until a block is about 1.5 pixels wide. Not saved.");
 
                     case "detail":
                         if (!TryParseSetting(

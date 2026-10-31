@@ -1779,10 +1779,15 @@ public static class SilhouetteChecks
             "silhouette reach snaps to 512-block increments");
         c.Eq(4096, LodThresholdScaleLayout.SnapSilhouetteReach(4096),
             "Farseer reach remains independently adjustable inside the cached draw edge");
-        c.Eq(512, LodThresholdScaleLayout.SnapDrawDistance(1),
+        c.Eq(256, LodThresholdScaleLayout.SnapDrawDistance(1),
             "the cached distance can sit below Farseer's floor, for a short view distance");
+        c.Eq(320, LodThresholdScaleLayout.SnapDrawDistance(300),
+            "below 1,024 the cached distance snaps to 64-block increments");
+        c.Eq(960, LodThresholdScaleLayout.SnapDrawDistance(970), "up to the last one before 1,024");
+        c.Eq(1024, LodThresholdScaleLayout.SnapDrawDistance(1010), "which meets the coarse steps exactly");
         c.Eq(1536, LodThresholdScaleLayout.SnapDrawDistance(1400),
-            "the cached distance snaps to 512-block increments");
+            "above that it snaps to 512-block increments");
+        c.Eq(1024, LodThresholdScaleLayout.SnapDrawDistance(1100), "with nothing between 1,024 and 1,536");
         c.Eq(32768, LodThresholdScaleLayout.SnapDrawDistance(int.MaxValue),
             "the cached distance clamps to the scale's end");
 

@@ -103,11 +103,6 @@ flat out int vhFaceAxis;
 // Where a fragment sits on a reed's sheet, 0 to 1 across and top to bottom. Zero elsewhere.
 out vec2 vhPlaneUv;
 
-// 1 on a quad whose block keeps its texture past the band: leaves, while `.dltexture leaves` is on.
-// The block table's colour row says so, and the vertex stage has fetched that row already.
-uniform int blockTextureFar;
-flat out int vhFarTexture;
-
 // ---- Per-section facts ------------------------------------------------------
 //
 // Everything in this block describes the SECTION being drawn rather than the vertex.

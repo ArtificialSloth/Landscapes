@@ -284,8 +284,6 @@ flat in int vhBlockSlot;
 flat in int vhFaceAxis;
 // Where this fragment sits on a reed's sheet. Read only when vhFaceAxis is 4.
 in vec2 vhPlaneUv;
-// 1 on a quad whose block keeps its texture past the band (see lodvertexinputs.vsh).
-flat in int vhFarTexture;
 // ------------------------------------------------------------------------------
 
 // 1 applies vanilla's own rule that an up-facing surface never darkens with the sun.

@@ -119,12 +119,10 @@ void main()
         int vhColorRow = vhFace < 2u ? 1 : (vhFace < 4u ? 8 : 9);
         vec4 vhAverage = texelFetch(blockTable, ivec2(vhBlockSlot, vhColorRow), 0);
         vertexColorIn = vec4(vhAverage.rgb, float(vhColor >> 24u) / 255.0);
-        vhFarTexture = blockTextureFar != 0 && vhAverage.a > 1.5 ? 1 : 0;
     }
     else
     {
         vhBlockSlot = -1;
-        vhFarTexture = 0;
         vertexColorIn = vec4(
             float(vhColor & 255u),
             float((vhColor >> 8u) & 255u),
@@ -145,7 +143,6 @@ void main()
     vhBlockSlot = -1;
     vhFaceAxis = 0;
     vhPlaneUv = vec2(0.0);
-    vhFarTexture = 0;
     if (vhEncodedAlpha >= 192)
     {
         ivec3 vhSlotBytes = ivec3(vertexColorIn.rgb * 255.0 + 0.5);

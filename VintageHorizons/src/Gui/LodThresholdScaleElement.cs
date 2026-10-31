@@ -15,9 +15,14 @@ internal static class LodThresholdScaleLayout
     internal const int MinVanillaDistance = 32;
     internal const int MaxVanillaDistance = 1536;
     internal const int VanillaDistanceStep = 32;
-    internal const int MinDrawDistance = 512;
+    internal const int MinDrawDistance = 256;
     internal const int MaxDrawDistance = 32768;
     internal const int DrawDistanceStep = 512;
+
+    // Short distances are where a step shows: 512 blocks is the whole setting at the bottom of
+    // the scale. Below this edge the cached distance moves in the fine step.
+    internal const int FineDrawDistanceEnd = 1024;
+    internal const int FineDrawDistanceStep = 64;
 
     internal static float FractionFor(double value)
     {
@@ -59,7 +64,8 @@ internal static class LodThresholdScaleLayout
     internal static int SnapDrawDistance(double value)
     {
         double safe = Math.Clamp(value, MinDrawDistance, MaxDrawDistance);
-        return (int)Math.Round(safe / DrawDistanceStep) * DrawDistanceStep;
+        int step = safe < FineDrawDistanceEnd ? FineDrawDistanceStep : DrawDistanceStep;
+        return (int)Math.Round(safe / step) * step;
     }
 
     // Reach is independent of the cached draw edge. A shorter value still has a useful meaning:

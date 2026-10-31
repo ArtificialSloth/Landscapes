@@ -314,20 +314,6 @@ public static class PackedQuadChecks
         c.Eq(2, registry.WallsAccepted, "both wall axes of the log are taken");
         c.Eq(1, registry.WallsOtherPage, "the wall on another page is counted as refused");
 
-        // Leaves keep their texture past the band, and the vertex stage reads whichever colour
-        // row its face wants, so all three must say so.
-        int leaf = registry.SlotFor(new Vintagestory.API.Common.Block
-        {
-            BlockId = 4,
-            BlockMaterial = Vintagestory.API.Common.EnumBlockMaterial.Leaves,
-        }, 0x00AABBCC);
-        foreach (int row in new[] { 1, 8, 9 })
-        {
-            c.Eq(LodBlockTextureRegistry.FarTextureFlag, t[leaf * f + row * 4 + 3],
-                $"a leaf block's colour row {row} asks for its texture past the band");
-            c.Eq(1f, t[plain * f + row * 4 + 3], $"and any other block's row {row} does not");
-        }
-
         // The wall colour rows. A block's colour is its top's, which on a standing log is the
         // cut end; its walls must draw at the bark's own colour, or a redwood's sides wear the
         // brightness of its rings. Low byte is red: 0x00405060 is red 0x60, blue 0x40.
