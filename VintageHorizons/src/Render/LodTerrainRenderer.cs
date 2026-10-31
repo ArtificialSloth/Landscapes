@@ -1106,7 +1106,7 @@ public partial class LodTerrainRenderer : IRenderer
         }
 
         waterAbsorption = table;
-        capi.Logger.Notification(
+        capi.Logger.Detail(
             "[Landscapes] water depth shading resolved: " + DescribeWaterAbsorption());
 
         // Anything meshed while the answer was unavailable is built unshaded and would stay
@@ -5783,7 +5783,7 @@ public partial class LodTerrainRenderer : IRenderer
         if (packedShaderOk && !reportedPackedShaderOk)
         {
             reportedPackedShaderOk = true;
-            capi.Logger.Notification(
+            capi.Logger.Detail(
                 "[Landscapes] the packed lodterrain variant compiled after {0} "
                 + "attempt(s); 12-byte quad drawing is available",
                 shaderLoadAttempts);
@@ -6452,7 +6452,7 @@ public partial class LodTerrainRenderer : IRenderer
         LodRenderPathSelection selection = LodRenderPathPolicy.Evaluate(
             gpuRendererPreference, gpuTelemetry.Decision);
         renderPaths.Configure(selection);
-        capi.Logger.Notification(
+        capi.Logger.Detail(
             "[Landscapes] Opaque renderer: packed GPU path required; per-section and "
             + "expanded fallbacks disabled. Capability result: {0}.",
             selection.Reason);
@@ -6484,7 +6484,7 @@ public partial class LodTerrainRenderer : IRenderer
             && (apiWidth != width || apiHeight != height))
         {
             reportedGpuFrameSizeDisagreement = true;
-            capi.Logger.Notification(
+            capi.Logger.Detail(
                 "[Landscapes] GPU copy size comes from the concrete primary framebuffer "
                 + "{0}x{1}; IRenderAPI reports {2}x{3} and is diagnostic only.",
                 width, height, apiWidth, apiHeight);
@@ -6559,7 +6559,7 @@ public partial class LodTerrainRenderer : IRenderer
                 message => capi.Logger.Warning("{0}", message));
             long packedCeiling = LodGpuArenaPolicy.PackedLimits(ceiling).CeilingBytes;
             long clusterCeiling = LodGpuArenaPolicy.PackedClusterLimits(ceiling).CeilingBytes;
-            capi.Logger.Notification(
+            capi.Logger.Detail(
                 "[Landscapes] GPU arenas on: retaining {0} geometry only; ceilings are "
                 + "{1} MiB expanded, {2} MiB packed and {3} MiB clustered, with {4} MiB "
                 + "vertex pages and {5} page sets; content verification {6}. Sized for a "
@@ -6703,7 +6703,7 @@ public partial class LodTerrainRenderer : IRenderer
             world.RenderDirty.Add(key);
             queued++;
         }
-        capi.Logger.Notification(
+        capi.Logger.Detail(
             "[Landscapes] GPU regional path on; {0} live sections queued for "
             + "re-mesh so the arenas match what is drawn. Give it a moment before reading "
             + "the numbers.", queued);
@@ -8109,7 +8109,7 @@ public partial class LodTerrainRenderer : IRenderer
             else if (LastHzbBuild.Built && !reportedHzbBuilt)
             {
                 reportedHzbBuilt = true;
-                capi.Logger.Notification(
+                capi.Logger.Detail(
                     "[Landscapes] depth pyramid built: {0}x{1}, {2} levels.",
                     LastHzbBuild.Width, LastHzbBuild.Height, LastHzbBuild.Levels);
             }
@@ -8306,7 +8306,7 @@ public partial class LodTerrainRenderer : IRenderer
         if (!reportedHzbClassifier)
         {
             reportedHzbClassifier = true;
-            capi.Logger.Notification(
+            capi.Logger.Detail(
                 "[Landscapes] depth-pyramid classification running in shadow: it "
                 + "counts what a depth test would hide and hides nothing.");
         }

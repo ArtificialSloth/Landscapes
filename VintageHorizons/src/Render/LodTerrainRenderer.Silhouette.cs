@@ -154,7 +154,7 @@ public partial class LodTerrainRenderer
         if (terrainOk) LodTerrainSamplerLayout.Configure(silhouetteProg);
         if (silhouetteShaderOk)
         {
-            capi.Logger.Notification(
+            capi.Logger.Detail(
                 "[Landscapes] the lodsilhouette shader compiled; horizon silhouettes can draw.");
         }
         else

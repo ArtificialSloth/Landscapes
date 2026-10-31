@@ -9,6 +9,7 @@ public static class PersistenceChecks
     public static void Run(Check c)
     {
         DirtyOrderAndAgeAreStable(c);
+        ALandedWriteRestartsTheAge(c);
         SustainedInflowCannotStarveOldKeys(c);
         CheckpointCadenceAndBudget(c);
         BackToBackCheckpointBatches(c);
@@ -43,6 +44,50 @@ public static class PersistenceChecks
             "a newly dirty revision joins at the tail after the old one became durable");
         c.Eq(400L, dirty.OldestAgeMilliseconds,
             "oldest age advances to the next surviving obligation");
+    }
+
+    // crystalkiori's report and G238: a section that changed during every save aged without
+    // bound while the writes kept up, and generation stopped at the 120-second gate for good.
+    static void ALandedWriteRestartsTheAge(Check c)
+    {
+        long now = 1_000;
+        var dirty = new LodSaveDirtySet(() => now);
+        dirty.Add(11);
+        now = 1_100;
+        dirty.Add(22);
+        now = 1_000_000;
+        c.Eq(999_000L, dirty.OldestAgeMilliseconds, "an unwritten key ages");
+
+        dirty.Saved(11);
+        c.SeqEq(new long[] { 22, 11 }, dirty.ToArray(),
+            "a key whose older revision landed goes behind everything still waiting");
+        c.Eq(998_900L, dirty.OldestAgeMilliseconds, "the oldest age is now the next key's");
+
+        dirty.Saved(22);
+        c.Eq(0L, dirty.OldestAgeMilliseconds, "with every write landing, nothing reads as old");
+        dirty.Saved(33);
+        c.False(dirty.Contains(33), "a key that is not dirty does not become dirty");
+
+        var world = new LodWorld();
+        long changing = LodWorld.SectionKey(0, 1, 0), waiting = LodWorld.SectionKey(0, 2, 0);
+        world.Sections[changing] = Fixtures.SolidSection();
+        world.Sections[waiting] = Fixtures.SolidSection();
+        world.MarkChanged(changing);
+        world.MarkChanged(waiting);
+        c.True(world.TryQueueSave(changing, out long written), "the section's save is queued");
+        world.MarkChanged(changing);
+        c.False(world.CompleteSave(changing, written, succeeded: false),
+            "a failed write acknowledges nothing");
+        c.SeqEq(new[] { changing, waiting }, world.SaveDirty.ToArray(),
+            "and a failed write keeps its place and its age, so a stuck disk still stops generation");
+
+        c.True(world.TryQueueSave(changing, out written), "the retry is queued");
+        world.MarkChanged(changing);
+        c.False(world.CompleteSave(changing, written, succeeded: true),
+            "a write overtaken by a newer change is not the newest");
+        c.True(world.SaveDirty.Contains(changing), "so the section stays dirty");
+        c.SeqEq(new[] { waiting, changing }, world.SaveDirty.ToArray(),
+            "but it restarts behind the section that has waited longer");
     }
 
     static void SustainedInflowCannotStarveOldKeys(Check c)
@@ -153,7 +198,7 @@ public static class PersistenceChecks
         string line = LodServerCaptureSystem.FormatCacheWorkStatus(
             17, 125_000, 6, 8.5, 901, 23, 4, 2);
         c.True(line.Contains("17 dirty", StringComparison.Ordinal)
-            && line.Contains("changing 125.0s", StringComparison.Ordinal)
+            && line.Contains("unsaved 125.0s", StringComparison.Ordinal)
             && line.Contains("storage queue 6", StringComparison.Ordinal)
             && line.Contains("8.50 saves/s", StringComparison.Ordinal)
             && line.Contains("capture backlog 23", StringComparison.Ordinal)
@@ -161,12 +206,11 @@ public static class PersistenceChecks
             && line.Contains("capture errors 2", StringComparison.Ordinal),
             "the server status line exposes every persistence and capture health signal");
 
-        // The two numbers describe different things and used to sit side by side as though
-        // they described one queue. The owner's 2026-09-20 log read 307.6s beside 52 dirty
-        // and 7.38 saves/s and looked like a stalled writer; it was coarse sections being
-        // re-dirtied by mip propagation while the writes kept up.
+        // The owner's 2026-09-20 log read 307.6s beside 52 dirty and 7.38 saves/s and looked
+        // like a stalled writer; it was coarse sections being re-dirtied by mip propagation
+        // while the writes kept up. The age now restarts on each write and the line says so.
         c.False(line.Contains("oldest dirty", StringComparison.Ordinal),
-            "the dirty age is not labelled as though it were a write backlog");
+            "the age says what it measures");
     }
 
     static void ExactAcknowledgements(Check c)

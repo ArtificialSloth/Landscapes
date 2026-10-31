@@ -189,9 +189,9 @@ internal static class VintageHorizonsConfigLayout
 /// </summary>
 internal sealed class VintageHorizonsConfigDialog : GuiDialog
 {
-    const int MinDrawDistance = 1024;
-    const int MaxDrawDistance = 32768;
-    const int DrawDistanceStep = 512;
+    const int MinDrawDistance = LodThresholdScaleLayout.MinDrawDistance;
+    const int MaxDrawDistance = LodThresholdScaleLayout.MaxDrawDistance;
+    const int DrawDistanceStep = LodThresholdScaleLayout.DrawDistanceStep;
 
 
     const double Width = VintageHorizonsConfigLayout.Width;

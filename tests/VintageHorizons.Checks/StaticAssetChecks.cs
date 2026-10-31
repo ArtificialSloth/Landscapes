@@ -2656,8 +2656,9 @@ public static class StaticAssetChecks
             && scale.Contains("MarkerText(index), CairoFont.WhiteDetailText()", StringComparison.Ordinal)
             && scale.Contains("Render2DLoadedTexture(label, labelX", StringComparison.Ordinal),
             "the moving LOD handles use the Vanilla font and stack each distance under L1-L6");
-        c.True(dialog.Contains("const int MaxDrawDistance = 32768", StringComparison.Ordinal)
-            && dialog.Contains("const int DrawDistanceStep = 512", StringComparison.Ordinal),
+        c.True(scale.Contains("const int MaxDrawDistance = 32768", StringComparison.Ordinal)
+            && scale.Contains("const int DrawDistanceStep = 512", StringComparison.Ordinal)
+            && dialog.Contains("MaxDrawDistance = LodThresholdScaleLayout.MaxDrawDistance", StringComparison.Ordinal),
             "the cached draw-distance slider stops at 32,768 in 512-block increments");
         // Defaults has to restore what a fresh install actually draws. They were different
         // numbers - the button said 32,768 while a new config said unlimited - so pressing it

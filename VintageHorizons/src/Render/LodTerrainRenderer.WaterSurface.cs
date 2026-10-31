@@ -30,7 +30,7 @@ public partial class LodTerrainRenderer
         if (waterSurfaceShaderOk) LodTerrainSamplerLayout.Configure(waterSurfaceProg);
         waterSurfaceFailed = false;
         if (waterSurfaceShaderOk)
-            capi.Logger.Notification(
+            capi.Logger.Detail(
                 "[Landscapes] dedicated water surface shader ready; legacy shader retired.");
         else
             capi.Logger.Error(

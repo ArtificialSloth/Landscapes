@@ -156,6 +156,8 @@ $psi.ArgumentList.Add($dataPath)
 $psi.ArgumentList.Add("--withconfig={ Port: $Port, VerifyPlayerAuth: false, WhitelistMode: 'off', AdvertiseServer: false }")
 $psi.Environment['TEMP'] = Join-Path $dataPath 'tmp'
 $psi.Environment['TMP'] = Join-Path $dataPath 'tmp'
+# The sweep's status line is read from the main log below; without this it goes to the debug log.
+$psi.Environment['VINTAGEHORIZONS_STATS'] = '1'
 
 $process = [Diagnostics.Process]::new()
 $process.StartInfo = $psi

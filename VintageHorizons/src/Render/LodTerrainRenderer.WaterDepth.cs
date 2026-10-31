@@ -145,7 +145,7 @@ public partial class LodTerrainRenderer
         waterDepthFailed = false;
         waterJunctionFailed = false;
         if (waterDepthShaderOk)
-            capi.Logger.Notification("[Landscapes] cached water-depth shader ready.");
+            capi.Logger.Detail("[Landscapes] cached water-depth shader ready.");
         else
             capi.Logger.Error(
                 "[Landscapes] cached water-depth shader unavailable; when murk/coverage "

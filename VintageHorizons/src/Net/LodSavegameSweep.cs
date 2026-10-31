@@ -390,7 +390,7 @@ public class LodSavegameSweep
 
             BeginLoadOrder();
 
-            logger.Notification(
+            logger.Detail(
                 "Savegame sweep: {0} columns hold generated terrain, read from the savegame "
                 + "itself rather than by probing the engine. {1} carry a fingerprint this cache "
                 + "already matches and will be skipped. Loading the rest with a complete "
@@ -973,7 +973,7 @@ public class LodSavegameSweep
         if (percent >= reported + 10)
         {
             reported = percent - percent % 10;
-            logger.Notification("Savegame sweep: loaded {0}% ({1} columns, {2} skipped as edge)",
+            logger.Detail("Savegame sweep: loaded {0}% ({1} columns, {2} skipped as edge)",
                 reported, Loaded, SkippedEdge);
         }
 

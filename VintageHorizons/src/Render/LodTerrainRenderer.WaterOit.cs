@@ -39,7 +39,7 @@ public partial class LodTerrainRenderer
         waterOitFailed = false;
         waterJunctionSurfaceFailed = false;
         if (waterOitShaderOk)
-            capi.Logger.Notification(
+            capi.Logger.Detail(
                 "[Landscapes] dedicated water OIT shader ready; fallback disabled.");
         else
             capi.Logger.Error(
@@ -74,7 +74,7 @@ public partial class LodTerrainRenderer
         {
             gpuTelemetry.ResetWaterInterval();
             previousWaterOit = waterFrame.UseOit;
-            capi.Logger.Notification("[Landscapes] water pipeline: {0}; surface timing interval restarted.", WaterPipelineStatus);
+            capi.Logger.Detail("[Landscapes] water pipeline: {0}; surface timing interval restarted.", WaterPipelineStatus);
         }
         if (waterFrame.UseOit) WaterOitSkipReason = "awaiting OIT";
         WaterJunctionSurfaceStatus = waterFrame.UseOit ? "awaiting OIT" : "opaque pipeline";

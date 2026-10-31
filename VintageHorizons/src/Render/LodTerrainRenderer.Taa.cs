@@ -825,7 +825,7 @@ public partial class LodTerrainRenderer
         autoAppliedThresholds = wanted;
         LodWorld.SetLevelThresholds(wanted);
         AutoThresholdSummary = DescribeAutoValues(wanted);
-        capi.Logger.Notification("[Landscapes] automatic LOD thresholds applied: {0}",
+        capi.Logger.Detail("[Landscapes] automatic LOD thresholds applied: {0}",
             AutoThresholdSummary);
     }
 

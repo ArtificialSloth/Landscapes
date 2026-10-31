@@ -41,6 +41,7 @@ public static class Program
         ("pure", "phase timing", PhaseCostChecks.Run),
         ("pure", "hitch recorder", HitchRecorderChecks.Run),
         ("pure", "chunk thread rest", ChunkThreadRestChecks.Run),
+        ("pure", "engine map gate", EngineMapGateChecks.Run),
         ("fixture", "all-cores collector setting", GameCollectorChecks.Run),
         ("fixture", "mod identity and rename", ModIdentityChecks.Run),
         ("runtime", "allocation sampler", AllocationSamplerChecks.Run),

@@ -1239,6 +1239,7 @@ public class LodAssistServerSystem : ModSystem
         }
         // Saves the tiles changed since the last world save, then closes the tile store.
         silhouettes?.Dispose();
+        if (sapi != null) EngineMapGate.Uninstall(sapi.Logger);
         blobReader?.Dispose();
         blobReader = null;
         blobReaderPath = null;

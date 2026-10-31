@@ -88,7 +88,7 @@ internal sealed class VanillaHorizonEffects : IDisposable
         }
 
         installed = true;
-        logger.Notification(
+        logger.Detail(
             "Vanilla terrain render-threshold fade and false outer liquid walls suppressed; "
             + "atmospheric and non-terrain fades remain unchanged");
         return true;

@@ -22,6 +22,9 @@ public sealed class CaptureLogger : ILogger
     /// </summary>
     public TimeSpan Delay { get; init; }
 
+    /// <summary>How many lines went to the game's debug log through <c>Log</c>, the detail route.</summary>
+    public int DebugLines { get; private set; }
+
     public bool Contains(string fragment)
     {
         lock (Lines) return Lines.Any(l => l.Contains(fragment, StringComparison.Ordinal));
@@ -45,8 +48,18 @@ public sealed class CaptureLogger : ILogger
 
     public void ClearWatchers() { }
 
-    public void Log(EnumLogType logType, string format, params object[] args) => Record(format, args);
-    public void Log(EnumLogType logType, string message) => Record(message);
+    public void Log(EnumLogType logType, string format, params object[] args)
+    {
+        if (logType == EnumLogType.Debug) DebugLines++;
+        Record(format, args);
+    }
+
+    public void Log(EnumLogType logType, string message)
+    {
+        if (logType == EnumLogType.Debug) DebugLines++;
+        Record(message);
+    }
+
     public void LogException(EnumLogType logType, Exception e) => Record(e.ToString());
 
     public void Chat(string format, params object[] args) => Record(format, args);

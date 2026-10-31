@@ -1080,8 +1080,8 @@ public static class VanillaReadinessChecks
         model.Observe(warmCell, rendered: true, 10, out _);
         model.Watch(cell, 1000);
         model.PromoteWatched(20, 1000, 10_000, 64, promote: true);
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int i = 0; i < 10_000; i++)
+
+        void Pass()
         {
             _ = model.State(cell);
             _ = model.Classify(section);
@@ -1093,6 +1093,12 @@ public static class VanillaReadinessChecks
             while (model.TryDequeueCandidate(out VanillaChunkCell queued))
                 model.Observe(queued, rendered: true, 20, out _);
         }
+
+        // The measured loop calls two methods the warm-up above does not, and this check failed 3
+        // of 7 runs in Session 108 with no source change. Every path gets its first run here.
+        for (int i = 0; i < 10_000; i++) Pass();
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 10_000; i++) Pass();
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         c.Eq(0L, allocated,
             "converged lookup, revalidation scheduling, fresh-chunk rechecks, probing, and "

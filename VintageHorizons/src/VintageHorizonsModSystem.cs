@@ -774,7 +774,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         if (pipeline.MaybeEvictAround(pos.X, pos.Z))
         {
             LodWorld world = pipeline.World;
-            Mod.Logger.Notification("Evict sweep at {0},{1}: checked {2}, pinned {3}, cold {4}, total evicted {5}",
+            Mod.Logger.Detail("Evict sweep at {0},{1}: checked {2}, pinned {3}, cold {4}, total evicted {5}",
                 (int)pos.X, (int)pos.Z, world.LastSweepChecked, world.LastSweepPinned,
                 world.LastSweepCold, world.EvictedSectionsTotal);
         }
@@ -869,7 +869,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         if (pipeline.RemoteOnly.Count != before && !loggedRemoteKeys)
         {
             loggedRemoteKeys = true;
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "Server assist: {0} sections offered that this client never captured. "
                 + "The mod fetches them as the view needs them.", pipeline.RemoteOnly.Count);
         }
@@ -1055,7 +1055,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             {
                 loggedLocalOffers = true;
                 // Sweeps and /dlgen both fill the sibling cache; this line covers either.
-                Mod.Logger.Notification(
+                Mod.Logger.Detail(
                     "Server-side cache offers sections locally. The mod adopts the ones it "
                     + "lacks as the view needs them, and fills in the ones it already holds.");
             }
@@ -1168,7 +1168,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         }
         if (now < nextFillProgressLogMs) return;
 
-        Mod.Logger.Notification("Distant sections held but incomplete: {0}; {1}; server sync: {2}",
+        Mod.Logger.Detail("Distant sections held but incomplete: {0}; {1}; server sync: {2}",
             pipeline.DescribeFills(), DescribeSiblingScanner(), serverSync.Describe());
         nextFillProgressLogMs = now + FillProgressLogIntervalMs;
         fillMergesAtLastLog = pipeline.ForeignMerges;
@@ -2284,7 +2284,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         string faces = block.Textures == null ? "?" : string.Join(", ", block.Textures
             .Where(entry => entry.Value?.Baked?.TextureSubId == subId)
             .Select(entry => $"{entry.Key}={entry.Value.Base}"));
-        Mod.Logger.Notification(
+        Mod.Logger.Detail(
             "[Landscapes] Some blocks carry a face texture that is the game's missing-texture image "
             + "(first: '{0}', {1}); the game never draws it, and distant terrain uses the block's own "
             + "texture there instead. The texture status line counts them.", block.Code, faces);
@@ -2343,7 +2343,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         if (!loggedMissingTexture)
         {
             loggedMissingTexture = true;
-            Mod.Logger.Notification(found != 0
+            Mod.Logger.Detail(found != 0
                 ? "Block '{0}' has no usable block-colour texture (vanilla resolved it to unknown.png). "
                     + "The mod uses another of its own textures instead, so it does not render wrong at distance."
                 : "Block '{0}' has no usable texture of its own (vanilla draws it as the missing-texture box). "
@@ -2395,7 +2395,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     {
         while (nextMilestone < FillInMilestones.Length && renderer.MeshCount >= FillInMilestones[nextMilestone])
         {
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 nextMilestone == 0 ? "Fill-in: first mesh after {1:0.0}s" : "Fill-in: {0} meshes after {1:0.0}s",
                 FillInMilestones[nextMilestone], joinClock.Elapsed.TotalSeconds);
             nextMilestone++;
@@ -2544,7 +2544,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
             renderer.WaterSurfaceTextureSlot = blockTextures.SlotFor(water, StableColorOf(water));
             renderer.WaterSurfaceTintSlot = TintSlotOf(water);
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "[Landscapes] standard water surface texture: {0}, atlas slot {1}, tint slot {2}.",
                 water.Code, renderer.WaterSurfaceTextureSlot, renderer.WaterSurfaceTintSlot);
         }
@@ -2608,7 +2608,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             Mod.Logger.Warning("First mip error was: {0}", worker.FirstMipError);
         }
 
-        Mod.Logger.Notification(
+        Mod.Logger.Detail(
             "{0}: {1} sections resident [{2}] ({3} RAM-evicted, {4} from cache), {5} meshes ({6} evicted, {23} seam repairs), " +
             "{7} selected [{8}] minus {9} draw-culled ({22} subtrees traversal-culled), {10} columns captured, {11} pending " +
             "({24} unloaded-before-capture drops), " +
@@ -2626,7 +2626,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         // The amplification between real changes and mesh rebuilds, counted rather than
         // inferred. A stationary run previously had to estimate it from 64 changed
         // sections against 5,057 mesh replacements with nothing recording the middle term.
-        Mod.Logger.Notification(
+        Mod.Logger.Detail(
             "  change locality: {0} content changes made {1} meshes stale ({2:0.00} per change); " +
             "{3} neighbour rebuilds skipped as interior",
             world.MarkChangedCalls, world.MarkChangedRenderDirtied,
@@ -2635,13 +2635,13 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         // Chiselled blocks and placeholder colours (0.4.62): whether distant structures are
         // drawn from what they are made of, or from the missing-texture image.
-        Mod.Logger.Notification(
+        Mod.Logger.Detail(
             "  chiselled blocks: {0} captured as their most visible material, {1} with no material "
             + "that can stand in, {2} column reads failed | {3} stored placeholder colours repaired on load",
             pipeline.ChiselStandIns, pipeline.ChiselsWithoutMaterial, pipeline.ChiselCollectErrors,
             placeholderEntriesRepaired);
 
-        Mod.Logger.Notification(
+        Mod.Logger.Detail(
             "  storage on main thread since last report: snapshot {0} calls, {1:0.00}ms avg, {2:0.00}ms max | " +
             "inline loads {3} calls, {4:0.00}ms avg, {5:0.00}ms max | storage thread: {6} write backlog, " +
             "{7} written, {8} write errors, {11} read, {9} async loads in flight, {10} read errors",
@@ -2652,7 +2652,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         if (assist != null && assist.RemoteKeys.Count > 0)
         {
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  server assist: {0} offered, {1} remote-only, {2} wanted by view, {3} requested, " +
                 "{4} received, {5} installed, {6} in flight, peak {7}, {8} declined",
                 assist.RemoteKeys.Count, pipeline.RemoteOnly.Count, pipeline.RemoteWanted().Length,
@@ -2662,7 +2662,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         if (localOffers != null || localOfferKeysDiscovered > 0)
         {
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  local sibling offers: {0} rows scanned, {1} offered, {2} fills queued, "
                 + "{3} retryable misses, {4} accepted, {5} installed, {6} remote-only, {7} wanted",
                 localOfferRowsScanned, localOfferKeysDiscovered, localOfferFillsQueued,
@@ -2672,16 +2672,16 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         if (localOffers != null || pipeline.PendingFills > 0 || pipeline.ForeignMerges > 0)
         {
-            Mod.Logger.Notification("  held sections: {0}; {1}",
+            Mod.Logger.Detail("  held sections: {0}; {1}",
                 pipeline.DescribeFills(), DescribeSiblingScanner());
         }
-        if (serverSync.Active) Mod.Logger.Notification("  server sync: {0}", serverSync.Describe());
+        if (serverSync.Active) Mod.Logger.Detail("  server sync: {0}", serverSync.Describe());
 
         // Repairing means the cache on disk was written without colours, which drew as
         // black ground. Worth saying out loud, and worth being able to watch go to zero.
         if (pipeline.PaletteEntriesRepaired > 0)
         {
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  repaired {0} palette entries that were cached with no colour at all. "
                 + "They drew as black terrain, and the repair is written back as they load.",
                 pipeline.PaletteEntriesRepaired);
@@ -2709,7 +2709,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             // them to milliseconds would print four zeroes and teach nobody anything.
             // A frame-rate comparison cannot see any of these: the benchmark's own
             // run-to-run spread is wider than all four added together.
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  render thread per frame over {0} frames: prune {9:0.0}us avg / {10:0.0}us max | " +
                 "schedule {1:0.0}/{2:0.0} | " +
                 "far distance {3:0.0}/{4:0.0} | readiness shadow {11:0.0}/{12:0.0} | "
@@ -2722,7 +2722,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 renderer.PruneCost.AvgUs, renderer.PruneCost.MaxUs,
                 renderer.ReadinessCost.AvgUs, renderer.ReadinessCost.MaxUs);
 
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  render p95/p99/max us: prune {0:0}/{1:0}/{2:0} | schedule {3:0}/{4:0}/{5:0} | "
                 + "upload {6:0}/{7:0}/{8:0} | evict {9:0}/{10:0}/{11:0} | seasonal {12:0}/{13:0}/{14:0} | "
                 + "far {15:0}/{16:0}/{17:0} | readiness {24:0}/{25:0}/{26:0} | "
@@ -2740,13 +2740,13 @@ public partial class VintageHorizonsModSystem : ModSystem
             // The one line that can see the reported micro-hitches at all. Everything
             // above it measures our own phases; this measures the frame the player
             // actually experiences, and how much of it was us.
-            Mod.Logger.Notification("  frame timeline: {0}", renderer.FrameTimeline.Describe());
+            Mod.Logger.Detail("  frame timeline: {0}", renderer.FrameTimeline.Describe());
 
             // How tall sections actually are, and what that already buys. The distribution
             // is the evidence Phase 4 of the GPU plan has to be argued from: a pyramid can
             // only reject a section that does not span the world, and until this line
             // nobody knew whether an ordinary section does.
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  section heights: {0} | vertical cull: {1} section-draws skipped this interval "
                 + "that a full-height box would have kept, worst frame {2}",
                 renderer.SectionHeights.Describe(renderer.WorldHeight),
@@ -2759,7 +2759,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             // nodes are what stopped being visited, the meshes are what stopped being
             // considered. Zero here with a healthy count above means the aggregate is
             // correct and simply never tight enough to reject, which is a real answer.
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  subtree cull: {0} nodes rejected this interval that a full-height box "
                 + "would have traversed, holding {1} resident meshes, worst frame {2} | "
                 + "{3} nodes carry an aggregate",
@@ -2773,14 +2773,14 @@ public partial class VintageHorizonsModSystem : ModSystem
             // the line that says whether a playtest was testing the thing it was meant to.
             // Unconditional: the case worth catching is the switch being on while nothing
             // ran, and a line that only appears when culling works cannot show that.
-            Mod.Logger.Notification("  cull: {0}", renderer.DescribeGpuCull());
+            Mod.Logger.Detail("  cull: {0}", renderer.DescribeGpuCull());
 
             // The pyramid's own cost, apart from everything else. Phase 4 lives or dies on
             // whether the GPU figure here is smaller than the drawing a depth test could
             // remove, and CPU time cannot see it because none of the work is on the CPU.
             if (renderer.HzbCost.Calls > 0)
             {
-                Mod.Logger.Notification(
+                Mod.Logger.Detail(
                     "  hzb: {0} | cpu {1:0.0}us avg / {2:0.0}us max, p95 {3:0}/p99 {4:0} | "
                     + "gpu {5:0.0}us avg / {6:0.0}us max over {7} timed builds | "
                     + "mid-frame gpu {8:0.0}us avg / {9:0.0}us max over {10} builds | "
@@ -2800,11 +2800,11 @@ public partial class VintageHorizonsModSystem : ModSystem
                 // blocks with 32,000 and cannot show that either way.
                 string byDistance = renderer.DescribeDepthPyramidByDistance();
                 if (byDistance.Length > 0)
-                    Mod.Logger.Notification("  hzb hidden by distance: {0}", byDistance);
+                    Mod.Logger.Detail("  hzb hidden by distance: {0}", byDistance);
 
                 string subdivision = renderer.DescribeDepthPyramidSubdivision();
                 if (subdivision.Length > 0)
-                    Mod.Logger.Notification("  hzb headroom: {0}", subdivision);
+                    Mod.Logger.Detail("  hzb headroom: {0}", subdivision);
 
                 // The correctness gate. The left-hand figure must be zero: it counts
                 // sections the pyramid called hidden that a query had actually seen pixels
@@ -2822,20 +2822,20 @@ public partial class VintageHorizonsModSystem : ModSystem
                     }
                     else
                     {
-                        Mod.Logger.Notification(line, renderer.HzbVerdictsChecked,
+                        Mod.Logger.Detail(line, renderer.HzbVerdictsChecked,
                             renderer.HzbHiddenButQuerySawIt, renderer.HzbMissedWhatQueryHid);
                     }
                 }
             }
 
-            Mod.Logger.Notification("  vanilla readiness: {0}", renderer.DescribeReadiness());
+            Mod.Logger.Detail("  vanilla readiness: {0}", renderer.DescribeReadiness());
 
             // Why a coarser parent is covering ground its children could cover. Each cause
             // wants a different fix, so they are reported apart rather than as one number.
             if (renderer.CoarseWaitingLoad + renderer.CoarseWaitingMesh
                 + renderer.CoarseWaitingSchedule + renderer.CoarseWaitingOther > 0)
             {
-                Mod.Logger.Notification(
+                Mod.Logger.Detail(
                     "  coarse cover waits: {0} on storage, {1} on a mesh worker, {2} on a schedule slot, "
                     + "{3} with nothing pending | backlog {4} render-dirty, {5} meshes queued, {6} loads in flight",
                     renderer.CoarseWaitingLoad, renderer.CoarseWaitingMesh,
@@ -2844,7 +2844,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                     pipeline.World.LoadsInFlight.Count);
             }
 
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  render interval: {0} projection resets, {1:0.00} MiB uploaded; phase hitches >=25/50/100ms: {2}/{3}/{4}",
                 renderer.ProjectionResetCount, renderer.MeshUploadBytes / (1024.0 * 1024.0),
                 renderer.PruneCost.Over25Ms + renderer.ScheduleCost.Over25Ms + renderer.UploadCost.Over25Ms
@@ -2857,7 +2857,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                     + renderer.EvictCost.Over100Ms + renderer.SeasonalCost.Over100Ms + renderer.FarDistanceCost.Over100Ms
                     + renderer.ReadinessCost.Over100Ms + renderer.WalkCost.Over100Ms + renderer.DrawCost.Over100Ms);
 
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  render budgets: snapshots {0} items/{1:0.00} MiB, {2} queued/{3:0.00} MiB, oldest {4}ms | "
                 + "uploads {5} items/{6:0.00} MiB, {7} queued/{8:0.00} MiB, oldest {9}ms | "
                 + "{10} stale results rejected",
@@ -2867,12 +2867,12 @@ public partial class VintageHorizonsModSystem : ModSystem
                 worker.PendingMeshResults, worker.PendingMeshResultBytes / (1024.0 * 1024.0),
                 worker.OldestMeshResultAgeMs, renderer.StaleMeshResultsRejected);
 
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  render gpu calls p95/p99/max us: upload {0:0}/{1:0}/{2:0} | dispose {3:0}/{4:0}/{5:0}",
                 renderer.GlUploadCost.P95Us, renderer.GlUploadCost.P99Us, renderer.GlUploadCost.MaxUs,
                 renderer.MeshDisposeCost.P95Us, renderer.MeshDisposeCost.P99Us, renderer.MeshDisposeCost.MaxUs);
 
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  render draw interval: opaque {0} calls, {1} vertices/{2} indices | "
                 + "water {3} calls, {4} vertices/{5} indices | live geometry {6:0.00} MiB, "
                 + "opaque {7}/{8}, water {9}/{10}",
@@ -2885,13 +2885,13 @@ public partial class VintageHorizonsModSystem : ModSystem
             string? arena = renderer.DescribeGpuArena();
             if (arena != null)
             {
-                Mod.Logger.Notification("  gpu arena shadow: {0}", arena);
-                Mod.Logger.Notification("  packed opaque: {0}", renderer.DescribePackedDraw());
-                Mod.Logger.Notification("  packed clusters: {0}", renderer.DescribeClusterDraw());
+                Mod.Logger.Detail("  gpu arena shadow: {0}", arena);
+                Mod.Logger.Detail("  packed opaque: {0}", renderer.DescribePackedDraw());
+                Mod.Logger.Detail("  packed clusters: {0}", renderer.DescribeClusterDraw());
                 // Phase 8 may emit several commands per section, so both counts are named.
                 // Coverage stays section-based: a missing clustered section falls back as
                 // one complete legacy draw rather than being flattered by command count.
-                Mod.Logger.Notification(
+                Mod.Logger.Detail(
                     "  gpu indirect shadow: last frame {0} commands for {1} of {2} drawn "
                     + "sections would be {3} multi-draw batches, coverage {4:P0}, {5} spans stale",
                     renderer.ShadowIndirectCommands,
@@ -2908,7 +2908,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 LodPhaseCost splitNearGpu = renderer.GpuSplitNearCost;
                 LodPhaseCost splitFarGpu = renderer.GpuSplitFarCost;
                 LodPhaseCost waterGpu = renderer.GpuWaterCost;
-                Mod.Logger.Notification(
+                Mod.Logger.Detail(
                     "  delayed GPU pass p95/p99/max us: opaque {0:0}/{1:0}/{2:0} over {3} samples | "
                     + "split near {4:0}/{5:0}/{6:0} over {7} | split far {8:0}/{9:0}/{10:0} over {11} | "
                     + "water {12:0}/{13:0}/{14:0} over {15}; {16} pending, {17} ring-full skips, "
@@ -2923,7 +2923,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 LodPhaseCost ordinaryCullGpu = renderer.GpuOrdinaryCullCost;
                 LodPhaseCost splitNearCullGpu = renderer.GpuSplitNearCullCost;
                 LodPhaseCost splitFarCullGpu = renderer.GpuSplitFarCullCost;
-                Mod.Logger.Notification(
+                Mod.Logger.Detail(
                     "  delayed GPU cull p95/p99/max us: ordinary {0:0}/{1:0}/{2:0} over {3} samples | "
                     + "split near {4:0}/{5:0}/{6:0} over {7} | "
                     + "split far {8:0}/{9:0}/{10:0} over {11}",
@@ -2936,7 +2936,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
                 LodPhaseCost taaGpu = renderer.GpuTaaCost;
                 LodPhaseCost taaCopyGpu = renderer.GpuTaaCopyCost;
-                Mod.Logger.Notification(
+                Mod.Logger.Detail(
                     "  delayed GPU distant anti-aliasing p95/p99/max us: resolve {0:0}/{1:0}/{2:0} "
                     + "over {3} samples | depth copy {4:0}/{5:0}/{6:0} over {7}",
                     taaGpu.P95Us, taaGpu.P99Us, taaGpu.MaxUs, taaGpu.Calls,
@@ -2950,7 +2950,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             // nothing inside a loop that multiplies and compares can account for. What a
             // maximum records is whatever interrupted the frame, charged to whichever
             // phase was running. These counters say how much of that was collection.
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  gc since last report: {0} gen0, {1} gen1, {2} gen2, {3} MB managed",
                 GC.CollectionCount(0) - gen0AtLastReport,
                 GC.CollectionCount(1) - gen1AtLastReport,
@@ -2964,7 +2964,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         if (totalTickCost.Calls > 0)
         {
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  game tick p95/p99/max us over {0} ticks: total {1:0}/{2:0}/{3:0} | assist {4:0}/{5:0}/{6:0} | "
                 + "local offers {7:0}/{8:0}/{9:0} | pipeline {10:0}/{11:0}/{12:0} | resident evict {13:0}/{14:0}/{15:0}; "
                 + "total hitches >=25/50/100ms: {16}/{17}/{18}",
@@ -2976,7 +2976,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 residentEvictTickCost.P95Us, residentEvictTickCost.P99Us, residentEvictTickCost.MaxUs,
                 totalTickCost.Over25Ms, totalTickCost.Over50Ms, totalTickCost.Over100Ms);
 
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  pipeline p95/p99/max us: foreign install {0:0}/{1:0}/{2:0} | load install {3:0}/{4:0}/{5:0} | "
                 + "capture schedule {6:0}/{7:0}/{8:0} | capture apply {9:0}/{10:0}/{11:0} | "
                 + "mip apply {12:0}/{13:0}/{14:0} | mip schedule {15:0}/{16:0}/{17:0} | "
@@ -2989,13 +2989,13 @@ public partial class VintageHorizonsModSystem : ModSystem
                 pipeline.MipScheduleCost.P95Us, pipeline.MipScheduleCost.P99Us, pipeline.MipScheduleCost.MaxUs,
                 pipeline.SaveSnapshotCost.P95Us, pipeline.SaveSnapshotCost.P99Us, pipeline.SaveSnapshotCost.MaxUs);
 
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  capture publish budget: {0} items/{1:0.00} MiB, {2} queued/{3:0.00} MiB, oldest {4}ms",
                 pipeline.CaptureApplyItems, pipeline.CaptureApplyBytes / (1024.0 * 1024.0),
                 pipeline.PendingCaptureResults, pipeline.PendingCaptureResultBytes / (1024.0 * 1024.0),
                 pipeline.OldestCaptureResultAgeMs);
 
-            Mod.Logger.Notification(
+            Mod.Logger.Detail(
                 "  install budgets: assist input {0} items/{1:0.00} MiB, {2} queued/{3:0.00} MiB, oldest {4}ms | "
                 + "local input {5} items/{6:0.00} MiB | foreign publish {7} items/{8:0.00} MiB, "
                 + "{9} queued/{10:0.00} MiB, oldest {11}ms | background {12} items/{13:0.00} MiB, "
@@ -3496,7 +3496,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             .HandleWith(args =>
             {
                 int blocks = (int)args[0];
-                renderer.FarViewDistanceCap = blocks <= 0 ? 0 : GameMath.Clamp(blocks, 1024, 262144);
+                renderer.FarViewDistanceCap = blocks <= 0 ? 0
+                    : GameMath.Clamp(blocks, LodThresholdScaleLayout.MinDrawDistance, 262144);
                 SaveConfig();
                 return TextCommandResult.Success(renderer.FarViewDistanceCap > 0
                     ? $"[Landscapes] render distance capped at {renderer.FarViewDistanceCap} (saved)"

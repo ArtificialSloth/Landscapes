@@ -296,11 +296,11 @@ public sealed class LodHitchRecorder : IRenderer
             Disarm();
             enabled = false;
             logger.Notification("[Landscapes] Hitch recorder off.");
-            return "Hitch recorder off. The partial minute was written to the client log.";
+            return "Hitch recorder off. The partial minute was written to client-main.log and client-debug.log.";
         }
         enabled = true;
         logger.Notification("[Landscapes] Hitch recorder on; it starts with the next frame.");
-        return "Hitch recorder on. It writes a report to the client log once a minute.";
+        return "Hitch recorder on. Once a minute it writes a summary to client-main.log and the detail to client-debug.log.";
     }
 
     /// <summary>Writes the current partial minute now, without waiting for the minute to end.</summary>
@@ -403,7 +403,7 @@ public sealed class LodHitchRecorder : IRenderer
         if (!legendLogged)
         {
             legendLogged = true;
-            logger.Notification(
+            logger.Detail(
                 "[Landscapes] Hitch recorder on. Once a minute this log gets the frame-time "
                 + "lows and, for the slowest 1% of frames, what was unusually slow in them. Names are "
                 + "the game's own frame-profiler steps plus this mod's: 'vh:*' is this mod's drawing "
@@ -802,9 +802,14 @@ public sealed class LodHitchRecorder : IRenderer
         long start = LodHitchActivity.StartJob();
         try
         {
+            // The minute's summary line stays in the main log; what explains it goes with the
+            // other diagnostics (LodDetailLog).
+            bool summary = true;
             foreach (string line in ReportLines(closed))
             {
-                logger.Notification("[Landscapes]{0}", line);
+                if (summary) logger.Notification("[Landscapes]{0}", line);
+                else logger.Detail("[Landscapes]{0}", line);
+                summary = false;
             }
         }
         catch (Exception e)

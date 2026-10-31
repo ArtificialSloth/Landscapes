@@ -258,15 +258,13 @@ public class LodPipeline
     public int CaptureErrors => Volatile.Read(ref Worker.CaptureErrors);
     public int DirtySections => World.SaveDirty.Count;
     /// <summary>
-    /// How long the longest-standing dirty section has been *continuously* dirty.
+    /// How long the longest-waiting dirty section has gone without a successful write.
     ///
-    /// Not a write backlog, and it reads like one. A section stays in the dirty set while it
-    /// keeps changing - `CompleteSave` clears it only when the completed revision is still
-    /// the newest - and its age is measured from when it first became dirty, so a section
-    /// that is modified again while its save is in flight never resets. During a sweep the
-    /// coarse parent sections are re-dirtied continuously by mip propagation, so this climbs
-    /// for as long as the sweep runs and says nothing about storage being behind.
-    /// <see cref="StorageBacklog"/> is the number that does.
+    /// A section stays in the dirty set while it keeps changing - `CompleteSave` clears it
+    /// only when the completed revision is still the newest - but each write that lands
+    /// restarts its clock, so a coarse parent re-dirtied through a whole sweep stays young
+    /// while the writes keep up. This climbs when writes fail or starve, which is what the
+    /// generation gate on it is for. <see cref="StorageBacklog"/> is the queue's own depth.
     /// </summary>
     public long OldestDirtyAgeMs => World.SaveDirty.OldestAgeMilliseconds;
 
@@ -618,7 +616,7 @@ public class LodPipeline
         logger.Notification("LOD cache: {0} ({1} persisted mip obligations)",
             dbPath, World.MipDirty.Count);
         if (mergeRecords > 0)
-            logger.Notification("LOD cache: {0} server-cache rows already merged into this cache",
+            logger.Detail("LOD cache: {0} server-cache rows already merged into this cache",
                 mergeRecords);
     }
 

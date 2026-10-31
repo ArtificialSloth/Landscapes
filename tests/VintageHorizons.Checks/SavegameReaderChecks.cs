@@ -23,6 +23,7 @@ public static class SavegameReaderChecks
         {
             ReadsASavegameShapedFile(c, Path.Combine(dir, "world.vcdbs"));
             TheGameCanSaveBetweenBatches(c, Path.Combine(dir, "batches.vcdbs"));
+            ClosingWaitsForTheRowInHand(c, Path.Combine(dir, "closing.vcdbs"));
             RefusesAnUnfamiliarSchema(c, Path.Combine(dir, "strange.vcdbs"));
             RefusesAMissingFile(c, Path.Combine(dir, "absent.vcdbs"));
             TracksTheChangeCounter(c, Path.Combine(dir, "counter.vcdbs"));
@@ -134,6 +135,49 @@ public static class SavegameReaderChecks
         c.Eq(5, seen, "and stops at the row it was asked to");
         c.Throws<ArgumentException>(() => reader.ReadTable("gamedata", "", _ => { }),
             "only the two terrain tables can be read this way");
+    }
+
+    /// <summary>
+    /// Shutdown closes the reader from another thread while the index thread can be mid-read, and
+    /// one SQLite connection is not safe to close under a running statement. Closing has to wait
+    /// for the row in hand, and the file must then open the way the game's world list opens it:
+    /// any handle left behind reads as "this world is in use".
+    /// </summary>
+    static void ClosingWaitsForTheRowInHand(Check c, string path)
+    {
+        CreateSavegame(path, chunkRows: 40, mapChunkRows: 12);
+        var logger = new CaptureLogger();
+        var reader = new LodSavegameReader(logger, path);
+        c.True(reader.Open(), "the closing fixture opens");
+
+        using var inRow = new ManualResetEventSlim(false);
+        int rowsFinished = 0, stopping = 0;
+        var read = new Thread(() => reader.ReadTable("chunk", ", data", row =>
+        {
+            inRow.Set();
+            Thread.Sleep(150);
+            row.GetFieldValue<byte[]>(1);
+            Interlocked.Increment(ref rowsFinished);
+        }, () => Volatile.Read(ref stopping) != 0));
+        read.Start();
+
+        c.True(inRow.Wait(5000), "the read reaches its first row");
+        Volatile.Write(ref stopping, 1);
+        reader.Dispose();
+        c.Eq(1, Volatile.Read(ref rowsFinished), "closing waited for the row being read");
+        c.True(read.Join(5000), "the read then stops");
+        c.False(logger.Contains("Savegame read path off"), "and it stopped without a failed statement");
+
+        bool opened = false;
+        try
+        {
+            using var exclusive = File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            opened = true;
+        }
+        catch (IOException)
+        {
+        }
+        c.True(opened, "nothing is left holding the savegame open");
     }
 
     /// <summary>One write the way the game makes one, with a one-second patience. True if it committed.</summary>

@@ -321,9 +321,9 @@ public sealed class LodSavegameIndex : IDisposable
     public void Dispose()
     {
         Stop();
-        // Never join: a whole-world read can be mid-batch, and shutdown must not wait for
-        // it. The thread is background, checks ShouldStop between rows, and owns nothing
-        // the rest of the mod can see until it publishes.
+        // Never join: the read has no deadline, and shutdown must not wait for it. The thread
+        // is background, checks ShouldStop between rows, and owns nothing the rest of the mod
+        // can see until it publishes. Closing waits only for the row in hand.
         reader.Dispose();
     }
 }

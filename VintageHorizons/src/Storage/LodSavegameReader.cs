@@ -231,14 +231,6 @@ public sealed class LodSavegameReader : IDisposable
         if (table is not (ChunkTable or MapChunkTable) || columns is not ("" or ", data"))
             throw new ArgumentException($"no paged read of '{table}' with '{columns}'");
 
-        SqliteConnection? live;
-        lock (gate)
-        {
-            if (!Available) return false;
-            live = connection;
-        }
-        if (live == null) return false;
-
         try
         {
             // Positions are never negative (LodSavegameScan's layout tops out at bit 62), so
@@ -248,8 +240,12 @@ public sealed class LodSavegameReader : IDisposable
             {
                 int read = 0;
                 bool more = false;
-                using (var command = live.CreateCommand())
+                // Dispose comes from another thread at shutdown, and a connection must not be
+                // closed under a running statement. It waits at most for this batch.
+                lock (gate)
                 {
+                    if (!Available || connection is not { } live) return false;
+                    using var command = live.CreateCommand();
                     command.CommandText =
                         $"SELECT position{columns} FROM {table} WHERE position > $after ORDER BY position;";
                     command.CommandTimeout = BusyTimeoutSeconds;
@@ -298,41 +294,37 @@ public sealed class LodSavegameReader : IDisposable
     public bool Read(string sql, Action<SqliteDataReader> row, Func<bool>? shouldStop = null,
         IReadOnlyList<(string Name, long Value)>? parameters = null)
     {
-        SqliteConnection? live;
-        lock (gate)
-        {
-            if (!Available) return false;
-            live = connection;
-        }
-        if (live == null) return false;
-
         try
         {
-            using var command = live.CreateCommand();
-            command.CommandText = sql;
-            command.CommandTimeout = BusyTimeoutSeconds;
-            if (parameters != null)
+            lock (gate)
             {
-                foreach ((string name, long value) in parameters)
+                if (!Available || connection is not { } live) return false;
+                using var command = live.CreateCommand();
+                command.CommandText = sql;
+                command.CommandTimeout = BusyTimeoutSeconds;
+                if (parameters != null)
                 {
-                    command.Parameters.AddWithValue(name, value);
+                    foreach ((string name, long value) in parameters)
+                    {
+                        command.Parameters.AddWithValue(name, value);
+                    }
                 }
-            }
 
-            using SqliteDataReader reader = command.ExecuteReader();
-            var budget = new LodWorkBudget(BatchMilliseconds);
-            while (reader.Read())
-            {
-                if (shouldStop?.Invoke() == true) return false;
-                row(reader);
+                using SqliteDataReader reader = command.ExecuteReader();
+                var budget = new LodWorkBudget(BatchMilliseconds);
+                while (reader.Read())
+                {
+                    if (shouldStop?.Invoke() == true) return false;
+                    row(reader);
 
-                if (!budget.Expired) continue;
-                // Hand the file back before taking another batch. Thread.Sleep rather than
-                // a spin: the point is to be absent, not to be ready.
-                Thread.Sleep(YieldMilliseconds);
-                budget = new LodWorkBudget(BatchMilliseconds);
+                    if (!budget.Expired) continue;
+                    // Hand the file back before taking another batch. Thread.Sleep rather than
+                    // a spin: the point is to be absent, not to be ready.
+                    Thread.Sleep(YieldMilliseconds);
+                    budget = new LodWorkBudget(BatchMilliseconds);
+                }
+                return true;
             }
-            return true;
         }
         catch (Exception e)
         {
@@ -390,10 +382,13 @@ public sealed class LodSavegameReader : IDisposable
 
     void Disable(string reason)
     {
-        State = EnumSavegameReadState.Disabled;
-        DisabledReason = reason;
-        try { connection?.Dispose(); } catch { /* already gone; nothing to salvage */ }
-        connection = null;
+        lock (gate)
+        {
+            State = EnumSavegameReadState.Disabled;
+            DisabledReason = reason;
+            try { connection?.Dispose(); } catch { /* already gone; nothing to salvage */ }
+            connection = null;
+        }
         logger.Notification(
             "[Landscapes] Savegame read path off for this session: {0}. This is an "
             + "accelerator, so the sweep continues exactly as it did without it.", reason);

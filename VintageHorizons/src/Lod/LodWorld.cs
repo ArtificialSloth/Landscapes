@@ -6,6 +6,8 @@ namespace VintageHorizons;
 /// Exact persistence obligations in first-dirtied order. Re-dirtying a key advances its
 /// revision in <see cref="LodWorld"/> but deliberately leaves its original queue position
 /// and age intact, so a continuous stream of new terrain cannot overtake old unsaved rows.
+/// Only a successful write of an older revision moves a key on (<see cref="Saved"/>), so an
+/// age is how long a key has gone without reaching the disk.
 /// </summary>
 public sealed class LodSaveDirtySet : IEnumerable<long>
 {
@@ -40,6 +42,19 @@ public sealed class LodSaveDirtySet : IEnumerable<long>
     }
 
     public bool Contains(long key) => nodes.ContainsKey(key);
+
+    /// <summary>
+    /// A write of this key landed, but the key has changed since and stays dirty. It goes to
+    /// the back with a fresh clock: nothing of it older than that write is at risk now, and
+    /// everything else has waited longer. Without this a section that keeps changing aged for
+    /// as long as it kept changing, and stopped generation behind a gate meant for a stuck disk
+    /// while every save was succeeding (G238, crystalkiori).
+    /// </summary>
+    public void Saved(long key)
+    {
+        if (!Remove(key)) return;
+        Add(key);
+    }
 
     public bool Remove(long key)
     {
@@ -681,7 +696,8 @@ public class LodWorld
 
     /// <summary>
     /// Apply one storage acknowledgement. Success clears dirty state only when it names
-    /// the newest row revision; a failure or stale success leaves the obligation intact.
+    /// the newest row revision; a failure or stale success leaves the obligation intact,
+    /// and a stale success restarts its age (<see cref="LodSaveDirtySet.Saved"/>).
     /// </summary>
     /// <returns>True only when the newest revision became durable.</returns>
     public bool CompleteSave(long key, long revision, bool succeeded)
@@ -689,7 +705,12 @@ public class LodWorld
         if (queuedSaveRevisions.GetValueOrDefault(key) == revision)
             queuedSaveRevisions.Remove(key);
 
-        if (!succeeded || PersistenceRevision(key) != revision) return false;
+        if (!succeeded) return false;
+        if (PersistenceRevision(key) != revision)
+        {
+            SaveDirty.Saved(key);
+            return false;
+        }
         SaveDirty.Remove(key);
         return true;
     }

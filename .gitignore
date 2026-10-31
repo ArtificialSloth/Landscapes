@@ -12,6 +12,9 @@ CLAUDE.local.md
 CLAUDE.md
 AGENTS.md
 
+# Player reports from the ModDB comments, kept private: they name players and quote their reports.
+dev/PLAYER_REPORTS.md
+
 # Python bytecode from the repository's own tools
 __pycache__/
 *.pyc

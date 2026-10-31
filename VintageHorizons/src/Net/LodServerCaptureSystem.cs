@@ -92,19 +92,17 @@ public class LodServerCaptureSystem : ModSystem
         pipeline?.CaptureErrors ?? 0);
 
     /// <summary>
-    /// The oldest-dirty age used to be printed beside the dirty count as though the two
-    /// described one backlog, and it read as an alarm: the owner's 2026-09-20 session
-    /// reported 307.6s beside 52 dirty and 7.38 saves/s, figures that cannot describe the
-    /// same queue. They do not. A section stays dirty while it keeps changing, so during a
-    /// sweep the coarse parents age continuously while the writes themselves keep up. The
-    /// storage queue depth is printed next to it so the two can be told apart.
+    /// The age is how long the longest-waiting section has gone without a write landing, which
+    /// generation stops for at <see cref="LodServerConfig.WorldGenOldestDirtySeconds"/>. Until
+    /// 0.5.2 it never reset while a section kept changing: the owner's 2026-09-20 session
+    /// reported 307.6s beside 52 dirty and 7.38 saves/s, figures that cannot describe one queue
+    /// (G238). The storage queue depth is printed next to it so the two can be told apart.
     /// </summary>
     internal static string FormatCacheWorkStatus(
         int dirtySections, long oldestDirtyAgeMs, long storageBacklog, double savesPerSecond,
         long sectionsSaved, int captureBacklog, long captureDropsUnloaded,
         int captureErrors) => string.Format(System.Globalization.CultureInfo.InvariantCulture,
-            "[Landscapes] Cache work: {0} dirty (oldest has been changing {1:0.0}s, "
-            + "which is not a write backlog), storage queue {2}, "
+            "[Landscapes] Cache work: {0} dirty (oldest unsaved {1:0.0}s), storage queue {2}, "
             + "{3:0.00} saves/s ({4} saved); capture backlog {5}, "
             + "unloaded-before-capture drops {6}, capture errors {7}.",
             dirtySections, oldestDirtyAgeMs / 1000.0, storageBacklog, savesPerSecond,
@@ -1423,7 +1421,7 @@ public class LodServerCaptureSystem : ModSystem
         if (HasActiveCacheWork() || BackgroundSweepWorkAdvanced())
         {
             if (now < nextActiveWorkStatusLogMs) return;
-            Mod.Logger.Notification("{0}", CacheWorkStatusLine);
+            Mod.Logger.Detail("{0}", CacheWorkStatusLine);
             // The sweep's own numbers belong here rather than behind the allocation
             // telemetry switch. The owner cannot copy text out of game chat, so anything
             // needed to answer "what was the mod doing while that happened?" has to reach
@@ -1433,7 +1431,7 @@ public class LodServerCaptureSystem : ModSystem
             // Including after the sweep finishes, while its audit or snow refresh are still
             // moving: those two only begin at that moment, and printing nothing from there on
             // is how both ran unobserved on the owner's world.
-            if (sweep != null) Mod.Logger.Notification("  {0}", sweep.Status);
+            if (sweep != null) Mod.Logger.Detail("  {0}", sweep.Status);
             lastBackgroundSweepSignature = sweep?.BackgroundWorkSignature ?? 0;
             nextActiveWorkStatusLogMs = now + ActiveWorkStatusLogIntervalMs;
         }

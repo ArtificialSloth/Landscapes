@@ -283,7 +283,7 @@ internal sealed class LodSilhouetteClient : IDisposable
                 if (requestSent)
                 {
                     reachRequestDirty = false;
-                    logger.Notification("Horizon silhouettes: asked the server for a {0:N0}-block reach.",
+                    logger.Detail("Horizon silhouettes: asked the server for a {0:N0}-block reach.",
                         ReachBlocks);
                 }
             }
@@ -339,7 +339,7 @@ internal sealed class LodSilhouetteClient : IDisposable
         {
             storeIndexTaken = true;
             (storedKeys ??= new HashSet<long>()).UnionWith(keys);
-            logger.Notification("Horizon silhouettes: the client tile store holds {0} tiles from "
+            logger.Detail("Horizon silhouettes: the client tile store holds {0} tiles from "
                 + "earlier sessions ({1}).", keys.Count, System.IO.Path.GetFileName(active.Path));
         }
 

@@ -104,6 +104,8 @@ internal static class LodHeightAccelerators
             if (system == null || method == null || method.ReturnType != typeof(int)) return null;
             var height = (System.Func<int, int, int>)method.CreateDelegate(typeof(System.Func<int, int, int>), system);
             bool viaWatersheds = system.GetType().GetProperty("WatershedsLoaded")?.GetValue(system) is true;
+            if (!viaWatersheds && !EngineMapGate.Install(
+                sapi.ModLoader.GetModSystem(EngineMapGate.GenMapsTypeName)?.GetType(), sapi.Logger)) return null;
             return new AlgernonsTerrainSampler(system, height, system.GetType().GetProperty("GenTerra"),
                 "Algernon's Terrain Sampler " + Version(sapi, "algernonsterrainsampler")
                 + (viaWatersheds ? " (answering through Watersheds)" : ""));
@@ -114,7 +116,11 @@ internal static class LodHeightAccelerators
             if (generator != null && generator.GetValue(system) == null)
                 throw new InvalidOperationException("its generator has not started yet");
             var heights = new int[positions.Count];
-            for (int i = 0; i < positions.Count; i++) heights[i] = height(positions[i].X, positions[i].Z);
+            for (int i = 0; i < positions.Count; i++)
+            {
+                // Point by point, so the chunk thread waits for at most one answer (EngineMapGate).
+                lock (EngineMapGate.MapLayers) heights[i] = height(positions[i].X, positions[i].Z);
+            }
             return heights;
         }
     }

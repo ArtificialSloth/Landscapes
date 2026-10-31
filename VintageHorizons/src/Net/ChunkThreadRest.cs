@@ -157,7 +157,7 @@ public static class ChunkThreadRest
                     "Could not remove the chunk thread rest cleanly: {0}", e.Message);
             }
             Volatile.Write(ref patched, null);
-            logger?.Notification("Chunk thread over this session: {0}",
+            logger?.Detail("Chunk thread over this session: {0}",
                 DescribeTotals(Read()));
         }
     }

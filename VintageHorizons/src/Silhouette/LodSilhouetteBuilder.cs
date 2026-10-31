@@ -8,6 +8,16 @@ using VintageHorizons.Net;
 
 namespace VintageHorizons.Silhouette;
 
+/// <summary>What silhouette previews are waiting for on a held tick.</summary>
+internal enum EnumSilhouetteYield
+{
+    None,
+    GenerationJob,
+    EngineChunks,
+    ServerLoad,
+    CacheBacklog,
+}
+
 /// <summary>
 /// Server half of horizon silhouettes (PLAN_HORIZON_SILHOUETTES_AND_FRONTIER P1-P3).
 ///
@@ -184,7 +194,8 @@ internal sealed class LodSilhouetteBuilder
     readonly HashSet<long> dirtyTiles = new();
     readonly List<long> evictable = new();
 
-    public int Probed, Existing, Peeked, Landed, Empty, TimedOut, Reissued, YieldTicks, TilesSent;
+    public int Probed, Existing, Peeked, Landed, Empty, TimedOut, Reissued, TilesSent;
+    readonly int[] yieldTicks = new int[Enum.GetValues<EnumSilhouetteYield>().Length];
     public int ManifestsSent, TilesRequested, TilesRefused, TilesRetryable;
     public int AcceleratorTilesIssued, AcceleratorTilesLanded, AcceleratorCells, AcceleratorFailures,
         CoastPreviews;
@@ -454,7 +465,7 @@ internal sealed class LodSilhouetteBuilder
         if (store == null || storedBeforeSession != null || !store.TryTakeIndex(out HashSet<long> keys))
             return;
         storedBeforeSession = keys;
-        logger.Notification("Horizon silhouettes: the tile store holds {0} tiles from earlier sessions ({1}).",
+        logger.Detail("Horizon silhouettes: the tile store holds {0} tiles from earlier sessions ({1}).",
             keys.Count, System.IO.Path.GetFileName(store.Path));
         foreach (Demand demand in demands.Values) WantStoredTiles(demand);
     }
@@ -803,10 +814,11 @@ internal sealed class LodSilhouetteBuilder
     {
         // Until the store has said what it holds, any preview might repeat one already paid for.
         if (store != null && storedBeforeSession == null) return;
-        if (MustYield(generationAuthority(), generationGate(),
-                sapi.WorldManager.CurrentGeneratingChunkCount))
+        EnumSilhouetteYield hold = YieldReason(generationAuthority(), generationGate(),
+            sapi.WorldManager.CurrentGeneratingChunkCount);
+        if (hold != EnumSilhouetteYield.None)
         {
-            YieldTicks++;
+            yieldTicks[(int)hold]++;
             return;
         }
 
@@ -845,9 +857,23 @@ internal sealed class LodSilhouetteBuilder
         }
     }
 
-    internal static bool MustYield(EnumWorldGenAuthority authority, EnumWorldGenGate gate,
-        int generatingChunks) => authority != EnumWorldGenAuthority.None
-        || gate != EnumWorldGenGate.None || generatingChunks >= YieldGeneratingChunks;
+    /// <summary>
+    /// Why previews wait this tick, so a log can say what held them rather than one total. The
+    /// game's own chunks come before our gate: both can be true, and they are what a player feels.
+    /// </summary>
+    internal static EnumSilhouetteYield YieldReason(EnumWorldGenAuthority authority,
+        EnumWorldGenGate gate, int generatingChunks)
+    {
+        if (authority != EnumWorldGenAuthority.None) return EnumSilhouetteYield.GenerationJob;
+        if (generatingChunks >= YieldGeneratingChunks || gate == EnumWorldGenGate.EngineQueue)
+            return EnumSilhouetteYield.EngineChunks;
+        return gate switch
+        {
+            EnumWorldGenGate.None => EnumSilhouetteYield.None,
+            EnumWorldGenGate.ServerOverload => EnumSilhouetteYield.ServerLoad,
+            _ => EnumSilhouetteYield.CacheBacklog,
+        };
+    }
 
     EnumProbeStep ProbeNext(Demand demand, bool previewsAvailable)
     {
@@ -1273,9 +1299,16 @@ internal sealed class LodSilhouetteBuilder
             "{0} player(s), {1} tiles in memory; heights from {2} loaded or previewed columns ({3} "
             + "matched their rain heights, like an old save's copy or bare ground); {4} lattice probes ({5} already hold terrain); previews {6} "
             + "issued, {7} landed, {8} without heights, {9} timed out, {10} in flight, {11} asked again "
-            + "after being lost; held {12} ticks for other generation; {13} tile messages sent ({14:0.0} KB)",
+            + "after being lost; held {12} ticks for a generation job, {13} for the game's own chunks, "
+            + "{14} for server load, {15} for the distant-terrain cache; "
+            + "{16} tile messages sent ({17:0.0} KB)",
             demands.Count, tiles.Count, CapturedColumns, RainColumns, Probed, Existing, Peeked, Landed,
-            Empty, TimedOut, peeksInFlight.Count, Reissued, YieldTicks, TilesSent, BytesSent / 1024.0);
+            Empty, TimedOut, peeksInFlight.Count, Reissued,
+            yieldTicks[(int)EnumSilhouetteYield.GenerationJob],
+            yieldTicks[(int)EnumSilhouetteYield.EngineChunks],
+            yieldTicks[(int)EnumSilhouetteYield.ServerLoad],
+            yieldTicks[(int)EnumSilhouetteYield.CacheBacklog],
+            TilesSent, BytesSent / 1024.0);
         text += string.Format(culture,
             "; delivery {0} manifests, {1} tile requests, {2} explicit refusals, {3} retryable",
             ManifestsSent, TilesRequested, TilesRefused, TilesRetryable);
@@ -1323,5 +1356,5 @@ internal sealed class LodSilhouetteBuilder
     }
 
     void LogStatus(string phase) =>
-        logger.Notification("Horizon silhouettes ({0}): {1}.", phase, Describe());
+        logger.Detail("Horizon silhouettes ({0}): {1}.", phase, Describe());
 }

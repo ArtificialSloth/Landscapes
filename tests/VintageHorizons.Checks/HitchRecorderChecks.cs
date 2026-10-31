@@ -176,7 +176,17 @@ public static class HitchRecorderChecks
             recorder.Feed(root, 0, 0);
             start += root.ElapsedTicks;
         }
+        int linesBefore = log.Lines.Count;
+        int debugBefore = log.DebugLines;
         recorder.WriteReport("check");
+
+        int reportLines = log.Lines.Count - linesBefore;
+        c.True(reportLines > 1, "the report has a summary and detail");
+        c.True(log.Lines[linesBefore].Contains("hitches", StringComparison.Ordinal),
+            "the line that stays in the main log is the minute's summary");
+        // A bench or check run keeps everything in the main log, where its scripts read it.
+        c.Eq(Environment.GetEnvironmentVariable("VINTAGEHORIZONS_STATS") == "1" ? 0 : reportLines - 1,
+            log.DebugLines - debugBefore, "everything after the summary goes to the debug log");
 
         c.True(log.Contains("slowest 1%"), "a run with hitches reports its slowest 1%");
         string? blamed = log.Lines.FirstOrDefault(l => l.Contains("blamed on", StringComparison.Ordinal));
