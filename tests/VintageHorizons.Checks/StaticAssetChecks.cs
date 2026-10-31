@@ -1667,6 +1667,10 @@ public static class StaticAssetChecks
             "that level can reach sharper than the distance warrants");
         c.False(fragment.Contains("texture(blockAtlas", StringComparison.Ordinal),
             "the atlas is never sampled with inferred derivatives");
+        c.True(fragment.Contains("1.0 - smoothstep(0.4, 0.667,", StringComparison.Ordinal),
+            "leaves past the band fade by size on screen, with smoothstep's edges in order");
+        c.True(renderer.Contains("prog.Uniform(\"blockTextureFar\"", StringComparison.Ordinal),
+            "the renderer uploads the far texture switch");
 
         foreach (string name in new[]
         {

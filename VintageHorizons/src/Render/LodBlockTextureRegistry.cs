@@ -69,8 +69,15 @@ public sealed class LodBlockTextureRegistry
     /// is the engine's block colour, which is the TOP's texture, so a log's sides wore bark's
     /// pattern at the cut end's colour - a redwood's rings average about twice as bright as its
     /// bark, and owner screenshots measured cached trunks 2.5 times as bright as vanilla's.
+    ///
+    /// The alpha of the three colour rows is <see cref="FarTextureFlag"/> for a block that keeps
+    /// its texture past the band. The vertex stage reads one of those rows anyway, so asking
+    /// costs nothing, and only the blocks that say yes pay a fetch per fragment out there.
     /// </summary>
     public const int RowsPerSlot = FloatsPerSlot / 4;
+
+    /// <summary>Colour-row alpha of a block that keeps its texture past the band: leaves.</summary>
+    public const float FarTextureFlag = 2f;
 
     /// <summary>
     /// Where a block's colour texture is, and what that texture averages to. Supplied by the
@@ -216,7 +223,8 @@ public sealed class LodBlockTextureRegistry
         table[at + 4] = red;
         table[at + 5] = green;
         table[at + 6] = blue;
-        table[at + 7] = 1f;
+        float colorAlpha = block.BlockMaterial == EnumBlockMaterial.Leaves ? FarTextureFlag : 1f;
+        table[at + 7] = colorAlpha;
         TextureAtlasPosition? overlay = resolved.Overlay;
         bool useOverlay = overlay != null && overlay.atlasNumber == atlasNumber;
         if (overlay != null)
@@ -244,8 +252,8 @@ public sealed class LodBlockTextureRegistry
 
         WriteWall(at + 16, at, resolved.WallX);
         WriteWall(at + 24, at, resolved.WallZ);
-        WriteWallColor(at + 32, resolved.WallX, stableColor);
-        WriteWallColor(at + 36, resolved.WallZ, stableColor);
+        WriteWallColor(at + 32, resolved.WallX, stableColor, colorAlpha);
+        WriteWallColor(at + 36, resolved.WallZ, stableColor, colorAlpha);
 
         slotByBlockId[block.BlockId] = slot;
         Version++;
@@ -286,13 +294,13 @@ public sealed class LodBlockTextureRegistry
     /// nothing different. Taken even when that texture sits on another atlas page and the
     /// wall keeps the top's pattern, because the colour is right whichever pattern it wears.
     /// </summary>
-    void WriteWallColor(int colorAt, FaceTexture? wall, int stableColor)
+    void WriteWallColor(int colorAt, FaceTexture? wall, int stableColor, float colorAlpha)
     {
         (float red, float green, float blue) = Channels(WallColor(wall, stableColor));
         table[colorAt + 0] = red;
         table[colorAt + 1] = green;
         table[colorAt + 2] = blue;
-        table[colorAt + 3] = 1f;
+        table[colorAt + 3] = colorAlpha;
     }
 
     static int WallColor(FaceTexture? wall, int blockColor) =>

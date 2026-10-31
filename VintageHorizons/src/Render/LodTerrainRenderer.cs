@@ -571,6 +571,9 @@ public partial class LodTerrainRenderer : IRenderer
     /// </summary>
     public bool BlockTexturesEnabled { get; set; } = true;
 
+    /// <summary>Whether leaves keep their texture past the band. Session only: `.dltexture leaves`.</summary>
+    public bool FarLeafTexturesEnabled { get; set; } = true;
+
     /// <summary>How much real texture shows at full band weight. 1 is all of it.</summary>
     public float BlockTextureStrength { get; set; } = 1f;
 
@@ -6208,6 +6211,7 @@ public partial class LodTerrainRenderer : IRenderer
         bool blockTexturesOn = blendPipelineEnabled && blockTexturesLive && blockTextures != null
             && blockTextures.AtlasTextureId > 0 && BlockTexturesEnabled;
         prog.Uniform("blockTextureEnabled", blockTexturesOn ? 1 : 0);
+        prog.Uniform("blockTextureFar", blockTexturesOn && FarLeafTexturesEnabled ? 1 : 0);
         if (blockTexturesOn || waterSurfaceTextureOn)
         {
             // Both axes: the atlas is 4096 x 2048 on a fresh install, square only on upgraded ones.

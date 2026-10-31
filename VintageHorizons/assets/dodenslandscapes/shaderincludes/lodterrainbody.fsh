@@ -64,8 +64,8 @@ void main()
     // switched on - and the band is a ring of the screen, against millions of vertices. Read
     // per vertex they were three dependent fetches and eleven floats of flat varying paid by
     // every vertex in the view, textures on or off. See lodterrainbody.vsh's vhBlockSlot.
-    if (!translucent && blockTextureEnabled == 1 && bandWeight > 0.0 && vhBlockSlot >= 0
-        && vhFaceAxis != 4)
+    if (!translucent && blockTextureEnabled == 1 && (bandWeight > 0.0 || vhFarTexture == 1)
+        && vhBlockSlot >= 0 && vhFaceAxis != 4)
     {
         // Row 0 is the atlas rectangle. An empty one means the slot describes no texture,
         // which is the same "nothing to draw here" the vertex stage used to answer with a
@@ -130,7 +130,18 @@ void main()
             float mipWanted = log2(max(max(footprint.x, footprint.y), 1.0));
             float mipFade = clamp(blockTextureMipLimit - mipWanted, 0.0, 1.0);
 
-            float textureAmount = bandWeight * clamp(blockTextureStrength, 0.0, 1.0) * mipFade;
+            // Leaves keep their texture past the band, keyed to size on screen rather than to a
+            // distance: full while a block is 2.5 pixels wide or more, gone at 1.5, which is where
+            // automatic detail hands level 0 over to a level with no single block to texture.
+            float textureReach = bandWeight;
+            if (vhFarTexture == 1)
+            {
+                vec2 blocksPerPixel = max(abs(dFdx(tile)), abs(dFdy(tile)));
+                textureReach = max(bandWeight,
+                    1.0 - smoothstep(0.4, 0.667, max(blocksPerPixel.x, blocksPerPixel.y)));
+            }
+
+            float textureAmount = textureReach * clamp(blockTextureStrength, 0.0, 1.0) * mipFade;
             if (textureAmount > 0.0)
             {
                 // Variation around the block's colour, never the colour itself. Dividing the
@@ -145,6 +156,10 @@ void main()
                 // boundary and draws a grid of grey lines; and the whole point here is to
                 // choose a level sharper than the footprint asks for anyway.
                 float sampleLod = max(mipWanted - blockTextureDetail, 0.0);
+                // Past the band nothing hides behind the seam, and at full sharpness a leaf canopy
+                // this small on screen would sparkle, so it eases back to half the sharpening.
+                if (vhFarTexture == 1)
+                    sampleLod = max(mipWanted - blockTextureDetail * max(bandWeight, 0.5), 0.0);
                 // A see-through texel shows nothing in the game, but it still stores a colour,
                 // and dividing that by the mean is not variation - it is whatever the file kept.
                 // Cattails' block-colour texture is 97% clear pixels stored as pure white over a
