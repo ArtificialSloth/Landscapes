@@ -8,6 +8,44 @@ first.
 
 ## [Unreleased]
 
+## [0.5.2-dev.3] - 2026-10-31
+
+**A test build: reeds at distance.** Cattails, papyrus, tule and sedge now show past the game's own view
+distance wherever they grow, on land and in water. They only ever drew under a tree before. Up to about
+620 blocks at default settings they draw as two crossed planes at their real height, the shape of the
+game's own far model, and further out as a patch of their colour. Land you have already cached gains them
+as it is captured again, for example when you walk through it. The fast checks pass with 0 failures on game
+1.22.0 and 1.22.7 (26,646 assertions).
+
+## [0.5.2-dev.2] - 2026-10-30
+
+**A test build, not a release: fixes for the first reports from the mod page.** The fast checks pass with 0
+failures on game 1.22.0 and 1.22.7 (26,569 assertions). Reviewed and finalized when a release is promoted.
+
+**Game versions.** The mod now declares Vintage Story 1.22.0, so it loads there, but it is intended for
+1.22.5 and later. It was briefly tested on 1.22.0 and is built against 1.22.7.
+
+**No more server crash with Algernon's Terrain Sampler alone.** Without Watersheds, the sampler ran the
+game's map generation on a second thread while the game was running it too, and the game's map code cannot
+do two things at once. The server could stop with `Index was outside the bounds of the array`, and in
+singleplayer that dropped you to the menu. The two now take turns.
+
+**`/dlgen` and `/dlworldgen` no longer wait forever for "an old distant-terrain save".** A section that kept
+changing counted as waiting to be saved even while its saves were succeeding, which could hold generation
+back for good. Its clock now restarts when a save lands; a disk that really fails still holds generation.
+
+**Much shorter logs.** Routine detail moved to the game's `client-debug.log` and `server-debug.log`, so the
+mod's lines in a session's `client-main.log` fall from about 150 to about 17. Warnings, errors and one summary
+line a minute stay in the main log. Nothing is lost: when reporting a problem, send the debug log as well.
+
+**Cached terrain can be drawn as short as 512 blocks** (it was 1,024). Farseer's reach is unchanged.
+
+**Distant terrain follows the game's `minbrightness` setting**, the way the game does, so dark colours keep
+their hue. It changes nothing at the default of 0. Idea and first version by ArtificialSloth.
+
+**Smaller:** the savegame reader can no longer be closed in the middle of a read at shutdown, and the
+server's Farseer status line says why it held back.
+
 ## [0.5.1] - 2026-10-22
 
 **A fix for distant terrain on newer NVIDIA drivers, explored land everywhere, and fixes for new
@@ -47,6 +85,7 @@ seam, see-through parts of a texture no longer brighten a block: cattails there 
 night.
 
 **Known:** cattails that are not under a leaf block are not drawn at distance (they never were).
+Fixed in 0.5.2-dev.3.
 
 ## [0.5.0] - 2026-10-20
 

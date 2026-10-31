@@ -68,7 +68,8 @@ in advance.
 
 ## Requirements
 
-- Vintage Story 1.22.5 or later.
+- Vintage Story 1.22.5 or later is what the mod is intended for. It also loads from 1.22.0, where it
+  was only briefly tested.
 - A graphics card and driver with **OpenGL 4.3** (compute shaders and multi-draw indirect).
   Distant terrain is drawn entirely on the graphics card, and there is no older fallback.
   Macs do not qualify: macOS stops at OpenGL 4.1. Some older laptop graphics lack it too.
@@ -274,12 +275,12 @@ depth, billow size, drift speed, Fog fade time, Fog quality and edge softness.
 
 ## Building
 
-Requires the .NET 10 SDK and a Vintage Story 1.22.5 or 1.22.6 install. Those are the two
-versions the check suite runs on. The mod declares 1.22.5 as its minimum, so it will not
-load on anything older.
+Requires the .NET 10 SDK and a Vintage Story install. Release zips are compiled against 1.22.7. The
+mod declares 1.22.0 as its minimum, so it will not load on anything older, and the check suite runs
+on both 1.22.0 and 1.22.7.
 
 ```sh
-export VINTAGE_STORY="$HOME/Games/vintagestory1.22.5"   # your game path
+export VINTAGE_STORY="$HOME/Games/vintagestory1.22.7"   # your game path
 dotnet build VintageHorizons
 ```
 

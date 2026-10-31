@@ -4535,6 +4535,12 @@ warranted at all.
 **Found:** 2026-09-20, Session 104, while building a storage-pressure brake that turned out to be
 unnecessary; the plan's §11.3 direction and a recommendation to the owner were both reversed.
 
+**Revised 2026-10-30, Session 120:** the same age was already an input, and Session 104 left it there:
+`LodWorldGenGates` has returned `SaveBacklogAge` on it since 0.4.72, so `/dlgen`, `/dlworldgen` and Farseer
+could wait for good behind a healthy writer (crystalkiori). `LodSaveDirtySet.Saved` now restarts a key's clock
+when a write of an older revision lands, so the age means time since the key last reached the disk. A failed
+write keeps its age. When a number is found not to mean what it says, look for what already reads it.
+
 ### G239 - A whole-row hash reports a berry bush as loudly as a landslide
 
 **Trigger:** fingerprinting stored data to decide whether work can be skipped, by hashing the whole
@@ -5708,3 +5714,114 @@ and send it only to a client whose hello advertised it (`AssistHello.ImportStatu
 `AssistImportStatus`) or behind a welcome feature bit for client-sent messages.
 
 **Found:** 2026-10-21, Session 119 (the import status, following the silhouette precedent).
+
+### G306 - The game's map layers cannot run on a second thread, and a mod's own lock does not help
+
+**Trigger:** anything that runs the game's map layers off the chunk thread, as Algernon's Terrain Sampler
+does when our silhouette builder calls it.
+
+**Trap:** `NoiseLandforms.GetParentLandformIndexAt` keeps its weights on a shared static list, and every map
+layer keeps its position seed on one shared object. Two threads inside them crash the chunk thread, or
+worse, silently pick a wrong landform. The sampler's `lock (mapGen)` only keeps its own callers apart: the
+engine never takes that lock. Watersheds is safe because it replaces these methods for the whole game, so the
+crash needs Algernon without Watersheds. It is rare: a new map region must start while a sample is inside
+one short method.
+
+**Safer action:** hold `EngineMapGate.MapLayers`, which `GenMaps.OnMapRegionGen` also holds, around every call
+into those layers, point by point so the chunk thread waits for one answer at most. If the patch cannot
+attach, do not run the sampler on another thread (decision 65). Bypassing the lock with a chunk thread busy
+on far peeks crashes within a second, which makes it easy to prove.
+
+**Found:** 2026-10-29, Session 120 (Akekho's server log, then decompilation).
+
+### G307 - After a chunk-thread crash the game keeps the save open until the process exits
+
+**Trigger:** a player reports "world is in use" after being dropped to the menu.
+
+**Trap:** it reads like a file handle a mod leaked. `ServerThread.Process`'s crash branch never runs
+`ShutDown`, so `ServerSystemLoadAndSaveGame.OnSeperateThreadShutDown`, the only `gameDatabase.Dispose`, never
+runs, and the game's own connection holds the file. `GameDatabase.HaveWriteAccessFile` then fails. So the
+message is a symptom of the crash, whatever caused it.
+
+**Safer action:** look for the crash, not for the handle. Restarting the game frees the save. Source-traced
+only; not reproduced.
+
+**Found:** 2026-10-30, Session 120.
+
+### G308 - A mod compiled on a newer game loads on an older one only through the start-up resolver
+
+**Trigger:** proving a build still loads on an older game, or compiling on a newer one than the mod declares.
+
+**Trap:** 1.22.0's `VintagestoryAPI` is assembly version 1.0.0.0 and 1.22.7's is 1.22.7.0. The real game binds
+anyway, because `Vintagestory.Common.AssemblyResolver.AssemblyResolve` strips the version. A probe using only
+`ModAssemblyLoader`'s handler fails falsely. Compile hosts for two games sharing an `obj` folder quietly build
+both against one API. And a method that exists only in the newer game compiles cleanly and fails when a
+player reaches it.
+
+**Safer action:** run the fast checks with `VINTAGE_STORY` on the oldest declared game too, then compile the
+zip on the newest. For a binary check, load through the game's resolver and run
+`RuntimeHelpers.PrepareMethod` on every method, with a negative control. That does not cover Harmony's attach.
+
+**Found:** 2026-10-30, Session 120.
+
+### G309 - Random positions turn a sampler stress test into a garbage collector test
+
+**Trigger:** judging a lock or a sampler by slow ticks under a synthetic load.
+
+**Trap:** random far positions defeat Algernon's region cache (512 entries), so every sample builds a region.
+64 slow ticks of up to 12 s looked like the new lock. Measured: 98% of the stall time was gen2 collection with
+the heap at up to 9.8 GB, and at most 3 lock waits per stall.
+
+**Safer action:** log `GC.GetTotalPauseDuration` and `Monitor.LockContentionCount` per stall before blaming a
+lock, and repeat with the real caller's pattern and a no-load control. One 512-block tile at a time gave 0 slow
+ticks and matched the control exactly.
+
+**Found:** 2026-10-30, Session 120.
+
+### G310 - A routine line you expect in the main log may be in the debug log
+
+**Trigger:** a script, a check or a person reading `client-main.log` or `server-main.log` for detail.
+
+**Trap:** since 0.5.2-dev.2 routine lines go through `LodDetailLog.Detail` to `client-debug.log` and
+`server-debug.log`. The stats block, the hitch detail and the sweep's status line are no longer in the main
+log, and a script waiting for one times out as if the feature had stopped.
+
+**Safer action:** ask the owner for the debug log with the main one. A script that reads the main log sets
+`VINTAGEHORIZONS_STATS=1`, as `scripts/claim-reread-sandbox.ps1` does. New diagnostics use `Detail`; warnings
+and failures never do.
+
+**Found:** 2026-10-30, Session 120.
+
+### G311 - The game's minbrightness scales the sun term, in vertex shaders only
+
+**Trigger:** matching the game's brightness on distant terrain.
+
+**Trap:** adding grey to the final light looks right and shifts the hue, so dark blue nights turn grey. The
+game floors `bBlock` before mixing (`fogandlight.vsh` line 130), which with no block light is
+`1.05 * S * max(1, M / mean(S))`. That line sits in the `DYNLIGHTS > 0` branch only, and `#define MINBRIGHT`
+reaches vertex shaders only, so a fragment stage cannot read it.
+
+**Safer action:** `LodTerrainRenderer.BrightnessFloorScale` works out the factor on the CPU, returning 1 with
+dynamic lights off, and `StaticAssetChecks.BrightnessFloor` holds it to a transcription of `applyLight`. To see
+it in game, raise `minbrightness` in `clientsettings.json` with the game closed; there is no slider.
+
+**Found:** 2026-10-30, Session 120 (reviewing pull request 1).
+
+### G312 - Capture starts at the rain map, so it misses whatever rain falls through
+
+**Trigger:** a block that never draws at distance, or draws only under a tree.
+
+**Trap:** `LodWorker.Capture` walks down from `RainHeightMap`, and the game leaves any `rainPermeable` block out
+of that map. So such a block on top of a column is never captured, unless something higher stops the rain and
+lifts the start. Cattails drew "only under leaves" for this reason, usually with a gap of air between: of 9,277
+reed runs in one cache, 13 topped their column. Separately, `FluidOrSolid` answers the water in a cell shared
+with a reed, so no water-habitat reed was ever captured. Tall grass is the big case: 486 column tops against
+497,155 under something in the same world. So are loose stones, torches, signs and mushrooms; snow-covered
+tall grass is not permeable and does draw.
+
+**Safer action:** do not treat the rain map as the top of a column. `LodBlockPolicy.ReedTable` names the blocks
+worth looking above it for, and reads the solid layer under a fluid. Widening it to everything permeable raises
+every meadow by a block, so that is a product decision. A run holds one block per cell: a reed in water goes in
+the air above, because replacing the water cuts a hole in the surface.
+
+**Found:** 2026-10-31, Session 120.

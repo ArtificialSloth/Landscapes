@@ -58,16 +58,16 @@ automatically, because nothing checks prose against capability.
 
 Development logging and player logging have different jobs, and this repo accumulates both.
 Before a public release, read a full session's `server-main.log` and `client-main.log` as a
-server admin who has never seen the source would.
+server admin who has never seen the source would. Routine detail goes to the debug logs through
+`LodDetailLog.Detail` since 0.5.2-dev.2 (decision 66).
 
 - **Keep** the small number of plain-language lines a dedicated-server admin has nothing else
   to go on for: the mod started, what it is doing, when it finished, and anything unusual.
   These are at most one line a minute, only while work is running, and they stop by themselves.
 - **Hide** per-interval numeric dumps - microsecond percentiles, allocation figures, tick
-  histograms. These already require `VINTAGEHORIZONS_STATS=1` and are off unless it is set, so
-  the usual answer is "nothing to do"; confirm rather than assume. The exception found at 0.5.0: the
-  once-a-minute hitch report (frame times, allocation, collections; client log) and the server's
-  once-a-minute "Cache work" line are always on.
+  histograms. These go to the debug logs unless `VINTAGEHORIZONS_STATS=1` is set, so the usual
+  answer is "nothing to do"; confirm rather than assume. One hitch summary line a minute stays in
+  `client-main.log` on purpose; the server's "Cache work" line moved to the debug log with the rest.
 - **Check the wording of anything that survives.** A status number that pairs badly with its
   neighbour reads as a fault report: the cache-work line printed a continuously-changing
   section's age beside a pending count and looked like a stalled writer for weeks (G238).

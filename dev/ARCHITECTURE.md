@@ -762,6 +762,22 @@ live until the exact replacement persistence revision is acknowledged.
     Rejected: deleting the dials (asked for, then reversed), the Advanced switch, a taller or
     scrolling window. Sampler mods stay optional (silhouette plan D13); the window warns in red when
     the server found neither.
+65. **The game's map layers run one thread at a time** (2026-10-30; 0.5.2-dev.2). With Algernon's Terrain
+    Sampler and no Watersheds, `EngineMapGate` holds one lock around `GenMaps.OnMapRegionGen` and around each
+    sampler call, point by point. No game code is replaced and no result changes. If the patch cannot attach,
+    the sampler is not used and silhouettes build from previews. Rejected: replacing the game's methods as
+    Watersheds does (it touches world generation for every mod). G306, G309.
+66. **The main log is for players; detail goes to the debug logs** (owner, 2026-10-29; 0.5.2-dev.2). Routine
+    lines use `LodDetailLog.Detail`, reaching `client-debug.log` and `server-debug.log` with no setup, because
+    the owner relies on numbers landing in a file by themselves. Warnings, failures, what a session is running
+    and one hitch summary a minute stay in the main log; `VINTAGEHORIZONS_STATS=1` keeps everything there for
+    scripts. Rejected: deleting the detail; a Developer switch that every install must remember. G310.
+67. **Reeds draw as two crossed planes, not cubes** (owner, 2026-10-31; 0.5.2-dev.3). `FlagCrossed`: at level 0
+    two untextured planes corner to corner, 2.75 blocks tall (1.25 for sedge and cut reeds), the layout of the
+    game's own far model; past level 0 an opaque mat of the reed's colour. Packed faces 6 and 7 hold the planes.
+    The vertex stage turns each toward the camera, so one quad serves both sides. Rejected: a single
+    camera-facing spike (owner: lackluster), a plain cube (a third of the real height), the real see-through
+    texture (it shimmers at a few pixels). Grass is out of scope (owner: probably never). G312.
 
 ## Concurrency invariants
 

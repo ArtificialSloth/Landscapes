@@ -4,12 +4,15 @@
 
 ## Start here
 
-Read [Session 119](sessions/SESSION_119.md), then [Session 118](sessions/SESSION_118.md). **0.5.1 is
-the release version**: the owner-played 0.5.1-dev.7, promoted on 2026-10-22 with only the two version
-strings changed (commit `7959339`, not tagged) and pushed. It fixes the packed shader on NVIDIA 617,
+Read [Session 120](sessions/SESSION_120.md), then [Session 119](sessions/SESSION_119.md). **0.5.2-dev.3**
+(`17aca13`, not pushed) is the current test build: the first ModDB reports fixed in dev.2 and reeds drawn at distance as
+crossed planes in dev.3, section "What Session 120 left open" below. It declares game 1.22.0, compiles on 1.22.7 and is intended for 1.22.5+ (owner, no more
+testing below that). Player reports, with their evidence, are in the git-ignored `dev/PLAYER_REPORTS.md`.
+**0.5.1 is the latest release**: the owner-played 0.5.1-dev.7, promoted on 2026-10-22 with only the two
+version strings changed (commit `7959339`, not tagged) and pushed. It fixes the packed shader on NVIDIA 617,
 sweeps all explored land nearest a player first, adds the import popup and progress line, and fixes the
 seam on NVIDIA and on fresh installs (a 4096 x 2048 atlas) and part-tinted plants. Development builds are
-`0.5.1-dev.N` from now on; the owner approves every promotion to a release number. The mod is
+numbered `<next release>-dev.N`; the owner approves every promotion to a release number. The mod is
 **Doden's Landscapes** (mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log),
 licensed GPL-3.0 only with a Vintage Story exception. **0.5.0** was build 0.4.175,
 which the owner played, promoted on 2026-10-20 with only the two version strings changed (commit
@@ -19,31 +22,50 @@ every dial on a Developer tab shown by Developer options, settled decision 64), 
 distance, Farseer, the seam fog and the automatic LOD target with Quality as the default and a first-run
 prompt (decision 63), let the vanilla floor hold only L1 (decision 35), held the seam fog for 5 s at
 login, and made Generate's Settings button unpause the game; it carries Session 116's review fixes. The
-fast tier passes (26,432 assertions; the count varies between runs on the same source: 26,377 then 26,432, suite not identified).
-Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
+fast tier passes (26,569 assertions at 0.5.2-dev.2). Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
 is solved for him by the all-cores garbage collector, an opt-in switch on General (0.4.134, settled
 decision 54), and the game's chunk thread rests when it has nothing to do (0.4.132, settled decision 53).
 
+### What Session 120 left open
+
+- **Reeds, for the owner to judge (dev.3):** nothing here has been seen in game, and the shader change has not
+  been compiled. Look at cattails near the seam, on land and in water, for a compile error in the log, whether
+  the planes read as reeds or as cards, whether the shade at the foot is right, and tule and sedge colours in
+  the open. If they read as cards, a notched top cut out in the fragment stage is the next cheap step. Cached land
+  gains reeds only when captured again; forcing it would mean a `FingerprintRule` bump and one full re-sweep per
+  world, which was not done. Frame cost is an estimate (0.1-0.2% more quads); an on/off pair would settle it.
+- **Other blocks rain falls through (G312):** tall grass stays out by the owner's choice. Saguaro, tree ferns and
+  bamboo also let rain through and showed no runs in the one world checked, which may only mean they do not grow
+  there. Look at one in a desert or a jungle before saying anything about them.
+- **Never run together:** the lock (decision 65) with the real silhouette builder and a connected player on
+  an Algernon-only world. Headless runs called the same sampling code with the builder's tile pattern and
+  stayed clean. Akekho's setup is the final check; look for silence in his next report.
+- **Unplayed:** the brightness floor at a raised `minbrightness` (with the game closed, set it in
+  `clientsettings.json`, for example 0.3; there is no slider, and set it back after). Look at night where near
+  land meets far land. The shader change has not been compiled here, and the owner's dev.2 session log was not
+  checked for shader errors. Farseer silhouettes do not take the floor, so they will read darker.
+- **Waiting on players:** whether crystalkiori's generator now starts (a failing disk was not ruled out; that
+  player's log was never seen), and replies to Akekho, crystalkiori, Case_Hardened and davidkiraly on the page.
+- **Far block textures (NateDoesLife):** needs the owner's design go-ahead. Evidence and four design points are
+  in `dev/PLAYER_REPORTS.md`, item 3.
+- **Pull request 1:** still open on GitHub; the owner posts the closing note himself. Do not close it.
+- **Reports to others, the owner's call:** Anego about G307 and the map layers, Algernon about the race (G306).
+  Dropped by the owner: the Sheydermod crash and its 100-slot shader table (still unguarded; diagnosis in
+  `dev/PLAYER_REPORTS.md`, item 1).
+- **At release:** the changelog's `[0.5.2-dev.2]` section folds into the release entry, the disclaimer about
+  1.22.0 goes on the mod page, and modinfo's description is checked again. dev.1 and dev.2 are not pushed.
+
 ### Publishing (owner's calls)
 
-- **ModDB:** upload `dist/dodenslandscapes_0.5.1.zip` (0.5.1 supersedes 0.5.0, which was never
-  uploaded) to `mods.vintagestory.at/dodenslandscapes` (GNU GPL v3 as the licence) and paste the
-  `[0.5.1]` and `[0.5.0]` changelog entries, or shortened ones, into its changelog field. The page's
-  text still says the startup sweep works around spawn; since 0.5.1 it covers all explored land. The description is the card page from `notes/moddb/` ("Copy all cards for ModDB", pasted
-  through the Source code view); its 12 pictures are on ImgBB at full size, addresses in
-  `notes/moddb/images.json`. Check ModDB's own preview for the dark fade behind each photo card's text
-  (G297). Gallery pictures, resized to 1920x1080 and under 2 MB, are in `Pictures\moddb\1080p`; the
-  card image (picture B, 480x320) is `Pictures\moddb\B-22-27-41-480x320.png`.
-- **GitHub:** `DodenGruva/Landscapes` is still private; the page's open invitation says the source is
-  available, so he makes it public first and adds the link to the page. The old fork
-  `DodenGruva/Horizons` still shows his personal email in 91 commits; he deletes it (a public fork
-  cannot be made private).
-- **Log noise found at release (step 4b):** in his 2026-10-20 session the client log held 414 of the
-  mod's lines in about 30 minutes, nearly all the once-a-minute hitch report (frames, allocation,
-  collections, worst frames), and the server log a "Cache work" line every minute all session, even
-  idle. No errors. Hiding them from players (behind a switch or `VINTAGEHORIZONS_STATS`) needs a code
-  change and a new build; his decision. Startup also logs a dozen technical lines (shader readiness,
-  GPU probe, arenas, a missing-texture note for `game:water-still-7`).
+- **ModDB:** 0.5.1 is live at `mods.vintagestory.at/show/mod/75034` (the slug address 404s). The page's
+  text still says the startup sweep works around spawn; since 0.5.1 it covers all explored land. The
+  description is the card page from `notes/moddb/` ("Copy all cards for ModDB", pasted through the Source
+  code view); its 12 pictures are on ImgBB at full size, addresses in `notes/moddb/images.json`. Check
+  ModDB's own preview for the dark fade behind each photo card's text (G297). Gallery pictures, resized to
+  1920x1080 and under 2 MB, are in `Pictures\moddb\1080p`; the card image (picture B, 480x320) is
+  `Pictures\moddb\B-22-27-41-480x320.png`.
+- **GitHub:** `DodenGruva/Landscapes` is public. The old fork `DodenGruva/Horizons` still showed his
+  personal email in 91 commits when last checked; he deletes it (a public fork cannot be made private).
 - **Not run for 0.5.0:** the smoke test of the shipped zip (release step 8) and the game-launching
   check tiers (`scripts/check.sh smoke` and `matrix`, about 25 minutes; not run since the rename; the
   `lod-conflict` and `farseer-off` scenarios have never run). Ask before launching anything.
@@ -54,18 +76,12 @@ decision 54), and the game's chunk thread rests when it has nothing to do (0.4.1
   no "ignored without a reply" warning appears in the server log. A Generate-page centre saved before
   0.4.160 was an internal position and now reads as a huge spawn-relative one; retype it.
 - **The fast tier's assertion count varies between runs** on the same source (26,377, then 26,432 twice,
-  0 failures each). Not a lost test, but the varying suite is not identified; the ModDB testing card's
-  26,432 is a count actually seen.
+  0 failures each). It held still through nine runs in Session 120 (six at 26,558, three at 26,569), then read
+  26,548 and 26,598 on the same binary, then 26,646 five times. The varying suite is still not identified, and
+  those two runs were not kept to compare; the ModDB testing card's 26,432 is a count actually seen.
 
 ### Left for after 0.5.1 (owner, 2026-10-22)
 
-- **Cattails that are not underneath a leaf block never render at distance** - and never did, the
-  owner says; only cattails with a leaf block directly above them draw. Owner-observed in play on
-  0.5.1-dev.7. The cache says they ARE captured: the owner's client caches hold about 3,300 level-0
-  `tallplant-coopersreed-*` runs with no leaf above (and a few hundred under leaves), palette flag 4
-  (`FlagCutout`). So they are dropped somewhere between capture and the screen; where has not been
-  investigated. The ones under leaves now draw the right colour: dev.6 colours part-tinted models from
-  their parts (`LodModelParts`), and dev.7 stops the seam band reading see-through texels as colour.
 - **The NVIDIA warble, watched:** distant ground near the seam jittered briefly while the camera turned,
   then settled, on the owner's NVIDIA machine. Not distant anti-aliasing (`.dltaa off`), not depth
   fighting (`.dlband sink 8` changed nothing), not speckle or textures; gone with seam blending off. On
@@ -251,8 +267,9 @@ collector in force.
 During the Session 108 doc pass, `VanillaReadinessChecks.SteadyStateAllocation` ("converged lookup,
 revalidation scheduling, probing, and classification allocate nothing") failed in 3 of 7 runs of
 the fast tier with no source change between them; it had passed in every earlier run that session.
-It counts allocations on its own thread only, but its warm-up never calls `QueueMaintenanceCells`
-or `PromoteObserved` before the measured loop. The cause is not established.
+It counts allocations on its own thread only, but its warm-up never called `QueueMaintenanceCells`
+or `PromoteObserved` before the measured loop. Session 120 warmed them up, and it has passed in every run
+since, at least nine. The cause is still not established; reopen if it fails again.
 
 ## Also open: 0.4.119 needs a session with a real sweep behind it
 
@@ -416,7 +433,8 @@ Open, in the order they block further work:
   the sweep permanently for a benign reason. The dirty *count* never approached its limit (52
   against 512) in the one production observation available, and the save queue is already bounded at
   `MaxStorageBacklog` = 256. Reopen only with evidence that downstream persistence is actually
-  player-facing, not with a number that merely looks large.
+  player-facing, not with a number that merely looks large. (The existing `SaveBacklogAge` gate did read
+  that age, and held a player's generation for good; Session 120 fixed the age, G238.)
 - **Probe scheduling is moot where the read path works.** The probe pass only runs now when the
   savegame read path is unavailable (A3), so its pacing is a fallback concern rather than a live
   one. The item below predates that.
@@ -431,11 +449,9 @@ Open, in the order they block further work:
 - **Count the swept arc's cost.** Each swept end now emits two cross-sections instead of one, and on
   a staircase frontier every strip is swept at both ends. The vertex/index budget is exact and
   harness-checked, but it has not been counted against a real frontier or measured on the GPU.
-- **Split the Farseer yield counter by reason.** `LodSilhouetteBuilder.YieldTicks` is one number, so
-  the log cannot say whether Farseer held for the engine's pending chunks, for a held generation
-  authority, or for Vintage Horizons' own capture/save backlog. In the measured window the cache
-  save backlog was 80-390 s old against a `WorldGenOldestDirtySeconds` limit of 120, so
-  `EnumWorldGenGate.SaveBacklogAge` is a live suspect for much of that 73% and cannot be confirmed.
+- ~~**Split the Farseer yield counter by reason.**~~ **Done in 0.5.2-dev.2** (`EnumSilhouetteYield`). The
+  suspect it was meant to confirm, `SaveBacklogAge`, was fixed in the same build, so how much of the old 73%
+  it held was never measured.
 ## Distant structures and block-entity colours: what 0.4.62 leaves open
 
 The white ruins are fixed and human-tested ([Session 87](sessions/SESSION_87.md), G180-G182).
