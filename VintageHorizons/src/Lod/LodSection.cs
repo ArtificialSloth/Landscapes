@@ -87,6 +87,15 @@ public struct LodPaletteEntry
     /// column's observed snow answer during capture.
     /// </summary>
     public const byte FlagSnowCovered = 64;
+
+    /// <summary>
+    /// A reed, which the game draws about three blocks tall. A cube a block high is the wrong
+    /// shape and height at the seam, so the nearest level draws two crossed planes the way the
+    /// game's own far model does, and coarser levels, where a reed is under two pixels wide, a
+    /// flat patch of its colour. With <see cref="FlagHalf"/> it is one of the short ones.
+    /// Derived from the live Block like the flags above.
+    /// </summary>
+    public const byte FlagCrossed = 128;
 }
 
 /// <summary>How a second copy of a section is merged into the one already held.</summary>

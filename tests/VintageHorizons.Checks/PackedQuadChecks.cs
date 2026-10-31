@@ -45,9 +45,18 @@ public static class PackedQuadChecks
         for (int quad = 0; quad < mesh.PackedOpaqueQuadCount; quad++)
             faces.Add(LodPackedQuadFormat.FaceOf(mesh.PackedOpaqueQuads, quad));
         foreach (LodPackedFace face in Enum.GetValues<LodPackedFace>())
-            c.True(faces.Contains(face), face + " winding is represented");
+        {
+            if (face < LodPackedFace.DiagonalRising)
+                c.True(faces.Contains(face), face + " winding is represented");
+        }
 
         AssertMatchesExpanded(c, mesh, columnBlocks: 1, "isolated L0 run");
+
+        var reed = new LodSection();
+        int planes = reed.FindOrAddPaletteEntry(blockId: 1, color: 0x00407030,
+            flags: LodPaletteEntry.FlagCrossed);
+        reed.SetColumn(LodSection.ColumnIndex(10, 4), new[] { LodSection.PackRun(planes, 11, 10) });
+        AssertMatchesExpanded(c, LodMesher.BuildMesh(Fixtures.Job(reed)), columnBlocks: 1, "crossed planes");
     }
 
     static void LevelsAndCoordinateLimits(Check c)

@@ -11,6 +11,12 @@ internal enum LodPackedFace : byte
     East,
     North,
     South,
+
+    /// <summary>A standing plane across one column, from its (x0, z0) corner to (x1, z1).</summary>
+    DiagonalRising,
+
+    /// <summary>A standing plane across one column, from its (x0, z1) corner to (x1, z0).</summary>
+    DiagonalFalling,
 }
 
 /// <summary>
@@ -106,7 +112,7 @@ internal static class LodPackedQuadFormat
             throw new ArgumentException("short packed-quad destination", nameof(destination));
         ValidateRange(x0, x1, nameof(x0));
         ValidateRange(z0, z1, nameof(z0));
-        if ((uint)face > (uint)LodPackedFace.South)
+        if ((uint)face > (uint)LodPackedFace.DiagonalFalling)
             throw new ArgumentOutOfRangeException(nameof(face));
 
         ushort qy0 = Quarter(y0, nameof(y0));
@@ -199,6 +205,16 @@ internal static class LodPackedQuadFormat
             {
                 0 => (x0, y0, z1), 1 => (x1, y0, z1),
                 2 => (x1, y1, z1), _ => (x0, y1, z1),
+            },
+            LodPackedFace.DiagonalRising => corner switch
+            {
+                0 => (x0, y0, z0), 1 => (x1, y0, z1),
+                2 => (x1, y1, z1), _ => (x0, y1, z0),
+            },
+            LodPackedFace.DiagonalFalling => corner switch
+            {
+                0 => (x0, y0, z1), 1 => (x1, y0, z0),
+                2 => (x1, y1, z0), _ => (x0, y1, z1),
             },
             _ => throw new InvalidOperationException("packed quad has an unknown face"),
         };

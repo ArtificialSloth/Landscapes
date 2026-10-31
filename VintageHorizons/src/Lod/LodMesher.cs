@@ -332,7 +332,7 @@ public static class LodMesher
                 {
                     for (int r = 0; r < runs.Length; r++)
                     {
-                        if (IsSnowLayerRun(self, runs[r])) continue;
+                        if (IsSnowLayerRun(self, runs[r]) || IsCrossedRun(self, runs[r])) continue;
                         snowSurfaceRun = r;
                         break;
                     }
@@ -381,6 +381,23 @@ public static class LodMesher
                     {
                         hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid,
                             false, true, true, r == snowSurfaceRun, (short)yBottom, 0, 0));
+                        continue;
+                    }
+
+                    // Past level 0 a reed is under two pixels wide, so its colour on the ground
+                    // says everything the planes would. It takes the mat's height, opaque.
+                    if (IsCrossedRun(self, run))
+                    {
+                        if (step == 1)
+                        {
+                            bool onWater = r + 1 < runs.Length && IsWaterRun(self, runs[r + 1]);
+                            AddCrossedPlanes(opaque, self, pid, cx, cz, yBottom, onWater);
+                        }
+                        else
+                        {
+                            hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid,
+                                false, false, true, false, (short)yBottom, 0, 0));
+                        }
                         continue;
                     }
 
@@ -756,10 +773,17 @@ public static class LodMesher
     /// Thin ground cover is drawn as a mat a quarter block tall, so it fills almost none
     /// of its cell and must never occlude anything. Without this a fern on a shoreline
     /// counted as cover for the water beside it and deleted the water's wall, letting you
-    /// see through the edge of the pond.
+    /// see through the edge of the pond. Crossed planes fill no more of their cell than a mat.
     /// </summary>
     static bool IsThinRun(SectionSnapshot s, ulong run) =>
-        (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagThin) != 0;
+        (s.PaletteFlags[LodSection.RunPaletteId(run)]
+            & (LodPaletteEntry.FlagThin | LodPaletteEntry.FlagCrossed)) != 0;
+
+    static bool IsCrossedRun(SectionSnapshot s, ulong run) =>
+        (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagCrossed) != 0;
+
+    static bool IsWaterRun(SectionSnapshot s, ulong run) =>
+        (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagWater) != 0;
 
     static bool IsSnowLayerRun(SectionSnapshot s, ulong run) =>
         (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagSnowLayer) != 0;
@@ -1046,6 +1070,33 @@ public static class LodMesher
     }
 
     // ---- Emission primitives ----
+
+    // How tall the game's far models stand: about 2.8 blocks for cattails, 3 for papyrus and
+    // tule, 1.5 for sedge. Exact quarter blocks, which is all a packed height can hold.
+    const float TallReedBlocks = 2.75f;
+    const float ShortReedBlocks = 1.25f;
+
+    /// <summary>
+    /// A reed as two planes crossing corner to corner, the layout of the game's own far model.
+    /// One quad per plane: the packed vertex stage turns each toward the camera, so neither needs
+    /// a back. They carry no texture, and sink half a block so a slab beneath leaves no gap. A
+    /// reed standing in water keeps its true height above the bed, a block below its run.
+    /// </summary>
+    static void AddCrossedPlanes(Buffers buf, SectionSnapshot self, int pid, int cx, int cz,
+        int yBottom, bool onWater)
+    {
+        byte flags = self.PaletteFlags[pid];
+        int color = self.WallColor(pid, true);
+        byte alpha = AlphaFor(flags, self.PaletteTintSlots[pid]);
+        float height = (flags & LodPaletteEntry.FlagHalf) != 0 ? ShortReedBlocks : TallReedBlocks;
+        float y0 = yBottom * 0.5f - 0.5f;
+        float y1 = yBottom * 0.5f + height - (onWater ? 1f : 0f);
+        float x0 = cx, x1 = cx + 1, z0 = cz, z1 = cz + 1;
+        AddQuad(buf, LodPackedFace.DiagonalRising, 1, color, alpha,
+            x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0);
+        AddQuad(buf, LodPackedFace.DiagonalFalling, 1, color, alpha,
+            x0, y0, z1, x1, y0, z0, x1, y1, z0, x0, y1, z1);
+    }
 
     static void AddQuad(Buffers buf, LodPackedFace face, int columnBlocks, int color, byte alpha,
         float x0, float y0, float z0, float x1, float y1, float z1,

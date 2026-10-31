@@ -506,6 +506,7 @@ public class LodPipeline
             Chunks = refs,
             RainMap = (ushort[])rainMap.Clone(),
             Chisels = CollectChisels(refs, cx, cz),
+            Reeds = Reeds,
         });
         if (PreviewHeightsCaptured is { } heightsCaptured
             && refs[0]?.MapChunk?.WorldGenTerrainHeightMap is { Length: >= ChunkSize * ChunkSize } heights)
@@ -1029,9 +1030,15 @@ public class LodPipeline
                 Chunks = chunks,
                 RainMap = (ushort[])rainMap.Clone(),
                 Chisels = CollectChisels(chunks, cx, cz),
+                Reeds = Reeds,
             });
         }
     }
+
+    // Built on first use, when the world's blocks are final. Two threads may race to build it;
+    // both get the same answer, and nothing writes to it afterwards.
+    bool[]? reeds;
+    bool[] Reeds => reeds ??= LodBlockPolicy.ReedTable(api.World.Blocks);
 
     /// <summary>
     /// Copy what the column's chiselled blocks are made of, on the thread creating the job

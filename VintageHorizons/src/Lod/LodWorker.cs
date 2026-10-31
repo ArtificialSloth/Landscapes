@@ -133,6 +133,9 @@ public class CaptureJob
     /// most visible material instead of as the chisel.
     /// </summary>
     public List<LodChiselRecord>? Chisels;
+
+    /// <summary>Block ids that are reeds (<see cref="LodBlockPolicy.ReedTable"/>), shared and read-only.</summary>
+    public bool[]? Reeds;
 }
 
 /// <summary>Runs carry raw BLOCK ids (not palette ids); the main thread remaps on apply.</summary>
@@ -694,6 +697,15 @@ public class LodWorker : IDisposable
                 int startY = Math.Min(job.RainMap[lz * ChunkSize + lx], maxY);
                 if (startY <= 0) continue;
 
+                // The rain map ends under a reed; the reed is one block taller than the ground.
+                if (startY < maxY && job.Chunks[(startY + 1) / ChunkSize] is { Disposed: false } above
+                    && IsReed(job, above.UnpackAndReadBlock(
+                        (((startY + 1) % ChunkSize) * ChunkSize + lz) * ChunkSize + lx,
+                        BlockLayersAccess.Solid)))
+                {
+                    startY++;
+                }
+
                 int col = LodSection.ColumnIndex(colOffsetX + cx, colOffsetZ + cz);
                 runs.Clear();
                 int currentBlock = 0;
@@ -713,6 +725,21 @@ public class LodWorker : IDisposable
                     int blockId = chunk.UnpackAndReadBlock(
                         ((y % ChunkSize) * ChunkSize + lz) * ChunkSize + lx,
                         BlockLayersAccess.FluidOrSolid);
+
+                    // A reed in water shares its cell with the water, and that read answers the
+                    // water. A run holds one block per cell, so the reed goes in the air above
+                    // and the water keeps its cell: replacing it would cut a hole in the surface.
+                    // Asked only where a run changes, so a deep sea costs one extra read.
+                    if (job.Reeds != null && blockId != currentBlock && currentBlock == 0)
+                    {
+                        int solid = chunk.UnpackAndReadBlock(
+                            ((y % ChunkSize) * ChunkSize + lz) * ChunkSize + lx,
+                            BlockLayersAccess.Solid);
+                        if (solid != blockId && IsReed(job, solid))
+                        {
+                            AddRun(runs, solid, y + 2, y + 1, col, 0, ref standInOriginals);
+                        }
+                    }
 
                     // Only while the block is still the chisel that was read: one replaced
                     // since the job was created keeps whatever is there now.
@@ -772,6 +799,9 @@ public class LodWorker : IDisposable
             ChiselsWithoutMaterial = chiselsWithoutMaterial,
         };
     }
+
+    static bool IsReed(CaptureJob job, int blockId) =>
+        job.Reeds is { } reeds && blockId > 0 && blockId < reeds.Length && reeds[blockId];
 
     /// <summary>
     /// Append a run, remembering the chisel beneath its top block when that block stands in

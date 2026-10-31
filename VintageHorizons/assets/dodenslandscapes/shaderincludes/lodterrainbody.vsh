@@ -69,6 +69,26 @@ void main()
             : vhLogicalCorner == 2u ? vec3(vhX1, vhY1, vhZ0)
             : vec3(vhX1, vhY0, vhZ0);
     }
+    else if (vhFace >= 6u)
+    {
+        // A reed's crossed plane (LodMesher.AddCrossedPlanes). Seen from behind its corners run
+        // the other way round the quad, so it faces the camera from both sides with one quad.
+        // The top narrows by a quarter a side, which reads as a tuft rather than a card.
+        vec2 vhPlaneA = vec2(vhX0, vhFace == 6u ? vhZ0 : vhZ1);
+        vec2 vhPlaneB = vec2(vhX1, vhFace == 6u ? vhZ1 : vhZ0);
+        vec2 vhPlaneMiddle = (vhPlaneA + vhPlaneB) * 0.5;
+        vec2 vhPlaneAlong = vhPlaneB - vhPlaneA;
+        if (dot(vec2(-vhPlaneAlong.y, vhPlaneAlong.x), -(vhRecordOrigin.xz + vhPlaneA)) < 0.0)
+        {
+            vec2 vhPlaneSwap = vhPlaneA;
+            vhPlaneA = vhPlaneB;
+            vhPlaneB = vhPlaneSwap;
+        }
+        vec2 vhPlaneEnd = vhLogicalCorner == 1u || vhLogicalCorner == 2u ? vhPlaneB : vhPlaneA;
+        vertexPositionIn = vhLogicalCorner < 2u
+            ? vec3(vhPlaneEnd.x, vhY0, vhPlaneEnd.y)
+            : vec3(mix(vhPlaneEnd.x, vhPlaneMiddle.x, 0.5), vhY1, mix(vhPlaneEnd.y, vhPlaneMiddle.y, 0.5));
+    }
     else
     {
         vertexPositionIn = vhLogicalCorner == 0u ? vec3(vhX0, vhY0, vhZ1)
@@ -103,6 +123,8 @@ void main()
             float((vhColor >> 16u) & 255u),
             float(vhColor >> 24u)) / 255.0;
     }
+    // The foot of a reed bed sits in its own shade, which is most of what gives it depth.
+    if (vhFace >= 6u && vhLogicalCorner < 2u) vertexColorIn.rgb *= 0.55;
 #endif
 
     // The established expanded mesh has no spare vertex attribute, so an opaque textured

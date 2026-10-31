@@ -1,5 +1,6 @@
 using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
+using Vintagestory.GameContent;
 
 namespace VintageHorizons;
 
@@ -71,8 +72,20 @@ public static class LodBlockPolicy
         // Drawn as a cube, but it covers nothing. See IsSeeThroughPlant.
         if (IsSeeThroughPlant(block)) flags |= LodPaletteEntry.FlagCutout;
 
+        if (block is BlockReeds)
+        {
+            flags |= LodPaletteEntry.FlagCrossed;
+            if (IsShortReed(block)) flags |= LodPaletteEntry.FlagHalf;
+        }
+
         return flags;
     }
+
+    /// <summary>Sedge stands about half as tall as the other reeds, and a cut reed is a stub.</summary>
+    static bool IsShortReed(Block block) =>
+        block.Code?.Path is { } path
+        && (path.Contains("brownsedge", StringComparison.Ordinal)
+            || path.Contains("-harvested-", StringComparison.Ordinal));
 
     /// <summary>
     /// A plant the game draws as a see-through cutout rather than a solid cube: a crop, tall
@@ -94,6 +107,24 @@ public static class LodBlockPolicy
     /// </summary>
     static bool IsSeeThroughPlant(Block block) =>
         block.BlockMaterial == EnumBlockMaterial.Plant && !block.AllSidesOpaque;
+
+    /// <summary>
+    /// Which block ids are reeds: cattails, papyrus, tule and sedge, by the engine's own class.
+    /// Capture starts at the game's rain map, which passes straight through a block that lets
+    /// rain through, so on land a reed sits one block above where capture begins and only drew
+    /// where a tree happened to stop the rain above it. In water it shares its cell with the
+    /// water, which is what a capture read answers. Capture looks for reeds in both places.
+    ///
+    /// A table, because capture runs on a worker that does not touch the block registry.
+    /// Deliberately not every block rain passes through: that is also tall grass, loose stones,
+    /// torches and signs, and tall grass alone would raise every meadow by a block.
+    /// </summary>
+    public static bool[] ReedTable(IList<Block> blocks)
+    {
+        var table = new bool[blocks.Count];
+        for (int id = 0; id < table.Length; id++) table[id] = blocks[id] is BlockReeds;
+        return table;
+    }
 
     /// <summary>
     /// A block whose solid part is the lower half of its cell: a full 1x1 footprint,
