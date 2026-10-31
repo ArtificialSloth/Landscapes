@@ -1780,6 +1780,9 @@ public partial class LodTerrainRenderer : IRenderer
     /// <summary>Current far edge in blocks: the farthest loaded LOD data, independent of the vanilla view distance.</summary>
     public float EffectiveFarDistance { get; private set; } = 3000;
 
+    /// <summary>The distance handed to the terrain's fade (<see cref="LodFarDistance.TerrainFade"/>).</summary>
+    public float TerrainFadeDistance { get; private set; } = 3000;
+
     public int MeshCount => sectionMeshes.Count;
     public int LastDrawCount { get; private set; }
 
@@ -2322,6 +2325,8 @@ public partial class LodTerrainRenderer : IRenderer
         if (meshBounds.Dirty) meshBounds.Rebuild(sectionMeshes.Keys, waterMeshes.Keys);
         double farthest = meshBounds.FarthestDistanceTo(camPos.X, camPos.Z);
         EffectiveFarDistance = LodFarDistance.Effective(farthest, vanillaViewDistance, FarViewDistanceCap);
+        TerrainFadeDistance = LodFarDistance.TerrainFade(
+            EffectiveFarDistance, vanillaViewDistance, FarViewDistanceCap);
     }
 
     // ---- Detail selection (quadtree walk) ----
@@ -5939,12 +5944,7 @@ public partial class LodTerrainRenderer : IRenderer
 
         ApplyFrameUniforms(prog, viewDistance);
 
-        float cullDistSq = float.MaxValue;
-        if (FarViewDistanceCap > 0)
-        {
-            float cull = FarViewDistanceCap + LodSection.SectionBlocks;
-            cullDistSq = cull * cull;
-        }
+        float cullDistSq = LodFarDistance.CullDistanceSquared(FarViewDistanceCap);
 
         renderPaths.PrepareFrame(new LodRenderFrame(
             currentWorldEpoch(), frameCounter, drawList.Count, cullDistSq));
@@ -6069,7 +6069,7 @@ public partial class LodTerrainRenderer : IRenderer
         prog.Uniform("horizonFog", capi.Ambient.BlendedCloudDensity);
 
         prog.Uniform("viewDistance", viewDistance);
-        prog.Uniform("farViewDistance", EffectiveFarDistance);
+        prog.Uniform("farViewDistance", TerrainFadeDistance);
         // The uniform exists in the shared body but only the packed decoder reads it.
         // Keeping it tied to the established switch makes `.dlbackface off` disable both
         // the early exact rejection and OpenGL's later winding rejection together.
@@ -7825,9 +7825,10 @@ public partial class LodTerrainRenderer : IRenderer
             prog!.Uniform("vhOceanity", SectionOceanity(key, originX, originZ, footprint));
         }
 
+        if (LodFarDistance.SectionPastCull(originX, originZ, footprint,
+            camPos.X, camPos.Z, cullDistSq)) return false;
         double dx = originX + footprint / 2.0 - camPos.X;
         double dz = originZ + footprint / 2.0 - camPos.Z;
-        if (dx * dx + dz * dz > cullDistSq) return false;
         float horizontalDistance = (float)Math.Sqrt(dx * dx + dz * dz);
 
         // Camera-relative box, matching the model matrix below. The Y range is the mesh's
@@ -8890,6 +8891,7 @@ public partial class LodTerrainRenderer : IRenderer
         farPlaneState.Reset();
         appliedZFar = 0;
         EffectiveFarDistance = LodFarDistance.MinimumProjectionDistance;
+        TerrainFadeDistance = LodFarDistance.MinimumProjectionDistance;
         meshJobInFlight.Clear();
         lastResidencyMs.Clear();
         meshEvictionOrder.Clear();

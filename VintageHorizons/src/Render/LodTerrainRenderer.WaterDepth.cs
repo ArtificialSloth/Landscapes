@@ -246,9 +246,7 @@ public partial class LodTerrainRenderer
             if (junctionReady)
                 prog.BindTexture2D("vanillaWaterDepth", waterVanillaDepthTexture,
                     LodTerrainSamplerLayout.VanillaWaterDepth);
-            float cull = FarViewDistanceCap > 0
-                ? FarViewDistanceCap + LodSection.SectionBlocks : float.MaxValue;
-            float cullSq = cull == float.MaxValue ? float.MaxValue : cull * cull;
+            float cullSq = LodFarDistance.CullDistanceSquared(FarViewDistanceCap);
             // A requested capture also records the old mask-only result in this exact
             // frame. Ordinary frames need one mesh traversal. Depth-min composition
             // makes the diagnostic traversal observational: it cannot change the result.

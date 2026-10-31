@@ -1,3 +1,5 @@
+using VintageHorizons.Silhouette;
+
 namespace VintageHorizons.Checks;
 
 public static class FarDistanceChecks
@@ -6,6 +8,9 @@ public static class FarDistanceChecks
     {
         CachedBounds(c);
         EffectiveDistanceAndCap(c);
+        TerrainFadeFollowsTheCap(c);
+        OwnershipMatchesTheDraw(c);
+        TheCapHasOneTest(c);
         ConservativeNearHandoff(c);
         WaterOwnershipRadius(c);
         StableProjection(c);
@@ -102,6 +107,175 @@ public static class FarDistanceChecks
             "the .dlfar cap cannot clip the vanilla view-distance safety band");
         c.Eq(4608f, LodFarDistance.RequiredProjection(4096),
             "the camera projection retains room beyond the visible LOD edge");
+    }
+
+    /// <summary>
+    /// The fade ends at the cap once the projection's floor would have carried it past, and no
+    /// cap the floor never touched moves at all.
+    /// </summary>
+    static void TerrainFadeFollowsTheCap(Check c)
+    {
+        c.Eq(8192f, LodFarDistance.TerrainFade(8192, 256, 8192),
+            "a long cap keeps its fade exactly where it was");
+        c.Eq(10000f, LodFarDistance.TerrainFade(10000, 256, 0),
+            "no cap keeps its fade exactly where it was");
+        c.Eq(1792f, LodFarDistance.TerrainFade(1792, 256, 1536),
+            "a cap the floor only just holds up keeps its fade too");
+        c.Eq(1536f, LodFarDistance.TerrainFade(1792, 256, 1024),
+            "a short cap brings the fade in");
+        c.Eq(1024f, LodFarDistance.TerrainEnd(LodFarDistance.TerrainFade(1792, 256, 1024)),
+            "and the terrain ends at the cap");
+        c.Eq(384f, LodFarDistance.TerrainEnd(LodFarDistance.TerrainFade(1792, 256, 384)),
+            "at the shortest caps too");
+
+        float previous = float.MinValue;
+        bool steady = true;
+        bool continuous = true;
+        for (int cap = 256; cap <= 4096; cap += 16)
+        {
+            float effective = LodFarDistance.Effective(32768, 256, cap);
+            float end = LodFarDistance.TerrainEnd(LodFarDistance.TerrainFade(effective, 256, cap));
+            steady &= end >= previous;
+            continuous &= previous == float.MinValue || end - previous <= 16f;
+            previous = end;
+        }
+        c.True(steady, "a longer cap never ends the terrain sooner");
+        c.True(continuous, "and the slider has no step where the rule changes");
+
+        for (int view = 32; view <= 2048; view += 32)
+        {
+            float fade = LodFarDistance.TerrainFade(
+                LodFarDistance.Effective(32768, view, 256), view, 256);
+            float length = fade - view * LodFarDistance.ShaderFadeStartFraction
+                - LodFarDistance.ShaderFadeMargin;
+            if (length >= LodFarDistance.MinimumFadeLength - 0.01f) continue;
+            c.True(false, $"the shader's divisor stays positive at view {view}, got {length}");
+        }
+        c.True(LodFarDistance.TerrainFade(1792, 256, 8192) == 1792f,
+            "a cap past the mesh edge changes nothing");
+
+        string assets = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "assets",
+            "dodenslandscapes", "shaderincludes");
+        string vertex = File.ReadAllText(Path.Combine(assets, "lodvertexsurface.vsh"));
+        string ownership = File.ReadAllText(Path.Combine(assets, "lodownershiptest.fsh"));
+        c.True(vertex.Contains("float distStart = viewDistance * 0.785;", StringComparison.Ordinal)
+                && vertex.Contains("dist = (radial - distStart) / (farViewDistance - distStart - 512.0);",
+                    StringComparison.Ordinal),
+            "the fade's arithmetic here is still the shader's");
+        c.True(ownership.Contains("dist > 1.0) discard;", StringComparison.Ordinal),
+            "the fade's end still discards, which is what makes it the terrain's end");
+    }
+
+    /// <summary>
+    /// What Farseer is told is drawn. A cell it gives up with nothing drawn on it is the void, so
+    /// a cell cut by the terrain's end stays Farseer's from anywhere inside the player's chunk.
+    /// </summary>
+    static void OwnershipMatchesTheDraw(Check c)
+    {
+        c.Eq(16.0, LodFarDistance.SnapCamera(0), "a camera snaps to its chunk's middle");
+        c.Eq(16.0, LodFarDistance.SnapCamera(31.9), "from anywhere inside it");
+        c.Eq(48.0, LodFarDistance.SnapCamera(32), "the next chunk starts on its line");
+        c.Eq(-16.0, LodFarDistance.SnapCamera(-0.1), "and the snap floors below zero");
+
+        c.True(LodFarDistance.CellInsideTerrain(0, 0, 32, 16, 16, 1024f),
+            "the cell under the player is inside");
+        c.False(LodFarDistance.CellInsideTerrain(2048, 0, 32, 16, 16, 1024f),
+            "a cell past the terrain's end is not");
+        c.False(LodFarDistance.CellInsideTerrain(0, 0, 32, 16, 16, 16f),
+            "nothing is inside an end shorter than the slack");
+
+        // The rule's whole promise, from every position in a chunk: no cell granted past the
+        // shader's discard, for a true camera the snap has moved by as much as it can.
+        const float end = 1024f;
+        const int cell = 32;
+        bool heldInside = true;
+        int granted = 0;
+        for (double cameraX = 0; cameraX < 32; cameraX += 3.1)
+        {
+            for (double cameraZ = 0; cameraZ < 32; cameraZ += 3.1)
+            {
+                double snappedX = LodFarDistance.SnapCamera(cameraX);
+                double snappedZ = LodFarDistance.SnapCamera(cameraZ);
+                for (int z = -48; z < 48; z++)
+                {
+                    for (int x = -48; x < 48; x++)
+                    {
+                        if (!LodFarDistance.CellInsideTerrain(
+                                x * cell, z * cell, cell, snappedX, snappedZ, end)) continue;
+                        granted++;
+                        double dx = Math.Max(Math.Abs(x * cell - cameraX),
+                            Math.Abs(x * cell + cell - cameraX));
+                        double dz = Math.Max(Math.Abs(z * cell - cameraZ),
+                            Math.Abs(z * cell + cell - cameraZ));
+                        heldInside &= Math.Sqrt(dx * dx + dz * dz) <= end;
+                    }
+                }
+            }
+        }
+        c.True(granted > 0 && heldInside,
+            "no granted cell reaches past the terrain's end from anywhere in the player's chunk");
+
+        float radius = LodTerrainRenderer.TerrainFogRadius(1792f, 1536f);
+        c.Eq(944f, radius, "the fog's disc stops short of a short cap's end");
+        LodSilhouetteCoverage disc =
+            LodTerrainRenderer.TerrainFogAvailableCells(0, 0, 4, 4, radius);
+        bool grantable = true;
+        for (int z = 0; z < LodSilhouetteField.CoverageCellsPerEdge; z++)
+            for (int x = 0; x < LodSilhouetteField.CoverageCellsPerEdge; x++)
+                if (disc.Covered(x, z))
+                    grantable &= LodFarDistance.CellInsideTerrain(x * 32, z * 32, 32,
+                        LodFarDistance.SnapCamera(4), LodFarDistance.SnapCamera(4), 1024f);
+        c.True(grantable, "so it never holds a cell ownership cannot grant, and draws no ring");
+        c.Eq(1200f, LodTerrainRenderer.TerrainFogRadius(1792f, 1792f),
+            "a floor-held far distance stops the disc short of the terrain's end as well");
+        c.Eq(6144f, LodTerrainRenderer.TerrainFogRadius(8192f, 8192f),
+            "a long far distance keeps three quarters, as before");
+        c.Eq(LodTerrainRenderer.TerrainFogMinimumRadius,
+            LodTerrainRenderer.TerrainFogRadius(1792f, 640f),
+            "and the shortest end keeps a small disc");
+    }
+
+    /// <summary>
+    /// One rule in one place. The fault this guards against was the draw and the ownership
+    /// answer each asking its own question about the cap.
+    /// </summary>
+    static void TheCapHasOneTest(Check c)
+    {
+        c.Eq(float.MaxValue, LodFarDistance.CullDistanceSquared(0), "no cap culls nothing");
+        c.Eq(1088f * 1088f, LodFarDistance.CullDistanceSquared(1024),
+            "a cap culls one level-0 section past itself");
+        float cull = LodFarDistance.CullDistanceSquared(1024);
+        c.False(LodFarDistance.SectionPastCull(0, 0, 64, 32, 32, cull),
+            "a section under the camera draws");
+        c.False(LodFarDistance.SectionPastCull(1024, 0, 64, 0, 0, cull),
+            "as does one centred inside the limit");
+        c.True(LodFarDistance.SectionPastCull(1088, 0, 64, 0, 0, cull),
+            "one centred past it does not");
+        c.False(LodFarDistance.SectionPastCull(0, -1024, 2048, 0, 0, cull),
+            "a coarse section is judged by its centre, however far its edge reaches");
+        c.True(LodFarDistance.SectionPastCull(1024, 1024, 1024, 0, 0, cull),
+            "and one whose near corner is inside but whose centre is not stays out");
+
+        string src = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src", "Render");
+        string renderer = File.ReadAllText(Path.Combine(src, "LodTerrainRenderer.cs"));
+        string pass = File.ReadAllText(Path.Combine(src, "LodTerrainRenderer.Silhouette.cs"));
+        string depth = File.ReadAllText(Path.Combine(src, "LodTerrainRenderer.WaterDepth.cs"));
+        c.True(renderer.Contains("if (LodFarDistance.SectionPastCull(originX, originZ, footprint,",
+                    StringComparison.Ordinal)
+                && pass.Contains("if (LodFarDistance.SectionPastCull(originX, originZ, footprint,",
+                    StringComparison.Ordinal),
+            "the draw and Farseer's ownership ask the cap the same question");
+        c.True(pass.Contains("!LodFarDistance.CellInsideTerrain(cellMinX, cellMinZ,",
+                    StringComparison.Ordinal),
+            "and ownership stops at the terrain's end");
+        c.True(renderer.Contains("prog.Uniform(\"farViewDistance\", TerrainFadeDistance);",
+                    StringComparison.Ordinal)
+                && renderer.Contains("LodFarDistance.RequiredProjection(EffectiveFarDistance)",
+                    StringComparison.Ordinal),
+            "the fade takes the cap, and the projection keeps its floor (G5)");
+        c.False(renderer.Contains("FarViewDistanceCap + LodSection.SectionBlocks", StringComparison.Ordinal)
+                || depth.Contains("FarViewDistanceCap + LodSection.SectionBlocks", StringComparison.Ordinal),
+            "no pass works the cull distance out for itself");
     }
 
     static void ConservativeNearHandoff(Check c)

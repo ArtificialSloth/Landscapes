@@ -550,6 +550,11 @@ public partial class LodTerrainRenderer
     /// distance-selected level, falls back to a coarser parent while that target is missing, and
     /// only then falls through to finer descendants. An incomplete selected mesh is never
     /// overruled by another level.
+    ///
+    /// Residency alone is not drawing: coarse meshes stay in memory well past the Cache distance,
+    /// and the terrain's fade discards everything past its end. A cell counted on either would
+    /// cut Farseer away with nothing drawn behind it, so the selected section must also pass the
+    /// draw's own cap, and the whole cell must lie inside the terrain's end.
     /// Every unknown or partial state remains fail-open to Farseer.
     /// </summary>
     LodSilhouetteCoverage SilhouetteStableReplacementCoverage(SilhouetteGpuMesh mesh) =>
@@ -621,6 +626,10 @@ public partial class LodTerrainRenderer
             }
         }
 
+        float cullDistanceSquared = LodFarDistance.CullDistanceSquared(FarViewDistanceCap);
+        float terrainEnd = LodFarDistance.TerrainEnd(TerrainFadeDistance);
+        double snappedCameraX = LodFarDistance.SnapCamera(camPos.X);
+        double snappedCameraZ = LodFarDistance.SnapCamera(camPos.Z);
         LodSilhouetteCoverage result = LodSilhouetteCoverage.Empty;
         for (int cellZ = 0; cellZ < LodSilhouetteField.CoverageCellsPerEdge; cellZ++)
         {
@@ -637,8 +646,17 @@ public partial class LodTerrainRenderer
 
                 int selected = SelectStableSilhouetteLevel(
                     residentByLevel, wanted, cellX, cellZ);
-                if (selected >= 0 && coveredByLevel[selected].Covered(cellX, cellZ))
-                    result = result.WithCovered(cellX, cellZ);
+                if (selected < 0 || !coveredByLevel[selected].Covered(cellX, cellZ)) continue;
+
+                int footprint = LodSection.SectionBlocks << selected;
+                double originX = Math.Floor(cellMinX / footprint) * footprint;
+                double originZ = Math.Floor(cellMinZ / footprint) * footprint;
+                if (LodFarDistance.SectionPastCull(originX, originZ, footprint,
+                        camPos.X, camPos.Z, cullDistanceSquared)
+                    || !LodFarDistance.CellInsideTerrain(cellMinX, cellMinZ,
+                        LodMeshGroundCoverage.CellBlocks, snappedCameraX, snappedCameraZ, terrainEnd))
+                    continue;
+                result = result.WithCovered(cellX, cellZ);
             }
         }
         if (!readinessMaskActive || readiness == null || readinessMask == null) return result;

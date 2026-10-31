@@ -304,7 +304,7 @@ public partial class LodTerrainRenderer
         return true;
     }
 
-    float SkyReachBlocks() => Math.Max(256f, EffectiveFarDistance - 512f) * 0.9f;
+    float SkyReachBlocks() => Math.Max(256f, LodFarDistance.TerrainEnd(TerrainFadeDistance)) * 0.9f;
 
     void DrawSkyWitness(int slot)
     {

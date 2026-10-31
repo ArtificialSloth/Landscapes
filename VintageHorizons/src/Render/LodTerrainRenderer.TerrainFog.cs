@@ -17,9 +17,10 @@ namespace VintageHorizons;
 /// and the fog works on a server that offers no tiles at all.
 ///
 /// The disc ends where cached terrain begins to fade into the sky, three quarters of the way to
-/// its far distance (lodsurfacefinish.fsh). Past that the terrain already dissolves, and an edge
-/// there needs no veil. A cell outside the disc is no owner at all, so the disc's own rim never
-/// draws fog (<see cref="LodSilhouetteSeamMask.SetTile"/>).
+/// its far distance (lodsurfacefinish.fsh), and never reaches the terrain's end, where ownership
+/// stops on a circle. Past that the terrain already dissolves, and an edge there needs no veil.
+/// A cell outside the disc is no owner at all, so the disc's own rim never draws fog
+/// (<see cref="LodSilhouetteSeamMask.SetTile"/>).
 /// </summary>
 public partial class LodTerrainRenderer
 {
@@ -59,6 +60,17 @@ public partial class LodTerrainRenderer
 
     /// <summary>Where cached terrain begins to fade into the sky, as a share of its far distance.</summary>
     internal const float TerrainFogReachFraction = 0.75f;
+
+    /// <summary>
+    /// How far inside the terrain's end the disc stays, so every cell it holds is one ownership
+    /// can still grant: half a cell's diagonal and the same again for the snapped camera, past
+    /// <see cref="LodFarDistance.OwnedEdgeSlackBlocks"/>. Less draws a curtain around the whole
+    /// circle, over terrain that has already dissolved.
+    /// </summary>
+    internal const float TerrainFogEndMarginBlocks = 80;
+
+    /// <summary>The smallest disc: a short cap's fade can end almost at the player.</summary>
+    internal const float TerrainFogMinimumRadius = 64;
 
     /// <summary>
     /// The foot of the cached terrain's wall at its edge. Every column is captured down to y = 1
@@ -135,7 +147,7 @@ public partial class LodTerrainRenderer
 
         Vec3d cam = capi.World.Player.Entity.CameraPos;
         float farDistance = EffectiveFarDistance;
-        float radius = MathF.Max(LodSilhouetteTile.TileBlocks, farDistance * TerrainFogReachFraction);
+        float radius = TerrainFogRadius(farDistance, TerrainFadeDistance);
         terrainFogFrame++;
         CollectTerrainFogTiles(cam.X, cam.Z, radius);
         RefreshTerrainFogCoverage(cam.X, cam.Z, radius);
@@ -317,6 +329,11 @@ public partial class LodTerrainRenderer
 
     static bool SameCoverage(LodSilhouetteCoverage a, LodSilhouetteCoverage b) =>
         a.Word0 == b.Word0 && a.Word1 == b.Word1 && a.Word2 == b.Word2 && a.Word3 == b.Word3;
+
+    internal static float TerrainFogRadius(float farDistance, float terrainFade) => MathF.Max(
+        TerrainFogMinimumRadius,
+        MathF.Min(farDistance * TerrainFogReachFraction,
+            LodFarDistance.TerrainEnd(terrainFade) - TerrainFogEndMarginBlocks));
 
     /// <summary>The tile's 32-block cells whose centres lie inside the disc.</summary>
     internal static LodSilhouetteCoverage TerrainFogAvailableCells(

@@ -90,6 +90,28 @@ internal static class LodFarDistance
     public const float ProjectionMargin = 512;
     public const float MinimumProjectionDistance = 3000;
 
+    /// <summary>
+    /// lodvertexsurface.vsh's fade: it starts at this share of the view distance, and ends this
+    /// far short of the distance it is handed. lodownershiptest.fsh discards past that end, so
+    /// the end is where cached terrain stops, on a circle, whatever the sections around it hold.
+    /// </summary>
+    public const float ShaderFadeStartFraction = 0.785f;
+    public const float ShaderFadeMargin = 512;
+
+    /// <summary>The shader divides by the fade's length, which must stay above zero.</summary>
+    public const float MinimumFadeLength = 64;
+
+    /// <summary>
+    /// How far inside the terrain's end a cell must lie for Farseer to give it up: the 24 a
+    /// camera snapped to its chunk can be off, and 8 because the shader's fade is interpolated
+    /// across a face and so reaches its end a few blocks early on a long flat one. Too little
+    /// opens sky between the two; too much only lets them overlap where the terrain is nearly
+    /// Farseer's colour already, and overlap outranks holes.
+    /// </summary>
+    public const double OwnedEdgeSlackBlocks = 32;
+
+    const int CameraSnapBlocks = 32;
+
     public static float Effective(double farthestMeshDistance, float vanillaViewDistance, int farViewDistanceCap)
     {
         float far = (float)farthestMeshDistance;
@@ -99,6 +121,71 @@ internal static class LodFarDistance
 
     public static float RequiredProjection(float effectiveFarDistance) =>
         Math.Max(MinimumProjectionDistance, effectiveFarDistance + ProjectionMargin);
+
+    /// <summary>
+    /// The distance handed to the terrain's fade. <see cref="Effective"/> holds its floor for the
+    /// camera projection and the globe curve, and nothing here may move those, but left to reach
+    /// the fade that floor let a short cap end terrain without one: a hard edge, in whole sections.
+    /// Taking the smaller of the two keeps every cap the floor never touched exactly as it was.
+    /// </summary>
+    public static float TerrainFade(float effectiveFarDistance, float vanillaViewDistance,
+        int farViewDistanceCap)
+    {
+        float fade = farViewDistanceCap > 0
+            ? Math.Min(effectiveFarDistance, farViewDistanceCap + ShaderFadeMargin)
+            : effectiveFarDistance;
+        return Math.Max(fade, vanillaViewDistance * ShaderFadeStartFraction
+            + ShaderFadeMargin + MinimumFadeLength);
+    }
+
+    public static float TerrainEnd(float terrainFade) => terrainFade - ShaderFadeMargin;
+
+    /// <summary>The squared section-centre distance past which the cap stops a section drawing.</summary>
+    public static float CullDistanceSquared(int farViewDistanceCap)
+    {
+        if (farViewDistanceCap <= 0) return float.MaxValue;
+        float cull = farViewDistanceCap + LodSection.SectionBlocks;
+        return cull * cull;
+    }
+
+    /// <summary>
+    /// The cap's one test, shared by the draw and by what Farseer and the fog are told is drawn.
+    /// The two disagreeing is a hole: a mesh in memory that nothing draws, with Farseer cut away
+    /// over it.
+    /// </summary>
+    public static bool SectionPastCull(double originX, double originZ, int footprint,
+        double cameraX, double cameraZ, float cullDistanceSquared)
+    {
+        double dx = originX + footprint / 2.0 - cameraX;
+        double dz = originZ + footprint / 2.0 - cameraZ;
+        return dx * dx + dz * dz > cullDistanceSquared;
+    }
+
+    /// <summary>
+    /// A camera coordinate moved to its chunk's middle. Ownership against the terrain's end asks
+    /// from here, so the whole circle changes hands as the player crosses a chunk line, as the
+    /// vanilla edge does. Asked from the camera itself some cell flips on almost every moving
+    /// frame, and each flip rebuilds the seam mask and prepares a fog field on the render thread.
+    /// </summary>
+    public static double SnapCamera(double coordinate) =>
+        (Math.Floor(coordinate / CameraSnapBlocks) + 0.5) * CameraSnapBlocks;
+
+    /// <summary>
+    /// Whether every part of a cell lies inside the terrain's end, from a snapped camera. The
+    /// farthest corner decides: a cell cut by the circle stays Farseer's, so the terrain's
+    /// discarded part has something behind it.
+    /// </summary>
+    public static bool CellInsideTerrain(double cellMinX, double cellMinZ, int cellBlocks,
+        double snappedCameraX, double snappedCameraZ, float terrainEnd)
+    {
+        double reach = terrainEnd - OwnedEdgeSlackBlocks;
+        if (reach <= 0) return false;
+        double dx = Math.Max(Math.Abs(cellMinX - snappedCameraX),
+            Math.Abs(cellMinX + cellBlocks - snappedCameraX));
+        double dz = Math.Max(Math.Abs(cellMinZ - snappedCameraZ),
+            Math.Abs(cellMinZ + cellBlocks - snappedCameraZ));
+        return dx * dx + dz * dz <= reach * reach;
+    }
 }
 
 /// <summary>
