@@ -282,6 +282,8 @@ uniform float blockTextureDetail;
 flat in int vhBlockSlot;
 // The quad's plane where the vertex stage knows it (see lodvertexinputs.vsh), 0 where it does not.
 flat in int vhFaceAxis;
+// Where this fragment sits on a reed's sheet. Read only when vhFaceAxis is 4.
+in vec2 vhPlaneUv;
 // ------------------------------------------------------------------------------
 
 // 1 applies vanilla's own rule that an up-facing surface never darkens with the sun.

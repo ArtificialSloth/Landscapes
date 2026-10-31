@@ -1549,7 +1549,7 @@ public static class StaticAssetChecks
         // exact face where the packed vertex stage knows it; the derivative normal is only the
         // fallback. On NVIDIA the guess put side grass on tops (2026-10-21).
         string vertexBody = ShaderBody("vsh");
-        c.True(vertexBody.Contains("vhFaceAxis = vhFace < 2u ? 1 : (vhFace < 4u ? 2 : 3);", StringComparison.Ordinal)
+        c.True(vertexBody.Contains("vhFaceAxis = vhFace < 2u ? 1 : (vhFace < 4u ? 2 : (vhFace < 6u ? 3 : 4));", StringComparison.Ordinal)
                 && vertexBody.Contains("vhFaceAxis = 0;", StringComparison.Ordinal),
             "packed quads hand the band their exact face; other meshes say unknown");
         c.True(fragment.Contains("bool vhWall = vhFaceAxis != 0 ? vhFaceAxis != 1 : abs(normal.y) <= 0.5;", StringComparison.Ordinal)

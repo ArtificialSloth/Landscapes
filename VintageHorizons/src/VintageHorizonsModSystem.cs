@@ -1509,8 +1509,52 @@ public partial class VintageHorizonsModSystem : ModSystem
         }
     }
 
+    /// <summary>
+    /// The sheets a reed's far model wears: its foliage, and a cattail's cobs laid over it as an
+    /// overlay, read from the game's own <c>lod2shape</c>. A reed has no ordinary face to texture,
+    /// so with no far model (papyrus) there is no slot and its planes draw plain.
+    /// </summary>
+    LodBlockTextureRegistry.BlockTexture ResolveReedSheets(Block block)
+    {
+        AssetLocation? farShape = block.Lod2Shape?.Base;
+        Shape? shape = farShape == null ? null : LoadBlockShape(farShape);
+        if (shape?.Elements == null) return default;
+
+        string? foliage = null, cobs = null;
+        foreach (ShapeElement element in shape.Elements)
+        {
+            string? name = element?.FacesResolved?
+                .FirstOrDefault(face => face is { Enabled: true } && !string.IsNullOrEmpty(face.Texture))?.Texture;
+            if (name == null) continue;
+            foliage ??= name;
+            if (cobs == null && name.StartsWith("cobs", StringComparison.Ordinal)) cobs = name;
+        }
+
+        (TextureAtlasPosition? Position, AssetLocation? Location) Sheet(string? name)
+        {
+            if (name == null) return default;
+            if (block.Textures != null && block.Textures.TryGetValue(name, out CompositeTexture? own)
+                && own?.Baked != null && IsUsableAtlasTexture(own.Baked.TextureSubId))
+                return (capi.BlockTextureAtlas.Positions[own.Baked.TextureSubId], own.Base);
+            if (shape.Textures != null && shape.Textures.TryGetValue(name, out AssetLocation? named))
+                return (capi.BlockTextureAtlas[named], named);
+            return default;
+        }
+
+        (TextureAtlasPosition? sheet, AssetLocation? location) = Sheet(foliage);
+        if (sheet == null || location == null) return default;
+
+        TexturePixels? pixels = ReadTexturePixels(location.Clone()
+            .WithPathPrefixOnce("textures/").WithPathAppendixOnce(".png"));
+        if (pixels == null) return default;
+        int mean = PackMean(RegionMean(pixels.Argb, pixels.Width, pixels.Height, null, 0, 0));
+        return new LodBlockTextureRegistry.BlockTexture(sheet, Sheet(cobs).Position, mean, mean);
+    }
+
     LodBlockTextureRegistry.BlockTexture ResolveBlockTextureFor(Block block)
     {
+        if (block is Vintagestory.GameContent.BlockReeds) return ResolveReedSheets(block);
+
         // The UP face, explicitly. `TextureSubIdForBlockColor` is the engine's generic "what
         // colour is this block" texture and for grass-covered soil that is the SIDE - which is
         // grass across its top half and bare dirt across its bottom half. Tiled onto a top

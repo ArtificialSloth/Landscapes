@@ -391,7 +391,8 @@ public static class LodMesher
                         if (step == 1)
                         {
                             bool onWater = r + 1 < runs.Length && IsWaterRun(self, runs[r + 1]);
-                            AddCrossedPlanes(opaque, self, pid, cx, cz, yBottom, onWater);
+                            AddCrossedPlanes(opaque, self, pid, cx, cz, yBottom, onWater,
+                                job.EmitTextureSlots);
                         }
                         else
                         {
@@ -1079,11 +1080,12 @@ public static class LodMesher
     /// <summary>
     /// A reed as two planes crossing corner to corner, the layout of the game's own far model.
     /// One quad per plane: the packed vertex stage turns each toward the camera, so neither needs
-    /// a back. They carry no texture, and sink half a block so a slab beneath leaves no gap. A
-    /// reed standing in water keeps its true height above the bed, a block below its run.
+    /// a back. Their texture slot names the sheet the game's far model wears, and with no slot
+    /// they draw plain. They sink half a block so a slab beneath leaves no gap. A reed standing
+    /// in water keeps its true height above the bed, a block below its run.
     /// </summary>
     static void AddCrossedPlanes(Buffers buf, SectionSnapshot self, int pid, int cx, int cz,
-        int yBottom, bool onWater)
+        int yBottom, bool onWater, bool emitTextureSlots)
     {
         byte flags = self.PaletteFlags[pid];
         int color = self.WallColor(pid, true);
@@ -1092,10 +1094,11 @@ public static class LodMesher
         float y0 = yBottom * 0.5f - 0.5f;
         float y1 = yBottom * 0.5f + height - (onWater ? 1f : 0f);
         float x0 = cx, x1 = cx + 1, z0 = cz, z1 = cz + 1;
+        int textureSlot = TextureSlotFor(self, pid, 1, emitTextureSlots, 0);
         AddQuad(buf, LodPackedFace.DiagonalRising, 1, color, alpha,
-            x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0);
+            x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0, textureSlot);
         AddQuad(buf, LodPackedFace.DiagonalFalling, 1, color, alpha,
-            x0, y0, z1, x1, y0, z0, x1, y1, z0, x0, y1, z1);
+            x0, y0, z1, x1, y0, z0, x1, y1, z0, x0, y1, z1, textureSlot);
     }
 
     static void AddQuad(Buffers buf, LodPackedFace face, int columnBlocks, int color, byte alpha,

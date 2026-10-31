@@ -14,7 +14,8 @@ void main()
     float vhZ0 = float((vhGeometry >> 14u) & 127u) * vhRecordNoise.z;
     float vhZ1 = float((vhGeometry >> 21u) & 127u) * vhRecordNoise.z;
     uint vhFace = (vhGeometry >> 28u) & 7u;
-    vhFaceAxis = vhFace < 2u ? 1 : (vhFace < 4u ? 2 : 3);
+    vhFaceAxis = vhFace < 2u ? 1 : (vhFace < 4u ? 2 : (vhFace < 6u ? 3 : 4));
+    vhPlaneUv = vec2(0.0);
     float vhY0 = float(vhHeights & 65535u) * 0.25;
     float vhY1 = float(vhHeights >> 16u) * 0.25;
 
@@ -73,7 +74,7 @@ void main()
     {
         // A reed's crossed plane (LodMesher.AddCrossedPlanes). Seen from behind its corners run
         // the other way round the quad, so it faces the camera from both sides with one quad.
-        // The top narrows by a quarter a side, which reads as a tuft rather than a card.
+        // With no sheet to wear, the top narrows by a quarter a side so it reads as a tuft.
         vec2 vhPlaneA = vec2(vhX0, vhFace == 6u ? vhZ0 : vhZ1);
         vec2 vhPlaneB = vec2(vhX1, vhFace == 6u ? vhZ1 : vhZ0);
         vec2 vhPlaneMiddle = (vhPlaneA + vhPlaneB) * 0.5;
@@ -84,10 +85,15 @@ void main()
             vhPlaneA = vhPlaneB;
             vhPlaneB = vhPlaneSwap;
         }
-        vec2 vhPlaneEnd = vhLogicalCorner == 1u || vhLogicalCorner == 2u ? vhPlaneB : vhPlaneA;
+        bool vhPlaneFarEnd = vhLogicalCorner == 1u || vhLogicalCorner == 2u;
+        vec2 vhPlaneEnd = vhPlaneFarEnd ? vhPlaneB : vhPlaneA;
+        float vhPlaneNarrow = (vhGeometry & 0x80000000u) != 0u ? 0.0 : 0.5;
         vertexPositionIn = vhLogicalCorner < 2u
             ? vec3(vhPlaneEnd.x, vhY0, vhPlaneEnd.y)
-            : vec3(mix(vhPlaneEnd.x, vhPlaneMiddle.x, 0.5), vhY1, mix(vhPlaneEnd.y, vhPlaneMiddle.y, 0.5));
+            : vec3(mix(vhPlaneEnd.x, vhPlaneMiddle.x, vhPlaneNarrow), vhY1,
+                mix(vhPlaneEnd.y, vhPlaneMiddle.y, vhPlaneNarrow));
+        // The second plane mirrors the sheet, so two planes do not show the same plant twice.
+        vhPlaneUv = vec2(vhPlaneFarEnd != (vhFace == 7u) ? 1.0 : 0.0, vhLogicalCorner < 2u ? 1.0 : 0.0);
     }
     else
     {
@@ -136,6 +142,7 @@ void main()
     int vhEncodedAlpha = int(vertexColorIn.a * 255.0 + 0.5);
     vhBlockSlot = -1;
     vhFaceAxis = 0;
+    vhPlaneUv = vec2(0.0);
     if (vhEncodedAlpha >= 192)
     {
         ivec3 vhSlotBytes = ivec3(vertexColorIn.rgb * 255.0 + 0.5);

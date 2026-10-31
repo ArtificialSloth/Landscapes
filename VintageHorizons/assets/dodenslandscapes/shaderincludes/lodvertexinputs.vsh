@@ -97,8 +97,11 @@ flat out int vhBlockSlot;
 // carry their face; every other mesh says 0 and the band falls back to the screen-derivative
 // normal. The band chooses a block's top or wall texture, and the plane to tile it on, from
 // this - it used to guess from the derivative normal alone, and on NVIDIA grass tops came out
-// wearing the side texture laid along the block (2026-10-21).
+// wearing the side texture laid along the block (2026-10-21). 4 is a reed's crossed plane.
 flat out int vhFaceAxis;
+
+// Where a fragment sits on a reed's sheet, 0 to 1 across and top to bottom. Zero elsewhere.
+out vec2 vhPlaneUv;
 
 // ---- Per-section facts ------------------------------------------------------
 //

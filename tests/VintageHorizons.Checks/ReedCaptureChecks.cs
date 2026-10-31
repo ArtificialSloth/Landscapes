@@ -56,6 +56,16 @@ public static class ReedCaptureChecks
         c.Eq(2, Count(far, LodPackedFace.Top), "they draw the ground and a mat of the reed's colour");
         c.Eq(10.25f, far.Heights.Opaque.MaxY, "and the mat lies a quarter block over the ground");
 
+        section.Palette[cattail] = section.Palette[cattail] with { TextureSlot = 7 };
+        MeshResult sheeted = LodMesher.BuildMesh(Fixtures.Job(section, emitTextureSlots: true));
+        int plane = Enumerable.Range(0, sheeted.PackedOpaqueQuadCount)
+            .First(i => LodPackedQuadFormat.FaceOf(sheeted.PackedOpaqueQuads, i) == LodPackedFace.DiagonalRising);
+        int planeWord = plane * LodPackedQuadFormat.WordsPerQuad;
+        c.True(LodPackedQuadFormat.IsTextured(sheeted.PackedOpaqueQuads[planeWord]),
+            "with textures on, a plane carries the reed's sheet");
+        c.Eq(7, LodPackedQuadFormat.TextureSlot(sheeted.PackedOpaqueQuads[planeWord + 2]),
+            "and names the slot its block was given");
+
         var shorter = new LodSection();
         foreach ((int id, int color, byte flags) in new[] { (1, 0x00806040, (byte)0), (2, 0, Crossed), (3, 0, (byte)(Crossed | LodPaletteEntry.FlagHalf)) })
             shorter.FindOrAddPaletteEntry(id, color, flags);
