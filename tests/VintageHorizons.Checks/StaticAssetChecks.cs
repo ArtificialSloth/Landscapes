@@ -543,7 +543,7 @@ public static class StaticAssetChecks
                 StringComparison.Ordinal)
             && renderer.Contains("EnumGetClimateMode.ForSuppliedDate_TemperatureOnly",
                 StringComparison.Ordinal)
-            && renderer.Contains(
+            && renderer.ReplaceLineEndings("\n").Contains(
                 "Climate.GetScaledAdjustedTemperatureFloatClient(\n            rawTemperature",
                 StringComparison.Ordinal),
             "remembered raw climate is advanced to the current season for each field cell");
