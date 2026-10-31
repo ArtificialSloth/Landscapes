@@ -8,6 +8,27 @@ first.
 
 ## [Unreleased]
 
+## [0.5.2-dev.7] - 2026-10-31
+
+**A test build: plants at distance, and a shorter cached distance.** The fast checks pass with 0 failures on game
+1.22.0 and 1.22.7 (26,664 assertions). This entry covers dev.4 to dev.7.
+
+**Reeds wear the game's own far textures.** Cattails, tule and sedge now show the see-through sheets of the game's
+far models, with a cattail's cobs on top. Papyrus has no far model and stays in plain color.
+
+**Ferns are visible at distance.** They were half see-through mats a quarter block off the ground, which read as
+nothing. Up to about 620 blocks at default settings they now draw as crossed planes wearing the game's frond texture.
+
+**New setting: Plant Textures.** On, reeds and ferns wear those textures. Off, they keep their shape in plain color.
+It is on in Quality and Balanced and off in Performance. A file saved on Performance shows Custom until the preset is
+picked again.
+
+**Cached terrain can be drawn as short as 256 blocks**, in 64-block steps up to 1,024 and 512-block steps above that.
+Below the game's own view distance it shows nothing, because the game draws all of that ground itself.
+
+**Known:** with the Cache distance lower than the explored distance, Farseer and the fog stay out at the explored
+edge, leaving a gap after the cached terrain.
+
 ## [0.5.2-dev.3] - 2026-10-31
 
 **A test build: reeds at distance.** Cattails, papyrus, tule and sedge now show past the game's own view

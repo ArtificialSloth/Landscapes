@@ -5560,6 +5560,11 @@ does, or match a single line.
 
 **Found:** 2026-10-19, Session 117.
 
+**Revised 2026-10-31, Session 120:** a file's endings can change under a check. `git revert` rewrote
+`LodTerrainRenderer.cs` with CRLF, and a check that had passed for months failed. That one chained command then
+packaged, installed and committed anyway, with a message saying the checks passed. Gate a build on the result: package
+only if a full run reports 0 failures, and read that result before writing the commit message.
+
 ### G296 - At login the seam fog's edge starts at the player
 
 **Trigger:** entering a world with the seam fog on.
@@ -5822,6 +5827,48 @@ tall grass is not permeable and does draw.
 **Safer action:** do not treat the rain map as the top of a column. `LodBlockPolicy.ReedTable` names the blocks
 worth looking above it for, and reads the solid layer under a fluid. Widening it to everything permeable raises
 every meadow by a block, so that is a product decision. A run holds one block per cell: a reed in water goes in
-the air above, because replacing the water cuts a hole in the surface.
+the air above, because replacing the water cuts a hole in the surface. Ferns joined the table in dev.7.
 
 **Found:** 2026-10-31, Session 120.
+
+### G313 - A cut-out sheet loses its stems in the mips, and its clear pixels stir in a colour
+
+**Trigger:** drawing a see-through texture at distance, as reed and fern planes do.
+
+**Trap:** mips average thin stems with the clear pixels around them, so a fixed alpha test deletes the plant as it
+shrinks. The same mips average in the colour clear texels store, which the game never shows: 176 grey in the foliage
+sheet and pure white in the cob sheet (G302). Past three levels the tile also borrows its neighbours in the shared
+atlas.
+
+**Safer action:** let the alpha test fall with the level, cap the level at three, read clear texels as the mean, and
+fade the pattern out before the mips are mostly clear colour. `lodterrainbody.fsh` does all four for `vhFaceAxis == 4`.
+
+**Found:** 2026-10-31, Session 120.
+
+### G314 - Texture slots serve two features, so blending off no longer means no slots
+
+**Trigger:** changing the block table, slot emission or the blockAtlas binding.
+
+**Trap:** slots, the block table and the atlas binding all used to follow `blendPipelineEnabled`. Seam blending is off
+in Performance and Balanced, so it silently took the plant sheets with it, and `blockTextureEnabled` still reads 0
+there while planes need the atlas.
+
+**Safer action:** ask `TextureSlotsWanted`, which is blending or Plant Textures, and keep a plane's sheet independent of
+`blockTextureEnabled`. With Plant Textures off, the vertex stage drops the slot, so the setting needs no remesh. A
+thin plant's planes must not pass through `AlphaFor` with `FlagThin` or `TextureSlotFor`: the first puts them in a
+blended band and the second refuses them a slot.
+
+**Found:** 2026-10-31, Session 120.
+
+### G315 - Texture past about two pixels a block costs a fetch and shows nothing
+
+**Trigger:** proposing block or leaf textures outside the seam band, as NateDoesLife's report and Distant Vistas suggest.
+
+**Trap:** it reads as an obvious upgrade. Built for leaves in dev.5, full to 2.5 pixels a block and gone at 1.5, the owner
+found it "kind of useless past 500 blocks or so", about 1.9 pixels a block at 1080 rows and FOV 60. At that size a
+mean-preserving pattern has nothing left to show. See-through leaf blocks are worse: +26.84% level-0 quads.
+
+**Safer action:** do not re-propose it. The owner closed the avenue and kept leaf textures in the seam band.
+Silhouette and shape do the work at that size, which is why crossed planes succeeded where texture did not.
+
+**Found:** 2026-10-31, Session 120 (0.5.2-dev.5, removed in dev.6).

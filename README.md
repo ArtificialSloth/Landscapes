@@ -89,8 +89,10 @@ The first time you join a world, a window asks you to pick a preset; Quality is 
 - **General** shows the LOD distances as a bar you can drag (hover the title for what each handle
   does), the **Automatic (Recommended)** switch, and the visual features in two columns, each with a
   rough cost (Low, Moderate, High). Most of what distant terrain costs is how much is drawn, so the
-  draw distance and the preset matter more than any single feature. **Load terrain while paused** and
-  **Developer options** sit beside Defaults. Defaults restores Quality.
+  draw distance and the preset matter more than any single feature. **Plant Textures** draws distant
+  reeds and ferns with the game's own plant textures; off, they keep their shape in plain color (on in
+  Quality and Balanced, off in Performance). **Load terrain while paused** and **Developer options**
+  sit beside Defaults. Defaults restores Quality.
 - **Generate** builds real terrain into the savegame (see below).
 - **Developer** appears while Developer options is on and holds every tuning dial: distant
   anti-aliasing and the LOD detail target, Farseer's look and reach, and the seam fog.
@@ -103,7 +105,7 @@ The first time you join a world, a window asks you to pick a preset; Quality is 
 | `.dldiag [on\|off]` | Show or hide the diagnostics side panel for this session. Off by default. |
 | `.dlconfig [general\|generate\|developer]` | Open the settings window, optionally on a tab (see Settings and presets). Changes preview live where applicable, Save keeps them and Cancel restores the previous values. In singleplayer the game's own Settings pauses the world, so its Generate tab offers **Open Live Controls + Unpause**, which leaves Settings, unpauses and opens this window. |
 | `.dldetail [auto\|manual\|target <px>\|<blocks>]` | Without an argument, report the six transition distances and where they come from. `auto` (the default) chooses them from your field of view and render resolution so every level hands over at the same size on screen, and `target <px>` sets that size (1.5 by default); `manual` returns to your own distances; a number sets a doubling sequence beginning there and switches automatic off. The presets set the target (Quality 1.5, Balanced 2, Performance 3), as does the Developer tab's slider. Saved; `.dlconfig` edits them individually. |
-| `.dlfar <blocks>` | Cap the LOD render distance. `0` means unlimited. A new install starts at 8,192, the Quality preset. |
+| `.dlfar <blocks>` | Cap the LOD render distance, from 256. `0` means unlimited. A new install starts at 8,192, the Quality preset. The settings bar moves in 64-block steps up to 1,024, then 512. |
 | `.dltaa [on\|off\|show\|reach\|nudge\|sharpen\|blend\|still\|clip\|reset]` | Distant anti-aliasing: stops distant terrain shimmering as you move by nudging it a fraction of a pixel each frame and blending frames together, on cached terrain only. On by default and saved; also a switch in `.dlconfig`. `reach <px>` sets where it begins as the on-screen width of one block; `nudge`, `sharpen`, `blend` (memory while turning), `still` (memory when still) and `clip` (how strictly old frames must match) tune it. All are saved and all are sliders on the `.dlconfig` Developer tab; `reset` restores the defaults, `show` tints what it touches for the session. With no argument it reports its settings and GPU cost to chat and the client log. |
 | `.dlsilhouette [on\|off\|log\|stats]` | Session-only Farseer override and status. The saved enable and Seam fog switches are on `.dlconfig`'s General page; the 1,024–32,768-block reach is a handle on its distance bar and, with outline, hill softness, colour/look and the twelve seam-fog dials, on the Developer tab. `off` drops the server demand and releases client tile, worker and GPU state; it does not rewrite the saved choice. |
 | `.dlfog [on\|off\|stats]` | Session-only seam fog switch; no argument toggles it. Off draws no fog pass and builds nothing for it, so comparing frame rates on and off in one scene shows the fog's whole cost. The Seam fog switch on General saves the choice. |

@@ -772,12 +772,17 @@ live until the exact replacement persistence revision is acknowledged.
     the owner relies on numbers landing in a file by themselves. Warnings, failures, what a session is running
     and one hitch summary a minute stay in the main log; `VINTAGEHORIZONS_STATS=1` keeps everything there for
     scripts. Rejected: deleting the detail; a Developer switch that every install must remember. G310.
-67. **Reeds draw as two crossed planes, not cubes** (owner, 2026-10-31; 0.5.2-dev.3). `FlagCrossed`: at level 0
-    two untextured planes corner to corner, 2.75 blocks tall (1.25 for sedge and cut reeds), the layout of the
-    game's own far model; past level 0 an opaque mat of the reed's colour. Packed faces 6 and 7 hold the planes.
-    The vertex stage turns each toward the camera, so one quad serves both sides. Rejected: a single
-    camera-facing spike (owner: lackluster), a plain cube (a third of the real height), the real see-through
-    texture (it shimmers at a few pixels). Grass is out of scope (owner: probably never). G312.
+67. **Reeds and ferns draw as two crossed planes, not cubes** (owner, 2026-10-31; 0.5.2-dev.3-dev.7). `FlagCrossed`:
+    at level 0 two planes corner to corner, 2.75 blocks tall (1.25 for sedge, cut reeds and ferns), the layout of the
+    game's own far model; past level 0 a mat, opaque for reeds and the old see-through one for ferns. Packed faces
+    6 and 7 hold the planes, and the vertex stage turns each toward the camera, so one quad serves both sides. They
+    wear the sheet of the plant's `lod2shape`, or a fern's `tall*` frond, cut out by alpha at every level-0 distance.
+    The Plant Textures setting (Quality and Balanced on, Performance off) keeps the plain tapered planes as its off
+    state, with no remesh. Rejected: a single camera-facing spike (owner: lackluster), a plain cube (a third of the
+    real height), grass (owner: probably never). G312-G314.
+68. **Block textures stay inside the seam band** (owner, 2026-10-31; 0.5.2-dev.6). Leaf textures past it were built and
+    removed: nothing shows past about 500 blocks. This closes the far-texture avenue; only crossed plants wear
+    texture beyond the band. Rejected: see-through leaf blocks, +26.84% level-0 quads. G315.
 
 ## Concurrency invariants
 

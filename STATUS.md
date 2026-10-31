@@ -4,9 +4,9 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-10-31`
-**Mod version:** `0.5.2-dev.3` - a test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; commit `17aca13`, not pushed; fast tier 26,646 assertions, 0 failures on game 1.22.0 and 1.22.7. **The latest release is 0.5.1**, the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
+**Mod version:** `0.5.2-dev.7` - a test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; commit `5b595dd`, not pushed; fast tier 26,664 assertions, 0 failures on game 1.22.0 and 1.22.7. **The latest release is 0.5.1**, the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083`, 0.5.0 `2826b2e`, 0.5.1-dev.2 `621ac7c`, 0.5.1-dev.3 `6b46739`, 0.5.1-dev.4 `102d1e1`, 0.5.1-dev.5 `939af75`, 0.5.1-dev.6 `4421cc3`, 0.5.1-dev.7 `9fa0026`, 0.5.1 `7959339`, 0.5.2-dev.1 `0fc55ef`, 0.5.2-dev.2 `5db022b`, 0.5.2-dev.3 `17aca13`; everything through 0.5.1 pushed to `main` on `DodenGruva/Landscapes` (now public) on 2026-10-22; the history was rewritten to his GitHub no-reply address on 2026-10-13
+**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083`, 0.5.0 `2826b2e`, 0.5.1-dev.2 `621ac7c`, 0.5.1-dev.3 `6b46739`, 0.5.1-dev.4 `102d1e1`, 0.5.1-dev.5 `939af75`, 0.5.1-dev.6 `4421cc3`, 0.5.1-dev.7 `9fa0026`, 0.5.1 `7959339`, 0.5.2-dev.1 `0fc55ef`, 0.5.2-dev.2 `ccd72be`, 0.5.2-dev.3 `07f1aed`, 0.5.2-dev.4 `8216b6f`, 0.5.2-dev.5 `21730b3`, 0.5.2-dev.6 `e2fb684`, 0.5.2-dev.7 `5b595dd`; everything through 0.5.1 pushed to `main` on `DodenGruva/Landscapes` (now public) on 2026-10-22; the history was rewritten to his GitHub no-reply address on 2026-10-13
 **Target:** intended for Vintage Story 1.22.5+; declares 1.22.0, where it was briefly tested; compiled on 1.22.7; .NET 10
 **Source files:** `159` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
@@ -15,14 +15,26 @@
 
 ## Current result
 
+**0.5.2-dev.7, plants and a shorter cached distance (2026-10-31).** Session 120. Copy-installed to both Mods folders,
+not pushed. His dev.7 session compiled every shader path first time and held 232-257 FPS (a median frame of 3.8-4.1 ms).
+
+- **Reeds and ferns (decision 67, G313-G314):** crossed planes wear the game's sheets at every level-0 distance.
+  Owner: "Cattails look great", and ferns "looked great up close". Papyrus has no far model and stays plain.
+- **Plant Textures:** on in Quality and Balanced, off in Performance, independent of seam blending. Off keeps plain
+  tapered planes with no remesh. Harness-tested; the switch itself has not been reported on.
+- **Leaves (decision 68, G315):** textures stay inside the seam band. dev.5 kept them past it, and the owner found them
+  useless past about 500 blocks, so dev.6 removed them. No on/off pair was taken.
+- **Cached distance:** 256 to 1,024 in 64-block steps, then 512. Owner: "Cache moved in 64 increments."
+- **Open:** a Cache distance below the explored distance leaves a void before Farseer and the fog (TODO).
+- **Evidence:** 26,664 assertions, 0 failures on both games, four runs. The count still varied once this session.
+
 **0.5.2-dev.3, reeds at distance (2026-10-31).** Session 120. Cattails drew only under trees because capture
 starts at the rain map, which ignores blocks rain falls through, and reeds in water were read as water (G312;
 measured on one cache: 13 of 9,277 reed runs topped their column, none was a water reed). Capture now looks
 above the rain map and under fluids, for reeds only. Reeds draw as two crossed untextured planes, turned to the
-camera, 2.75 blocks tall at level 0, and as a mat of their colour past it (decision 67). Harness-tested only:
-not seen in game, and the shader change has not been compiled. Cost is an estimate from his 30 October session
-(about 4.6 million quads held 30 s in), 0.1-0.2% more quads. Existing caches gain reeds only as land is captured
-again. Open items are in TODO.
+camera, 2.75 blocks tall at level 0, and as a mat of their colour past it (decision 67). He found plain planes
+underwhelming, which led to dev.4. Cost is an estimate from his 30 October session (about 4.6 million quads held 30 s
+in), 0.1-0.2% more quads. Existing caches gain reeds only as land is captured again.
 
 **0.5.2-dev.2, the first ModDB reports (2026-10-30).** Session 120; details in `dev/PLAYER_REPORTS.md`
 (private). Copy-installed to both Mods folders, not pushed. The owner ran it once on 1.22.7; none of its

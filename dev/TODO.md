@@ -4,9 +4,10 @@
 
 ## Start here
 
-Read [Session 120](sessions/SESSION_120.md), then [Session 119](sessions/SESSION_119.md). **0.5.2-dev.3**
-(`17aca13`, not pushed) is the current test build: the first ModDB reports fixed in dev.2 and reeds drawn at distance as
-crossed planes in dev.3, section "What Session 120 left open" below. It declares game 1.22.0, compiles on 1.22.7 and is intended for 1.22.5+ (owner, no more
+Read [Session 120](sessions/SESSION_120.md), then [Session 119](sessions/SESSION_119.md). **0.5.2-dev.7**
+(`5b595dd`, not pushed) is the current test build: the first ModDB reports fixed in dev.2, reeds and ferns drawn at
+distance as textured crossed planes, a Plant Textures setting, and the cached distance down to 256, section "What
+Session 120 left open" below. It declares game 1.22.0, compiles on 1.22.7 and is intended for 1.22.5+ (owner, no more
 testing below that). Player reports, with their evidence, are in the git-ignored `dev/PLAYER_REPORTS.md`.
 **0.5.1 is the latest release**: the owner-played 0.5.1-dev.7, promoted on 2026-10-22 with only the two
 version strings changed (commit `7959339`, not tagged) and pushed. It fixes the packed shader on NVIDIA 617,
@@ -22,18 +23,19 @@ every dial on a Developer tab shown by Developer options, settled decision 64), 
 distance, Farseer, the seam fog and the automatic LOD target with Quality as the default and a first-run
 prompt (decision 63), let the vanilla floor hold only L1 (decision 35), held the seam fog for 5 s at
 login, and made Generate's Settings button unpause the game; it carries Session 116's review fixes. The
-fast tier passes (26,569 assertions at 0.5.2-dev.2). Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
+fast tier passes (26,664 assertions at 0.5.2-dev.7). Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
 is solved for him by the all-cores garbage collector, an opt-in switch on General (0.4.134, settled
 decision 54), and the game's chunk thread rests when it has nothing to do (0.4.132, settled decision 53).
 
 ### What Session 120 left open
 
-- **Reeds, for the owner to judge (dev.3):** nothing here has been seen in game, and the shader change has not
-  been compiled. Look at cattails near the seam, on land and in water, for a compile error in the log, whether
-  the planes read as reeds or as cards, whether the shade at the foot is right, and tule and sedge colours in
-  the open. If they read as cards, a notched top cut out in the fragment stage is the next cheap step. Cached land
-  gains reeds only when captured again; forcing it would mean a `FingerprintRule` bump and one full re-sweep per
-  world, which was not done. Frame cost is an estimate (0.1-0.2% more quads); an on/off pair would settle it.
+- **Void between a short Cache distance and Farseer (owner, seen on 0.5.2-dev.7):** with the Cache distance set
+  lower than the explored distance, the cached terrain ends where it should, but Farseer and the fog curtain stay
+  out at the edge of explored land, leaving a jarring empty gap between them. Not investigated yet.
+- **Plants, still to look at:** cattails and ferns are owner-approved. Not reported on: the Plant Textures switch and
+  whether each preset sets it, reeds in water, tule and sedge in the open, and shimmer on far stems. Plant Textures is
+  on in Balanced by the agent's choice, for the owner to confirm. Cached land gains open-air reeds only when captured again; forcing it would mean a `FingerprintRule` bump and one full
+  re-sweep per world, which was not done. Frame cost is an estimate; an on/off pair of Plant Textures would settle it.
 - **Other blocks rain falls through (G312):** tall grass stays out by the owner's choice. Saguaro, tree ferns and
   bamboo also let rain through and showed no runs in the one world checked, which may only mean they do not grow
   there. Look at one in a desert or a jungle before saying anything about them.
@@ -46,14 +48,14 @@ decision 54), and the game's chunk thread rests when it has nothing to do (0.4.1
   checked for shader errors. Farseer silhouettes do not take the floor, so they will read darker.
 - **Waiting on players:** whether crystalkiori's generator now starts (a failing disk was not ruled out; that
   player's log was never seen), and replies to Akekho, crystalkiori, Case_Hardened and davidkiraly on the page.
-- **Far block textures (NateDoesLife):** needs the owner's design go-ahead. Evidence and four design points are
-  in `dev/PLAYER_REPORTS.md`, item 3.
-- **Pull request 1:** still open on GitHub; the owner posts the closing note himself. Do not close it.
+- **Pull request 1:** the owner declines it himself with a note. Its author is credited in `f874186` and the
+  changelog, and for nothing wider. Do not merge, close or comment on it. Local `backup/before-credit-split` keeps
+  the pre-split history and is never pushed; delete it once the owner is happy.
 - **Reports to others, the owner's call:** Anego about G307 and the map layers, Algernon about the race (G306).
   Dropped by the owner: the Sheydermod crash and its 100-slot shader table (still unguarded; diagnosis in
   `dev/PLAYER_REPORTS.md`, item 1).
-- **At release:** the changelog's `[0.5.2-dev.2]` section folds into the release entry, the disclaimer about
-  1.22.0 goes on the mod page, and modinfo's description is checked again. dev.1 and dev.2 are not pushed.
+- **At release:** the changelog's `[0.5.2-dev.N]` sections fold into the release entry, the disclaimer about 1.22.0
+  goes on the mod page, and modinfo's description is checked again. dev.1 to dev.7 are not pushed.
 
 ### Publishing (owner's calls)
 

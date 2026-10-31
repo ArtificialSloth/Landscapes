@@ -1,8 +1,8 @@
-# Session 120 — 0.5.2-dev.3: the first ModDB reports, an Algernon crash, a stalled generator, shorter logs, reeds
+# Session 120 — 0.5.2-dev.7: the first ModDB reports, an Algernon crash, a stalled generator, shorter logs, reeds and ferns
 
 **Date:** `2026-10-24..31`
-**Branch/commit:** `main`; dev builds `0fc55ef` (0.5.2-dev.1), `5db022b` (0.5.2-dev.2), `17aca13` (0.5.2-dev.3), none pushed
-**Mod version:** `0.5.2-dev.3` (a test build; dev.2 had one session on 1.22.7, dev.3 is unplayed)
+**Branch/commit:** `main`; `0fc55ef` (dev.1), `f874186` (brightness), `ccd72be` (dev.2), `07f1aed` (dev.3), `8216b6f` (dev.4), `21730b3` (dev.5), `e2fb684` (dev.6), `bab272a` (check fix), `5b595dd` (dev.7), none pushed
+**Mod version:** `0.5.2-dev.7` (a test build; the owner played dev.2, dev.3, dev.5 and dev.7 on 1.22.7)
 **Assist protocol / blob / schema:** `1 / 4 / 6` (unchanged)
 
 > Session records are Tier 3 history. Write narrative as needed, but preserve the four required tail sections so future harvesting remains mechanical.
@@ -130,8 +130,8 @@ final light. The game floors `bBlock` before mixing it with the sun (`fogandligh
 chose to rewrite and credit. `LodTerrainRenderer.BrightnessFloorScale` works the factor out on the CPU and
 feeds the uniform `brightnessFloorScale`: exactly 1 at the default of 0, and 1 when dynamic lights are off.
 `StaticAssetChecks.BrightnessFloor` compares it with a transcription of `applyLight`. Farseer silhouettes do
-not take the floor. The commit carries a `Co-authored-by` trailer; the owner posts the note on the pull
-request himself. G311.
+not take the floor. `f874186` carries a `Co-authored-by` trailer; the owner posts the note on the pull
+request himself. Section 16 has how the credit ended up. G311.
 
 ### 9. Not done
 
@@ -162,19 +162,89 @@ hides nothing: `IsThinRun` includes it. A reed in water could not replace the wa
 surface, so capture puts it in the air above and the mesher takes a block off its height. Under-tree reeds change
 shape as soon as a cache loads, because palette flags come from the live block.
 
+### 11. Reed sheets (dev.4)
+
+The owner played dev.3, whose shader compiled, and found plain planes "not nearly what I was hoping for". dev.4
+gives the planes the sheets from each reed's own `lod2shape`, read by `ResolveReedSheets`: foliage as the slot's
+rectangle and a cattail's cobs as its overlay, so a reed spends no new table rows. The planes read the whole sheet
+top to bottom, at every level-0 distance rather than only in the band. The foliage art is grey and takes the
+live tint through the existing mean-preserving detail. Mips average thin stems with clear pixels, so the alpha test
+falls from 0.5 to 0.12 over the first three levels, past which the atlas starts to bleed. The pattern fades before
+the clear texels' stored colour can stir in (G302, G313). Papyrus has no far model, so it stays plain. Owner on dev.5:
+"Cattails look great."
+
+### 12. Leaf textures, tried and removed (dev.5, dev.6)
+
+The game has no far texture or far model for leaves. See-through leaf blocks were priced with `cutoutfield` on
+`71c0c6af`, 60 level-0 sections: +26.84% quads, leaves ending 17.80% of surface columns, so they were not built. The
+owner chose the cheaper route, the real texture past the band on the same faces. dev.5 did that with a flag in the
+block table's colour rows, a size-keyed fade from 2.5 to 1.5 pixels per block, half the band's sharpening, and a
+session switch. He found it "kind of useless past 500 blocks or so", and while the fade was being shortened he
+asked to keep leaf textures inside the seam band. dev.6 reverted it whole, switch included. No on/off FPS pair was
+taken. This also closed the far-texture avenue for NateDoesLife's report (G315); his feedback stays as a general aim
+to improve visual fidelity.
+
+### 13. Cached distance (dev.6)
+
+The minimum had moved to 512 in dev.2, but the 512-block step left nothing between 512 and 1,024. The owner asked
+for 256 and 64-block steps up to 1,024, and steps stay 512 above that. Traced first: `LodFarDistance.Effective` keeps its
+fade at vanilla + 1,536 whatever the cap, the cap culls sections at cap + 64, and the arena has a floor, so a short
+cap is mechanically safe. A cap below the view distance shows no cached terrain, because vanilla owns all of it.
+Owner on dev.7: "Cache moved in 64 increments." He also found that a cap below the explored distance leaves
+Farseer and the fog out at the explored edge, with a void between (TODO).
+
+### 14. Plant Textures and ferns (dev.7)
+
+The owner wanted the plain planes kept for lower presets, with a "Plant Textures" option: on in Quality, off in
+Performance. He named no Balanced value, and it was set on. Seam blending is off in Performance and Balanced and had
+been taking the sheets with it, so `TextureSlotsWanted` now keeps slots alive for either feature (G314). The vertex
+stage drops a plane's slot when the setting is off, so it applies at once with no remesh. The eighth feature row
+needed a sixth line, which took the rows from a 30 to a 28-unit pitch to clear the action row.
+
+He also noticed ferns did not render. They did: 226,081 column tops on `6bab2982`, about 1% of columns, as half
+see-through mats a quarter block off the ground, which read as nothing. Ferns are now `FlagThin | FlagCrossed |
+FlagHalf`: planes 1.25 blocks tall at level 0, and the old mat past it. They have no far model, but the model's
+`tall*` frond is one see-through picture of the plant, which serves as a sheet. Owner on dev.7: "The ferns looked
+great up close." His dev.7 session compiled first time and held 232-257 FPS.
+
+### 15. A failed check that still shipped (dev.6)
+
+`git revert -n` rewrote `LodTerrainRenderer.cs` with CRLF, and a static check spanning two lines stopped matching
+it (G295). The check failed, but one chained command went on to package, install and commit, and the commit message
+said the checks passed. Nothing in the game was wrong: the DLL in the zip came from the same source and references
+1.22.7. `bab272a` makes the check read through any line ending and corrects the record. The next build's command
+packaged only if a full run reported 0 failures.
+
+### 16. Credit for pull request 1
+
+The owner considered merging for contributor credit, then dropped it on learning none of the author's lines would
+survive: he declines it himself with a note. He does not want them credited beyond that change, and the
+`Co-authored-by` trailer had landed on dev.2, 40 files and 839 lines, which would have shown them as co-author of the
+crash fix and the rest. Nothing was pushed, so the nine local commits were rebuilt with `commit-tree`: `f874186`
+holds only the brightness change and is the only commit naming them. Every later commit keeps its exact tree,
+message, author and dates, and the final tree is byte-identical. `f874186` passes alone (26,523 assertions, 1.22.7).
+Local `backup/before-credit-split` keeps the old history and is not to be pushed.
+
 ---
 
 ## Delivered
 
 - **0.5.2-dev.1** (`0fc55ef`): game 1.22.0 declared, compiled on 1.22.0.
-- **0.5.2-dev.2** (`5db022b`): everything above, compiled on 1.22.7, 862,211 bytes, copy-installed to both
+- **0.5.2-dev.2** (`ccd72be`): everything above, compiled on 1.22.7, 862,211 bytes, copy-installed to both
   Mods folders, not pushed.
-- **0.5.2-dev.3** (`17aca13`): reeds captured above the rain map and in water, drawn as crossed planes; copy-installed to
-  both Mods folders, not pushed.
+- **Brightness** (`f874186`): the minbrightness change alone, split out of dev.2.
+- **0.5.2-dev.3** (`07f1aed`): reeds captured above the rain map and in water, drawn as crossed planes.
+- **0.5.2-dev.4** (`8216b6f`): the game's far sheets on reed planes.
+- **0.5.2-dev.5** (`21730b3`): leaf textures past the band, removed in dev.6.
+- **0.5.2-dev.6** (`e2fb684`): leaves back in the band; cached distance from 256 in 64-block steps. `bab272a`
+  fixes the check that failed there.
+- **0.5.2-dev.7** (`5b595dd`): Plant Textures, ferns as crossed planes. Each build was copy-installed to both
+  Mods folders; none is pushed.
 - Checks: 26,569 assertions, 0 failures on 1.22.0 and 1.22.7 at dev.2, three identical runs at that count and
-  six at 26,558; 26,646 at dev.3, five identical runs. New checks cover the map gate, `Saved`, the reader's close,
-  the brightness floor, the log split, reed capture and crossed planes.
-- Documentation (2026-10-31, at the owner's request): this record, CHANGELOG, GOTCHAS G306-G312 and G238,
+  six at 26,558; 26,646 at dev.3, 26,648 at dev.4, 26,657 at dev.5, 26,652 at dev.6, 26,664 at dev.7, four runs at
+  that count. New checks cover the map gate, `Saved`, the reader's close, the brightness floor, the log split, reed
+  capture, crossed planes, sheets, fern flags and meshing, the draw-distance steps and the presets.
+- Documentation (2026-10-31, at the owner's request): this record, CHANGELOG, GOTCHAS G306-G315, G295 and G238,
   ARCHITECTURE decisions 65-67, TODO, STATUS, README, RELEASING and the private working rules.
 
 ## Decisions
@@ -189,8 +259,15 @@ shape as soon as a cache loads, because palette flags come from the live block.
 - **Logs:** nothing deleted; the detail moves to the debug logs. Rejected: a Developer switch, which every
   install would have to remember.
 - **Pull request:** rewrite with the game's formula and credit the author. Rejected: merging as written.
-- **Reeds:** two crossed untextured planes, all four reed types, land and water. Rejected: a single spike, the
-  real texture, a forced re-sweep of existing worlds. Grass is out of scope (owner: probably never).
+- **Reeds and ferns:** two crossed planes wearing the game's sheets, plain when Plant Textures is off. Rejected: a
+  single spike, a forced re-sweep of existing worlds. Grass is out of scope (owner: probably never).
+- **Plant Textures:** on in Quality, off in Performance (owner); on in Balanced (agent's choice, for him to change).
+- **Leaves:** textures stay inside the seam band (owner). Rejected: see-through leaf blocks (+26.84% quads); leaf
+  textures past the band (invisible past about 500 blocks).
+- **Cached distance:** 256 to 1,024 in 64-block steps, then 512 (owner).
+- **Far block textures for Nate:** closed (owner). His feedback stays as a general aim of better visual fidelity.
+- **Pull request 1:** declined by the owner with a note, credited only for the brightness change. Rejected: merging,
+  since none of the author's lines survive.
 - **Dropped by the owner:** the Sheydermod items.
 
 ## Traps
@@ -203,24 +280,31 @@ shape as soon as a cache loads, because palette flags come from the live block.
 - Scripts that read the main log now need `VINTAGEHORIZONS_STATS=1` (G310).
 - `#define MINBRIGHT` reaches vertex shaders only, and the floor applies only with dynamic lights on (G311).
 - Capture misses whatever rain falls through, and reads water in a cell it shares with a reed (G312).
+- A cut-out sheet loses thin stems as mips average them, and clear texels stir in a colour never shown (G313).
+- Texture slots serve two features, so blending off no longer means no slots (G314).
+- Texture past about 2 pixels a block costs a fetch and shows nothing (G315).
+- `git revert` can rewrite a whole source file's line endings, and a chained command runs on past a failed check
+  (G295).
 - From the session itself: `-RequiredModIds a,b` through `pwsh -File` arrives as one string, so call the
   script with `-Command` and `@(...)`; a Bash heredoc holding an apostrophe can fail, so write the file with
   the Write tool; `scripts/silhouette-compare.ps1` refuses to run while any game process is open.
 
 ## Flagged and unverified
 
-- **Judgement calls for the owner:** the disclaimer's wording at release; Nate's far textures; whether to
+- **Judgement calls for the owner:** the disclaimer's wording at release; Plant Textures on in Balanced; whether to
   tell Anego about G307 and the map layers, and Algernon about the race.
 - **Harness-tested and headless only:** the lock with the real silhouette builder and a connected player on
   an Algernon-only world. The tile test called the same sampling code with the builder's pattern, not the
   builder itself. Akekho's own setup is the final check.
 - **Source-traced, not run:** G307.
-- **Not played:** the brightness floor at a raised setting, and the shader change itself: there is no GLSL
-  compiler here. The owner's 2026-10-30 session ran dev.2, but its log was not checked for shader errors.
+- **Not played:** the brightness floor at a raised setting. Its shader compiled: the dev.7 session reported
+  every path ready on the first attempt.
 - **Unconfirmed by the players:** crystalkiori's and Akekho's fixes; crystalkiori's log was never seen, so a
   failing disk was not ruled out for that report.
 - **Not proven:** that the warm-up was the flaky check's cause. The fast tier's count held still in nine runs,
   then read 26,548 and 26,598 on one binary before five runs at 26,646, so it still varies and the suite is unknown.
 - **Closed by the owner, so never checked:** client-side patches on 1.22.0 after dev.1, and 1.22.1-1.22.4.
-- **Reeds, not seen in game:** the look, and the shader, which has not been compiled. Their number is an estimate
-  (2,000-15,000 in range, scaled from reeds under trees), and so is the frame cost.
+- **Not reported on:** the Plant Textures switch and its presets, tule, sedge and papyrus in the open, shimmer on far
+  stems, and reeds in water. Tall ferns appear in neither cache read and have not been seen.
+- **Estimates:** plants in range (2,000-15,000 reeds, about 14,000 ferns) and their frame cost; no on/off pair taken.
+- **Known fault:** the void between a short cached distance and Farseer or the fog (TODO).
