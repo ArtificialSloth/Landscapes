@@ -336,6 +336,12 @@ uniform int lightDayBoost;
 // was never either.
 uniform float sunLightLevel;
 
+// The game's minbrightness setting ("Light up all caves" in applyLight), reduced to the one
+// factor it comes to on sky-lit ground with no block light. Worked out on the CPU because
+// every input is a uniform, and the game's own MINBRIGHT define reaches vertex shaders only.
+// Exactly 1.0 at the default setting; see LodTerrainRenderer.BrightnessFloorScale.
+uniform float brightnessFloorScale;
+
 // 1 mixes the far dissolve band toward the sky the engine actually draws. Every engine
 // shader that calls getSkyColorAt passes SkyDaylight, not DayLightStrength; the two
 // differ by a factor of 1.25 and by a night floor, so the band this shader fades terrain

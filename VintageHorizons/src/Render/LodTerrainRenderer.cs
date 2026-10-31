@@ -742,6 +742,26 @@ public partial class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
+    /// What the game's `minbrightness` setting multiplies a cached surface's light by.
+    ///
+    /// `applyLight` raises `bBlock` to the setting before it mixes the light colours. With no
+    /// block light that mix and its `bMax` renormalisation reduce to scaling the sun light up
+    /// until its mean reaches the floor, so the hue survives: night stays blue. Adding the
+    /// difference to every channel instead would land on the same brightness in a greyer
+    /// colour than the terrain beside it.
+    ///
+    /// The floor sits in the branch of `applyLight` that handles dynamic lights, so with
+    /// `maxDynamicLights` at 0 the game never applies it and neither does this.
+    /// </summary>
+    internal static float BrightnessFloorScale(Vec3f ambient, float sunLevel, float minBrightness,
+        int maxDynamicLights)
+    {
+        if (maxDynamicLights <= 0) return 1f;
+        float sunMean = sunLevel * (ambient.R + ambient.G + ambient.B) / 3f;
+        return sunMean > 0f ? Math.Max(1f, minBrightness / sunMean) : 1f;
+    }
+
+    /// <summary>
     /// Fade the far edge of the cache toward the sky the engine actually draws. Every engine
     /// shader that calls `getSkyColorAt` passes `SkyDaylight`, which is
     /// `1.25 * max(DayLightStrength - MoonLightStrength / 2, 0.05)` attenuated above 1,000
@@ -6126,7 +6146,10 @@ public partial class LodTerrainRenderer : IRenderer
         prog.Uniform("rgbaAmbientIn", capi.Ambient.BlendedAmbientColor);
         // 1 is exactly what the shader assumed before this correction, so the switch needs
         // no branch of its own on the GPU side.
-        prog.Uniform("sunLightLevel", LightSunLevel ? SunLightLevel() : 1f);
+        float sunLevel = LightSunLevel ? SunLightLevel() : 1f;
+        prog.Uniform("sunLightLevel", sunLevel);
+        prog.Uniform("brightnessFloorScale", BrightnessFloorScale(capi.Ambient.BlendedAmbientColor,
+            sunLevel, capi.Settings.Float["minbrightness"], capi.Settings.Int["maxDynamicLights"]));
         prog.Uniform("lightSkyDayLight", LightSkyDayLight ? 1 : 0);
         prog.Uniform("skyDayLight", SkyDayLight());
         prog.Uniform("silhouetteEnabled", SilhouetteFadeTargetActive ? 1 : 0);
