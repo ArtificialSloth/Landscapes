@@ -63,6 +63,7 @@ public class VintageHorizonsConfig
     /// </summary>
     public bool SeamBand = true;
     public bool BlockTextures = true;
+    public bool PlantTextures = true;
     public bool ClimateTint = true;
 
     /// <summary>
@@ -379,7 +380,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             // back wherever the texture is not shown.
             block => (ushort)blockTextures.SlotFor(
                 block, block.EntityClass != null ? 0 : StableColorOf(block)),
-            textureSlotsEnabled: config.BlendPipeline);
+            textureSlotsEnabled: config.BlendPipeline || config.PlantTextures);
         pipeline.TrackPhaseAllocations = allocationTelemetryEnabled;
 
         // Repairs a cache written while a block lookup was poisoned, which saved sections
@@ -401,6 +402,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             WaterSeamStripBlocks = config.WaterSeamStripBlocks,
             SuppressUnknownWaterWalls = config.SuppressUnknownWaterWalls,
             TextureSlotSourceReady = pipeline.TextureSlotsPrepared,
+            PlantTexturesEnabled = config.PlantTextures,
             BlendPipelineEnabled = config.BlendPipeline,
             OpaqueBackfaceCulling =
                 Environment.GetEnvironmentVariable("VINTAGEHORIZONS_BACKFACE_CULLING") != "0",
@@ -1510,32 +1512,43 @@ public partial class VintageHorizonsModSystem : ModSystem
     }
 
     /// <summary>
-    /// The sheets a reed's far model wears: its foliage, and a cattail's cobs laid over it as an
-    /// overlay, read from the game's own <c>lod2shape</c>. A reed has no ordinary face to texture,
-    /// so with no far model (papyrus) there is no slot and its planes draw plain.
+    /// The sheets a crossed plant wears. A reed's are its foliage, and a cattail's cobs laid over
+    /// it as an overlay, read from the game's own <c>lod2shape</c>; with no far model (papyrus)
+    /// there is no slot and its planes draw plain. A fern has no far model, but its model's tall
+    /// frond is one see-through picture of the plant, which does the same job.
     /// </summary>
     LodBlockTextureRegistry.BlockTexture ResolveReedSheets(Block block)
     {
-        AssetLocation? farShape = block.Lod2Shape?.Base;
-        Shape? shape = farShape == null ? null : LoadBlockShape(farShape);
+        bool reed = block is Vintagestory.GameContent.BlockReeds;
+        AssetLocation? model = reed ? block.Lod2Shape?.Base : block.Shape?.Base;
+        Shape? shape = model == null ? null : LoadBlockShape(model);
         if (shape?.Elements == null) return default;
 
-        string? foliage = null, cobs = null;
-        foreach (ShapeElement element in shape.Elements)
+        string? foliage = null, frond = null, cobs = null;
+        void Visit(ShapeElement[] elements)
         {
-            string? name = element?.FacesResolved?
-                .FirstOrDefault(face => face is { Enabled: true } && !string.IsNullOrEmpty(face.Texture))?.Texture;
-            if (name == null) continue;
-            foliage ??= name;
-            if (cobs == null && name.StartsWith("cobs", StringComparison.Ordinal)) cobs = name;
+            foreach (ShapeElement element in elements)
+            {
+                string? name = element?.FacesResolved?
+                    .FirstOrDefault(face => face is { Enabled: true } && !string.IsNullOrEmpty(face.Texture))?.Texture;
+                if (name != null)
+                {
+                    foliage ??= name;
+                    if (cobs == null && name.StartsWith("cobs", StringComparison.Ordinal)) cobs = name;
+                    if (frond == null && name.StartsWith("tall", StringComparison.Ordinal)) frond = name;
+                }
+                if (element?.Children != null) Visit(element.Children);
+            }
         }
+        Visit(shape.Elements);
+        if (!reed && frond != null) foliage = frond;
 
         (TextureAtlasPosition? Position, AssetLocation? Location) Sheet(string? name)
         {
             if (name == null) return default;
             if (block.Textures != null && block.Textures.TryGetValue(name, out CompositeTexture? own)
                 && own?.Baked != null && IsUsableAtlasTexture(own.Baked.TextureSubId))
-                return (capi.BlockTextureAtlas.Positions[own.Baked.TextureSubId], own.Base);
+                return (capi.BlockTextureAtlas.Positions[own.Baked.TextureSubId], own.Baked.BakedName ?? own.Base);
             if (shape.Textures != null && shape.Textures.TryGetValue(name, out AssetLocation? named))
                 return (capi.BlockTextureAtlas[named], named);
             return default;
@@ -1553,7 +1566,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
     LodBlockTextureRegistry.BlockTexture ResolveBlockTextureFor(Block block)
     {
-        if (block is Vintagestory.GameContent.BlockReeds) return ResolveReedSheets(block);
+        if (LodBlockPolicy.IsCrossedPlant(block)) return ResolveReedSheets(block);
 
         // The UP face, explicitly. `TextureSubIdForBlockColor` is the engine's generic "what
         // colour is this block" texture and for grass-covered soil that is the SIDE - which is
@@ -5392,7 +5405,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             LeafSeasonColours: renderer.LeafSeasonVariation > 0f,
             HalfBlockTerrain: renderer.HalfBlockLevels > 0,
             WaterEffects: renderer.WaterFresnel,
-            DistantAntiAliasing: renderer.DistantAntiAliasing);
+            DistantAntiAliasing: renderer.DistantAntiAliasing,
+            PlantTextures: renderer.PlantTexturesEnabled);
 
     /// <summary>What the config file says, for startup and for when no renderer exists.</summary>
     LodVisualSettings ConfiguredVisualSettings() => new(
@@ -5404,7 +5418,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         LeafSeasonColours: config.LeafSeasonColours,
         HalfBlockTerrain: config.HalfBlockTerrain,
         WaterEffects: config.WaterEffects,
-        DistantAntiAliasing: config.DistantAntiAliasing);
+        DistantAntiAliasing: config.DistantAntiAliasing,
+        PlantTextures: config.PlantTextures);
 
     /// <summary>What the config file says for the anti-aliasing dials, for when no renderer exists.</summary>
     LodTaaDials ConfiguredTaaDials() => new(config.TaaReachPixels, config.TaaNudge,
@@ -5426,6 +5441,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.BlendPipeline = v.BlendPipeline;
         config.SeamBand = v.SeamBand;
         config.BlockTextures = v.BlockTextures;
+        config.PlantTextures = v.PlantTextures;
         config.ClimateTint = v.ClimateTint;
         config.ClimateTintRange = v.ClimateTintRange;
         config.LeafSeasonColours = v.LeafSeasonColours;
@@ -5450,6 +5466,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     {
         bool shapeChanged = renderer.HalfBlockLevels > 0 != v.HalfBlockTerrain;
 
+        renderer.PlantTexturesEnabled = v.PlantTextures;
         ApplyBlendPipeline(v.BlendPipeline);
         renderer.BandEnabled = v.SeamBand;
         renderer.BlockTexturesEnabled = v.BlockTextures;
@@ -5475,7 +5492,8 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// </summary>
     void ApplyBlendPipeline(bool enabled)
     {
-        if (!enabled)
+        // Plant textures read the same slots, so they keep them alive with blending off.
+        if (!enabled && !renderer.PlantTexturesEnabled)
         {
             renderer.BlendPipelineEnabled = false;
             pipeline.SetTextureSlotsEnabled(false);
@@ -5485,7 +5503,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         pipeline.SetTextureSlotsEnabled(true);
         renderer.TextureSlotSourceReady = pipeline.TextureSlotsPrepared;
-        renderer.BlendPipelineEnabled = true;
+        renderer.BlendPipelineEnabled = enabled;
     }
 
     /// <summary>

@@ -91,14 +91,14 @@ internal static class VintageHorizonsConfigLayout
     internal const double RuleHeight = 4;
 
     /// <summary>
-    /// Visual features head everything under the rule (owner, 2026-10-19): five lines of two
+    /// Visual features head everything under the rule (owner, 2026-10-19): six lines of two
     /// columns, Farseer beside its seam fog first and all-cores collection under the fog, at a
     /// roomier 30-unit pitch now that the page has the space.
     /// </summary>
     internal const double VisualHeadingY = 340;
     internal const double VisualRowsY = 378;
-    internal const int VisualLineCount = 5;
-    internal const double VisualRowHeight = 30;
+    internal const int VisualLineCount = 6;
+    internal const double VisualRowHeight = 28;
 
     /// <summary>The no-sampler note, a line under the features.</summary>
     internal const double NoteY = VisualRowsY + VisualLineCount * VisualRowHeight + 6;
@@ -112,13 +112,13 @@ internal static class VintageHorizonsConfigLayout
 
     /// <summary>The rows' switches, sized to their 28-unit pitch.</summary>
     internal const double RowSwitchSize = 26;
-    internal const int VisualRowCount = 7;
+    internal const int VisualRowCount = 8;
 
     /// <summary>
     /// The feature rows run down the left column under Farseer first, then the right column under
     /// the seam fog and all-cores collection (owner: two columns, 2026-10-19).
     /// </summary>
-    internal const int VisualRowsPerColumn = 4;
+    internal const int VisualRowsPerColumn = 5;
 
     /// <summary>
     /// The two columns span the window from the margin to the right edge of the Automatic
@@ -419,6 +419,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             "Low",
             v => v.LeafSeasonColours,
             (v, on) => v with { LeafSeasonColours = on }),
+
+        new("plant-textures", "Plant Textures",
+            "Draws distant reeds and ferns with the game's own plant textures. Off keeps their "
+            + "shape in plain color.",
+            "Low",
+            v => v.PlantTextures,
+            (v, on) => v with { PlantTextures = on }),
 
         new("half-blocks", "Slab Terrain",
             "Implements LOD rendering of slabs - turn on with Terrain Slabs.",

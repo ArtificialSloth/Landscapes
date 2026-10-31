@@ -50,6 +50,10 @@ uniform float vhTaaFullPixels;
 // It follows the ordinary back-face switch so `.dlbackface off` remains a complete escape.
 uniform int packedBackfaceCull;
 
+// The Plant Textures setting. Off, a crossed plane drops its slot here and draws plain, narrowing
+// toward its top, so the setting takes effect at once with nothing to remesh.
+uniform int plantTextureEnabled;
+
 // How far to lower solid cached terrain, in blocks. A constant global offset, NOT a ramp
 // and NOT a function of distance: an earlier transition sink was eight blocks deep and
 // ramped, so it slid visibly as the player walked toward it, and it was removed. A constant

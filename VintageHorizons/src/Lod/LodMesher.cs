@@ -372,21 +372,10 @@ public static class LodMesher
 
                     bool isThin = (self.PaletteFlags[pid] & LodPaletteEntry.FlagThin) != 0;
 
-                    // Ground cover is a few centimetres of plant in a one-block cell, so
-                    // it is drawn as a low mat: top face only, dropped to just above the
-                    // soil. Rendering it as a full cube turned meadows into fields of
-                    // solid blocks, which was the real problem -- most flowers store
-                    // perfectly good colour.
-                    if (isThin)
-                    {
-                        hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid,
-                            false, true, true, r == snowSurfaceRun, (short)yBottom, 0, 0));
-                        continue;
-                    }
-
                     // Past level 0 a reed is under two pixels wide, so its colour on the ground
-                    // says everything the planes would. It takes the mat's height, opaque.
-                    if (IsCrossedRun(self, run))
+                    // says everything the planes would. It takes the mat's height, opaque. A
+                    // fern is thin cover out there, and takes the path below.
+                    if (IsCrossedRun(self, run) && (step == 1 || !isThin))
                     {
                         if (step == 1)
                         {
@@ -399,6 +388,18 @@ public static class LodMesher
                             hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid,
                                 false, false, true, false, (short)yBottom, 0, 0));
                         }
+                        continue;
+                    }
+
+                    // Ground cover is a few centimetres of plant in a one-block cell, so
+                    // it is drawn as a low mat: top face only, dropped to just above the
+                    // soil. Rendering it as a full cube turned meadows into fields of
+                    // solid blocks, which was the real problem -- most flowers store
+                    // perfectly good colour.
+                    if (isThin)
+                    {
+                        hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid,
+                            false, true, true, r == snowSurfaceRun, (short)yBottom, 0, 0));
                         continue;
                     }
 
@@ -1087,14 +1088,17 @@ public static class LodMesher
     static void AddCrossedPlanes(Buffers buf, SectionSnapshot self, int pid, int cx, int cz,
         int yBottom, bool onWater, bool emitTextureSlots)
     {
-        byte flags = self.PaletteFlags[pid];
+        // Opaque however the plant draws past level 0: thin cover's alpha band blends.
+        byte flags = (byte)(self.PaletteFlags[pid] & ~LodPaletteEntry.FlagThin);
         int color = self.WallColor(pid, true);
         byte alpha = AlphaFor(flags, self.PaletteTintSlots[pid]);
         float height = (flags & LodPaletteEntry.FlagHalf) != 0 ? ShortReedBlocks : TallReedBlocks;
         float y0 = yBottom * 0.5f - 0.5f;
         float y1 = yBottom * 0.5f + height - (onWater ? 1f : 0f);
         float x0 = cx, x1 = cx + 1, z0 = cz, z1 = cz + 1;
-        int textureSlot = TextureSlotFor(self, pid, 1, emitTextureSlots, 0);
+        int textureSlot = emitTextureSlots && (uint)pid < (uint)self.PaletteTextureSlots.Length
+            ? self.PaletteTextureSlots[pid]
+            : 0;
         AddQuad(buf, LodPackedFace.DiagonalRising, 1, color, alpha,
             x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0, textureSlot);
         AddQuad(buf, LodPackedFace.DiagonalFalling, 1, color, alpha,

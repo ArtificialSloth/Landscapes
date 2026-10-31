@@ -87,7 +87,7 @@ void main()
         }
         bool vhPlaneFarEnd = vhLogicalCorner == 1u || vhLogicalCorner == 2u;
         vec2 vhPlaneEnd = vhPlaneFarEnd ? vhPlaneB : vhPlaneA;
-        float vhPlaneNarrow = (vhGeometry & 0x80000000u) != 0u ? 0.0 : 0.5;
+        float vhPlaneNarrow = (vhGeometry & 0x80000000u) != 0u && plantTextureEnabled != 0 ? 0.0 : 0.5;
         vertexPositionIn = vhLogicalCorner < 2u
             ? vec3(vhPlaneEnd.x, vhY0, vhPlaneEnd.y)
             : vec3(mix(vhPlaneEnd.x, vhPlaneMiddle.x, vhPlaneNarrow), vhY1,
@@ -119,6 +119,7 @@ void main()
         int vhColorRow = vhFace < 2u ? 1 : (vhFace < 4u ? 8 : 9);
         vec4 vhAverage = texelFetch(blockTable, ivec2(vhBlockSlot, vhColorRow), 0);
         vertexColorIn = vec4(vhAverage.rgb, float(vhColor >> 24u) / 255.0);
+        if (vhFace >= 6u && plantTextureEnabled == 0) vhBlockSlot = -1;
     }
     else
     {

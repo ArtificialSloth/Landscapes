@@ -68,8 +68,11 @@ public static class PolicyChecks
     static void GroundCover(Check c)
     {
         c.Eq(LodPaletteEntry.FlagThin, Flags(EnumBlockMaterial.Plant, "flower-forgetmenot"), "flowers are thin");
-        c.Eq(LodPaletteEntry.FlagThin, Flags(EnumBlockMaterial.Plant, "fern-normal"), "ferns are thin");
-        c.Eq(LodPaletteEntry.FlagThin, Flags(EnumBlockMaterial.Plant, "tallfern-normal"), "tall ferns are thin");
+        c.Eq((byte)(LodPaletteEntry.FlagThin | LodPaletteEntry.FlagCrossed | LodPaletteEntry.FlagHalf),
+            Flags(EnumBlockMaterial.Plant, "fern-normal"),
+            "ferns are thin past level 0, and short crossed planes at it");
+        c.Eq((byte)(LodPaletteEntry.FlagThin | LodPaletteEntry.FlagCrossed),
+            Flags(EnumBlockMaterial.Plant, "tallfern-normal"), "tall ferns are tall crossed planes");
 
         c.Eq((byte)0, Flags(EnumBlockMaterial.Plant, "tallgrass-tall"), "dense grass stays solid");
         c.Eq((byte)0, Flags(EnumBlockMaterial.Plant, "seaweed-top"), "unlisted plants stay solid");

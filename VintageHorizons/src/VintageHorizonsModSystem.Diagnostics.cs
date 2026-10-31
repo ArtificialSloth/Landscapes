@@ -89,6 +89,7 @@ public partial class VintageHorizonsModSystem
         Entry(lines, ".dlblend", visual.BlendPipeline);
         Entry(lines, ".dlband", visual.SeamBand);
         Entry(lines, ".dltexture", visual.BlockTextures);
+        Entry(lines, "Plant Textures", visual.PlantTextures);
         Entry(lines, ".dltint field", visual.ClimateTint);
         Entry(lines, "climate tint range", BlocksPerVoxel(visual.ClimateTintRange));
         Entry(lines, ".dltint climatewide", visual.FarBiomeColours);

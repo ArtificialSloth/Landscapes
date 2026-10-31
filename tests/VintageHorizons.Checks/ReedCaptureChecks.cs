@@ -73,6 +73,31 @@ public static class ReedCaptureChecks
         c.Eq(11.25f, LodMesher.BuildMesh(Fixtures.Job(shorter)).Heights.Opaque.MaxY,
             "sedge and cut reeds stand 1.25 blocks tall");
 
+        // A fern: planes at level 0, opaque however it draws further out, and still thin cover there.
+        const byte Fern = LodPaletteEntry.FlagThin | LodPaletteEntry.FlagCrossed | LodPaletteEntry.FlagHalf;
+        var ferny = new LodSection();
+        int ground = ferny.FindOrAddPaletteEntry(blockId: 1, color: 0x00806040, flags: 0);
+        int fern = ferny.FindOrAddPaletteEntry(blockId: 2, color: 0x00407030, flags: Fern, textureSlot: 9);
+        ferny.SetColumn(0, new[] { LodSection.PackRun(fern, 11, 10), LodSection.PackRun(ground, 10, 1) });
+
+        MeshResult fernNear = LodMesher.BuildMesh(Fixtures.Job(ferny, emitTextureSlots: true));
+        c.Eq(2, Count(fernNear, LodPackedFace.DiagonalRising, LodPackedFace.DiagonalFalling),
+            "a fern is two planes at level 0");
+        c.Eq(11.25f, fernNear.Heights.Opaque.MaxY, "and stands 1.25 blocks tall");
+        int fernPlane = Enumerable.Range(0, fernNear.PackedOpaqueQuadCount).First(i =>
+            LodPackedQuadFormat.FaceOf(fernNear.PackedOpaqueQuads, i) == LodPackedFace.DiagonalRising);
+        int fernWord = fernPlane * LodPackedQuadFormat.WordsPerQuad;
+        c.Eq(9, LodPackedQuadFormat.TextureSlot(fernNear.PackedOpaqueQuads[fernWord + 2]),
+            "wearing its sheet though thin cover carries no texture");
+        c.True(fernNear.PackedOpaqueQuads[fernWord + 2] >> 24 < 64,
+            "and in the opaque alpha band, not the blended band of a mat");
+
+        MeshResult fernFar = LodMesher.BuildMesh(Fixtures.Job(ferny, LodWorld.SectionKey(1, 0, 0)));
+        c.Eq(0, Count(fernFar, LodPackedFace.DiagonalRising, LodPackedFace.DiagonalFalling),
+            "a fern draws no planes past level 0");
+        c.Eq(1, Count(fernFar, LodPackedFace.Top), "and the ground its own top there");
+        c.True(fernFar.Heights.Water.MaxY >= 10f, "with its see-through mat where it always was");
+
         var wet = new LodSection();
         foreach ((int id, int color, byte flags) in new[] { (1, 0x00806040, (byte)0), (2, 0, Crossed), (3, 0, (byte)0), (4, 0x00C06030, LodPaletteEntry.FlagWater) })
             wet.FindOrAddPaletteEntry(id, color, flags);

@@ -571,6 +571,15 @@ public partial class LodTerrainRenderer : IRenderer
     /// </summary>
     public bool BlockTexturesEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Whether reeds and ferns wear the game's plant textures. Off keeps their planes in plain
+    /// colour and takes the atlas reads away; the vertex stage drops the slot, so nothing remeshes.
+    /// </summary>
+    public bool PlantTexturesEnabled { get; set; } = true;
+
+    /// <summary>Slots serve seam blending and plant textures, so either keeps them alive.</summary>
+    bool TextureSlotsWanted => blendPipelineEnabled || PlantTexturesEnabled;
+
     /// <summary>How much real texture shows at full band weight. 1 is all of it.</summary>
     public float BlockTextureStrength { get; set; } = 1f;
 
@@ -4309,7 +4318,7 @@ public partial class LodTerrainRenderer : IRenderer
         if (!enabled)
         {
             ReleaseBlendField();
-            queued = SetTextureSlotEmission(false);
+            if (!TextureSlotsWanted) queued = SetTextureSlotEmission(false);
             MaybeReleaseBlockTextureTable();
         }
         else if (textureSlotSourceReady && BlockTextureTableCurrent)
@@ -4366,7 +4375,7 @@ public partial class LodTerrainRenderer : IRenderer
     {
         if (textureSlotsReady || liveTexturedMeshes > 0) return;
         if (WaterSurfaceTexture && WaterSurfaceTextureSlot > 0 && !blockTableFailed) return;
-        if (blendPipelineEnabled && !blockTableFailed) return;
+        if (TextureSlotsWanted && !blockTableFailed) return;
         DisposeBlockTableTexture();
     }
 
@@ -4393,12 +4402,12 @@ public partial class LodTerrainRenderer : IRenderer
     void PublishBlockTextureTable()
     {
         bool waterNeedsTable = WaterSurfaceTexture && WaterSurfaceTextureSlot > 0;
-        if (!blendPipelineEnabled && !waterNeedsTable)
+        if (!TextureSlotsWanted && !waterNeedsTable)
         {
             MaybeReleaseBlockTextureTable();
             return;
         }
-        if (blendPipelineEnabled && !textureSlotSourceReady)
+        if (TextureSlotsWanted && !textureSlotSourceReady)
         {
             SetTextureSlotEmission(false);
             if (!waterNeedsTable) return;
@@ -4406,7 +4415,7 @@ public partial class LodTerrainRenderer : IRenderer
         if (blockTextures == null || blockTableFailed) return;
         if (BlockTextureTableCurrent)
         {
-            SetTextureSlotEmission(blendPipelineEnabled && textureSlotSourceReady);
+            SetTextureSlotEmission(TextureSlotsWanted && textureSlotSourceReady);
             return;
         }
 
@@ -6208,14 +6217,17 @@ public partial class LodTerrainRenderer : IRenderer
         bool blockTexturesOn = blendPipelineEnabled && blockTexturesLive && blockTextures != null
             && blockTextures.AtlasTextureId > 0 && BlockTexturesEnabled;
         prog.Uniform("blockTextureEnabled", blockTexturesOn ? 1 : 0);
-        if (blockTexturesOn || waterSurfaceTextureOn)
+        bool plantTexturesOn = PlantTexturesEnabled && blockTexturesLive && blockTextures != null
+            && blockTextures.AtlasTextureId > 0;
+        prog.Uniform("plantTextureEnabled", plantTexturesOn ? 1 : 0);
+        if (blockTexturesOn || plantTexturesOn || waterSurfaceTextureOn)
         {
             // Both axes: the atlas is 4096 x 2048 on a fresh install, square only on upgraded ones.
             prog.Uniform("blockAtlasSize",
                 (float)capi.BlockTextureAtlas.Size.Width, (float)capi.BlockTextureAtlas.Size.Height);
             prog.BindTexture2D("blockAtlas", blockTextures!.AtlasTextureId, BlockAtlasUnit);
         }
-        if (blockTexturesOn)
+        if (blockTexturesOn || plantTexturesOn)
         {
             prog.Uniform("blockTextureStrength", Math.Clamp(BlockTextureStrength, 0f, 1f));
             prog.Uniform("blockTextureMipLimit", Math.Max(0f, BlockTextureMipLimit));
@@ -7145,7 +7157,8 @@ public partial class LodTerrainRenderer : IRenderer
             target.BindTexture2D("seamField", seamFieldTexture.TextureId, SeamFieldUnit);
         if (blockTexturesLive && blockTableTexture != 0)
             target.BindTexture2D("blockTable", blockTableTexture, BlockTableUnit);
-        if (((blendPipelineEnabled && BlockTexturesEnabled) || WaterSurfaceTextureReady)
+        if (((blendPipelineEnabled && BlockTexturesEnabled) || PlantTexturesEnabled
+            || WaterSurfaceTextureReady)
             && blockTexturesLive
             && blockTextures != null
             && blockTextures.AtlasTextureId > 0)

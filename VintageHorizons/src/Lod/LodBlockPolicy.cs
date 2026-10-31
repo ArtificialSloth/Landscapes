@@ -44,9 +44,12 @@ public static class LodBlockPolicy
         // Not all of EnumBlockMaterial.Plant: skipping every plant was tried and
         // flattened the landscape, and dense cover like grass reads fine as solid colour.
         // The Plant guard also keeps ferntree (material Wood, an actual tree) opaque.
+        // A fern is a mat past level 0 and crossed planes at it, so it carries both flags.
         if (block.BlockMaterial == EnumBlockMaterial.Plant && IsThinGroundCover(block))
         {
-            return LodPaletteEntry.FlagThin;
+            return IsCrossedPlant(block)
+                ? (byte)(LodPaletteEntry.FlagThin | CrossedFlags(block))
+                : LodPaletteEntry.FlagThin;
         }
 
         // Not terrain at all, so it never becomes geometry.
@@ -72,20 +75,29 @@ public static class LodBlockPolicy
         // Drawn as a cube, but it covers nothing. See IsSeeThroughPlant.
         if (IsSeeThroughPlant(block)) flags |= LodPaletteEntry.FlagCutout;
 
-        if (block is BlockReeds)
-        {
-            flags |= LodPaletteEntry.FlagCrossed;
-            if (IsShortReed(block)) flags |= LodPaletteEntry.FlagHalf;
-        }
+        if (IsCrossedPlant(block)) flags |= CrossedFlags(block);
 
         return flags;
     }
 
-    /// <summary>Sedge stands about half as tall as the other reeds, and a cut reed is a stub.</summary>
-    static bool IsShortReed(Block block) =>
+    /// <summary>
+    /// A plant drawn as crossed planes at level 0: reeds, by the engine's class, and ferns. A fern
+    /// as a mat is half see-through and a quarter block off the ground, so it reads as nothing.
+    /// </summary>
+    public static bool IsCrossedPlant(Block block) =>
+        block is BlockReeds
+        || (block.BlockMaterial == EnumBlockMaterial.Plant && block.Code?.Path is { } path
+            && (path.StartsWith("fern-", StringComparison.Ordinal)
+                || path.StartsWith("tallfern", StringComparison.Ordinal)));
+
+    /// <summary>Sedge and ferns stand about half as tall as reeds, and a cut reed is a stub.</summary>
+    static byte CrossedFlags(Block block) =>
         block.Code?.Path is { } path
         && (path.Contains("brownsedge", StringComparison.Ordinal)
-            || path.Contains("-harvested-", StringComparison.Ordinal));
+            || path.Contains("-harvested-", StringComparison.Ordinal)
+            || path.StartsWith("fern-", StringComparison.Ordinal))
+            ? (byte)(LodPaletteEntry.FlagCrossed | LodPaletteEntry.FlagHalf)
+            : LodPaletteEntry.FlagCrossed;
 
     /// <summary>
     /// A plant the game draws as a see-through cutout rather than a solid cube: a crop, tall
@@ -122,7 +134,8 @@ public static class LodBlockPolicy
     public static bool[] ReedTable(IList<Block> blocks)
     {
         var table = new bool[blocks.Count];
-        for (int id = 0; id < table.Length; id++) table[id] = blocks[id] is BlockReeds;
+        for (int id = 0; id < table.Length; id++)
+            table[id] = blocks[id] is { } block && IsCrossedPlant(block);
         return table;
     }
 

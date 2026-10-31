@@ -21,7 +21,7 @@ void main()
     if (vhFaceAxis == 4)
     {
         shade = 1.0;
-        vec4 vhSheet = vhBlockSlot >= 0 && blockTextureEnabled == 1
+        vec4 vhSheet = vhBlockSlot >= 0
             ? texelFetch(blockTable, ivec2(vhBlockSlot, 0), 0)
             : vec4(0.0);
         if (vhSheet.z > vhSheet.x)

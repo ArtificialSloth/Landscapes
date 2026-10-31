@@ -24,7 +24,8 @@ internal readonly record struct LodVisualSettings(
     bool LeafSeasonColours,
     bool HalfBlockTerrain,
     bool WaterEffects,
-    bool DistantAntiAliasing)
+    bool DistantAntiAliasing,
+    bool PlantTextures)
 {
     /// <summary>
     /// What a fresh install draws, and what the Defaults button restores.
@@ -42,7 +43,8 @@ internal readonly record struct LodVisualSettings(
         LeafSeasonColours: true,
         HalfBlockTerrain: true,
         WaterEffects: true,
-        DistantAntiAliasing: true);
+        DistantAntiAliasing: true,
+        PlantTextures: true);
 
     /// <summary>
     /// Biome colour out to four blocks per voxel - levels L0, L1 and L2. The window calls this
@@ -85,7 +87,8 @@ internal readonly record struct LodVisualSettings(
         LeafSeasonColours: false,
         HalfBlockTerrain: false,
         WaterEffects: false,
-        DistantAntiAliasing: false);
+        DistantAntiAliasing: false,
+        PlantTextures: false);
 
     /// <summary>
     /// Quality without seam blending's block textures and speckle, the one Moderate-cost
@@ -102,7 +105,8 @@ internal readonly record struct LodVisualSettings(
         LeafSeasonColours: true,
         HalfBlockTerrain: true,
         WaterEffects: true,
-        DistantAntiAliasing: true);
+        DistantAntiAliasing: true,
+        PlantTextures: true);
 
     /// <summary>Every default visual feature, while keeping costly far biome colour off.</summary>
     public static LodVisualSettings Quality => Default;

@@ -800,7 +800,7 @@ public static class StaticAssetChecks
             c.True(renderer.Contains($"prog.Uniform(\"{uniform}\"", StringComparison.Ordinal),
                 $"and the renderer uploads {uniform}");
         }
-        c.True(renderer.Contains("blockTexturesOn || waterSurfaceTextureOn", StringComparison.Ordinal)
+        c.True(renderer.Contains("blockTexturesOn || plantTexturesOn || waterSurfaceTextureOn", StringComparison.Ordinal)
             && renderer.Contains("WaterSurfaceTextureReady", StringComparison.Ordinal),
             "water atlas binding remains independent of the land texture switch");
 
@@ -2682,7 +2682,7 @@ public static class StaticAssetChecks
         {
             "BlendPipeline", "SeamBand", "BlockTextures", "ClimateTint",
             "ClimateTintRange", "LeafSeasonColours", "HalfBlockTerrain", "WaterEffects",
-            "DistantAntiAliasing",
+            "DistantAntiAliasing", "PlantTextures",
         };
         foreach (string name in settingNames)
         {
