@@ -74,7 +74,8 @@ public static class PolicyChecks
         c.Eq((byte)(LodPaletteEntry.FlagThin | LodPaletteEntry.FlagCrossed),
             Flags(EnumBlockMaterial.Plant, "tallfern-normal"), "tall ferns are tall crossed planes");
 
-        c.Eq((byte)0, Flags(EnumBlockMaterial.Plant, "tallgrass-tall"), "dense grass stays solid");
+        c.Eq(LodPaletteEntry.FlagThin, Flags(EnumBlockMaterial.Plant, "tallgrass-tall"),
+            "tall grass lies flat: capture only reaches it under trees, where a cube stood out");
         c.Eq((byte)0, Flags(EnumBlockMaterial.Plant, "seaweed-top"), "unlisted plants stay solid");
     }
 

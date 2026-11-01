@@ -474,6 +474,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             v => v.ReedShapes,
             (v, on) => v with { ReedShapes = on }),
 
+        new("vine-shapes", "Vine Sheets",
+            "Hangs vines as flat sheets against what holds them, as the game does. Off draws a flat "
+            + "patch of their color. Needs Plant Textures.",
+            "Low",
+            v => v.VineShapes,
+            (v, on) => v with { VineShapes = on }),
+
         new("plant-textures", "Plant Textures",
             "Puts the game's own pictures on crop, reed and fern planes, and cuts leaf planes out. "
             + "Off draws those planes in plain color, and leaves as cubes whatever Leaf Shape says.",
@@ -1354,7 +1361,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         int full = (int)MathF.Round(LodScreenScale.DepthForBlockPixels(blockScale,
             LodTaaMath.FullPixels(reach)));
         return $"At this FOV and resolution: starts about {FormatBlocks(begins)} blocks out, "
-            + $"full strength past {FormatBlocks(full)}.";
+            + $"full strength past {FormatBlocks(full)}, or from vanilla's edge if that is nearer.";
     }
 
     bool OnSilhouetteReachSlider(int blocks)
@@ -1953,6 +1960,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 PlantDetail = plants.PlantDetail,
                 PlantTextures = plants.PlantTextures,
                 ReedShapes = plants.ReedShapes,
+                VineShapes = plants.VineShapes,
                 CropShapes = plants.CropShapes,
                 BushTextures = plants.BushTextures,
                 FruitTreeColors = plants.FruitTreeColors,

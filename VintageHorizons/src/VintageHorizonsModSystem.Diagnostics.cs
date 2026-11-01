@@ -92,6 +92,7 @@ public partial class VintageHorizonsModSystem
         Entry(lines, "Plant Textures", visual.PlantTextures);
         Entry(lines, "Plant Detail", visual.PlantDetail);
         Entry(lines, "Reed and Fern Shapes", visual.ReedShapes);
+        Entry(lines, "Vine Sheets", visual.VineShapes);
         Entry(lines, "Crop Shapes", visual.CropShapes);
         Entry(lines, "Berry Bush Textures", visual.BushTextures);
         Entry(lines, "Fruit Tree Colors", visual.FruitTreeColors);

@@ -8,7 +8,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>DodensLandscapes</AssemblyName>
     <RootNamespace>VintageHorizons</RootNamespace>
-    <Version>0.5.2-dev.13</Version>
+    <Version>0.5.2-dev.14</Version>
   </PropertyGroup>
 
   <!-- No debug info in Release: the zip never ships the .pdb, and generating one

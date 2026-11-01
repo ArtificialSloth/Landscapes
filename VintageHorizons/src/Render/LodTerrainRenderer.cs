@@ -582,6 +582,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// coarser levels draw. Decides what geometry exists, so a change needs <see cref="RemeshAll"/>.
     /// </summary>
     public bool ReedShapesEnabled { get; set; } = true;
+    public bool VineShapesEnabled { get; set; } = true;
 
     /// <summary>The same for crops, whose flat patch is the opaque one.</summary>
     public bool CropShapesEnabled { get; set; } = true;
@@ -2901,7 +2902,9 @@ public partial class LodTerrainRenderer : IRenderer
         crossedShapeOf ??= blockId =>
         {
             Block? block = capi.World.GetBlock(blockId);
-            return (block is Vintagestory.GameContent.BlockCrop ? CropShapesEnabled : ReedShapesEnabled)
+            bool on = block is Vintagestory.GameContent.BlockVines ? VineShapesEnabled
+                : block is Vintagestory.GameContent.BlockCrop ? CropShapesEnabled : ReedShapesEnabled;
+            return on
                 ? LodBlockPolicy.CrossedShapeOf(block)
                 : LodBlockPolicy.CrossedShapeAsMat;
         };
@@ -6117,8 +6120,8 @@ public partial class LodTerrainRenderer : IRenderer
         prog.Uniform("vhTaaBlockScale", taaActiveThisFrame ? taaBlockScale : 0f);
         prog.Uniform("vhTaaJitterX", taaJitterX);
         prog.Uniform("vhTaaJitterY", taaJitterY);
-        prog.Uniform("vhTaaStartPixels", LodTaaMath.NudgeStartPixels(taaReachPixels));
-        prog.Uniform("vhTaaFullPixels", LodTaaMath.FullPixels(taaReachPixels));
+        prog.Uniform("vhTaaStartPixels", LodTaaMath.NudgeStartPixels(taaReachNow));
+        prog.Uniform("vhTaaFullPixels", LodTaaMath.FullPixels(taaReachNow));
         // Per-cell ownership supersedes the radius entirely: the mask knows which
         // individual cells vanilla owns, so leaving a radius active would suppress cached
         // terrain the mask says is still ours. With the mask off, the measured radius (or

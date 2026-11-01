@@ -18,13 +18,25 @@ void main()
 #include lodsurfacecolor.fsh
     // A reed's crossed plane wears the sheet the game's own far model wears, at every distance
     // the planes reach rather than only in the band. The game's reeds take no shading by facing.
-    // Leaves (5) tile their sheet. With the vertex stage's shade under other leaves, which averages
-    // 0.84 over real forest, these come out about 11% under the plain 0.78 and 0.95 they had:
-    // those read 5-13% over the game's own trees, with bright ground showing between the leaves.
+    // Leaves (5, or 6 for a flat top) tile their sheet. With the vertex stage's shade under other
+    // leaves, which averages 0.84 over real forest, these come out about 11% under the plain 0.78
+    // and 0.95 they had: those read 5-13% over the game's own trees, with bright ground between.
     if (vhFaceAxis >= 4)
     {
-        shade = vhFaceAxis == 5 ? mix(0.82, 1.0, abs(normal.y)) : 1.0;
-        vec2 vhSheetUv = vhFaceAxis == 5 ? fract(vhPlaneUv) : vhPlaneUv;
+        shade = vhFaceAxis >= 5 ? 0.82 : 1.0;
+        vec2 vhSheetUv = vhFaceAxis >= 5 ? fract(vhPlaneUv) : vhPlaneUv;
+        // Nearly edge-on a flat top's cut-outs blur into a solid bar across the tree. How much of
+        // the sheet faces the camera is the ratio of its two footprints on screen, and the top
+        // dissolves between 30 and 14 degrees, in a pattern the anti-aliasing smooths over.
+        if (vhFaceAxis == 6)
+        {
+            vec2 vhAcross = dFdx(vhPlaneUv);
+            vec2 vhDown = dFdy(vhPlaneUv);
+            float vhFacing = abs(vhAcross.x * vhDown.y - vhAcross.y * vhDown.x)
+                / max(max(dot(vhAcross, vhAcross), dot(vhDown, vhDown)), 1e-9);
+            float vhDither = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+            if (vhFacing < mix(0.25, 0.5, vhDither)) discard;
+        }
         vec4 vhSheet = vhBlockSlot >= 0
             ? texelFetch(blockTable, ivec2(vhBlockSlot, 0), 0)
             : vec4(0.0);

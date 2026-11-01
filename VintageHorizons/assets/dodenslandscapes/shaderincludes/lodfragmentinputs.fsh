@@ -282,7 +282,7 @@ uniform float blockTextureDetail;
 flat in int vhBlockSlot;
 // The quad's plane where the vertex stage knows it (see lodvertexinputs.vsh), 0 where it does not.
 flat in int vhFaceAxis;
-// Where this fragment sits on a plant's sheet. Read only when vhFaceAxis is 4, or 5 for leaves.
+// Where this fragment sits on a plant's sheet. Read only when vhFaceAxis is 4, or 5 and 6 for leaves.
 in vec2 vhPlaneUv;
 // ------------------------------------------------------------------------------
 

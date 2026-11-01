@@ -103,6 +103,10 @@ void main()
             ? vec3(vhPlaneEnd.x, vhY0, vhPlaneEnd.y)
             : vec3(mix(vhPlaneEnd.x, vhPlaneMiddle.x, vhPlaneNarrow), vhY1,
                 mix(vhPlaneEnd.y, vhPlaneMiddle.y, vhPlaneNarrow));
+        // A vine's plane runs along a block's edge, not across the block: it stands just off
+        // what holds it, on the camera's side, as the game's own does.
+        if (vhX0 == vhX1) vertexPositionIn.x += vhRecordOrigin.x + vhX0 < 0.0 ? 0.06 : -0.06;
+        else if (vhZ0 == vhZ1) vertexPositionIn.z += vhRecordOrigin.z + vhZ0 < 0.0 ? 0.06 : -0.06;
         // The second plane mirrors the sheet, so two planes do not show the same plant twice.
         vhPlaneUv = vec2(vhPlaneFarEnd != (vhFace == 7u) ? 1.0 : 0.0, vhLogicalCorner < 2u ? 1.0 : 0.0);
     }
@@ -143,6 +147,10 @@ void main()
                 vhPlaneUv.y *= (vhY1 - vhY0) / max(vhX1 - vhX0, 1.0);
                 if (vhLogicalCorner < 2u)
                     vertexColorIn.rgb *= 1.0 - mix(0.16, 0.36, clamp((vhY1 - vhY0) / 12.0, 0.0, 1.0));
+            }
+            else
+            {
+                vhFaceAxis = 6;
             }
         }
         if (vhFace >= 6u && plantTextureEnabled == 0) vhBlockSlot = -1;

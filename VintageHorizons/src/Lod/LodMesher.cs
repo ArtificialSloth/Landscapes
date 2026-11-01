@@ -398,6 +398,13 @@ public static class LodMesher
                     // crossed plant draws that way at level 0 too.
                     bool planes = step == 1 && IsCrossedRun(self, run)
                         && self.CrossedShape(pid) != LodBlockPolicy.CrossedShapeAsMat;
+                    // A vine is a sheet on what holds it, which past level 0 is under a voxel of
+                    // nothing, so there it draws nothing at all.
+                    if (IsCrossedRun(self, run) && LodBlockPolicy.IsVineShape(self.CrossedShape(pid)))
+                    {
+                        if (planes) AddVinePlane(job, opaque, self, pid, cx, cz, run);
+                        continue;
+                    }
                     if (IsCrossedRun(self, run) && (planes || !isThin))
                     {
                         if (planes)
@@ -1143,6 +1150,31 @@ public static class LodMesher
             x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0, textureSlot);
         AddQuad(buf, LodPackedFace.DiagonalFalling, 1, color, alpha,
             x0, y0, z1, x1, y0, z0, x1, y1, z0, x0, y1, z1, textureSlot);
+    }
+
+    /// <summary>
+    /// A run of vine as one flat sheet down the edge of its column, on the side that holds it up,
+    /// as the game draws it. It is a plane along a block edge rather than across a block, which is
+    /// how the vertex stage knows to stand it just off that edge.
+    /// </summary>
+    static void AddVinePlane(MeshJob job, Buffers buf, SectionSnapshot self, int pid, int cx, int cz,
+        ulong run)
+    {
+        int textureSlot = self.PaletteTextureSlots.Length > pid ? self.PaletteTextureSlots[pid] : 0;
+        if (textureSlot == 0) return;
+
+        int y0 = LodSection.RunYBottom(run), y1 = LodSection.RunYTop(run);
+        (int x0, int z0, int x1, int z1) = self.CrossedShape(pid) switch
+        {
+            LodBlockPolicy.CrossedShapeVineNorth => (cx, cz + 1, cx + 1, cz + 1),
+            LodBlockPolicy.CrossedShapeVineSouth => (cx, cz, cx + 1, cz),
+            LodBlockPolicy.CrossedShapeVineEast => (cx, cz, cx, cz + 1),
+            _ => (cx + 1, cz, cx + 1, cz + 1),
+        };
+        AddQuad(buf, LodPackedFace.DiagonalRising, 1, self.WallColor(pid, true),
+            AlphaFor(self.PaletteFlags[pid], self.PaletteTintSlots[pid]),
+            x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0, textureSlot,
+            LeafBuried(job, self, cx, cz, 1, y0, y1));
     }
 
     /// <summary>One cell of a coarser leaf grid (<see cref="LodLeafShape.Clusters"/>), by cell index.</summary>

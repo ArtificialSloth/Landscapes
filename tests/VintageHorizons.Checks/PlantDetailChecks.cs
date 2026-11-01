@@ -21,6 +21,8 @@ public static class PlantDetailChecks
         LeafShapes(c);
         LeavesCoverNothing(c);
         BuriedLeaves(c);
+        VineSheets(c);
+        GrassUnderTrees(c);
         FruitWoodInTheCanopy(c);
         SwitchedOffPlants(c);
         VariantsInThePalette(c);
@@ -170,6 +172,67 @@ public static class PlantDetailChecks
         c.Eq(7, LodPackedQuadFormat.TextureSlot(mesh.PackedOpaqueQuads[2]), "the shade leaves the slot alone");
         c.True(HighestShade(mesh) <= LodPackedQuadFormat.MaximumLeafShade, "and fits its four bits");
         c.Eq(0, HighestShade(Mesh(ringed, LodLeafShape.Cubes)), "cubes carry no shade at all");
+    }
+
+    static void VineSheets(Check c)
+    {
+        c.Eq(LodBlockPolicy.CrossedShapeVineNorth, LodBlockPolicy.VineShapeOf("wildvine-section-north"),
+            "a vine's code gives the way it faces");
+        c.Eq(LodBlockPolicy.CrossedShapeVineWest, LodBlockPolicy.VineShapeOf("wildvine-tropical-end-west"),
+            "whatever its other parts");
+        c.Eq(LodBlockPolicy.CrossedShapeAsMat, LodBlockPolicy.VineShapeOf("wildvine"),
+            "and one with no direction is a flat patch");
+
+        LodSection section = Fixtures.Section(
+            (LodSection.ColumnIndex(10, 10), new[] { LodSection.PackRun(0, 110, 104) }));
+        section.Palette.Clear();
+        section.Palette.Add(new LodPaletteEntry
+        {
+            BlockId = Leaf, Color = 0x336633, Flags = LodPaletteEntry.FlagCrossed, TextureSlot = 7,
+        });
+
+        MeshResult Build(byte shape, long key = 0) => LodMesher.BuildMesh(new MeshJob
+        {
+            Key = key,
+            Self = SectionSnapshot.Of(section, crossedShapes: _ => shape),
+            Neighbors = new SectionSnapshot?[4],
+            EmitTextureSlots = true,
+        });
+
+        (int X0, int X1, int Z0, int Z1) Span(MeshResult mesh)
+        {
+            uint geometry = mesh.PackedOpaqueQuads[0];
+            return ((int)(geometry & 127u), (int)((geometry >> 7) & 127u),
+                (int)((geometry >> 14) & 127u), (int)((geometry >> 21) & 127u));
+        }
+
+        MeshResult north = Build(LodBlockPolicy.CrossedShapeVineNorth);
+        c.Eq(1, north.PackedOpaqueQuadCount, "a run of vine is one sheet, however long");
+        c.Eq((10, 11, 11, 11), Span(north), "a north-facing vine hangs on its cell's south edge");
+        c.Eq((10, 11, 10, 10), Span(Build(LodBlockPolicy.CrossedShapeVineSouth)), "south on the north edge");
+        c.Eq((10, 10, 10, 11), Span(Build(LodBlockPolicy.CrossedShapeVineEast)), "east on the west edge");
+        c.Eq((11, 11, 10, 11), Span(Build(LodBlockPolicy.CrossedShapeVineWest)), "and west on the east edge");
+        c.Eq(7, LodPackedQuadFormat.TextureSlot(north.PackedOpaqueQuads[2]), "it wears its own sheet");
+
+        c.Eq(0, Planes(Build(LodBlockPolicy.CrossedShapeAsMat)), "switched off it draws no sheet");
+        c.Eq(0, Build(LodBlockPolicy.CrossedShapeVineNorth, LodWorld.SectionKey(1, 0, 0)).PackedOpaqueQuadCount,
+            "and past level 0 a vine draws nothing");
+
+        LodVisualSettings on = LodVisualSettings.Default;
+        c.True(on.VineShapesOn, "vine sheets are on by default");
+        c.False((on with { PlantTextures = false }).VineShapesOn, "a sheet needs Plant Textures");
+        c.False((on with { PlantDetail = false }).VineShapesOn, "and Plant Detail governs it");
+    }
+
+    static void GrassUnderTrees(Check c)
+    {
+        var grass = new Block
+        {
+            Code = new AssetLocation("game", "tallgrass-medium-free"),
+            BlockMaterial = EnumBlockMaterial.Plant,
+        };
+        c.True((LodBlockPolicy.FlagsFor(grass) & LodPaletteEntry.FlagThin) != 0,
+            "tall grass under a tree lies flat instead of standing as a cube");
     }
 
     static int HighestShade(MeshResult mesh)
@@ -347,14 +410,14 @@ public static class PlantDetailChecks
     static void Wiring(Check c)
     {
         string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
-        foreach (string row in new[] { "plant-detail", "fruit-tree-colors", "crop-shapes", "reed-shapes",
+        foreach (string row in new[] { "plant-detail", "fruit-tree-colors", "crop-shapes", "reed-shapes", "vine-shapes",
             "plant-textures", "bush-textures", "leaf-shape" })
         {
             c.True(dialog.Contains($"\"{row}\"", StringComparison.Ordinal), $"the Plants tab has {row}");
         }
 
         string mod = Source("VintageHorizonsModSystem.cs");
-        foreach (string name in new[] { "PlantDetail", "ReedShapes", "CropShapes", "BushTextures",
+        foreach (string name in new[] { "PlantDetail", "ReedShapes", "VineShapes", "CropShapes", "BushTextures",
             "FruitTreeColors", "LeafShape" })
         {
             c.True(mod.Contains($"config.{name} = v.{name};", StringComparison.Ordinal)
@@ -368,6 +431,13 @@ public static class PlantDetailChecks
         int rendererBranch = mod.IndexOf("if (renderer != null)", apply, StringComparison.Ordinal);
         c.True(apply >= 0 && writes >= 0 && writes < rendererBranch,
             "a Save writes the visual settings whether or not a renderer exists");
+        c.Eq(2.5f, LodTaaMath.SeamReach(2.5f, 0f, 256f), "with no frame drawn the reach is the player's own");
+        c.Eq(32f, LodTaaMath.SeamReach(32f, 1000f, 512f), "and a reach set wider is never narrowed");
+        float atSeam = LodTaaMath.SeamReach(2.5f, 1000f, 256f);
+        c.True(LodTaaMath.Ramp(1000f, 256f * 0.6f, atSeam) >= 1f,
+            "anti-aliasing is at full strength where cached terrain can first appear");
+        c.True(LodTaaMath.Ramp(1000f, 256f * 0.1f, atSeam) < 1f,
+            "and not on stand-in terrain far inside vanilla's distance");
         c.True(mod.Contains("|| renderer.LeafShape != v.LeafShapeOn", StringComparison.Ordinal)
                 && mod.Contains("|| renderer.CropShapesEnabled != v.CropShapesOn", StringComparison.Ordinal),
             "a shape switch re-meshes, since it decides what geometry exists");

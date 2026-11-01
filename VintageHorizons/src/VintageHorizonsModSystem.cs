@@ -71,6 +71,7 @@ public class VintageHorizonsConfig
     /// </summary>
     public bool PlantDetail = true;
     public bool ReedShapes = true;
+    public bool VineShapes = true;
     public bool CropShapes = true;
     public bool BushTextures = true;
     public bool FruitTreeColors = true;
@@ -429,6 +430,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             TextureSlotSourceReady = pipeline.TextureSlotsPrepared,
             PlantTexturesEnabled = startupVisuals.PlantTexturesOn,
             ReedShapesEnabled = startupVisuals.ReedShapesOn,
+            VineShapesEnabled = startupVisuals.VineShapesOn,
             CropShapesEnabled = startupVisuals.CropShapesOn,
             LeafShape = startupVisuals.LeafShapeOn,
             BlendPipelineEnabled = config.BlendPipeline,
@@ -1707,6 +1709,19 @@ public partial class VintageHorizonsModSystem : ModSystem
             : default;
     }
 
+    /// <summary>The picture a vine hangs as: the one the game baked first of its alternates.</summary>
+    LodBlockTextureRegistry.BlockTexture ResolveVineSheet(Block block)
+    {
+        if (block.Textures == null || !block.Textures.TryGetValue("north", out CompositeTexture? sheet)
+            || sheet?.Baked == null || !IsUsableAtlasTexture(sheet.Baked.TextureSubId)) return default;
+        TexturePixels? pixels = ReadTexturePixels((sheet.Baked.BakedName ?? sheet.Base).Clone()
+            .WithPathPrefixOnce("textures/").WithPathAppendixOnce(".png"));
+        if (pixels == null) return default;
+        int mean = PackMean(RegionMean(pixels.Argb, pixels.Width, pixels.Height, null, 0, 0));
+        return new LodBlockTextureRegistry.BlockTexture(
+            capi.BlockTextureAtlas.Positions[sheet.Baked.TextureSubId], null, mean, mean);
+    }
+
     static string CropTileKey(Block block) => "crop:" + block.BlockId;
 
     // Each layered tile: a bush type's, by the folder its leaf sheets live in, and a layered crop's
@@ -1796,6 +1811,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
     LodBlockTextureRegistry.BlockTexture ResolveBlockTextureFor(Block block)
     {
+        if (block is Vintagestory.GameContent.BlockVines) return ResolveVineSheet(block);
         if (block is Vintagestory.GameContent.BlockCrop) return ResolveCropSheet(block);
         if (LodBlockPolicy.IsCrossedPlant(block)) return ResolveReedSheets(block);
         if (LodBlockPolicy.IsBerryBush(block)) return ResolveBushTile(block);
@@ -5648,7 +5664,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             CropShapes: config.CropShapes,
             BushTextures: config.BushTextures,
             FruitTreeColors: config.FruitTreeColors,
-            LeafShape: config.LeafShape);
+            LeafShape: config.LeafShape,
+            VineShapes: config.VineShapes);
 
     /// <summary>What the config file says, for startup and for when no renderer exists.</summary>
     LodVisualSettings ConfiguredVisualSettings() => new(
@@ -5667,7 +5684,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         CropShapes: config.CropShapes,
         BushTextures: config.BushTextures,
         FruitTreeColors: config.FruitTreeColors,
-        LeafShape: config.LeafShape);
+        LeafShape: config.LeafShape,
+        VineShapes: config.VineShapes);
 
     /// <summary>What the config file says for the anti-aliasing dials, for when no renderer exists.</summary>
     LodTaaDials ConfiguredTaaDials() => new(config.TaaReachPixels, config.TaaNudge,
@@ -5692,6 +5710,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.PlantTextures = v.PlantTextures;
         config.PlantDetail = v.PlantDetail;
         config.ReedShapes = v.ReedShapes;
+        config.VineShapes = v.VineShapes;
         config.CropShapes = v.CropShapes;
         config.BushTextures = v.BushTextures;
         config.FruitTreeColors = v.FruitTreeColors;
@@ -5721,12 +5740,14 @@ public partial class VintageHorizonsModSystem : ModSystem
         bool fruitChanged = fruitTreeColors != v.FruitTreeColorsOn;
         bool shapeChanged = renderer.HalfBlockLevels > 0 != v.HalfBlockTerrain
             || renderer.ReedShapesEnabled != v.ReedShapesOn
+            || renderer.VineShapesEnabled != v.VineShapesOn
             || renderer.CropShapesEnabled != v.CropShapesOn
             || renderer.LeafShape != v.LeafShapeOn
             || fruitChanged;
 
         renderer.PlantTexturesEnabled = v.PlantTexturesOn;
         renderer.ReedShapesEnabled = v.ReedShapesOn;
+        renderer.VineShapesEnabled = v.VineShapesOn;
         renderer.CropShapesEnabled = v.CropShapesOn;
         renderer.LeafShape = v.LeafShapeOn;
         blockTextures.BushTexturesVisible = v.BushTexturesOn;

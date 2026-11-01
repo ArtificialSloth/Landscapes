@@ -27,11 +27,13 @@ public static class LeafField
     {
         string? cache = null;
         int samples = 60, seed = 20261101;
+        bool under = false;
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--cache") cache = args[++i];
             else if (args[i] == "--samples") samples = int.Parse(args[++i]);
             else if (args[i] == "--seed") seed = int.Parse(args[++i]);
+            else if (args[i] == "--under") under = true;
         }
         if (cache == null || !File.Exists(cache))
         {
@@ -47,7 +49,7 @@ public static class LeafField
             File.Copy(cache, copy);
             using var conn = new SqliteConnection($"Data Source={copy};Mode=ReadOnly");
             conn.Open();
-            return Measure(conn, cache, samples, seed);
+            return Measure(conn, cache, samples, seed, under);
         }
         finally
         {
@@ -55,7 +57,110 @@ public static class LeafField
         }
     }
 
-    static int Measure(SqliteConnection conn, string cache, int samples, int seed)
+    /// <summary>
+    /// What stands between the canopy and the ground: every run under a column's first leaf down to
+    /// its soil or stone, by block code. Which side of a vine holds it up is read from the blocks
+    /// around it, since a vine's name gives the direction it faces rather than where it hangs.
+    /// </summary>
+    static int Under(SqliteConnection conn, LodStore decoder, long[] sample)
+    {
+        using SqliteCommand get = conn.CreateCommand();
+        get.CommandText = "SELECT Data FROM Section WHERE Detail=0 AND SX=@x AND SZ=@z";
+        get.Parameters.Add("@x", SqliteType.Integer);
+        get.Parameters.Add("@z", SqliteType.Integer);
+        get.Prepare();
+
+        var blocks = new Dictionary<string, long>();
+        var supports = new Dictionary<string, long>();
+        int gs = LodSection.GridSize;
+        foreach (long key in sample)
+        {
+            get.Parameters["@x"].Value = LodWorld.KeySx(key);
+            get.Parameters["@z"].Value = LodWorld.KeySz(key);
+            if (get.ExecuteScalar() is not byte[] blob) continue;
+            LodSection? section = decoder.DeserializeForeign(blob, null);
+            string[]? codes = section?.PendingPaletteCodes;
+            if (section == null || codes == null) continue;
+            string Path(ulong run)
+            {
+                string code = codes[LodSection.RunPaletteId(run)];
+                return code.Substring(code.IndexOf(':') + 1);
+            }
+            bool Solid(int x, int y, int z)
+            {
+                if (x < 0 || z < 0 || x >= gs || z >= gs) return false;
+                foreach (ulong run in section.ColumnRuns(LodSection.ColumnIndex(x, z)))
+                {
+                    if (LodSection.RunYTop(run) <= y || LodSection.RunYBottom(run) > y) continue;
+                    string path = Path(run);
+                    return !path.StartsWith("wildvine", StringComparison.Ordinal)
+                        && !path.StartsWith("tallgrass", StringComparison.Ordinal);
+                }
+                return false;
+            }
+
+            for (int cz = 0; cz < gs; cz++)
+            {
+                for (int cx = 0; cx < gs; cx++)
+                {
+                    bool canopy = false;
+                    foreach (ulong run in section.ColumnRuns(LodSection.ColumnIndex(cx, cz)))
+                    {
+                        string path = Path(run);
+                        long height = LodSection.RunYTop(run) - LodSection.RunYBottom(run);
+                        if (path.StartsWith("wildvine", StringComparison.Ordinal))
+                        {
+                            string side = path.Substring(path.LastIndexOf('-') + 1);
+                            int y = LodSection.RunYBottom(run);
+                            if (Solid(cx, y, cz + 1)) Add(supports, side + " held from south", 1);
+                            if (Solid(cx, y, cz - 1)) Add(supports, side + " held from north", 1);
+                            if (Solid(cx + 1, y, cz)) Add(supports, side + " held from east", 1);
+                            if (Solid(cx - 1, y, cz)) Add(supports, side + " held from west", 1);
+                        }
+                        if (path.StartsWith("leaves", StringComparison.Ordinal)
+                            || path.StartsWith("fruittree-foliage", StringComparison.Ordinal))
+                        {
+                            canopy = true;
+                            continue;
+                        }
+                        if (!canopy) continue;
+                        byte flags = section.Palette[LodSection.RunPaletteId(run)].Flags;
+                        Add(blocks, $"{Trim(path)} flags {flags}", height);
+                        if (path.StartsWith("soil", StringComparison.Ordinal)
+                            || path.StartsWith("rock", StringComparison.Ordinal)
+                            || path.StartsWith("sand", StringComparison.Ordinal)
+                            || path.StartsWith("gravel", StringComparison.Ordinal)
+                            || path.StartsWith("forestfloor", StringComparison.Ordinal))
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("  under the canopy, in blocks");
+        foreach ((string code, long count) in blocks.OrderByDescending(pair => pair.Value).Take(30))
+            Console.WriteLine($"  {count,10:n0}  {code}");
+        Console.WriteLine();
+        Console.WriteLine("  what holds a vine up");
+        foreach ((string side, long count) in supports.OrderBy(pair => pair.Key))
+            Console.WriteLine($"  {count,10:n0}  {side}");
+        return 0;
+    }
+
+    static void Add(Dictionary<string, long> tally, string key, long amount) =>
+        tally[key] = tally.GetValueOrDefault(key) + amount;
+
+    /// <summary>A code without its last two parts, so one plant's sizes and sides add up.</summary>
+    static string Trim(string path)
+    {
+        string[] parts = path.Split('-');
+        return parts.Length > 2 ? string.Join('-', parts.Take(2)) : path;
+    }
+
+    static int Measure(SqliteConnection conn, string cache, int samples, int seed, bool under)
     {
         var keys = new List<long>();
         using (SqliteCommand list = conn.CreateCommand())
@@ -69,6 +174,7 @@ public static class LeafField
         var random = new Random(seed);
         long[] sample = keys.OrderBy(_ => random.Next()).Take(samples).ToArray();
         var decoder = new LodStore(new CaptureLogger());
+        if (under) return Under(conn, decoder, sample);
         using SqliteCommand get = conn.CreateCommand();
         get.CommandText = "SELECT Data FROM Section WHERE Detail=0 AND SX=@x AND SZ=@z";
         get.Parameters.Add("@x", SqliteType.Integer);

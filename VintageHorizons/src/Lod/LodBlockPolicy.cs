@@ -64,7 +64,7 @@ public static class LodBlockPolicy
         // Sparse, mostly-transparent ground cover. As solid LOD cubes these come out as
         // pale grey blobs, because their textures average toward the transparent pixels.
         // Not all of EnumBlockMaterial.Plant: skipping every plant was tried and
-        // flattened the landscape, and dense cover like grass reads fine as solid colour.
+        // flattened the landscape.
         // The Plant guard also keeps ferntree (material Wood, an actual tree) opaque.
         // A fern is a mat past level 0 and crossed planes at it, so it carries both flags.
         if (block.BlockMaterial == EnumBlockMaterial.Plant && IsThinGroundCover(block))
@@ -107,7 +107,8 @@ public static class LodBlockPolicy
     /// see-through and a quarter block off the ground, so it reads as nothing. A crop's game art
     /// is planes already, so a cube was only ever a block-shaped patch of its colour.
     /// </summary>
-    public static bool IsCrossedPlant(Block block) => IsReedOrFern(block) || block is BlockCrop;
+    public static bool IsCrossedPlant(Block block) =>
+        IsReedOrFern(block) || block is BlockCrop || block is BlockVines;
 
     /// <summary>The crossed plants capture has to look above the rain map for (<see cref="ReedTable"/>).</summary>
     static bool IsReedOrFern(Block block) =>
@@ -127,6 +128,29 @@ public static class LodBlockPolicy
 
     /// <summary>Leaves drawn as planes (<see cref="LodLeafShape"/>), which never come from storage.</summary>
     public const byte CrossedShapeLeaf = 255;
+
+    /// <summary>A vine by the way it faces, and so the far side of its cell, where it hangs.</summary>
+    public const byte CrossedShapeVineNorth = 250;
+    public const byte CrossedShapeVineEast = 251;
+    public const byte CrossedShapeVineSouth = 252;
+    public const byte CrossedShapeVineWest = 253;
+
+    public static bool IsVineShape(byte shape) =>
+        shape is >= CrossedShapeVineNorth and <= CrossedShapeVineWest;
+
+    /// <summary>
+    /// How a vine stands, from the last part of its code: <c>wildvine-section-north</c> faces north
+    /// and is held up from the south, which the owner's cache bears out two to one over any other
+    /// neighbour. A vine of no direction draws as the flat patch.
+    /// </summary>
+    public static byte VineShapeOf(string? path) => path?.Substring(path.LastIndexOf('-') + 1) switch
+    {
+        "north" => CrossedShapeVineNorth,
+        "east" => CrossedShapeVineEast,
+        "south" => CrossedShapeVineSouth,
+        "west" => CrossedShapeVineWest,
+        _ => CrossedShapeAsMat,
+    };
 
     /// <summary>
     /// Which block ids are leaves, for mesh jobs, which do not touch the block registry. By
@@ -181,6 +205,7 @@ public static class LodBlockPolicy
     /// </summary>
     public static byte CrossedShapeOf(Block? block)
     {
+        if (block is BlockVines) return VineShapeOf(block.Code?.Path);
         if (block is not BlockCrop crop) return CrossedShapeByFlags;
         bool tall = block.Shape?.Base?.Path?.Contains("tall", StringComparison.Ordinal) == true
             || block.Code?.Path?.Contains("sunflower", StringComparison.Ordinal) == true;
@@ -301,7 +326,10 @@ public static class LodBlockPolicy
         return null;
     }
 
-    static readonly string[] ThinGroundCoverPrefixes = { "flower", "fern", "tallfern" };
+    // Tall grass reaches a section only under trees, where the rain map starts at the canopy: out
+    // in the open rain passes through it and capture begins at the soil. It was half-height cubes,
+    // hidden until leaves stopped being cubes.
+    static readonly string[] ThinGroundCoverPrefixes = { "flower", "fern", "tallfern", "tallgrass" };
 
     static bool IsThinGroundCover(Block block)
     {

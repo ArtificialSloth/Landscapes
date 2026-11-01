@@ -147,6 +147,9 @@ public partial class LodTerrainRenderer
     }
     float taaReachPixels = LodTaaMath.DefaultReachPixels;
 
+    /// <summary>This frame's reach, which vanilla's edge can raise (<see cref="LodTaaMath.SeamReach"/>).</summary>
+    float taaReachNow = LodTaaMath.DefaultReachPixels;
+
     /// <summary>Saved. Choose L1-L6 from the screen; see <see cref="LodAutoThresholds"/>.</summary>
     public bool AutoLodThresholds
     {
@@ -359,6 +362,7 @@ public partial class LodTerrainRenderer
             ThrowOnTaaError("the anti-aliasing depth snapshot");
 
             taaBlockScale = LodScreenScale.BlockScale(taaHeight, capi.Render.CurrentProjectionMatrix[5]);
+            taaReachNow = LodTaaMath.SeamReach(taaReachPixels, taaBlockScale, ApprovedViewDistance());
             (float x, float y) = LodTaaMath.JitterPixels(taaJitterFrame);
             taaJitterX = 2f * x * taaNudge / taaWidth;
             taaJitterY = 2f * y * taaNudge / taaHeight;
@@ -463,8 +467,8 @@ public partial class LodTerrainRenderer
                     resolve.Uniform("projectionA", projection[10]);
                     resolve.Uniform("projectionB", projection[14]);
                     resolve.Uniform("blockScale", taaBlockScale);
-                    resolve.Uniform("startPixels", taaReachPixels);
-                    resolve.Uniform("fullPixels", LodTaaMath.FullPixels(taaReachPixels));
+                    resolve.Uniform("startPixels", taaReachNow);
+                    resolve.Uniform("fullPixels", LodTaaMath.FullPixels(taaReachNow));
                     resolve.Uniform("feedback", taaFeedback);
                     resolve.Uniform("stillFeedback", taaStillFeedback);
                     resolve.Uniform("stillMotion", LodTaaMath.StillMotionPixels);
@@ -879,6 +883,7 @@ public partial class LodTerrainRenderer
         return string.Create(System.Globalization.CultureInfo.InvariantCulture,
             $"anti-aliasing reach {taaReachPixels:0.#} px: it fades in where a block is "
             + $"{taaReachPixels:0.#} px wide on screen and is full strength at {full:0.#} px{blocks}; "
+            + $"always full strength from vanilla's edge outward ({taaReachNow:0.#} px in force); "
             + $"cached terrain only, vanilla terrain is never touched");
     }
 

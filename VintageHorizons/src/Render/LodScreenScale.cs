@@ -147,6 +147,26 @@ internal static class LodTaaMath
     public static float FullPixels(float reach) => ClampReach(reach) * 0.5f;
 
     /// <summary>
+    /// How far along the view axis cached terrain can begin, as a share of vanilla's view distance.
+    /// Vanilla's edge is that far out in every direction, but a depth is measured straight ahead,
+    /// and the corners of a wide view see it this much nearer.
+    /// </summary>
+    const float SeamDepthShare = 0.6f;
+
+    /// <summary>
+    /// The reach in force: the player's, or more, so that see-through leaf sheets are at full
+    /// strength wherever cached terrain begins (owner, 2026-11-01). It follows vanilla's view
+    /// distance and the block's size on screen, so it means the same at any field of view,
+    /// resolution or view distance.
+    /// </summary>
+    public static float SeamReach(float reach, float blockScale, float vanillaBlocks)
+    {
+        float set = ClampReach(reach);
+        if (!(blockScale > 0f) || !(vanillaBlocks > 0f)) return set;
+        return ClampReach(Math.Max(set, 2f * blockScale / (vanillaBlocks * SeamDepthShare)));
+    }
+
+    /// <summary>
     /// Where the nudge begins: three quarters of the reach, the middle of the fade. The vertex
     /// shader's own ramp runs from here to <see cref="FullPixels"/>, which is exactly
     /// <see cref="NudgeStrength"/> of <see cref="Ramp"/>.

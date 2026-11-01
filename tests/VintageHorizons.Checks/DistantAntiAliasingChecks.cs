@@ -350,15 +350,15 @@ public static class DistantAntiAliasingChecks
         c.True(water >= 0 && resolve > water,
             "and the resolve runs after thin cover, which the terrain program also nudged");
         c.True(renderer.Contains(
-                "prog.Uniform(\"vhTaaStartPixels\", LodTaaMath.NudgeStartPixels(taaReachPixels));",
+                "prog.Uniform(\"vhTaaStartPixels\", LodTaaMath.NudgeStartPixels(taaReachNow));",
                 StringComparison.Ordinal)
             && renderer.Contains(
-                "prog.Uniform(\"vhTaaFullPixels\", LodTaaMath.FullPixels(taaReachPixels));",
+                "prog.Uniform(\"vhTaaFullPixels\", LodTaaMath.FullPixels(taaReachNow));",
                 StringComparison.Ordinal)
-            && taa.Contains("resolve.Uniform(\"startPixels\", taaReachPixels);", StringComparison.Ordinal)
-            && taa.Contains("resolve.Uniform(\"fullPixels\", LodTaaMath.FullPixels(taaReachPixels));",
+            && taa.Contains("resolve.Uniform(\"startPixels\", taaReachNow);", StringComparison.Ordinal)
+            && taa.Contains("resolve.Uniform(\"fullPixels\", LodTaaMath.FullPixels(taaReachNow));",
                 StringComparison.Ordinal),
-            "the nudge and the blend are both derived from the one reach setting");
+            "the nudge and the blend are both derived from the one reach in force");
         c.True(taa.Contains("taaJitterX = 2f * x * taaNudge / taaWidth;", StringComparison.Ordinal)
                 && taa.Contains("taaJitterY = 2f * y * taaNudge / taaHeight;", StringComparison.Ordinal),
             "the nudge dial scales how far terrain moves each frame");
