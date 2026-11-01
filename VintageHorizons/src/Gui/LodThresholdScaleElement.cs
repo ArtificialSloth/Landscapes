@@ -17,10 +17,10 @@ internal static class LodThresholdScaleLayout
     internal const int VanillaDistanceStep = 32;
     internal const int MinDrawDistance = 256;
     internal const int MaxDrawDistance = 32768;
-    internal const int DrawDistanceStep = 512;
+    internal const int DrawDistanceStep = 128;
 
-    // Short distances are where a step shows: 512 blocks is the whole setting at the bottom of
-    // the scale. Below this edge the cached distance moves in the fine step.
+    // Short distances are where a step shows: a coarse step is the whole setting at the bottom
+    // of the scale. Below this edge the cached distance moves in the fine step.
     internal const int FineDrawDistanceEnd = 1024;
     internal const int FineDrawDistanceStep = 64;
 

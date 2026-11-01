@@ -49,8 +49,10 @@ void main()
 
             // Clear texels store a colour the game never shows, and mips stir it into their
             // neighbours, so the pattern bows out where the mean is the better answer (G302).
-            float vhSheetDetail = clamp(blockTextureMipLimit - vhSheetMip, 0.0, 1.0)
-                * clamp(2.0 - vhSheetLod, 0.0, 1.0);
+            // A crop's clear texels hold its own mean, so it keeps its picture (row 1's alpha).
+            float vhSheetHold = texelFetch(blockTable, ivec2(vhBlockSlot, 1), 0).a > 1.5
+                ? 1.0 : clamp(2.0 - vhSheetLod, 0.0, 1.0);
+            float vhSheetDetail = clamp(blockTextureMipLimit - vhSheetMip, 0.0, 1.0) * vhSheetHold;
             vec3 vhFoliageTexel = mix(vhMeanRow.rgb, vhFoliage.rgb, vhFoliage.a);
             albedo *= mix(vec3(1.0), vhFoliageTexel / max(vhMeanRow.rgb, vec3(0.02)), vhSheetDetail);
             albedo = mix(albedo, vhCob.rgb, vhCob.a * vhSheetDetail);

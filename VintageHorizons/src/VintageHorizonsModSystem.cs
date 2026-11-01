@@ -1564,9 +1564,101 @@ public partial class VintageHorizonsModSystem : ModSystem
         return new LodBlockTextureRegistry.BlockTexture(sheet, Sheet(cobs).Position, mean, mean);
     }
 
+    /// <summary>
+    /// The sheets the game draws a crop's planes with, in order of preference. Crops built from
+    /// parts - cabbage, sunflower, cassava - hold no such sheet, only pieces of a model, which a
+    /// plane would show as a jumble. They get no slot and their planes draw plain.
+    /// </summary>
+    static readonly string[] CropSheetNames = { "crop", "e", "s", "all", "0" };
+
+    /// <summary>The picture a crop's planes wear. Every crop's clear pixels store its mean.</summary>
+    LodBlockTextureRegistry.BlockTexture ResolveCropSheet(Block block)
+    {
+        if (block.Textures == null) return default;
+        foreach (string name in CropSheetNames)
+        {
+            if (!block.Textures.TryGetValue(name, out CompositeTexture? sheet)
+                || sheet?.Baked == null || !IsUsableAtlasTexture(sheet.Baked.TextureSubId)) continue;
+            TexturePixels? pixels = ReadTexturePixels(sheet.Base.Clone()
+                .WithPathPrefixOnce("textures/").WithPathAppendixOnce(".png"));
+            if (pixels == null) continue;
+            int mean = PackMean(RegionMean(pixels.Argb, pixels.Width, pixels.Height, null, 0, 0));
+            return new LodBlockTextureRegistry.BlockTexture(
+                capi.BlockTextureAtlas.Positions[sheet.Baked.TextureSubId], null, mean, mean,
+                ClearPixelsHoldMean: true);
+        }
+        return default;
+    }
+
+    // Each bush type's layered tile, by the folder its leaf sheets live in; null where none could
+    // be built. Filled once, the first time a bush asks.
+    Dictionary<string, (TextureAtlasPosition Position, int Mean)?>? bushTiles;
+
+    static string? BushLeafFolder(Block block)
+    {
+        string? path = block.Textures != null
+            && block.Textures.TryGetValue("particle", out CompositeTexture? particle)
+                ? particle?.Base?.Path
+                : null;
+        int end = path?.LastIndexOf('/') ?? -1;
+        return end > 0 ? path!.Substring(0, end) : null;
+    }
+
+    /// <summary>
+    /// A bush's tile (<see cref="LodBushTile"/>), which reaches the seam band as any other block
+    /// texture does. Every type is built together so the atlas regenerates its mipmaps once.
+    /// </summary>
+    LodBlockTextureRegistry.BlockTexture ResolveBushTile(Block block)
+    {
+        bushTiles ??= BuildBushTiles();
+        string? folder = BushLeafFolder(block);
+        return folder != null && bushTiles.TryGetValue(folder, out var tile) && tile is { } found
+            ? new LodBlockTextureRegistry.BlockTexture(found.Position, null, found.Mean, found.Mean)
+            : default;
+    }
+
+    Dictionary<string, (TextureAtlasPosition Position, int Mean)?> BuildBushTiles()
+    {
+        var tiles = new Dictionary<string, (TextureAtlasPosition Position, int Mean)?>();
+        var pages = new HashSet<int>();
+        foreach (Block block in capi.World.Blocks)
+        {
+            if (block == null || block.Code == null || !LodBlockPolicy.IsBerryBush(block)) continue;
+            string? folder = BushLeafFolder(block);
+            if (folder == null || tiles.ContainsKey(folder)) continue;
+
+            var sheets = new List<(int Width, int Height, int[] Argb)>();
+            foreach (string part in new[] { "center", "inside" })
+            {
+                for (int n = 1; n <= 3; n++)
+                {
+                    TexturePixels? pixels = ReadTexturePixels(new AssetLocation(block.Code.Domain,
+                        $"textures/{folder}/leaves{part}{n}.png"));
+                    if (pixels != null) sheets.Add((pixels.Width, pixels.Height, pixels.Argb));
+                }
+            }
+
+            tiles[folder] = null;
+            if (LodBushTile.Compose(sheets) is not { } composed) continue;
+            int size = sheets[0].Width;
+            var bitmap = new BakedBitmap { TexturePixels = composed.Pixels, Width = size, Height = size };
+            if (!capi.BlockTextureAtlas.InsertTexture(bitmap, out _, out TextureAtlasPosition position)) continue;
+            tiles[folder] = (position, composed.Mean);
+            pages.Add(position.atlasNumber);
+        }
+
+        // Queued, so it runs on the main thread after the uploads, whichever thread asked. The
+        // band samples below the top level, where a new tile is otherwise whatever was there.
+        foreach (int page in pages)
+            capi.Event.EnqueueMainThreadTask(() => capi.BlockTextureAtlas.RegenMipMaps(page), "dodenslandscapes-bushtiles");
+        return tiles;
+    }
+
     LodBlockTextureRegistry.BlockTexture ResolveBlockTextureFor(Block block)
     {
+        if (block is Vintagestory.GameContent.BlockCrop) return ResolveCropSheet(block);
         if (LodBlockPolicy.IsCrossedPlant(block)) return ResolveReedSheets(block);
+        if (LodBlockPolicy.IsBerryBush(block)) return ResolveBushTile(block);
 
         // The UP face, explicitly. `TextureSubIdForBlockColor` is the engine's generic "what
         // colour is this block" texture and for grass-covered soil that is the SIDE - which is

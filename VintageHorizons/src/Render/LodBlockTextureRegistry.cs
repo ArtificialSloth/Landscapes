@@ -95,10 +95,14 @@ public sealed class LodBlockTextureRegistry
     /// top's texture there.
     /// </param>
     /// <param name="WallZ">The same for faces along Z.</param>
+    /// <param name="ClearPixelsHoldMean">
+    /// A sheet whose see-through texels already store its mean. Mips cannot stir a foreign colour
+    /// into it, so a crossed plane keeps its picture as far as the planes reach (G313).
+    /// </param>
     public readonly record struct BlockTexture(
         TextureAtlasPosition? Position, TextureAtlasPosition? Overlay,
         int MeanColor, int OverlayMeanColor,
-        FaceTexture? WallX = null, FaceTexture? WallZ = null);
+        FaceTexture? WallX = null, FaceTexture? WallZ = null, bool ClearPixelsHoldMean = false);
 
     /// <summary>One face's atlas rectangle and that texture's own mean.</summary>
     public readonly record struct FaceTexture(TextureAtlasPosition Position, int MeanColor);
@@ -168,7 +172,8 @@ public sealed class LodBlockTextureRegistry
         // A chiselled block averages the materials of its own block entity at that position,
         // so its colour is genuinely per-position and cannot be recovered from a table keyed
         // by block id (G46). Those keep the colour form, which is exactly today's behaviour.
-        if (block.EntityClass != null)
+        // A berry bush's entity only tracks its growth, so a bush is not one of them.
+        if (block.EntityClass != null && !LodBlockPolicy.IsBerryBush(block))
         {
             RefusedPerPositionColour++;
             slotByBlockId[block.BlockId] = NoSlot;
@@ -216,7 +221,8 @@ public sealed class LodBlockTextureRegistry
         table[at + 4] = red;
         table[at + 5] = green;
         table[at + 6] = blue;
-        table[at + 7] = 1f;
+        // Row 1's alpha: nothing reads it as alpha, so above one it marks ClearPixelsHoldMean.
+        table[at + 7] = resolved.ClearPixelsHoldMean ? 2f : 1f;
         TextureAtlasPosition? overlay = resolved.Overlay;
         bool useOverlay = overlay != null && overlay.atlasNumber == atlasNumber;
         if (overlay != null)

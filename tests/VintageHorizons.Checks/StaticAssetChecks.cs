@@ -1724,9 +1724,9 @@ public static class StaticAssetChecks
         c.True(pipeline.Contains("tintSlot, ResolveTextureSlot(block)", StringComparison.Ordinal)
             && pipeline.Contains("TextureSlotsEnabled && block != null", StringComparison.Ordinal),
             "live palette registration resolves slots only while the pipeline is enabled");
-        c.True(renderer.Contains("SectionSnapshot.Of(section, includeTextureSlots, wallColors)",
+        c.True(renderer.Contains("section, includeTextureSlots, wallColors, crossedShapeOf)",
                 StringComparison.Ordinal)
-            && renderer.Contains("section, includeTextureSlots, includeWallColors: wallColors != null)",
+            && renderer.Contains("section, includeTextureSlots, includeWallColors: wallColors != null,",
                 StringComparison.Ordinal),
             "the renderer omits the texture-slot snapshot array while the pipeline is off");
         c.True(modSystem.Contains("textureSlotsEnabled: config.BlendPipeline", StringComparison.Ordinal)
@@ -2657,9 +2657,9 @@ public static class StaticAssetChecks
             && scale.Contains("Render2DLoadedTexture(label, labelX", StringComparison.Ordinal),
             "the moving LOD handles use the Vanilla font and stack each distance under L1-L6");
         c.True(scale.Contains("const int MaxDrawDistance = 32768", StringComparison.Ordinal)
-            && scale.Contains("const int DrawDistanceStep = 512", StringComparison.Ordinal)
+            && scale.Contains("const int DrawDistanceStep = 128", StringComparison.Ordinal)
             && dialog.Contains("MaxDrawDistance = LodThresholdScaleLayout.MaxDrawDistance", StringComparison.Ordinal),
-            "the cached draw-distance slider stops at 32,768, in 512-block increments past its fine range");
+            "the cached draw-distance slider stops at 32,768, in 128-block increments past its fine range");
         // Defaults has to restore what a fresh install actually draws. They were different
         // numbers - the button said 32,768 while a new config said unlimited - so pressing it
         // changed the setting rather than resetting it.

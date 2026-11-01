@@ -27,6 +27,17 @@ public class SectionSnapshot
     public int[] PaletteWallXColors = Array.Empty<int>();
     public int[] PaletteWallZColors = Array.Empty<int>();
 
+    /// <summary>
+    /// How each palette entry stands if it is a crossed plant (<see cref="LodBlockPolicy"/>'s
+    /// CrossedShape values); an empty array means by its flags. Read through
+    /// <see cref="CrossedShape"/>.
+    /// </summary>
+    public byte[] PaletteCrossedShapes = Array.Empty<byte>();
+
+    public byte CrossedShape(int pid) => (uint)pid < (uint)PaletteCrossedShapes.Length
+        ? PaletteCrossedShapes[pid]
+        : LodBlockPolicy.CrossedShapeByFlags;
+
     /// <summary>The colour a wall of this palette entry draws at, along X or along Z.</summary>
     public int WallColor(int pid, bool xWall)
     {
@@ -44,7 +55,7 @@ public class SectionSnapshot
         Runs.LongLength, ColumnStart.LongLength, Captured.LongLength,
         SnowStateObservedBits.LongLength, SnowCoveredBits.LongLength,
         PaletteColors.LongLength + PaletteWallXColors.LongLength + PaletteWallZColors.LongLength,
-        PaletteFlags.LongLength, PaletteTintSlots.LongLength,
+        PaletteFlags.LongLength + PaletteCrossedShapes.LongLength, PaletteTintSlots.LongLength,
         PaletteTextureSlots.LongLength);
 
     public Span<ulong> ColumnRuns(int col) =>
@@ -55,8 +66,13 @@ public class SectionSnapshot
     /// wall at its block's colour. Only the section being meshed needs them: neighbours are
     /// asked what covers what, never what colour anything is.
     /// </param>
+    /// <param name="crossedShapes">
+    /// A block id's <see cref="PaletteCrossedShapes"/> value, or null to stand every crossed plant
+    /// by its flags. Only the section being meshed needs them, as with wall colours.
+    /// </param>
     public static SectionSnapshot Of(LodSection s, bool includeTextureSlots = true,
-        System.Func<int, (int X, int Z)>? wallColors = null)
+        System.Func<int, (int X, int Z)>? wallColors = null,
+        System.Func<int, byte>? crossedShapes = null)
     {
         var colors = new int[s.Palette.Count];
         var flags = new byte[s.Palette.Count];
@@ -66,6 +82,7 @@ public class SectionSnapshot
             : Array.Empty<ushort>();
         int[] wallX = wallColors != null ? new int[s.Palette.Count] : Array.Empty<int>();
         int[] wallZ = wallColors != null ? new int[s.Palette.Count] : Array.Empty<int>();
+        byte[] shapes = crossedShapes != null ? new byte[s.Palette.Count] : Array.Empty<byte>();
         for (int i = 0; i < s.Palette.Count; i++)
         {
             colors[i] = s.Palette[i].Color;
@@ -73,6 +90,9 @@ public class SectionSnapshot
             slots[i] = s.Palette[i].TintSlot;
             if (includeTextureSlots) textureSlots[i] = s.Palette[i].TextureSlot;
             if (wallColors != null) (wallX[i], wallZ[i]) = wallColors(s.Palette[i].BlockId);
+            // Most sections hold no crossed plant, and flags are the cheap way to know.
+            if (crossedShapes != null && (flags[i] & LodPaletteEntry.FlagCrossed) != 0)
+                shapes[i] = crossedShapes(s.Palette[i].BlockId);
         }
         return new SectionSnapshot
         {
@@ -87,14 +107,16 @@ public class SectionSnapshot
             PaletteTextureSlots = textureSlots,
             PaletteWallXColors = wallX,
             PaletteWallZColors = wallZ,
+            PaletteCrossedShapes = shapes,
         };
     }
 
     public static long EstimateRetainedBytes(LodSection s, bool includeTextureSlots = true,
-        bool includeWallColors = false) => EstimateRetainedBytes(
+        bool includeWallColors = false, bool includeCrossedShapes = false) => EstimateRetainedBytes(
         s.Runs.LongLength, s.ColumnStart.LongLength, s.Captured.LongLength,
         s.SnowStateObservedBits.LongLength, s.SnowCoveredBits.LongLength,
-        includeWallColors ? 3L * s.Palette.Count : s.Palette.Count, s.Palette.Count, s.Palette.Count,
+        includeWallColors ? 3L * s.Palette.Count : s.Palette.Count,
+        includeCrossedShapes ? 2L * s.Palette.Count : s.Palette.Count, s.Palette.Count,
         includeTextureSlots ? s.Palette.Count : 0);
 
     static long EstimateRetainedBytes(long runs, long columnStarts, long captured,

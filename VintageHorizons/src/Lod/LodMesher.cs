@@ -1079,11 +1079,13 @@ public static class LodMesher
     const float ShortReedBlocks = 1.25f;
 
     /// <summary>
-    /// A reed as two planes crossing corner to corner, the layout of the game's own far model.
+    /// A plant as two planes crossing corner to corner, the layout of the game's own far model.
     /// One quad per plane: the packed vertex stage turns each toward the camera, so neither needs
     /// a back. Their texture slot names the sheet the game's far model wears, and with no slot
-    /// they draw plain. They sink half a block so a slab beneath leaves no gap. A reed standing
-    /// in water keeps its true height above the bed, a block below its run.
+    /// they draw plain. A reed sinks half a block so a slab beneath leaves no gap. A crop does
+    /// not: its sheet is one picture of the plant from the ground up, and a seedling is the
+    /// bottom few rows of it. A reed standing in water keeps its true height above the bed, a
+    /// block below its run.
     /// </summary>
     static void AddCrossedPlanes(Buffers buf, SectionSnapshot self, int pid, int cx, int cz,
         int yBottom, bool onWater, bool emitTextureSlots)
@@ -1092,8 +1094,14 @@ public static class LodMesher
         byte flags = (byte)(self.PaletteFlags[pid] & ~LodPaletteEntry.FlagThin);
         int color = self.WallColor(pid, true);
         byte alpha = AlphaFor(flags, self.PaletteTintSlots[pid]);
-        float height = (flags & LodPaletteEntry.FlagHalf) != 0 ? ShortReedBlocks : TallReedBlocks;
-        float y0 = yBottom * 0.5f - 0.5f;
+        byte shape = self.CrossedShape(pid);
+        float height = shape switch
+        {
+            LodBlockPolicy.CrossedShapeCrop => 1f,
+            LodBlockPolicy.CrossedShapeTallCrop => 2f,
+            _ => (flags & LodPaletteEntry.FlagHalf) != 0 ? ShortReedBlocks : TallReedBlocks,
+        };
+        float y0 = yBottom * 0.5f - (shape == LodBlockPolicy.CrossedShapeByFlags ? 0.5f : 0f);
         float y1 = yBottom * 0.5f + height - (onWater ? 1f : 0f);
         float x0 = cx, x1 = cx + 1, z0 = cz, z1 = cz + 1;
         int textureSlot = emitTextureSlots && (uint)pid < (uint)self.PaletteTextureSlots.Length

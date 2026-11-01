@@ -1533,6 +1533,7 @@ public partial class LodTerrainRenderer : IRenderer
     // quad can carry a block slot instead of a colour and lose nothing.
     readonly LodBlockTextureRegistry? blockTextures;
     System.Func<int, (int X, int Z)>? wallColorsOf;
+    System.Func<int, byte>? crossedShapeOf;
     int blockTableTexture;
     int blockTableVersion = -1;
     bool blockTableFailed;
@@ -2879,6 +2880,7 @@ public partial class LodTerrainRenderer : IRenderer
         System.Func<int, (int X, int Z)>? wallColors = blockTextures == null
             ? null
             : wallColorsOf ??= blockId => blockTextures.WallColorsFor(capi.World.GetBlock(blockId));
+        crossedShapeOf ??= blockId => LodBlockPolicy.CrossedShapeOf(capi.World.GetBlock(blockId));
 
         // Two budgets. Starting a background reload costs this thread almost nothing
         // (enqueue a key), whereas building a mesh snapshot is real work, so charging a
@@ -2928,7 +2930,8 @@ public partial class LodTerrainRenderer : IRenderer
             // are never asked whether a side is covered.
             var neighborSections = new LodSection?[8];
             long estimatedBytes = SectionSnapshot.EstimateRetainedBytes(
-                section, includeTextureSlots, includeWallColors: wallColors != null);
+                section, includeTextureSlots, includeWallColors: wallColors != null,
+                includeCrossedShapes: true);
 
             // A neighbour that is absent from RAM is NOT automatically the edge of
             // explored space. HasDataSet is the question the mesher actually wants
@@ -2987,7 +2990,8 @@ public partial class LodTerrainRenderer : IRenderer
                     neighbors[d] = SectionSnapshot.Of(neighborSections[d]!, includeTextureSlots);
             }
 
-            SectionSnapshot self = SectionSnapshot.Of(section, includeTextureSlots, wallColors);
+            SectionSnapshot self = SectionSnapshot.Of(
+                section, includeTextureSlots, wallColors, crossedShapeOf);
 
             // Same-world publication needs a finer identity than WorldEpoch. If a mesh-visible
             // capture or neighbour-edge invalidation landed while these immutable inputs were

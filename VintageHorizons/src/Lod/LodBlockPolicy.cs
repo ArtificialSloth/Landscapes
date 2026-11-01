@@ -81,14 +81,47 @@ public static class LodBlockPolicy
     }
 
     /// <summary>
-    /// A plant drawn as crossed planes at level 0: reeds, by the engine's class, and ferns. A fern
-    /// as a mat is half see-through and a quarter block off the ground, so it reads as nothing.
+    /// A plant drawn as crossed planes at level 0: reeds, ferns and crops. A fern as a mat is half
+    /// see-through and a quarter block off the ground, so it reads as nothing. A crop's game art
+    /// is planes already, so a cube was only ever a block-shaped patch of its colour.
     /// </summary>
-    public static bool IsCrossedPlant(Block block) =>
+    public static bool IsCrossedPlant(Block block) => IsReedOrFern(block) || block is BlockCrop;
+
+    /// <summary>The crossed plants capture has to look above the rain map for (<see cref="ReedTable"/>).</summary>
+    static bool IsReedOrFern(Block block) =>
         block is BlockReeds
         || (block.BlockMaterial == EnumBlockMaterial.Plant && block.Code?.Path is { } path
             && (path.StartsWith("fern-", StringComparison.Ordinal)
                 || path.StartsWith("tallfern", StringComparison.Ordinal)));
+
+    /// <summary>A reed or fern, whose planes follow its flags (see LodMesher).</summary>
+    public const byte CrossedShapeByFlags = 0;
+
+    /// <summary>A crop on planes a block tall, standing on the ground as the game's own do.</summary>
+    public const byte CrossedShapeCrop = 1;
+
+    /// <summary>A crop on the game's two-block planes.</summary>
+    public const byte CrossedShapeTallCrop = 2;
+
+    /// <summary>
+    /// How a crossed plant stands. Not a flag: flags are stored in the palette and every bit of
+    /// the byte is taken, and this is only ever wanted while meshing.
+    /// </summary>
+    public static byte CrossedShapeOf(Block? block)
+    {
+        if (block is not BlockCrop) return CrossedShapeByFlags;
+        return block.Shape?.Base?.Path?.Contains("tall", StringComparison.Ordinal) == true
+            ? CrossedShapeTallCrop
+            : CrossedShapeCrop;
+    }
+
+    /// <summary>
+    /// A berry bush, wild or planted. The game builds one from many see-through sheets, so no
+    /// single texture of its own can dress a cube (LodBushTile). Its block entity tracks growth
+    /// and has no bearing on its colour, which is why a bush may hold a texture slot.
+    /// </summary>
+    public static bool IsBerryBush(Block block) =>
+        block.Code?.Path?.StartsWith("fruitingbush-", StringComparison.Ordinal) == true;
 
     /// <summary>Sedge and ferns stand about half as tall as reeds, and a cut reed is a stub.</summary>
     static byte CrossedFlags(Block block) =>
@@ -135,7 +168,7 @@ public static class LodBlockPolicy
     {
         var table = new bool[blocks.Count];
         for (int id = 0; id < table.Length; id++)
-            table[id] = blocks[id] is { } block && IsCrossedPlant(block);
+            table[id] = blocks[id] is { } block && IsReedOrFern(block);
         return table;
     }
 
