@@ -818,6 +818,20 @@ public static class GpuArenaChecks
             "an extreme distance is still clamped");
 
         // The 2026-08-24 configuration - unlimited - must now afford more than it refused at.
+        // The pool never follows the Cache distance: pages follow what is resident, which a
+        // short distance barely changes. Owner's logs: 23 pages in use 30 seconds in, at 512
+        // and at 8,192 alike, against the 21 a pool sized for 384 could hold.
+        string renderer = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot,
+            "VintageHorizons", "src", "Render", "LodTerrainRenderer.cs"));
+        c.True(renderer.Contains("const double sizedFor = LodGpuArenaPolicy.UnlimitedDrawDistanceBlocks;",
+                StringComparison.Ordinal),
+            "the arenas are sized for the full horizon, whatever the Cache distance");
+        long fullPool = LodGpuArenaPolicy.CeilingBytesFor(
+            LodGpuArenaPolicy.UnlimitedDrawDistanceBlocks, null);
+        c.True(LodGpuArenaPolicy.PackedClusterLimits(fullPool).CeilingBytes
+                / LodGpuArenaPolicy.VertexPageBytes >= 3 * 23,
+            "which leaves room for three times the pages a session uses at login");
+
         long unlimited = LodGpuArenaPolicy.CeilingBytesFor(
             LodGpuArenaPolicy.UnlimitedDrawDistanceBlocks, null);
         c.True(unlimited > LodGpuArenaPolicy.DefaultCeilingBytes,

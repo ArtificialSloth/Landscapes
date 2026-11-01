@@ -6531,14 +6531,14 @@ public partial class LodTerrainRenderer : IRenderer
     {
         LodGpuArenaPolicy.ConfigurePageBytes(
             Environment.GetEnvironmentVariable("VINTAGEHORIZONS_GPU_ARENA_PAGE_MB"));
-        // Sized from the player's own cached-terrain distance rather than a fixed number, so
-        // the pool can hold whatever their settings ask the mod to draw. A cap of zero means
-        // unlimited and gets a generous horizon instead. Read here rather than per frame
-        // because the arenas are real GL buffers; changing the distance mid-session does not
-        // resize them, and the log line below says which distance this pool was built for.
-        double sizedFor = FarViewDistanceCap > 0
-            ? FarViewDistanceCap
-            : LodGpuArenaPolicy.UnlimitedDrawDistanceBlocks;
+        // Always the full horizon, never the Cache distance. What fills the pool is pages, one
+        // per region per level, and those follow what is resident, which a short Cache distance
+        // barely changes: 23 pages 30 seconds into a session at 512 and at 8,192 alike. Sized
+        // from the setting, 384 gave a pool of 21, so terrain went missing within a minute, and
+        // a refused section is not asked again until the next login (owner, 2026-10-31). The
+        // ceiling is a cap and pages are committed as sections arrive, so this costs nothing
+        // that is not used, and a short distance still uses less because less arrives.
+        const double sizedFor = LodGpuArenaPolicy.UnlimitedDrawDistanceBlocks;
         long ceiling = LodGpuArenaPolicy.CeilingBytesFor(
             sizedFor, Environment.GetEnvironmentVariable("VINTAGEHORIZONS_GPU_ARENA_MB"));
         try
@@ -6579,7 +6579,7 @@ public partial class LodTerrainRenderer : IRenderer
                 "[Landscapes] GPU arenas on: retaining {0} geometry only; ceilings are "
                 + "{1} MiB expanded, {2} MiB packed and {3} MiB clustered, with {4} MiB "
                 + "vertex pages and {5} page sets; content verification {6}. Sized for a "
-                + "{7} draw distance ({8} sections); each ceiling "
+                + "{7}-block horizon ({8} sections); each ceiling "
                 + "is a cap, not a reservation, so pages are only "
                 + "committed as sections arrive.",
                 retention,
@@ -6589,10 +6589,7 @@ public partial class LodTerrainRenderer : IRenderer
                 LodGpuArenaPolicy.VertexPageBytes / (1024 * 1024),
                 LodGpuArenaPolicy.PageSets(ceiling),
                 mode == LodGpuArenaMode.Verify ? "on" : "off",
-                FarViewDistanceCap > 0
-                    ? FarViewDistanceCap + "-block"
-                    : "an unlimited (modelled as "
-                        + LodGpuArenaPolicy.UnlimitedDrawDistanceBlocks.ToString("0") + "-block)",
+                sizedFor.ToString("0"),
                 LodGpuArenaPolicy.SectionsWithin(sizedFor).ToString("0"));
         }
         catch (Exception e)
@@ -7062,6 +7059,10 @@ public partial class LodTerrainRenderer : IRenderer
         capi.Logger.Error(
             "[Landscapes] REQUIRED PACKED TERRAIN PATH FAILED; cached opaque terrain "
             + "is suppressed and no legacy/expanded fallback will run: {0}.", reason);
+        // The reason alone could not tell a full pool from anything else, and the periodic
+        // report that carries these numbers fires once, 30 seconds in.
+        if (gpuShadow.Mirror is { } mirror)
+            capi.Logger.Error("[Landscapes] GPU arenas at that moment: {0}", mirror.Describe());
     }
 
     string DescribeRequiredTerrainFailure()
