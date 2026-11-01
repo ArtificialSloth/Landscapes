@@ -76,7 +76,7 @@ public class VintageHorizonsConfig
     public bool FruitTreeColors = true;
 
     /// <summary>What level 0 draws leaves as. Cubes until the owner has chosen among the trial's shapes.</summary>
-    public LodLeafShape LeafShape = LodLeafShape.Cubes;
+    public LodLeafShape LeafShape = LodLeafShape.ClustersWithTops;
 
     public bool ClimateTint = true;
 
@@ -5588,6 +5588,9 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.FarViewDistanceCap = farViewDistanceCap;
         config.LoadWhilePaused = loadWhilePaused;
         WriteSilhouetteSettings(silhouetteSettings);
+        // First, with or without a renderer: SaveConfig reads the plant switches back from here, so
+        // a choice that only reached the renderer drew at once and was then saved over.
+        WriteVisualSettings(visuals);
 
         if (renderer != null)
         {
@@ -5605,7 +5608,6 @@ public partial class VintageHorizonsModSystem : ModSystem
             // No renderer to set, so the file is the only place the choice can live until one
             // exists. SaveConfig leaves every renderer-derived key alone without a renderer, so
             // writing them here is what makes the window work at all in that state.
-            WriteVisualSettings(visuals);
             WriteTaaDials(taaDials);
         }
 

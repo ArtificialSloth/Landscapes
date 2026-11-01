@@ -118,7 +118,7 @@ void main()
     vec4 vertexColorIn;
     if ((vhGeometry & 0x80000000u) != 0u)
     {
-        vhBlockSlot = int(vhColor & 0x00FFFFFFu);
+        vhBlockSlot = int(vhColor & 0x000FFFFFu);
         // One colour row alone. This is the quad's albedo - the averaged colour it carries
         // INSTEAD of its own, which every fragment needs whether or not the band asks for a
         // texture - so it is the one row that belongs at this stage. The atlas rectangle, the
@@ -132,11 +132,18 @@ void main()
         vertexColorIn = vec4(vhAverage.rgb, float(vhColor >> 24u) / 255.0);
         // Row 9's alpha above one marks leaves, whose sheet tiles up a plane of any height where
         // a plant's is one picture. A flat plane has no height to tile up, and already holds
-        // its position.
+        // its position. Leaves under other leaves sit in their shade (LodMesher.LeafBuried), and
+        // a stack's foot in its own, the more the taller it is.
         if (vhFace >= 6u && vhAverage.a > 1.5)
         {
             vhFaceAxis = 5;
-            if (vhY1 > vhY0) vhPlaneUv.y *= (vhY1 - vhY0) / max(vhX1 - vhX0, 1.0);
+            vertexColorIn.rgb *= 1.0 - 0.03 * float((vhColor >> 20u) & 15u);
+            if (vhY1 > vhY0)
+            {
+                vhPlaneUv.y *= (vhY1 - vhY0) / max(vhX1 - vhX0, 1.0);
+                if (vhLogicalCorner < 2u)
+                    vertexColorIn.rgb *= 1.0 - mix(0.16, 0.36, clamp((vhY1 - vhY0) / 12.0, 0.0, 1.0));
+            }
         }
         if (vhFace >= 6u && plantTextureEnabled == 0) vhBlockSlot = -1;
     }

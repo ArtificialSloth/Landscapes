@@ -63,11 +63,22 @@ internal static class LodPackedQuadFormat
     /// <summary>Slot values live in the 24 bits the colour would otherwise occupy.</summary>
     public const int MaximumTextureSlot = 0x00FF_FFFF;
 
+    /// <summary>
+    /// How buried a leaf plane is (<see cref="LodMesher"/>'s LeafBuried), in the top of that
+    /// field. A slot is twelve bits, so a slot and this share it, and the vertex stage takes
+    /// them apart. Comes with a texture only, which every leaf plane has.
+    /// </summary>
+    public const int LeafShadeShift = 20;
+    public const int MaximumLeafShade = 15;
+
     /// <summary>True when this quad's word 2 is a block texture slot rather than a colour.</summary>
     public static bool IsTextured(uint geometry) => (geometry & TexturedFlag) != 0;
 
     /// <summary>The block texture slot in a textured quad's colour word.</summary>
-    public static int TextureSlot(uint colorWord) => (int)(colorWord & 0x00FF_FFFFu);
+    public static int TextureSlot(uint colorWord) => (int)(colorWord & 0x000F_FFFFu);
+
+    /// <summary>The leaf shade in a textured quad's colour word.</summary>
+    public static int LeafShade(uint colorWord) => (int)((colorWord >> LeafShadeShift) & 15u);
 
     public static long Bytes(int quadCount) => Math.Max(0, (long)quadCount) * StrideBytes;
 

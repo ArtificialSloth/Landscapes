@@ -38,6 +38,20 @@ public class SectionSnapshot
         ? PaletteCrossedShapes[pid]
         : LodBlockPolicy.CrossedShapeByFlags;
 
+    const byte CanopyLeaf = 1;
+    const byte CanopyWood = 2;
+
+    /// <summary>
+    /// Which palette entries are leaf planes or the wood of a fruit tree, only where leaves are
+    /// drawn as planes; otherwise empty. A neighbour's leaves are asked about too, which
+    /// <see cref="PaletteCrossedShapes"/> cannot answer, since neighbours carry none.
+    /// </summary>
+    public byte[] PaletteCanopy = Array.Empty<byte>();
+
+    public bool IsLeafPlane(int pid) => (uint)pid < (uint)PaletteCanopy.Length && PaletteCanopy[pid] == CanopyLeaf;
+
+    public bool IsCanopyWood(int pid) => (uint)pid < (uint)PaletteCanopy.Length && PaletteCanopy[pid] == CanopyWood;
+
     /// <summary>The colour a wall of this palette entry draws at, along X or along Z.</summary>
     public int WallColor(int pid, bool xWall)
     {
@@ -55,8 +69,8 @@ public class SectionSnapshot
         Runs.LongLength, ColumnStart.LongLength, Captured.LongLength,
         SnowStateObservedBits.LongLength, SnowCoveredBits.LongLength,
         PaletteColors.LongLength + PaletteWallXColors.LongLength + PaletteWallZColors.LongLength,
-        PaletteFlags.LongLength + PaletteCrossedShapes.LongLength, PaletteTintSlots.LongLength,
-        PaletteTextureSlots.LongLength);
+        PaletteFlags.LongLength + PaletteCrossedShapes.LongLength + PaletteCanopy.LongLength,
+        PaletteTintSlots.LongLength, PaletteTextureSlots.LongLength);
 
     public Span<ulong> ColumnRuns(int col) =>
         Runs.AsSpan(ColumnStart[col], ColumnStart[col + 1] - ColumnStart[col]);
@@ -76,9 +90,14 @@ public class SectionSnapshot
     /// wanted for cover as well as for drawing, so neighbours need it too. A leaf with no texture
     /// slot has nothing to cut its planes out with, and stays a cube.
     /// </param>
+    /// <param name="canopyWood">
+    /// Block ids that are a fruit tree's wood, which stop at the canopy when leaves are planes.
+    /// Only the section being meshed needs them.
+    /// </param>
     public static SectionSnapshot Of(LodSection s, bool includeTextureSlots = true,
         System.Func<int, (int X, int Z)>? wallColors = null,
-        System.Func<int, byte>? crossedShapes = null, bool[]? leafPlanes = null)
+        System.Func<int, byte>? crossedShapes = null, bool[]? leafPlanes = null,
+        bool[]? canopyWood = null)
     {
         var colors = new int[s.Palette.Count];
         var flags = new byte[s.Palette.Count];
@@ -89,6 +108,7 @@ public class SectionSnapshot
         int[] wallX = wallColors != null ? new int[s.Palette.Count] : Array.Empty<int>();
         int[] wallZ = wallColors != null ? new int[s.Palette.Count] : Array.Empty<int>();
         byte[] shapes = crossedShapes != null ? new byte[s.Palette.Count] : Array.Empty<byte>();
+        byte[] canopy = leafPlanes != null ? new byte[s.Palette.Count] : Array.Empty<byte>();
         for (int i = 0; i < s.Palette.Count; i++)
         {
             colors[i] = s.Palette[i].Color;
@@ -100,12 +120,18 @@ public class SectionSnapshot
                 && (uint)s.Palette[i].BlockId < (uint)leafPlanes.Length && leafPlanes[s.Palette[i].BlockId])
             {
                 flags[i] |= LodPaletteEntry.FlagCrossed;
+                canopy[i] = CanopyLeaf;
                 if (crossedShapes != null) shapes[i] = LodBlockPolicy.CrossedShapeLeaf;
             }
             // Most sections hold no crossed plant, and flags are the cheap way to know.
             else if (crossedShapes != null && (flags[i] & LodPaletteEntry.FlagCrossed) != 0)
             {
                 shapes[i] = crossedShapes(s.Palette[i].BlockId);
+            }
+            else if (leafPlanes != null && canopyWood != null
+                && (uint)s.Palette[i].BlockId < (uint)canopyWood.Length && canopyWood[s.Palette[i].BlockId])
+            {
+                canopy[i] = CanopyWood;
             }
         }
         return new SectionSnapshot
@@ -122,6 +148,7 @@ public class SectionSnapshot
             PaletteWallXColors = wallX,
             PaletteWallZColors = wallZ,
             PaletteCrossedShapes = shapes,
+            PaletteCanopy = canopy,
         };
     }
 

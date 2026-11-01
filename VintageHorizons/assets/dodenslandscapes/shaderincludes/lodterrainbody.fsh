@@ -18,11 +18,12 @@ void main()
 #include lodsurfacecolor.fsh
     // A reed's crossed plane wears the sheet the game's own far model wears, at every distance
     // the planes reach rather than only in the band. The game's reeds take no shading by facing.
-    // Leaves (5) tile their sheet and sit at about a cube's mean shade, its tops brighter, so a
-    // tree does not change brightness where the planes hand over to cubes.
+    // Leaves (5) tile their sheet. With the vertex stage's shade under other leaves, which averages
+    // 0.84 over real forest, these come out about 11% under the plain 0.78 and 0.95 they had:
+    // those read 5-13% over the game's own trees, with bright ground showing between the leaves.
     if (vhFaceAxis >= 4)
     {
-        shade = vhFaceAxis == 5 ? mix(0.78, 0.95, abs(normal.y)) : 1.0;
+        shade = vhFaceAxis == 5 ? mix(0.82, 1.0, abs(normal.y)) : 1.0;
         vec2 vhSheetUv = vhFaceAxis == 5 ? fract(vhPlaneUv) : vhPlaneUv;
         vec4 vhSheet = vhBlockSlot >= 0
             ? texelFetch(blockTable, ivec2(vhBlockSlot, 0), 0)

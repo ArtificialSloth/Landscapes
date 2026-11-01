@@ -147,6 +147,18 @@ public static class LodBlockPolicy
     public static bool IsFruitFoliage(Block block) => block is BlockFruitTreeFoliage;
 
     /// <summary>
+    /// Which block ids are a fruit tree's trunk and branches, for mesh jobs. The game draws these
+    /// as a thin model its foliage hides; here each is a whole block.
+    /// </summary>
+    public static bool[] FruitWoodTable(IList<Block> blocks)
+    {
+        var table = new bool[blocks.Count];
+        for (int id = 0; id < table.Length; id++)
+            table[id] = blocks[id] is BlockFruitTreeBranch;
+        return table;
+    }
+
+    /// <summary>
     /// The sheets the game draws a crop's own planes with, in order of preference. Each is one
     /// picture of the plant. Crops built from parts - cabbage, cassava - hold none.
     /// </summary>

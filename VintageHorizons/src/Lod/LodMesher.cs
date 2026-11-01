@@ -378,6 +378,13 @@ public static class LodMesher
 
                     bool isThin = (self.PaletteFlags[pid] & LodPaletteEntry.FlagThin) != 0;
 
+                    if (self.IsCanopyWood(pid))
+                    {
+                        int canopy = CanopyStart(job, self, cx, cz, run);
+                        if (canopy * 2 <= yBottom) continue;
+                        yTop = Math.Min(yTop, canopy * 2);
+                    }
+
                     if (IsLeafPlaneRun(self, run))
                     {
                         CollectLeafPlanes(job, self, opaque, hf, cells, cx, cz, runs, r,
@@ -497,7 +504,7 @@ public static class LodMesher
 
         // ---- Phase 2: greedy-merge and emit ----
 
-        EmitLeafCells(cells, self, opaque, job.LeafShape == LodLeafShape.ClustersWithTops);
+        EmitLeafCells(job, cells, self, opaque, job.LeafShape == LodLeafShape.ClustersWithTops);
         EmitHorizontalGreedy(hf, self, opaque, water, step, job.EmitTextureSlots,
             job.WaterAbsorption);
         EmitVerticalMerged(vf, self, opaque, water, step, job.EmitTextureSlots,
@@ -1184,7 +1191,7 @@ public static class LodMesher
                 continue;
             }
             if (spanTop < 0) continue;
-            if (!clusters) AddLeafPlanes(opaque, self, pid, cx, cz, 1, y + 1, spanTop);
+            if (!clusters) AddLeafPlanes(job, opaque, self, pid, cx, cz, 1, y + 1, spanTop);
             spanTop = -1;
         }
 
@@ -1213,10 +1220,106 @@ public static class LodMesher
     }
 
     /// <summary>
+    /// Where a fruit tree's wood meets its foliage: the lowest block of the run with a leaf plane
+    /// beside it, or the run's top if none has. From there up it draws nothing. Foliage hides the
+    /// game's thin branches, but planes do not hide a whole block of wood, which stood as a black
+    /// slot down the middle of the tree.
+    /// </summary>
+    static int CanopyStart(MeshJob job, SectionSnapshot self, int cx, int cz, ulong run)
+    {
+        (SectionSnapshot? snap, int col) west = NeighborColumn(job, self, cx - 1, cz);
+        (SectionSnapshot? snap, int col) east = NeighborColumn(job, self, cx + 1, cz);
+        (SectionSnapshot? snap, int col) north = NeighborColumn(job, self, cx, cz - 1);
+        (SectionSnapshot? snap, int col) south = NeighborColumn(job, self, cx, cz + 1);
+
+        int top = LodSection.RunYTop(run);
+        for (int y = LodSection.RunYBottom(run); y < top; y++)
+        {
+            if (LeafAt(west.snap, west.col, y) || LeafAt(east.snap, east.col, y)
+                || LeafAt(north.snap, north.col, y) || LeafAt(south.snap, south.col, y))
+            {
+                return y;
+            }
+        }
+        return top;
+    }
+
+    static bool LeafAt(SectionSnapshot? s, int col, int y)
+    {
+        if (s == null || !s.Captured[col]) return false;
+        foreach (ulong run in s.ColumnRuns(col))
+        {
+            if (LodSection.RunYTop(run) <= y || LodSection.RunYBottom(run) > y) continue;
+            return s.IsLeafPlane(LodSection.RunPaletteId(run));
+        }
+        return false;
+    }
+
+    /// <summary>How far to each side a stack of leaves looks for more of the tree.</summary>
+    const int LeafShadeReach = 3;
+
+    /// <summary>What having more of the tree overhead adds to the sides' count of eight.</summary>
+    const int LeafShadeRoof = 3;
+
+    /// <summary>
+    /// How buried a stack of leaves is: of the eight spots around it, how many are filled, and
+    /// whether more stands over it. Planes draw every stack the same otherwise, and it is the
+    /// shade of leaves under other leaves that lets the eye tell one tree from the next. Read when
+    /// the mesh is built and carried in the quad, so it costs the frame nothing.
+    /// </summary>
+    static int LeafBuried(MeshJob job, SectionSnapshot self, int x, int z, int size, int y0, int y1)
+    {
+        int cx = x + size / 2, cz = z + size / 2;
+        int middle = (y0 + y1) / 2;
+        int buried = 0;
+        for (int dz = -1; dz <= 1; dz++)
+        {
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                if ((dx != 0 || dz != 0)
+                    && FilledNear(job, self, cx + dx * LeafShadeReach, middle, cz + dz * LeafShadeReach))
+                {
+                    buried++;
+                }
+            }
+        }
+        if (FilledNear(job, self, cx, y1, cz) || FilledNear(job, self, cx, y1 + 2, cz)
+            || FilledNear(job, self, cx, y1 + 4, cz))
+        {
+            buried += LeafShadeRoof;
+        }
+        return buried;
+    }
+
+    /// <summary>
+    /// <see cref="CellFilled"/> a few blocks away, over the edge of the section if need be. Past a
+    /// corner it reads the nearest edge instead: this is a shade, and corners are not in a job's
+    /// four sides.
+    /// </summary>
+    static bool FilledNear(MeshJob job, SectionSnapshot self, int x, int y, int z)
+    {
+        int gs = LodSection.GridSize;
+        SectionSnapshot? s = self;
+        if (x < 0 || x >= gs)
+        {
+            s = job.Neighbors[x < 0 ? W : E];
+            x = (x + gs) % gs;
+            z = Math.Clamp(z, 0, gs - 1);
+        }
+        else if (z < 0 || z >= gs)
+        {
+            s = job.Neighbors[z < 0 ? N : S];
+            z = (z + gs) % gs;
+        }
+        return s != null && CellFilled(s, LodSection.ColumnIndex(x, z), y);
+    }
+
+    /// <summary>
     /// The coarser grid: two planes across each two-block cell that holds a visible leaf, merged up
     /// each stack of cells, and with tops a flat plane through the highest cell of a stack.
     /// </summary>
-    static void EmitLeafCells(List<LeafCell> cells, SectionSnapshot self, Buffers opaque, bool tops)
+    static void EmitLeafCells(MeshJob job, List<LeafCell> cells, SectionSnapshot self, Buffers opaque,
+        bool tops)
     {
         if (cells.Count == 0) return;
         cells.Sort((a, b) =>
@@ -1245,13 +1348,14 @@ public static class LodMesher
             int x = first.X * LeafCellBlocks;
             int z = first.Z * LeafCellBlocks;
             int y1 = (lastY + 1) * LeafCellBlocks;
-            AddLeafPlanes(opaque, self, first.Pid, x, z, LeafCellBlocks, first.Y * LeafCellBlocks, y1);
+            int shade = AddLeafPlanes(job, opaque, self, first.Pid, x, z, LeafCellBlocks,
+                first.Y * LeafCellBlocks, y1);
             if (tops)
             {
                 AddFlatPlane(opaque, self.WallColor(first.Pid, true),
                     AlphaFor(self.PaletteFlags[first.Pid], self.PaletteTintSlots[first.Pid]),
                     x, y1 - LeafCellBlocks / 2f, z, x + LeafCellBlocks, z + LeafCellBlocks,
-                    self.PaletteTextureSlots[first.Pid]);
+                    self.PaletteTextureSlots[first.Pid], shade);
             }
             i = j;
         }
@@ -1259,19 +1363,22 @@ public static class LodMesher
 
     /// <summary>
     /// Two planes corner to corner across a square of leaves. The vertex stage turns each toward
-    /// the camera and tiles the sheet up it, the block table saying which sheets tile.
+    /// the camera and tiles the sheet up it, the block table saying which sheets tile. Returns the
+    /// stack's shade.
     /// </summary>
-    static void AddLeafPlanes(Buffers buf, SectionSnapshot self, int pid, int x, int z, int size,
-        int y0, int y1)
+    static int AddLeafPlanes(MeshJob job, Buffers buf, SectionSnapshot self, int pid, int x, int z,
+        int size, int y0, int y1)
     {
         int color = self.WallColor(pid, true);
         byte alpha = AlphaFor(self.PaletteFlags[pid], self.PaletteTintSlots[pid]);
         int textureSlot = self.PaletteTextureSlots[pid];
+        int shade = LeafBuried(job, self, x, z, size, y0, y1);
         float x1 = x + size, z1 = z + size;
         AddQuad(buf, LodPackedFace.DiagonalRising, 1, color, alpha,
-            x, y0, z, x1, y0, z1, x1, y1, z1, x, y1, z, textureSlot);
+            x, y0, z, x1, y0, z1, x1, y1, z1, x, y1, z, textureSlot, shade);
         AddQuad(buf, LodPackedFace.DiagonalFalling, 1, color, alpha,
-            x, y0, z1, x1, y0, z, x1, y1, z, x, y1, z1, textureSlot);
+            x, y0, z1, x1, y0, z, x1, y1, z, x, y1, z1, textureSlot, shade);
+        return shade;
     }
 
     /// <summary>
@@ -1279,14 +1386,14 @@ public static class LodMesher
     /// stage knows it, so it faces the camera from above and below alike.
     /// </summary>
     static void AddFlatPlane(Buffers buf, int color, byte alpha, float x0, float y, float z0,
-        float x1, float z1, int textureSlot) =>
+        float x1, float z1, int textureSlot, int leafShade = 0) =>
         AddQuad(buf, LodPackedFace.DiagonalRising, 1, color, alpha,
-            x0, y, z0, x0, y, z1, x1, y, z1, x1, y, z0, textureSlot);
+            x0, y, z0, x0, y, z1, x1, y, z1, x1, y, z0, textureSlot, leafShade);
 
     static void AddQuad(Buffers buf, LodPackedFace face, int columnBlocks, int color, byte alpha,
         float x0, float y0, float z0, float x1, float y1, float z1,
         float x2, float y2, float z2, float x3, float y3, float z3,
-        int textureSlot = 0)
+        int textureSlot = 0, int leafShade = 0)
     {
         int baseVert = buf.Xyz.Count / 3;
         AddVert(buf, color, alpha, textureSlot, x0, y0, z0);
@@ -1309,6 +1416,7 @@ public static class LodMesher
             float maxY = Math.Max(Math.Max(y0, y1), Math.Max(y2, y3));
             float minZ = Math.Min(Math.Min(z0, z1), Math.Min(z2, z3));
             float maxZ = Math.Max(Math.Max(z0, z1), Math.Max(z2, z3));
+            int packedSlot = textureSlot | leafShade << LodPackedQuadFormat.LeafShadeShift;
             LodPackedQuadFormat.Append(
                 buf.Packed, face,
                 (int)MathF.Round(minX / columnBlocks),
@@ -1316,7 +1424,7 @@ public static class LodMesher
                 minY, maxY,
                 (int)MathF.Round(minZ / columnBlocks),
                 (int)MathF.Round(maxZ / columnBlocks),
-                color, alpha, textureSlot);
+                color, alpha, packedSlot);
             buf.ClusteredPacked!.Append(
                 face,
                 (int)MathF.Round(minX / columnBlocks),
@@ -1325,7 +1433,7 @@ public static class LodMesher
                 (int)MathF.Round(minZ / columnBlocks),
                 (int)MathF.Round(maxZ / columnBlocks),
                 columnBlocks,
-                color, alpha, textureSlot);
+                color, alpha, packedSlot);
         }
     }
 

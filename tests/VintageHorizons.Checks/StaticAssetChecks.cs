@@ -1724,7 +1724,7 @@ public static class StaticAssetChecks
         c.True(pipeline.Contains("tintSlot, ResolveTextureSlot(block)", StringComparison.Ordinal)
             && pipeline.Contains("TextureSlotsEnabled && block != null", StringComparison.Ordinal),
             "live palette registration resolves slots only while the pipeline is enabled");
-        c.True(renderer.Contains("section, includeTextureSlots, wallColors, crossedShapeOf, leafPlanesHere)",
+        c.True(renderer.Contains("section, includeTextureSlots, wallColors, crossedShapeOf, leafPlanesHere, fruitWoodTable)",
                 StringComparison.Ordinal)
             && renderer.Contains("section, includeTextureSlots, includeWallColors: wallColors != null,",
                 StringComparison.Ordinal),
@@ -2908,7 +2908,7 @@ public static class StaticAssetChecks
         c.True(mesher.Contains("emitTextureSlots && step == 1 && submerged == 0",
                 StringComparison.Ordinal),
             "a submerged quad carries a colour rather than a texture slot");
-        c.True(ShaderBody("vsh").Contains("vhBlockSlot = int(vhColor & 0x00FFFFFFu);",
+        c.True(ShaderBody("vsh").Contains("vhBlockSlot = int(vhColor & 0x000FFFFFu);",
                 StringComparison.Ordinal)
             && ShaderBody("vsh").Contains("texelFetch(blockTable, ivec2(vhBlockSlot, 1), 0)",
                 StringComparison.Ordinal),

@@ -31,7 +31,7 @@ internal readonly record struct LodVisualSettings(
     bool CropShapes = true,
     bool BushTextures = true,
     bool FruitTreeColors = true,
-    LodLeafShape LeafShape = LodLeafShape.Cubes)
+    LodLeafShape LeafShape = LodLeafShape.ClustersWithTops)
 {
     // What the Plants tab's switches come to. Plant Detail is one switch over all of them and
     // keeps their positions, so turning it back on restores the player's own choices.

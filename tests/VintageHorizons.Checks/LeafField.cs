@@ -16,10 +16,12 @@ namespace VintageHorizons.Checks;
 /// </summary>
 public static class LeafField
 {
-    // One palette block id for every leaf, one for everything else, standing in for the table
-    // a running game builds from its block registry.
+    // One palette block id for every leaf, one for a fruit tree's wood and one for everything else,
+    // standing in for the tables a running game builds from its block registry.
     const int LeafBlockId = 1;
-    static readonly bool[] LeafTable = { false, true };
+    const int FruitWoodBlockId = 2;
+    static readonly bool[] LeafTable = { false, true, false };
+    static readonly bool[] FruitWoodTable = { false, false, true };
 
     public static int Run(string[] args)
     {
@@ -86,6 +88,10 @@ public static class LeafField
         LodLeafShape[] shapes = Enum.GetValues<LodLeafShape>();
         var quads = new long[shapes.Length];
         var planes = new long[shapes.Length];
+        var meshTicks = new long[shapes.Length];
+        var shadeArea = new double[shapes.Length];
+        var shadeSum = new double[shapes.Length];
+        var buriedArea = new double[shapes.Length, LodPackedQuadFormat.MaximumLeafShade + 1];
         long leafBlocks = 0;
         int meshed = 0, withLeaves = 0;
 
@@ -115,21 +121,36 @@ public static class LeafField
                         neighbours[side] = SectionSnapshot.Of(sides[side]!, leafPlanes: leafPlanes);
                 }
 
-                MeshResult mesh = LodMesher.BuildMesh(new MeshJob
+                var job = new MeshJob
                 {
                     Key = key,
                     Self = SectionSnapshot.Of(self, crossedShapes: _ => LodBlockPolicy.CrossedShapeByFlags,
-                        leafPlanes: leafPlanes),
+                        leafPlanes: leafPlanes, canopyWood: FruitWoodTable),
                     Neighbors = neighbours,
                     CaveCullReach = 64,
                     EmitTextureSlots = true,
                     LeafShape = shapes[s],
-                });
+                };
+                long started = System.Diagnostics.Stopwatch.GetTimestamp();
+                MeshResult mesh = LodMesher.BuildMesh(job);
+                meshTicks[s] += System.Diagnostics.Stopwatch.GetTimestamp() - started;
                 quads[s] += mesh.PackedOpaqueQuadCount;
                 for (int q = 0; q < mesh.PackedOpaqueQuadCount; q++)
                 {
-                    if (LodPackedQuadFormat.FaceOf(mesh.PackedOpaqueQuads, q) >= LodPackedFace.DiagonalRising)
-                        planes[s]++;
+                    if (LodPackedQuadFormat.FaceOf(mesh.PackedOpaqueQuads, q) < LodPackedFace.DiagonalRising) continue;
+                    planes[s]++;
+                    if (!LodPackedQuadFormat.IsTextured(mesh.PackedOpaqueQuads[q * 3])) continue;
+
+                    int buried = LodPackedQuadFormat.LeafShade(mesh.PackedOpaqueQuads[q * 3 + 2]);
+                    uint heights = mesh.PackedOpaqueQuads[q * 3 + 1];
+                    float height = ((heights >> 16) - (heights & 0xFFFFu)) * 0.25f;
+                    // A flat plane is two blocks by two, and a stack's foot is shaded down its height.
+                    float area = height > 0f ? height : 2f;
+                    float foot = 1f - (0.16f + 0.2f * Math.Clamp(height / 12f, 0f, 1f));
+                    float shade = (1f - 0.03f * buried) * (height > 0f ? (1f + foot) / 2f : 1f);
+                    shadeArea[s] += area;
+                    shadeSum[s] += area * shade;
+                    buriedArea[s, buried] += area;
                 }
             }
         }
@@ -148,6 +169,20 @@ public static class LeafField
                 + $"{planes[s],11:n0}{Reach(s),15:n0}{Reach(s) * 100.0 / Math.Max(1, Reach(0)),10:0.0}%");
         }
         Console.WriteLine();
+        Console.WriteLine("  shape                  mesh ms   mean leaf shade   share of leaf area by buried 0-2 / 3-5 / 6-8 / 9-11");
+        for (int s = 0; s < shapes.Length; s++)
+        {
+            double Share(int from, int to)
+            {
+                double area = 0;
+                for (int b = from; b <= to; b++) area += buriedArea[s, b];
+                return area * 100.0 / Math.Max(1, shadeArea[s]);
+            }
+            double ms = meshTicks[s] * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            Console.WriteLine($"  {shapes[s],-20}{ms,10:0.0}{shadeSum[s] / Math.Max(1, shadeArea[s]),18:0.000}"
+                + $"{Share(0, 2),12:0}%{Share(3, 5),6:0}%{Share(6, 8),6:0}%{Share(9, 11),6:0}%");
+        }
+        Console.WriteLine();
         return 0;
     }
 
@@ -158,10 +193,12 @@ public static class LeafField
         for (int i = 0; i < section.Palette.Count; i++)
         {
             string? code = codes != null && i < codes.Length ? codes[i] : null;
-            int colon = code?.IndexOf(':') ?? -1;
-            bool leaf = code != null && code.Substring(colon + 1).StartsWith("leaves", StringComparison.Ordinal);
+            string path = code?.Substring(code.IndexOf(':') + 1) ?? "";
+            bool leaf = path.StartsWith("leaves", StringComparison.Ordinal)
+                || path.StartsWith("fruittree-foliage", StringComparison.Ordinal);
+            bool wood = !leaf && path.StartsWith("fruittree-", StringComparison.Ordinal);
             LodPaletteEntry e = section.Palette[i];
-            e.BlockId = leaf ? LeafBlockId : 0;
+            e.BlockId = leaf ? LeafBlockId : wood ? FruitWoodBlockId : 0;
             e.TextureSlot = leaf ? (ushort)1 : (ushort)0;
             section.Palette[i] = e;
         }

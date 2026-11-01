@@ -593,6 +593,7 @@ public partial class LodTerrainRenderer : IRenderer
     public LodLeafShape LeafShape { get; set; } = LodLeafShape.Cubes;
 
     bool[]? leafTable;
+    bool[]? fruitWoodTable;
 
     /// <summary>Slots serve seam blending and plant textures, so either keeps them alive.</summary>
     bool TextureSlotsWanted => blendPipelineEnabled || PlantTexturesEnabled;
@@ -2907,6 +2908,7 @@ public partial class LodTerrainRenderer : IRenderer
         bool[]? leafPlanes = LeafShape != LodLeafShape.Cubes
             ? leafTable ??= LodBlockPolicy.LeafTable(capi.World.Blocks)
             : null;
+        fruitWoodTable ??= LodBlockPolicy.FruitWoodTable(capi.World.Blocks);
 
         // Two budgets. Starting a background reload costs this thread almost nothing
         // (enqueue a key), whereas building a mesh snapshot is real work, so charging a
@@ -3019,7 +3021,7 @@ public partial class LodTerrainRenderer : IRenderer
             }
 
             SectionSnapshot self = SectionSnapshot.Of(
-                section, includeTextureSlots, wallColors, crossedShapeOf, leafPlanesHere);
+                section, includeTextureSlots, wallColors, crossedShapeOf, leafPlanesHere, fruitWoodTable);
 
             // Same-world publication needs a finer identity than WorldEpoch. If a mesh-visible
             // capture or neighbour-edge invalidation landed while these immutable inputs were

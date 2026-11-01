@@ -20,6 +20,8 @@ public static class PlantDetailChecks
         Switches(c);
         LeafShapes(c);
         LeavesCoverNothing(c);
+        BuriedLeaves(c);
+        FruitWoodInTheCanopy(c);
         SwitchedOffPlants(c);
         VariantsInThePalette(c);
         VariantsInStorage(c);
@@ -48,9 +50,11 @@ public static class PlantDetailChecks
         c.False(LodVisualSettings.Performance.PlantDetail, "Performance gives plants up");
         c.True(LodVisualSettings.Quality.PlantDetail && LodVisualSettings.Balanced.PlantDetail,
             "Quality and Balanced keep them");
-        c.Eq(LodLeafShape.Cubes, LodVisualSettings.Default.LeafShape,
-            "no player gets a trial shape until the owner has chosen one");
-        c.Eq(LodLeafShape.Cubes, new VintageHorizonsConfig().LeafShape, "a fresh config says the same");
+        c.Eq(LodLeafShape.ClustersWithTops, LodVisualSettings.Default.LeafShape,
+            "a new player gets the shape the owner chose");
+        c.Eq(LodLeafShape.ClustersWithTops, new VintageHorizonsConfig().LeafShape,
+            "a fresh config says the same");
+        c.Eq(LodLeafShape.Cubes, LodVisualSettings.Performance.LeafShapeOn, "and Performance still draws cubes");
     }
 
     /// <summary>A tree crown: a 3x3 block of leaves four high, whose middle column is walled in.</summary>
@@ -135,6 +139,88 @@ public static class PlantDetailChecks
         section.Palette[0] = section.Palette[0] with { TextureSlot = 0 };
         c.Eq(0, Planes(Mesh(section, LodLeafShape.Planes)),
             "a leaf with no texture slot has nothing to cut a plane out with, and stays a cube");
+    }
+
+    static void BuriedLeaves(Check c)
+    {
+        // A lone leaf, and a leaf ringed by others at the reach and roofed over.
+        LodSection lone = Fixtures.Section(
+            (LodSection.ColumnIndex(10, 10), new[] { LodSection.PackRun(0, 104, 100) }));
+        lone.Palette.Clear();
+        lone.Palette.Add(new LodPaletteEntry { BlockId = Leaf, Color = 0x336633, TextureSlot = 7 });
+        c.Eq(0, HighestShade(Mesh(lone, LodLeafShape.Planes)), "a leaf with nothing around it is not shaded");
+
+        var columns = new List<(int, ulong[])>();
+        for (int z = 6; z <= 14; z++)
+        {
+            for (int x = 6; x <= 14; x++)
+            {
+                ulong[] runs = x == 10 && z == 10
+                    ? new[] { LodSection.PackRun(0, 120, 110), LodSection.PackRun(0, 104, 100) }
+                    : new[] { LodSection.PackRun(0, 104, 100) };
+                columns.Add((LodSection.ColumnIndex(x, z), runs));
+            }
+        }
+        LodSection ringed = Fixtures.Section(columns.ToArray());
+        ringed.Palette.Clear();
+        ringed.Palette.Add(new LodPaletteEntry { BlockId = Leaf, Color = 0x336633, TextureSlot = 7 });
+        c.True(HighestShade(Mesh(ringed, LodLeafShape.Clusters)) >= 8,
+            "a leaf deep in a crown is, and the slot beside the shade still reads back");
+        MeshResult mesh = Mesh(ringed, LodLeafShape.Clusters);
+        c.Eq(7, LodPackedQuadFormat.TextureSlot(mesh.PackedOpaqueQuads[2]), "the shade leaves the slot alone");
+        c.True(HighestShade(mesh) <= LodPackedQuadFormat.MaximumLeafShade, "and fits its four bits");
+        c.Eq(0, HighestShade(Mesh(ringed, LodLeafShape.Cubes)), "cubes carry no shade at all");
+    }
+
+    static int HighestShade(MeshResult mesh)
+    {
+        int highest = 0;
+        for (int q = 0; q < mesh.PackedOpaqueQuadCount; q++)
+        {
+            if (LodPackedQuadFormat.IsTextured(mesh.PackedOpaqueQuads[q * LodPackedQuadFormat.WordsPerQuad]))
+            {
+                highest = Math.Max(highest, LodPackedQuadFormat.LeafShade(
+                    mesh.PackedOpaqueQuads[q * LodPackedQuadFormat.WordsPerQuad + 2]));
+            }
+        }
+        return highest;
+    }
+
+    static void FruitWoodInTheCanopy(Check c)
+    {
+        // A trunk from 100 to 110, with foliage either side of it from 106 up.
+        LodSection tree = Fixtures.Section(
+            (LodSection.ColumnIndex(10, 10), new[] { LodSection.PackRun(1, 110, 100) }),
+            (LodSection.ColumnIndex(9, 10), new[] { LodSection.PackRun(0, 110, 106) }),
+            (LodSection.ColumnIndex(11, 10), new[] { LodSection.PackRun(0, 110, 106) }));
+        tree.Palette.Clear();
+        tree.Palette.Add(new LodPaletteEntry { BlockId = Leaf, Color = 0x336633, TextureSlot = 7 });
+        tree.Palette.Add(new LodPaletteEntry { BlockId = Stone, Color = 0x222211 });
+        bool[] wood = { false, false, true };
+
+        float Top(LodLeafShape shape, bool[]? table)
+        {
+            MeshResult mesh = LodMesher.BuildMesh(new MeshJob
+            {
+                Key = 0,
+                Self = SectionSnapshot.Of(tree, crossedShapes: _ => LodBlockPolicy.CrossedShapeByFlags,
+                    leafPlanes: shape == LodLeafShape.Cubes ? null : Leaves, canopyWood: table),
+                Neighbors = new SectionSnapshot?[4],
+                EmitTextureSlots = true,
+                LeafShape = shape,
+            });
+            float top = 0f;
+            for (int q = 0; q < mesh.PackedOpaqueQuadCount; q++)
+            {
+                if (LodPackedQuadFormat.FaceOf(mesh.PackedOpaqueQuads, q) >= LodPackedFace.DiagonalRising) continue;
+                top = Math.Max(top, (mesh.PackedOpaqueQuads[q * LodPackedQuadFormat.WordsPerQuad + 1] >> 16) * 0.25f);
+            }
+            return top;
+        }
+
+        c.Eq(110f, Top(LodLeafShape.Planes, null), "without the table a trunk stands to its full height");
+        c.Eq(106f, Top(LodLeafShape.Planes, wood), "with it, the wood stops where the foliage starts");
+        c.Eq(110f, Top(LodLeafShape.Cubes, wood), "and cubes of leaves hide the trunk as they always did");
     }
 
     static void SwitchedOffPlants(Check c)
@@ -275,6 +361,13 @@ public static class PlantDetailChecks
                     && mod.Contains($"{name}: config.{name}", StringComparison.Ordinal),
                 $"{name} reaches the config file and comes back out of it");
         }
+        // Save reads the plant switches back out of the config, so with a renderer present they
+        // have to be written first or the window reopens on the old value and saves it again.
+        int apply = mod.IndexOf("void ApplyGuiConfig(", StringComparison.Ordinal);
+        int writes = mod.IndexOf("WriteVisualSettings(visuals);", apply, StringComparison.Ordinal);
+        int rendererBranch = mod.IndexOf("if (renderer != null)", apply, StringComparison.Ordinal);
+        c.True(apply >= 0 && writes >= 0 && writes < rendererBranch,
+            "a Save writes the visual settings whether or not a renderer exists");
         c.True(mod.Contains("|| renderer.LeafShape != v.LeafShapeOn", StringComparison.Ordinal)
                 && mod.Contains("|| renderer.CropShapesEnabled != v.CropShapesOn", StringComparison.Ordinal),
             "a shape switch re-meshes, since it decides what geometry exists");
