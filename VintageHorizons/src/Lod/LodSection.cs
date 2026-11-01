@@ -31,6 +31,15 @@ public struct LodPaletteEntry
     /// </summary>
     public ushort TextureSlot;
 
+    /// <summary>
+    /// What this block is showing when one block id can show several things, or null for the
+    /// block's ordinary look. Only a fruit tree's foliage has one: the game has a single foliage
+    /// block for every species, and keeps the species and its season in the block entity
+    /// (<see cref="LodFruitTrees"/>). Two entries may share a block id and differ here. Saved in
+    /// a tail of its own, because no live block can give this back the way flags are given back.
+    /// </summary>
+    public string? Variant;
+
     public const byte FlagWater = 1;
 
     /// <summary>
@@ -252,11 +261,12 @@ public class LodSection
         Runs.AsSpan(ColumnStart[col], ColumnStart[col + 1] - ColumnStart[col]);
 
     public int FindOrAddPaletteEntry(
-        int blockId, int color, byte flags, byte tintSlot = 0, ushort textureSlot = 0)
+        int blockId, int color, byte flags, byte tintSlot = 0, ushort textureSlot = 0,
+        string? variant = null)
     {
         for (int i = 0; i < Palette.Count; i++)
         {
-            if (Palette[i].BlockId == blockId) return i;
+            if (Palette[i].BlockId == blockId && Palette[i].Variant == variant) return i;
         }
         Palette.Add(new LodPaletteEntry
         {
@@ -265,6 +275,7 @@ public class LodSection
             Flags = flags,
             TintSlot = tintSlot,
             TextureSlot = textureSlot,
+            Variant = variant,
         });
         return Palette.Count - 1;
     }
@@ -489,7 +500,8 @@ public class LodSection
                 if (id < 0)
                 {
                     LodPaletteEntry e = source.Palette[sourceId];
-                    id = FindOrAddPaletteEntry(e.BlockId, e.Color, e.Flags, e.TintSlot, e.TextureSlot);
+                    id = FindOrAddPaletteEntry(e.BlockId, e.Color, e.Flags, e.TintSlot, e.TextureSlot,
+                        e.Variant);
                     paletteMap[sourceId] = id;
                 }
                 remapped[i] = PackRun(id, RunYTop(runs[i]), RunYBottom(runs[i]));

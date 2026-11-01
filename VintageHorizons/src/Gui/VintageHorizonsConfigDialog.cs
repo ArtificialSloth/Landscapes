@@ -60,7 +60,7 @@ internal static class VintageHorizonsConfigLayout
     internal const double SwitchX = 824;
     internal const double ButtonY = Height - 48;
     internal const double TabsWidth = 760;
-    internal const int PlannedTabCount = 3;
+    internal const int PlannedTabCount = 4;
 
     /// <summary>
     /// One title over the bar, "LOD Thresholds (Drag to adjust)", beside the Automatic switch
@@ -112,7 +112,7 @@ internal static class VintageHorizonsConfigLayout
 
     /// <summary>The rows' switches, sized to their 28-unit pitch.</summary>
     internal const double RowSwitchSize = 26;
-    internal const int VisualRowCount = 8;
+    internal const int VisualRowCount = 7;
 
     /// <summary>
     /// The feature rows run down the left column under Farseer first, then the right column under
@@ -124,6 +124,13 @@ internal static class VintageHorizonsConfigLayout
     /// The two columns span the window from the margin to the right edge of the Automatic
     /// switch, so the right column's switches line up under it.
     /// </summary>
+    // The Plants tab: its switch over everything, a rule, the leaf shape, then a row of features.
+    internal const double PlantDetailY = 76;
+    internal const double PlantRuleY = 112;
+    internal const double LeafShapeY = 130;
+    internal const double LeafShapeNoteY = 170;
+    internal const double PlantRowsY = 232;
+
     internal const double ColumnGap = 32;
     internal const double ColumnWidth = (SwitchX + 32 - Margin - ColumnGap) / 2;
     internal const double CostWidth = 72;
@@ -151,10 +158,11 @@ internal static class VintageHorizonsConfigLayout
 /// Client-only settings editor shared by the in-game Settings page and .dlconfig window.
 ///
 /// <para>
-/// Two tabs, three with Developer options on. General is how far and how finely cached terrain
+/// Three tabs, four with Developer options on. General is how far and how finely cached terrain
 /// is drawn, and which of the optional passes are drawn at all, Farseer and its fog included -
 /// the settings a machine that cannot afford them needs to be able to give up, each one measured
-/// rather than guessed - with the all-cores collector beside them. Generate controls the
+/// rather than guessed - with the all-cores collector beside them. Plants holds one switch over
+/// every plant feature and one for each of them. Generate controls the
 /// server-owned, explicitly confirmed savegame generator and remains read-only when the player
 /// lacks permission. Developer holds every tuning dial, in three groups picked from a drop-down,
 /// and shows only while General's Developer options switch is on.
@@ -201,8 +209,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     const double RowHeight = VintageHorizonsConfigLayout.VisualRowHeight;
 
     const int GeneralTab = 0;
-    const int GenerateTab = 1;
-    const int DeveloperTab = 2;
+    const int PlantsTab = 1;
+    const int GenerateTab = 2;
+    const int DeveloperTab = 3;
 
     // The Developer tab's groups, one at a time from the sub-tabs at the top of its page. Each
     // group's id is its position in the strip.
@@ -420,13 +429,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             v => v.LeafSeasonColours,
             (v, on) => v with { LeafSeasonColours = on }),
 
-        new("plant-textures", "Plant Textures",
-            "Draws distant reeds and ferns with the game's own plant textures. Off keeps their "
-            + "shape in plain color.",
-            "Low",
-            v => v.PlantTextures,
-            (v, on) => v with { PlantTextures = on }),
-
         new("half-blocks", "Slab Terrain",
             "Implements LOD rendering of slabs - turn on with Terrain Slabs.",
             "Low",
@@ -448,6 +450,78 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             v => v.DistantAntiAliasing,
             (v, on) => v with { DistantAntiAliasing = on }),
     };
+
+    /// <summary>The Plants tab's switches. Each off draws the cheaper form; see each one's tip.</summary>
+    static readonly VisualRow[] PlantRows =
+    {
+        new("fruit-tree-colors", "Fruit Tree Colors",
+            "Draws each fruit tree in its own species' colors: in leaf, in blossom, in fruit or bare. "
+            + "A tree shows what it was doing when it was last loaded, so one you left in blossom "
+            + "stays in blossom until you see it again. Off draws every fruit tree in plain leaf color.",
+            "Low",
+            v => v.FruitTreeColors,
+            (v, on) => v with { FruitTreeColors = on }),
+
+        new("crop-shapes", "Crop Shapes",
+            "Stands nearby crops up on crossed planes. Off draws a flat patch of their color.",
+            "Low",
+            v => v.CropShapes,
+            (v, on) => v with { CropShapes = on }),
+
+        new("reed-shapes", "Reed and Fern Shapes",
+            "Stands nearby reeds and ferns up on crossed planes. Off draws a flat patch of their color.",
+            "Low",
+            v => v.ReedShapes,
+            (v, on) => v with { ReedShapes = on }),
+
+        new("plant-textures", "Plant Textures",
+            "Puts the game's own pictures on crop, reed and fern planes, and cuts leaf planes out. "
+            + "Off draws those planes in plain color, and leaves as cubes whatever Leaf Shape says.",
+            "Low",
+            v => v.PlantTextures,
+            (v, on) => v with { PlantTextures = on }),
+
+        new("bush-textures", "Berry Bush Textures",
+            "Gives berry bushes a leafy texture inside the seam band. Off draws them in plain color.",
+            "Low",
+            v => v.BushTextures,
+            (v, on) => v with { BushTextures = on }),
+    };
+
+    /// <summary>The leaf shapes, in the order the drop-down shows them.</summary>
+    static readonly LodLeafShape[] LeafShapes = Enum.GetValues<LodLeafShape>();
+
+    static string LeafShapeName(LodLeafShape shape) => shape switch
+    {
+        LodLeafShape.Planes => "Crossed Planes",
+        LodLeafShape.PlanesWithTops => "Crossed Planes with Tops",
+        LodLeafShape.Clusters => "Leaf Clusters",
+        LodLeafShape.ClustersWithTops => "Leaf Clusters with Tops",
+        _ => "Cubes",
+    };
+
+    static string LeafShapeNote(LodLeafShape shape) => shape switch
+    {
+        LodLeafShape.Planes =>
+            "Two see-through planes through each visible leaf block. Thin from straight above.",
+        LodLeafShape.PlanesWithTops =>
+            "The same, with a see-through layer across the top of the canopy.",
+        LodLeafShape.Clusters =>
+            "Two planes across each two-block patch of leaves. Far fewer faces, chunkier up close.",
+        LodLeafShape.ClustersWithTops =>
+            "The same, with a flat plane through each patch's top.",
+        _ => "Solid blocks, as the game has always drawn them here. The cheapest to shade.",
+    };
+
+    const string PlantDetailTip =
+        "Every plant feature on this page at once. Off draws leaves as cubes, crops, reeds and ferns "
+        + "as flat patches of color, bushes in plain color, and every fruit tree in plain leaf color. "
+        + "The switches below keep their positions.";
+
+    const string LeafShapeTip =
+        "What leaves are drawn as, out to the end of the nearest detail level; past that they are "
+        + "cubes. See-through shapes cost more to shade than their face count suggests, so "
+        + "compare your frame rate at one spot. Needs Plant Textures.";
 
     static readonly string[] PresetCodes =
         LodPreset.All.Select(preset => preset.Code).Append("custom").ToArray();
@@ -624,6 +698,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         scale = null;
         if (shownTab == GenerateTab) ComposeGenerate(composer);
         else if (shownTab == DeveloperTab) ComposeDeveloper(composer);
+        else if (shownTab == PlantsTab) ComposePlants(composer);
         else ComposeGeneral(composer);
 
         // Generate works through its own buttons. Save, Cancel and Defaults there invited the
@@ -644,8 +719,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     /// <summary>The tabs on show, in order. Each tab's id is its position.</summary>
     internal static int[] VisibleTabs(bool showDeveloper) => showDeveloper
-        ? new[] { GeneralTab, GenerateTab, DeveloperTab }
-        : new[] { GeneralTab, GenerateTab };
+        ? new[] { GeneralTab, PlantsTab, GenerateTab, DeveloperTab }
+        : new[] { GeneralTab, PlantsTab, GenerateTab };
 
     /// <summary>
     /// The tab a `.dlconfig` argument names, or null. Farseer, Performance and Anti-Aliasing had
@@ -655,6 +730,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     internal static int? TabNamed(string name) => name.Trim().ToLowerInvariant() switch
     {
         "general" or "farseer" or "performance" => GeneralTab,
+        "plants" or "plant" or "leaves" => PlantsTab,
         "generate" => GenerateTab,
         "developer" or "dev" or "antialiasing" or "anti-aliasing" or "aa" => DeveloperTab,
         _ => null,
@@ -672,6 +748,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         DeveloperTab => "Developer",
         GenerateTab => "Generate",
+        PlantsTab => "Plants",
         _ => "General",
     };
 
@@ -695,6 +772,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         if (shownTab == GenerateTab) SetGenerateValues();
         else if (shownTab == DeveloperTab) SetDeveloperValues();
+        else if (shownTab == PlantsTab) SetPlantValues();
         else SetGeneralValues();
         SetFooterValues();
     }
@@ -734,19 +812,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         };
         composer.AddInteractiveElement(scale, "lod-threshold-scale");
 
-        // The rule: a dark line over a faint light one, the groove look of the game's own insets.
-        composer.AddStaticCustomDraw(ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.RuleY),
-            Width - 2 * Margin, VintageHorizonsConfigLayout.RuleHeight), (ctx, surface, bounds) =>
-        {
-            double line = Math.Max(1, Math.Round(GuiElement.scaled(1)));
-            double y = Math.Round(bounds.drawY + bounds.InnerHeight / 2 - line);
-            ctx.SetSourceRGBA(0, 0, 0, 0.45);
-            ctx.Rectangle(bounds.drawX, y, bounds.InnerWidth, line);
-            ctx.Fill();
-            ctx.SetSourceRGBA(1, 1, 1, 0.16);
-            ctx.Rectangle(bounds.drawX, y + line, bounds.InnerWidth, line);
-            ctx.Fill();
-        });
+        AddRule(composer, VintageHorizonsConfigLayout.RuleY);
 
         composer.AddStaticText("Visual features", CairoFont.WhiteMediumText(),
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.VisualHeadingY), 230, 30));
@@ -801,6 +867,73 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             composer.AddHoverText(NoSamplerWarning, CairoFont.WhiteSmallText(), 420,
                 ElementBounds.Fixed(Margin, Y(noteY), noteWidth, RowHeight - 2), "tip-no-sampler");
         }
+    }
+
+    /// <summary>
+    /// One switch over every plant feature, the leaf shape, and a switch for each of the rest. A
+    /// plant's cheaper form is what it drew before it had the feature, and nothing here keeps a
+    /// cost when it is off (owner, 2026-11-01).
+    /// </summary>
+    void ComposePlants(GuiComposer composer)
+    {
+        composer.AddStaticText("Plants", CairoFont.WhiteMediumText(),
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.LodTitleY), 560, 30));
+        AddToggle(composer, 0, VintageHorizonsConfigLayout.PlantDetailY, "plant-detail",
+            "Plant Detail", "", PlantDetailTip, OnPlantDetailChanged);
+
+        AddRule(composer, VintageHorizonsConfigLayout.PlantRuleY);
+
+        double dropDownX = VintageHorizonsConfigLayout.ColumnX(0) + 130;
+        composer.AddStaticText("Leaf Shape", CairoFont.WhiteSmallishText(),
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.LeafShapeY + 4), 124, 26));
+        composer.AddDropDown(LeafShapes.Select(shape => shape.ToString()).ToArray(),
+            LeafShapes.Select(LeafShapeName).ToArray(),
+            Array.IndexOf(LeafShapes, pendingVisuals.LeafShape), OnLeafShapeSelected,
+            ElementBounds.Fixed(dropDownX, Y(VintageHorizonsConfigLayout.LeafShapeY), 300, 32),
+            "leaf-shape");
+        composer.AddHoverText(LeafShapeTip, CairoFont.WhiteSmallText(), 420,
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.LeafShapeY), 124, 32), "tip-leaf-shape");
+        composer.AddDynamicText(LeafShapeNote(pendingVisuals.LeafShape), CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.LeafShapeNoteY), Width - 2 * Margin, 44),
+            "leaf-shape-note");
+
+        for (int column = 0; column < 2; column++)
+        {
+            composer.AddStaticText("Cost", CairoFont.WhiteDetailText(), EnumTextOrientation.Right,
+                ElementBounds.Fixed(VintageHorizonsConfigLayout.ColumnCostX(column),
+                    Y(VintageHorizonsConfigLayout.PlantRowsY - 24),
+                    VintageHorizonsConfigLayout.CostWidth, 22));
+        }
+
+        for (int i = 0; i < PlantRows.Length; i++)
+        {
+            VisualRow row = PlantRows[i];
+            AddToggle(composer, i % 2, VintageHorizonsConfigLayout.PlantRowsY + i / 2 * RowHeight,
+                row.Key, row.Title, row.Cost, row.Tip, on => OnVisualChanged(row, on));
+        }
+    }
+
+    void SetPlantValues()
+    {
+        if (activeComposer?.Composed != true) return;
+        activeComposer.GetSwitch("plant-detail").On = pendingVisuals.PlantDetail;
+        foreach (VisualRow row in PlantRows)
+        {
+            activeComposer.GetSwitch(row.Key).On = row.Read(pendingVisuals);
+        }
+        activeComposer.GetDropDown("leaf-shape")
+            .SetSelectedIndex(Array.IndexOf(LeafShapes, pendingVisuals.LeafShape));
+        activeComposer.GetDynamicText("leaf-shape-note")
+            .SetNewText(LeafShapeNote(pendingVisuals.LeafShape), false, true, false);
+    }
+
+    void OnPlantDetailChanged(bool on) => pendingVisuals = pendingVisuals with { PlantDetail = on };
+
+    void OnLeafShapeSelected(string code, bool selected)
+    {
+        if (!selected || !Enum.TryParse(code, out LodLeafShape shape)) return;
+        pendingVisuals = pendingVisuals with { LeafShape = shape };
+        SetPlantValues();
     }
 
     /// <summary>
@@ -885,6 +1018,23 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddSwitch(onToggle, ElementBounds.Fixed(switchX, Y(y + 1), size, size), key, size);
         composer.AddHoverText(tip, CairoFont.WhiteSmallText(), 380,
             ElementBounds.Fixed(x, Y(y), switchX + size - x, RowHeight - 2), $"tip-{key}");
+    }
+
+    /// <summary>A rule across the page: a dark line over a faint light one, the groove look of the game's own insets.</summary>
+    void AddRule(GuiComposer composer, double top)
+    {
+        composer.AddStaticCustomDraw(ElementBounds.Fixed(Margin, Y(top),
+            Width - 2 * Margin, VintageHorizonsConfigLayout.RuleHeight), (ctx, surface, bounds) =>
+        {
+            double line = Math.Max(1, Math.Round(GuiElement.scaled(1)));
+            double y = Math.Round(bounds.drawY + bounds.InnerHeight / 2 - line);
+            ctx.SetSourceRGBA(0, 0, 0, 0.45);
+            ctx.Rectangle(bounds.drawX, y, bounds.InnerWidth, line);
+            ctx.Fill();
+            ctx.SetSourceRGBA(1, 1, 1, 0.16);
+            ctx.Rectangle(bounds.drawX, y + line, bounds.InnerWidth, line);
+            ctx.Fill();
+        });
     }
 
     void SetGeneralValues()
@@ -1680,6 +1830,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void RefreshVisuals()
     {
+        if (shownTab == PlantsTab) SetPlantValues();
         if (activeComposer?.Composed != true || shownTab != GeneralTab) return;
         foreach (VisualRow other in Rows)
         {
@@ -1791,6 +1942,23 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 silhouettes.Preview(pendingSilhouettes);
             }
             RequestRecompose();
+            return true;
+        }
+
+        if (shownTab == PlantsTab)
+        {
+            LodVisualSettings plants = LodPreset.Quality.Visuals;
+            pendingVisuals = pendingVisuals with
+            {
+                PlantDetail = plants.PlantDetail,
+                PlantTextures = plants.PlantTextures,
+                ReedShapes = plants.ReedShapes,
+                CropShapes = plants.CropShapes,
+                BushTextures = plants.BushTextures,
+                FruitTreeColors = plants.FruitTreeColors,
+                LeafShape = plants.LeafShape,
+            };
+            RefreshVisuals();
             return true;
         }
 

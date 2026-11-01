@@ -70,6 +70,17 @@ void main()
             : vhLogicalCorner == 2u ? vec3(vhX1, vhY1, vhZ0)
             : vec3(vhX1, vhY0, vhZ0);
     }
+    else if (vhFace >= 6u && vhY0 == vhY1)
+    {
+        // A leaf canopy's flat plane (LodMesher.AddFlatPlane): a crossed plane with no height.
+        // Its corners run the other way round from below, so it faces the camera from both sides.
+        uint vhFlatCorner = vhRecordOrigin.y + vhY0 > 0.0 ? (4u - vhLogicalCorner) % 4u : vhLogicalCorner;
+        vertexPositionIn = vhFlatCorner == 0u ? vec3(vhX0, vhY0, vhZ0)
+            : vhFlatCorner == 1u ? vec3(vhX0, vhY0, vhZ1)
+            : vhFlatCorner == 2u ? vec3(vhX1, vhY0, vhZ1)
+            : vec3(vhX1, vhY0, vhZ0);
+        vhPlaneUv = vertexPositionIn.xz;
+    }
     else if (vhFace >= 6u)
     {
         // A reed's crossed plane (LodMesher.AddCrossedPlanes). Seen from behind its corners run
@@ -119,6 +130,14 @@ void main()
         int vhColorRow = vhFace < 2u ? 1 : (vhFace < 4u ? 8 : 9);
         vec4 vhAverage = texelFetch(blockTable, ivec2(vhBlockSlot, vhColorRow), 0);
         vertexColorIn = vec4(vhAverage.rgb, float(vhColor >> 24u) / 255.0);
+        // Row 9's alpha above one marks leaves, whose sheet tiles up a plane of any height where
+        // a plant's is one picture. A flat plane has no height to tile up, and already holds
+        // its position.
+        if (vhFace >= 6u && vhAverage.a > 1.5)
+        {
+            vhFaceAxis = 5;
+            if (vhY1 > vhY0) vhPlaneUv.y *= (vhY1 - vhY0) / max(vhX1 - vhX0, 1.0);
+        }
         if (vhFace >= 6u && plantTextureEnabled == 0) vhBlockSlot = -1;
     }
     else
@@ -131,7 +150,7 @@ void main()
             float(vhColor >> 24u)) / 255.0;
     }
     // The foot of a reed bed sits in its own shade, which is most of what gives it depth.
-    if (vhFace >= 6u && vhLogicalCorner < 2u) vertexColorIn.rgb *= 0.55;
+    if (vhFaceAxis == 4 && vhLogicalCorner < 2u) vertexColorIn.rgb *= 0.55;
 #endif
 
     // The established expanded mesh has no spare vertex attribute, so an opaque textured

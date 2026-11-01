@@ -694,6 +694,12 @@ public class LodStore : SQLiteDBConnection
     public System.Func<int, (byte Flags, byte TintSlot, int Color, ushort TextureSlot)>? ClassifyBlock;
 
     /// <summary>
+    /// The look of a palette entry that carries a variant, in place of its block's. Set by the
+    /// coordinator on a client, which alone holds the atlas; main thread only. Null keeps the block's.
+    /// </summary>
+    public System.Func<int, string, (byte TintSlot, int Color, ushort TextureSlot)>? ClassifyVariant;
+
+    /// <summary>
     /// A block code to a live block id, or 0 when the registry does not know it.
     ///
     /// Only a SUCCESS is cached. Caching the failure too was the obvious thing, and it is
@@ -741,6 +747,8 @@ public class LodStore : SQLiteDBConnection
         e.Flags = flags;
         e.TintSlot = slot;
         e.TextureSlot = textureSlot;
+        if (e.Variant != null && ClassifyVariant != null)
+            (e.TintSlot, color, e.TextureSlot) = ClassifyVariant(blockId, e.Variant);
 
         // Colours captured before they were section-independent were a random pixel of
         // the block's texture, redrawn for every section, which put a hard green/brown
@@ -1074,6 +1082,21 @@ public class LodStore : SQLiteDBConnection
                     snap.SnowCoveredBits[i]);
             }
             w.Write(snowCoveredBits);
+
+            // Third append-compatible format-4 tail: what the entries that have one are showing
+            // (LodPaletteEntry.Variant). A section with no fruit tree spends two bytes on it.
+            int variants = 0;
+            foreach (string? variant in snap.PaletteVariants)
+            {
+                if (variant != null) variants++;
+            }
+            w.Write((ushort)variants);
+            for (int i = 0; i < snap.PaletteVariants.Length; i++)
+            {
+                if (snap.PaletteVariants[i] is not { } variant) continue;
+                w.Write((ushort)i);
+                w.Write(variant);
+            }
         }
 
         return ms.ToArray();
@@ -1093,6 +1116,9 @@ public class LodStore : SQLiteDBConnection
 
     /// <summary>Bytes one palette block code may claim; real codes such as "game:soil-medium-normal" are tens.</summary>
     internal const int MaxBlockCodeBytes = 1024;
+
+    /// <summary>Bytes one palette variant may claim; real ones such as "pinkapple:flowering" are tens.</summary>
+    internal const int MaxVariantBytes = 128;
 
     /// <param name="world">Null to defer block-id resolution to the main thread.</param>
     LodSection? Deserialize(byte[] blob, IWorldAccessor? world)
@@ -1205,6 +1231,28 @@ public class LodStore : SQLiteDBConnection
                 {
                     section.SnowCoveredBits[i] = BinaryPrimitives.ReadUInt64LittleEndian(
                         snowCoveredBits.AsSpan(i * sizeof(ulong), sizeof(ulong)));
+                }
+            }
+
+            // Absent on a row written before fruit trees had variants: its entries keep the
+            // block's own look until the tree is next captured.
+            byte[] variantCount = r.ReadBytes(sizeof(ushort));
+            if (variantCount.Length == sizeof(ushort))
+            {
+                int variants = BinaryPrimitives.ReadUInt16LittleEndian(variantCount);
+                if (variants > paletteCount) return null;
+                for (int i = 0; i < variants; i++)
+                {
+                    int index = r.ReadUInt16();
+                    int variantBytes = r.Read7BitEncodedInt();
+                    if (index >= paletteCount || variantBytes <= 0 || variantBytes > MaxVariantBytes) return null;
+                    byte[] variantUtf8 = r.ReadBytes(variantBytes);
+                    if (variantUtf8.Length != variantBytes) return null;
+
+                    LodPaletteEntry e = section.Palette[index];
+                    e.Variant = Encoding.UTF8.GetString(variantUtf8);
+                    section.Palette[index] = e;
+                    if (deferredCodes == null) Reclassify(section, index, e.BlockId);
                 }
             }
 

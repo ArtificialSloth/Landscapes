@@ -175,7 +175,8 @@ public static class LodMesher
     /// up to 8,191 blocks, which is far past what the game builds.
     /// </summary>
     readonly record struct HFace(short Cx, short Cz, short Y, short Pid, bool Bottom,
-        bool Water, bool Thin, bool SnowCovered, short YBottom, short Submerged, short SeamCell);
+        bool Water, bool Thin, bool SnowCovered, short YBottom, short Submerged, short SeamCell,
+        bool LeafTop = false);
 
     /// <summary>One exposed wall segment on a column edge. YTop and YBottom are half blocks.</summary>
     readonly record struct VFace(byte Dir, short Fixed, short Along, short YTop, short YBottom, short Pid, bool Water, short Submerged);
@@ -186,6 +187,7 @@ public static class LodMesher
 
     [ThreadStatic] static List<HFace>? hFaces;
     [ThreadStatic] static List<VFace>? vFaces;
+    [ThreadStatic] static List<LeafCell>? leafCells;
 
     // Pooled per thread for the same reason the face lists are, and missed when they were
     // done: a fresh pair cost 240 KB per mesh job even for a section that emits five
@@ -261,6 +263,7 @@ public static class LodMesher
                 CutoutBlocksCover = job.CutoutBlocksCover,
                 EmitTextureSlots = job.EmitTextureSlots,
                 TextureModeRevision = job.TextureModeRevision,
+                LeafShape = job.LeafShape,
             });
             Interlocked.Add(ref AuditVerticesWithout, plain.VertexCount);
             Interlocked.Increment(ref AuditSections);
@@ -307,6 +310,7 @@ public static class LodMesher
         var water = waterBuffers ??= new Buffers(pack: false);
         var hf = hFaces ??= new List<HFace>(8192);
         var vf = vFaces ??= new List<VFace>(8192);
+        var cells = leafCells ??= new List<LeafCell>(1024);
         Span<ulong> opaqueTopColumns = stackalloc ulong[
             LodSection.GridSize * LodSection.GridSize / 64];
         opaqueTopColumns.Clear();
@@ -314,6 +318,7 @@ public static class LodMesher
         water.Clear();
         hf.Clear();
         vf.Clear();
+        cells.Clear();
 
         // ---- Phase 1: collect exposed faces ----
 
@@ -332,7 +337,8 @@ public static class LodMesher
                 {
                     for (int r = 0; r < runs.Length; r++)
                     {
-                        if (IsSnowLayerRun(self, runs[r]) || IsCrossedRun(self, runs[r])) continue;
+                        if (IsSnowLayerRun(self, runs[r])) continue;
+                        if (IsCrossedRun(self, runs[r]) && !IsLeafPlaneRun(self, runs[r])) continue;
                         snowSurfaceRun = r;
                         break;
                     }
@@ -372,12 +378,22 @@ public static class LodMesher
 
                     bool isThin = (self.PaletteFlags[pid] & LodPaletteEntry.FlagThin) != 0;
 
+                    if (IsLeafPlaneRun(self, run))
+                    {
+                        CollectLeafPlanes(job, self, opaque, hf, cells, cx, cz, runs, r,
+                            r == snowSurfaceRun);
+                        continue;
+                    }
+
                     // Past level 0 a reed is under two pixels wide, so its colour on the ground
                     // says everything the planes would. It takes the mat's height, opaque. A
-                    // fern is thin cover out there, and takes the path below.
-                    if (IsCrossedRun(self, run) && (step == 1 || !isThin))
+                    // fern is thin cover out there, and takes the path below. Switched off, a
+                    // crossed plant draws that way at level 0 too.
+                    bool planes = step == 1 && IsCrossedRun(self, run)
+                        && self.CrossedShape(pid) != LodBlockPolicy.CrossedShapeAsMat;
+                    if (IsCrossedRun(self, run) && (planes || !isThin))
                     {
-                        if (step == 1)
+                        if (planes)
                         {
                             bool onWater = r + 1 < runs.Length && IsWaterRun(self, runs[r + 1]);
                             AddCrossedPlanes(opaque, self, pid, cx, cz, yBottom, onWater,
@@ -481,6 +497,7 @@ public static class LodMesher
 
         // ---- Phase 2: greedy-merge and emit ----
 
+        EmitLeafCells(cells, self, opaque, job.LeafShape == LodLeafShape.ClustersWithTops);
         EmitHorizontalGreedy(hf, self, opaque, water, step, job.EmitTextureSlots,
             job.WaterAbsorption);
         EmitVerticalMerged(vf, self, opaque, water, step, job.EmitTextureSlots,
@@ -565,6 +582,8 @@ public static class LodMesher
             if (c != 0) return c;
             c = a.SeamCell.CompareTo(b.SeamCell);
             if (c != 0) return c;
+            c = a.LeafTop.CompareTo(b.LeafTop);
+            if (c != 0) return c;
             c = a.Cz.CompareTo(b.Cz);
             return c != 0 ? c : a.Cx.CompareTo(b.Cx);
         });
@@ -584,7 +603,8 @@ public static class LodMesher
                 && faces[end].SnowCovered == first.SnowCovered
                 && faces[end].YBottom == first.YBottom
                 && faces[end].Submerged == first.Submerged
-                && faces[end].SeamCell == first.SeamCell)
+                && faces[end].SeamCell == first.SeamCell
+                && faces[end].LeafTop == first.LeafTop)
             {
                 end++;
             }
@@ -653,7 +673,11 @@ public static class LodMesher
                 // a surface. This was not true for the old two-sided meshes: top/bottom
                 // happened to oppose one another, but both X walls and both Z walls used
                 // the same winding.
-                if (first.Bottom)
+                if (first.LeafTop)
+                {
+                    AddFlatPlane(buf, color, alpha, x0, y, z0, x1, z1, textureSlot);
+                }
+                else if (first.Bottom)
                 {
                     AddQuad(buf, LodPackedFace.Bottom, step, color, alpha,
                         x0, y, z0, x1, y, z0, x1, y, z1, x0, y, z1, textureSlot);
@@ -783,6 +807,10 @@ public static class LodMesher
 
     static bool IsCrossedRun(SectionSnapshot s, ulong run) =>
         (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagCrossed) != 0;
+
+    /// <summary>Leaves this level draws as planes (<see cref="SectionSnapshot.Of"/>).</summary>
+    static bool IsLeafPlaneRun(SectionSnapshot s, ulong run) =>
+        s.CrossedShape(LodSection.RunPaletteId(run)) == LodBlockPolicy.CrossedShapeLeaf;
 
     static bool IsWaterRun(SectionSnapshot s, ulong run) =>
         (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagWater) != 0;
@@ -1109,6 +1137,151 @@ public static class LodMesher
         AddQuad(buf, LodPackedFace.DiagonalFalling, 1, color, alpha,
             x0, y0, z1, x1, y0, z0, x1, y1, z0, x0, y1, z1, textureSlot);
     }
+
+    /// <summary>One cell of a coarser leaf grid (<see cref="LodLeafShape.Clusters"/>), by cell index.</summary>
+    readonly record struct LeafCell(short X, short Z, short Y, short Pid);
+
+    const int LeafCellBlocks = 2;
+
+    /// <summary>
+    /// A leaf run as planes. A block every side of which is more tree draws nothing, and the rest
+    /// merge up the column, so a run costs two quads for each unbroken stretch of it rather than
+    /// two per block; the sheet tiles once per block up the plane. Its open top is merged across
+    /// the canopy like any top, except that it is cut out like the planes.
+    /// </summary>
+    static void CollectLeafPlanes(MeshJob job, SectionSnapshot self, Buffers opaque,
+        List<HFace> hf, List<LeafCell> cells, int cx, int cz, Span<ulong> runs, int r,
+        bool snowCovered)
+    {
+        ulong run = runs[r];
+        int pid = LodSection.RunPaletteId(run);
+        int top = LodSection.RunYTop(run);
+        int bottom = LodSection.RunYBottom(run);
+        int col = LodSection.ColumnIndex(cx, cz);
+        bool clusters = job.LeafShape is LodLeafShape.Clusters or LodLeafShape.ClustersWithTops;
+        bool openAbove = !CellFilled(self, col, top);
+        bool openBelow = !CellFilled(self, col, bottom - 1);
+        (SectionSnapshot? snap, int col) west = NeighborColumn(job, self, cx - 1, cz);
+        (SectionSnapshot? snap, int col) east = NeighborColumn(job, self, cx + 1, cz);
+        (SectionSnapshot? snap, int col) north = NeighborColumn(job, self, cx, cz - 1);
+        (SectionSnapshot? snap, int col) south = NeighborColumn(job, self, cx, cz + 1);
+
+        int spanTop = -1;
+        for (int y = top - 1; y >= bottom - 1; y--)
+        {
+            bool visible = y >= bottom
+                && ((y == top - 1 && openAbove) || (y == bottom && openBelow)
+                    || !CellFilled(west.snap, west.col, y) || !CellFilled(east.snap, east.col, y)
+                    || !CellFilled(north.snap, north.col, y) || !CellFilled(south.snap, south.col, y));
+            if (visible)
+            {
+                if (spanTop < 0) spanTop = y + 1;
+                if (clusters)
+                {
+                    cells.Add(new LeafCell((short)(cx / LeafCellBlocks), (short)(cz / LeafCellBlocks),
+                        (short)(y / LeafCellBlocks), (short)pid));
+                }
+                continue;
+            }
+            if (spanTop < 0) continue;
+            if (!clusters) AddLeafPlanes(opaque, self, pid, cx, cz, 1, y + 1, spanTop);
+            spanTop = -1;
+        }
+
+        if (openAbove && job.LeafShape == LodLeafShape.PlanesWithTops)
+        {
+            hf.Add(new HFace((short)cx, (short)cz, (short)(top * 2), (short)pid, false, false, false,
+                snowCovered, 0, 0, 0, LeafTop: true));
+        }
+    }
+
+    /// <summary>
+    /// Whether anything but air or a mat fills this block: a side it touches cannot be seen. An
+    /// absent or uncaptured column fills nothing, so the edge of explored space keeps its planes.
+    /// </summary>
+    static bool CellFilled(SectionSnapshot? s, int col, int y)
+    {
+        if (s == null || !s.Captured[col]) return false;
+        foreach (ulong run in s.ColumnRuns(col))
+        {
+            if (LodSection.RunYTop(run) <= y) continue;
+            if (LodSection.RunYBottom(run) > y) continue;
+            return (s.PaletteFlags[LodSection.RunPaletteId(run)]
+                & (LodPaletteEntry.FlagWater | LodPaletteEntry.FlagThin | LodPaletteEntry.FlagSnowLayer)) == 0;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The coarser grid: two planes across each two-block cell that holds a visible leaf, merged up
+    /// each stack of cells, and with tops a flat plane through the highest cell of a stack.
+    /// </summary>
+    static void EmitLeafCells(List<LeafCell> cells, SectionSnapshot self, Buffers opaque, bool tops)
+    {
+        if (cells.Count == 0) return;
+        cells.Sort((a, b) =>
+        {
+            int c = a.X.CompareTo(b.X);
+            if (c != 0) return c;
+            c = a.Z.CompareTo(b.Z);
+            if (c != 0) return c;
+            c = a.Pid.CompareTo(b.Pid);
+            return c != 0 ? c : a.Y.CompareTo(b.Y);
+        });
+
+        int i = 0;
+        while (i < cells.Count)
+        {
+            LeafCell first = cells[i];
+            int lastY = first.Y;
+            int j = i + 1;
+            while (j < cells.Count && cells[j].X == first.X && cells[j].Z == first.Z
+                && cells[j].Pid == first.Pid && cells[j].Y <= lastY + 1)
+            {
+                lastY = cells[j].Y;
+                j++;
+            }
+
+            int x = first.X * LeafCellBlocks;
+            int z = first.Z * LeafCellBlocks;
+            int y1 = (lastY + 1) * LeafCellBlocks;
+            AddLeafPlanes(opaque, self, first.Pid, x, z, LeafCellBlocks, first.Y * LeafCellBlocks, y1);
+            if (tops)
+            {
+                AddFlatPlane(opaque, self.WallColor(first.Pid, true),
+                    AlphaFor(self.PaletteFlags[first.Pid], self.PaletteTintSlots[first.Pid]),
+                    x, y1 - LeafCellBlocks / 2f, z, x + LeafCellBlocks, z + LeafCellBlocks,
+                    self.PaletteTextureSlots[first.Pid]);
+            }
+            i = j;
+        }
+    }
+
+    /// <summary>
+    /// Two planes corner to corner across a square of leaves. The vertex stage turns each toward
+    /// the camera and tiles the sheet up it, the block table saying which sheets tile.
+    /// </summary>
+    static void AddLeafPlanes(Buffers buf, SectionSnapshot self, int pid, int x, int z, int size,
+        int y0, int y1)
+    {
+        int color = self.WallColor(pid, true);
+        byte alpha = AlphaFor(self.PaletteFlags[pid], self.PaletteTintSlots[pid]);
+        int textureSlot = self.PaletteTextureSlots[pid];
+        float x1 = x + size, z1 = z + size;
+        AddQuad(buf, LodPackedFace.DiagonalRising, 1, color, alpha,
+            x, y0, z, x1, y0, z1, x1, y1, z1, x, y1, z, textureSlot);
+        AddQuad(buf, LodPackedFace.DiagonalFalling, 1, color, alpha,
+            x, y0, z1, x1, y0, z, x1, y1, z, x, y1, z1, textureSlot);
+    }
+
+    /// <summary>
+    /// A cut-out plane lying flat. It is a crossed plane with no height, which is how the vertex
+    /// stage knows it, so it faces the camera from above and below alike.
+    /// </summary>
+    static void AddFlatPlane(Buffers buf, int color, byte alpha, float x0, float y, float z0,
+        float x1, float z1, int textureSlot) =>
+        AddQuad(buf, LodPackedFace.DiagonalRising, 1, color, alpha,
+            x0, y, z0, x0, y, z1, x1, y, z1, x1, y, z0, textureSlot);
 
     static void AddQuad(Buffers buf, LodPackedFace face, int columnBlocks, int color, byte alpha,
         float x0, float y0, float z0, float x1, float y1, float z1,

@@ -70,9 +70,15 @@ public class SectionSnapshot
     /// A block id's <see cref="PaletteCrossedShapes"/> value, or null to stand every crossed plant
     /// by its flags. Only the section being meshed needs them, as with wall colours.
     /// </param>
+    /// <param name="leafPlanes">
+    /// Block ids that are leaves, when this level draws them as planes (<see cref="LodLeafShape"/>);
+    /// otherwise null. A leaf then reads as a crossed plant here and only here, which is the rule
+    /// wanted for cover as well as for drawing, so neighbours need it too. A leaf with no texture
+    /// slot has nothing to cut its planes out with, and stays a cube.
+    /// </param>
     public static SectionSnapshot Of(LodSection s, bool includeTextureSlots = true,
         System.Func<int, (int X, int Z)>? wallColors = null,
-        System.Func<int, byte>? crossedShapes = null)
+        System.Func<int, byte>? crossedShapes = null, bool[]? leafPlanes = null)
     {
         var colors = new int[s.Palette.Count];
         var flags = new byte[s.Palette.Count];
@@ -90,9 +96,17 @@ public class SectionSnapshot
             slots[i] = s.Palette[i].TintSlot;
             if (includeTextureSlots) textureSlots[i] = s.Palette[i].TextureSlot;
             if (wallColors != null) (wallX[i], wallZ[i]) = wallColors(s.Palette[i].BlockId);
+            if (leafPlanes != null && includeTextureSlots && textureSlots[i] != 0
+                && (uint)s.Palette[i].BlockId < (uint)leafPlanes.Length && leafPlanes[s.Palette[i].BlockId])
+            {
+                flags[i] |= LodPaletteEntry.FlagCrossed;
+                if (crossedShapes != null) shapes[i] = LodBlockPolicy.CrossedShapeLeaf;
+            }
             // Most sections hold no crossed plant, and flags are the cheap way to know.
-            if (crossedShapes != null && (flags[i] & LodPaletteEntry.FlagCrossed) != 0)
+            else if (crossedShapes != null && (flags[i] & LodPaletteEntry.FlagCrossed) != 0)
+            {
                 shapes[i] = crossedShapes(s.Palette[i].BlockId);
+            }
         }
         return new SectionSnapshot
         {
@@ -158,6 +172,12 @@ public class CaptureJob
 
     /// <summary>Block ids that are reeds (<see cref="LodBlockPolicy.ReedTable"/>), shared and read-only.</summary>
     public bool[]? Reeds;
+
+    /// <summary>
+    /// What the column's fruit tree foliage is showing, copied where the job was created
+    /// (LodFruitTrees.Collect), by column-local index; null when it has none.
+    /// </summary>
+    public Dictionary<int, (int BlockId, string Variant)>? Foliage;
 }
 
 /// <summary>Runs carry raw BLOCK ids (not palette ids); the main thread remaps on apply.</summary>
@@ -177,6 +197,12 @@ public class CaptureResult
     /// column's snow, because a snowy chisel variant is not its material. Null when none.
     /// </summary>
     public Dictionary<int, int>? StandInOriginals;
+
+    /// <summary>
+    /// The palette variant of each run that has one (LodFruitTrees), keyed by
+    /// LodChiselStandIn.RunKey. Null when none.
+    /// </summary>
+    public Dictionary<int, string>? RunVariants;
 
     /// <summary>Blocks recorded as their material, and read chisels with no material to use.</summary>
     public int ChiselStandIns;
@@ -309,6 +335,12 @@ public class MeshJob
     /// slabs; false retains the exact all-runs behaviour.
     /// </summary>
     public bool SurfaceHalfBlocksOnly;
+
+    /// <summary>
+    /// How leaves the snapshots mark as planes are laid out. Carried on the job for the same reason
+    /// the cave reach is: a mesh built half way through a change must not mix two.
+    /// </summary>
+    public LodLeafShape LeafShape;
 }
 
 public class MeshResult
@@ -705,6 +737,7 @@ public class LodWorker : IDisposable
             LodChiselStandIn.Resolve(job.Chisels, out int chiselsWithoutMaterial);
         Dictionary<int, int>? standInOriginals = null;
         int chiselStandIns = 0;
+        Dictionary<int, string>? runVariants = null;
 
         // Rain map values can sit at/above map height on freshly streamed columns
         // (uninitialized sentinel) - clamp so the y walk stays inside the chunk stack.
@@ -732,6 +765,7 @@ public class LodWorker : IDisposable
                 runs.Clear();
                 int currentBlock = 0;
                 int currentChisel = 0; // the chisel under the run's top block, when it stands in
+                string? currentVariant = null;
                 int runTop = 0;
                 bool complete = true;
 
@@ -759,7 +793,8 @@ public class LodWorker : IDisposable
                             BlockLayersAccess.Solid);
                         if (solid != blockId && IsReed(job, solid))
                         {
-                            AddRun(runs, solid, y + 2, y + 1, col, 0, ref standInOriginals);
+                            AddRun(runs, solid, y + 2, y + 1, col, 0, null,
+                                ref standInOriginals, ref runVariants);
                         }
                     }
 
@@ -775,14 +810,24 @@ public class LodWorker : IDisposable
                         chiselStandIns++;
                     }
 
-                    if (blockId != currentBlock)
+                    // Two trees touching are two runs of one block. A block replaced since the job
+                    // was created keeps whatever is there now.
+                    string? variant = job.Foliage != null
+                        && job.Foliage.TryGetValue(LodChiselStandIn.IndexOf(lx, y, lz), out var foliage)
+                        && foliage.BlockId == blockId
+                            ? foliage.Variant
+                            : null;
+
+                    if (blockId != currentBlock || !ReferenceEquals(variant, currentVariant))
                     {
                         if (currentBlock != 0)
                         {
-                            AddRun(runs, currentBlock, runTop, y + 1, col, currentChisel, ref standInOriginals);
+                            AddRun(runs, currentBlock, runTop, y + 1, col, currentChisel, currentVariant,
+                                ref standInOriginals, ref runVariants);
                         }
                         currentBlock = blockId;
                         currentChisel = chisel;
+                        currentVariant = variant;
                         runTop = y + 1;
                     }
                 }
@@ -790,7 +835,8 @@ public class LodWorker : IDisposable
                 if (!complete) continue;
                 if (currentBlock != 0)
                 {
-                    AddRun(runs, currentBlock, runTop, 1, col, currentChisel, ref standInOriginals);
+                    AddRun(runs, currentBlock, runTop, 1, col, currentChisel, currentVariant,
+                        ref standInOriginals, ref runVariants);
                 }
 
                 ulong[] capturedRuns = runs.ToArray();
@@ -817,6 +863,7 @@ public class LodWorker : IDisposable
             EstimatedBytes = estimatedBytes,
             ReadyAtMilliseconds = Environment.TickCount64,
             StandInOriginals = standInOriginals,
+            RunVariants = runVariants,
             ChiselStandIns = chiselStandIns,
             ChiselsWithoutMaterial = chiselsWithoutMaterial,
         };
@@ -827,15 +874,21 @@ public class LodWorker : IDisposable
 
     /// <summary>
     /// Append a run, remembering the chisel beneath its top block when that block stands in
-    /// for one: the apply step reads the chisel's own flags for the column's snow.
+    /// for one: the apply step reads the chisel's own flags for the column's snow. A run's
+    /// palette variant travels the same way, runs holding only a block id.
     /// </summary>
     static void AddRun(List<ulong> runs, int blockId, int yTop, int yBottom, int col, int chisel,
-        ref Dictionary<int, int>? standInOriginals)
+        string? variant, ref Dictionary<int, int>? standInOriginals,
+        ref Dictionary<int, string>? runVariants)
     {
         runs.Add(LodSection.PackRun(blockId, yTop, yBottom));
         if (chisel != 0)
         {
             (standInOriginals ??= new Dictionary<int, int>())[LodChiselStandIn.RunKey(col, yTop)] = chisel;
+        }
+        if (variant != null)
+        {
+            (runVariants ??= new Dictionary<int, string>())[LodChiselStandIn.RunKey(col, yTop)] = variant;
         }
     }
 

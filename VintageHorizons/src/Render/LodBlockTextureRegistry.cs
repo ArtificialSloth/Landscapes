@@ -104,6 +104,12 @@ public sealed class LodBlockTextureRegistry
         int MeanColor, int OverlayMeanColor,
         FaceTexture? WallX = null, FaceTexture? WallZ = null, bool ClearPixelsHoldMean = false);
 
+    /// <summary>
+    /// Row 9's alpha: above one, a crossed plane tiles this sheet once per block. Nothing reads
+    /// that alpha as alpha. Leaves are the only sheets that tile; a plant's is one picture.
+    /// </summary>
+    public const float TilesOnPlanes = 2f;
+
     /// <summary>One face's atlas rectangle and that texture's own mean.</summary>
     public readonly record struct FaceTexture(TextureAtlasPosition Position, int MeanColor);
 
@@ -113,6 +119,9 @@ public sealed class LodBlockTextureRegistry
     readonly Dictionary<int, int> slotByBlockId = new();
     readonly Dictionary<int, BlockTexture> resolvedByBlockId = new();
     readonly Dictionary<int, (int X, int Z)> wallColorsByBlockId = new();
+    readonly Dictionary<(int BlockId, string Variant), int> slotByVariant = new();
+    readonly Dictionary<int, float[]?> bushSlotRectangles = new();
+    bool bushTexturesVisible = true;
     readonly float[] table = new float[MaxSlots * FloatsPerSlot];
 
     int nextSlot = 1;
@@ -180,12 +189,78 @@ public sealed class LodBlockTextureRegistry
             return NoSlot;
         }
 
-        BlockTexture resolved = Resolve(block);
+        int slot = Allocate(block, Resolve(block), stableColor);
+        slotByBlockId[block.BlockId] = slot;
+        if (slot != NoSlot && LodBlockPolicy.IsBerryBush(block))
+        {
+            bushSlotRectangles[slot] = null;
+            if (!bushTexturesVisible) HideRectangles(slot);
+        }
+        return slot;
+    }
+
+    /// <summary>
+    /// The slot for what one block id is showing when it can show several (LodPaletteEntry.Variant).
+    /// Asked once per variant, the caller holding the texture this block's own resolver cannot name.
+    /// </summary>
+    public int SlotForVariant(Block block, string variant, int stableColor, BlockTexture texture)
+    {
+        if (slotByVariant.TryGetValue((block.BlockId, variant), out int existing)) return existing;
+        int slot = Allocate(block, texture, stableColor);
+        slotByVariant[(block.BlockId, variant)] = slot;
+        return slot;
+    }
+
+    /// <summary>
+    /// Whether berry bushes show their tiles. Off clears each one's rectangles, which the shader
+    /// reads as "no texture here": its quads keep their colour, and nothing is remeshed.
+    /// </summary>
+    public bool BushTexturesVisible
+    {
+        get => bushTexturesVisible;
+        set
+        {
+            if (bushTexturesVisible == value) return;
+            bushTexturesVisible = value;
+            foreach (int slot in bushSlotRectangles.Keys.ToArray())
+            {
+                if (value) ShowRectangles(slot);
+                else HideRectangles(slot);
+            }
+            Version++;
+        }
+    }
+
+    // Rows 0, 4 and 6: the top's rectangle and each wall axis's.
+    static readonly int[] RectangleRows = { 0, 4, 6 };
+
+    void HideRectangles(int slot)
+    {
+        var saved = new float[RectangleRows.Length * 4];
+        for (int i = 0; i < RectangleRows.Length; i++)
+        {
+            int at = slot * FloatsPerSlot + RectangleRows[i] * 4;
+            Array.Copy(table, at, saved, i * 4, 4);
+            Array.Clear(table, at, 4);
+        }
+        bushSlotRectangles[slot] = saved;
+    }
+
+    void ShowRectangles(int slot)
+    {
+        if (bushSlotRectangles[slot] is not { } saved) return;
+        for (int i = 0; i < RectangleRows.Length; i++)
+            Array.Copy(saved, i * 4, table, slot * FloatsPerSlot + RectangleRows[i] * 4, 4);
+        bushSlotRectangles[slot] = null;
+    }
+
+    /// <summary>A new slot's rows, or <see cref="NoSlot"/> with the reason counted.</summary>
+    int Allocate(Block block, BlockTexture resolved, int stableColor)
+    {
         TextureAtlasPosition? position = resolved.Position;
         if (position == null)
         {
             RefusedNoTexture++;
-            slotByBlockId[block.BlockId] = NoSlot;
             return NoSlot;
         }
 
@@ -200,14 +275,12 @@ public sealed class LodBlockTextureRegistry
         else if (position.atlasNumber != atlasNumber)
         {
             RefusedOtherAtlasPage++;
-            slotByBlockId[block.BlockId] = NoSlot;
             return NoSlot;
         }
 
         if (nextSlot >= MaxSlots)
         {
             RefusedTableFull++;
-            slotByBlockId[block.BlockId] = NoSlot;
             return NoSlot;
         }
 
@@ -252,8 +325,8 @@ public sealed class LodBlockTextureRegistry
         WriteWall(at + 24, at, resolved.WallZ);
         WriteWallColor(at + 32, resolved.WallX, stableColor);
         WriteWallColor(at + 36, resolved.WallZ, stableColor);
+        if (block.BlockMaterial == EnumBlockMaterial.Leaves) table[at + 39] = TilesOnPlanes;
 
-        slotByBlockId[block.BlockId] = slot;
         Version++;
         return slot;
     }
@@ -388,6 +461,8 @@ public sealed class LodBlockTextureRegistry
         slotByBlockId.Clear();
         resolvedByBlockId.Clear();
         wallColorsByBlockId.Clear();
+        slotByVariant.Clear();
+        bushSlotRectangles.Clear();
         Array.Clear(table);
         nextSlot = 1;
         atlasTextureId = 0;

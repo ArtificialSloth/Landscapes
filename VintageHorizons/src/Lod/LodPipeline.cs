@@ -76,7 +76,7 @@ public sealed class LodTextureSlotBackfill
     /// boundary after the elapsed allowance. One first entry always progresses.
     /// </summary>
     public int Pump(IReadOnlyDictionary<long, LodSection> sections,
-        System.Func<int, ushort> resolve, int maxEntries, double maxMilliseconds)
+        System.Func<LodPaletteEntry, ushort> resolve, int maxEntries, double maxMilliseconds)
     {
         ArgumentNullException.ThrowIfNull(sections);
         ArgumentNullException.ThrowIfNull(resolve);
@@ -114,7 +114,7 @@ public sealed class LodTextureSlotBackfill
             LodPaletteEntry entry = section.Palette[nextPaletteIndex];
             if (entry.BlockId > 0 && entry.TextureSlot == 0)
             {
-                entry.TextureSlot = resolve(entry.BlockId);
+                entry.TextureSlot = resolve(entry);
                 section.Palette[nextPaletteIndex] = entry;
             }
             nextPaletteIndex++;
@@ -358,6 +358,12 @@ public class LodPipeline
     long worldEpoch;
     public long WorldEpoch => worldEpoch;
 
+    /// <summary>
+    /// The look of a palette entry that carries a variant (LodFruitTrees): a client's answer, from
+    /// its atlas. Null on a server, which stores the variant and no colour.
+    /// </summary>
+    public System.Func<int, string, (byte TintSlot, int Color, ushort TextureSlot)>? VariantLook { get; set; }
+
     public LodPipeline(ICoreAPI api, ILogger logger, LodPaletteDescriber describePalette,
         LodTintSlotResolver? tintSlotFor = null, LodStableColorResolver? stableColorFor = null,
         LodTextureSlotResolver? textureSlotFor = null, bool textureSlotsEnabled = true)
@@ -396,8 +402,9 @@ public class LodPipeline
     ushort ResolveTextureSlot(Block? block) =>
         TextureSlotsEnabled && block != null ? textureSlotFor(block) : (ushort)0;
 
-    ushort ResolveTextureSlot(int blockId) =>
-        ResolveTextureSlot(blockId > 0 ? api.World.GetBlock(blockId) : null);
+    ushort ResolveTextureSlot(LodPaletteEntry entry) => entry.Variant != null
+        ? VariantLookOf(entry.BlockId, entry.Variant).TextureSlot
+        : ResolveTextureSlot(entry.BlockId > 0 ? api.World.GetBlock(entry.BlockId) : null);
 
     public void ResetStorageStats()
     {
@@ -564,6 +571,7 @@ public class LodPipeline
 
         store = newStore;
         DbPath = dbPath;
+        if (VariantLook != null) newStore.ClassifyVariant = VariantLookOf;
         newStore.ClassifyBlock = blockId =>
         {
             Block? block = blockId > 0 ? api.World.GetBlock(blockId) : null;
@@ -1031,6 +1039,7 @@ public class LodPipeline
                 RainMap = (ushort[])rainMap.Clone(),
                 Chisels = CollectChisels(chunks, cx, cz),
                 Reeds = Reeds,
+                Foliage = CollectFoliage(chunks, cx, cz),
             });
         }
     }
@@ -1061,6 +1070,29 @@ public class LodPipeline
             return null;
         }
     }
+
+    /// <summary>
+    /// Copy what the column's fruit trees are showing (LodFruitTrees.Collect). A failure costs the
+    /// column its variants, never its capture: its trees then keep the block's own look.
+    /// </summary>
+    Dictionary<int, (int BlockId, string Variant)>? CollectFoliage(IWorldChunk?[] chunks, int cx, int cz)
+    {
+        try
+        {
+            return LodFruitTrees.Collect(chunks, cx, cz);
+        }
+        catch (Exception e)
+        {
+            if (Interlocked.Increment(ref foliageCollectErrors) == 1)
+            {
+                logger.Warning("Could not read a fruit tree's species; that column records its trees "
+                    + "without one. {0}", e);
+            }
+            return null;
+        }
+    }
+
+    int foliageCollectErrors;
 
     /// <summary>A chisel: the engine's own block class, whichever mod registered the code.</summary>
     bool IsChiselBlock(int blockId) =>
@@ -1190,7 +1222,16 @@ public class LodPipeline
             for (int i = 0; i < runs.Length; i++)
             {
                 int blockId = LodSection.RunPaletteId(runs[i]); // raw block id from capture
-                if (!pidByBlockId.TryGetValue(blockId, out int pid))
+                string? variant = null;
+                result.RunVariants?.TryGetValue(
+                    LodChiselStandIn.RunKey(col, LodSection.RunYTop(runs[i])), out variant);
+                int pid;
+                if (variant != null)
+                {
+                    // Few and far between, so the palette's own search answers these.
+                    pid = RegisterVariantEntry(section, blockId, variant);
+                }
+                else if (!pidByBlockId.TryGetValue(blockId, out pid))
                 {
                     // One palette entry per block id per section, coloured from the first
                     // run seen. Chiselled blocks arrive already recorded as the material that
@@ -1327,6 +1368,40 @@ public class LodPipeline
         (int color, byte tintSlot) = describePalette(blockId, x, y, z);
         return section.FindOrAddPaletteEntry(blockId, color, LodBlockPolicy.FlagsFor(block),
             tintSlot, ResolveTextureSlot(block));
+    }
+
+    int RegisterVariantEntry(LodSection section, int blockId, string variant)
+    {
+        (byte tintSlot, int color, ushort textureSlot) = VariantLookOf(blockId, variant);
+        return section.FindOrAddPaletteEntry(blockId, color,
+            LodBlockPolicy.FlagsFor(api.World.Blocks[blockId]), tintSlot, textureSlot, variant);
+    }
+
+    /// <summary>A variant's look; a server has no atlas, and stores no colour for anything.</summary>
+    (byte TintSlot, int Color, ushort TextureSlot) VariantLookOf(int blockId, string variant)
+    {
+        if (VariantLook == null) return default;
+        (byte tintSlot, int color, ushort textureSlot) = VariantLook(blockId, variant);
+        return (tintSlot, color, TextureSlotsEnabled ? textureSlot : (ushort)0);
+    }
+
+    /// <summary>
+    /// Put every resident entry with a variant back through its look: the Fruit Tree Colors switch
+    /// changes the answer, and nothing else asks again until a section is next loaded.
+    /// </summary>
+    public void RefreshVariantLooks()
+    {
+        foreach (LodSection section in World.Sections.Values)
+        {
+            for (int i = 0; i < section.Palette.Count; i++)
+            {
+                LodPaletteEntry e = section.Palette[i];
+                if (e.Variant == null || e.BlockId <= 0) continue;
+                (e.TintSlot, int color, e.TextureSlot) = VariantLookOf(e.BlockId, e.Variant);
+                if (color != 0) e.Color = color;
+                section.Palette[i] = e;
+            }
+        }
     }
 
     // ---- Persistence ----

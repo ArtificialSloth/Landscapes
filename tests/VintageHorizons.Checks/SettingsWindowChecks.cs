@@ -24,17 +24,18 @@ public static class SettingsWindowChecks
     {
         int[] hidden = VintageHorizonsConfigDialog.VisibleTabs(false);
         int[] shown = VintageHorizonsConfigDialog.VisibleTabs(true);
-        c.Eq(2, hidden.Length, "without Developer options: General and Generate");
-        c.Eq(3, shown.Length, "with them, Developer as well");
-        c.Eq(VintageHorizonsConfigLayout.PlannedTabCount, shown.Length, "the strip is sized for all three");
-        c.True(shown.Select((tab, i) => tab == i).All(x => x) && shown.Take(2).SequenceEqual(hidden),
+        c.Eq(3, hidden.Length, "without Developer options: General, Plants and Generate");
+        c.Eq(4, shown.Length, "with them, Developer as well");
+        c.Eq(VintageHorizonsConfigLayout.PlannedTabCount, shown.Length, "the strip is sized for all four");
+        c.True(shown.Select((tab, i) => tab == i).All(x => x) && shown.Take(3).SequenceEqual(hidden),
             "a tab's id is its position, and hiding Developer moves no other tab");
         int? general = VintageHorizonsConfigDialog.TabNamed("general");
         c.True(general == shown[0]
                 && VintageHorizonsConfigDialog.TabNamed("Farseer") == general
                 && VintageHorizonsConfigDialog.TabNamed("performance") == general
-                && VintageHorizonsConfigDialog.TabNamed("Developer") == shown[2]
-                && VintageHorizonsConfigDialog.TabNamed("aa") == shown[2]
+                && VintageHorizonsConfigDialog.TabNamed("Developer") == shown[3]
+                && VintageHorizonsConfigDialog.TabNamed("plants") == shown[1]
+                && VintageHorizonsConfigDialog.TabNamed("aa") == shown[3]
                 && VintageHorizonsConfigDialog.TabNamed("nonsense") == null,
             ".dlconfig opens a tab named in any case; Farseer and Performance open General, AA Developer");
 

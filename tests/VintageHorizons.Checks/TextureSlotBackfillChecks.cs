@@ -21,10 +21,10 @@ public static class TextureSlotBackfillChecks
         };
         var backfill = new LodTextureSlotBackfill();
         int resolverCalls = 0;
-        ushort Resolve(int blockId)
+        ushort Resolve(LodPaletteEntry entry)
         {
             resolverCalls++;
-            return (ushort)(100 + blockId);
+            return (ushort)(100 + entry.BlockId);
         }
 
         backfill.Begin(new[] { firstKey, missingKey, secondKey });

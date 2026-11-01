@@ -212,7 +212,7 @@ public static class StoreChecks
             deflate.CopyTo(output);
             payload = output.ToArray();
         }
-        payload = payload[..^LodSection.SnowStateObservedByteCount];
+        payload = payload[..^(LodSection.SnowStateObservedByteCount + sizeof(ushort))];
 
         byte[] legacy;
         using (var output = new MemoryStream())

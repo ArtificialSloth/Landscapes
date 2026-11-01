@@ -25,8 +25,25 @@ internal readonly record struct LodVisualSettings(
     bool HalfBlockTerrain,
     bool WaterEffects,
     bool DistantAntiAliasing,
-    bool PlantTextures)
+    bool PlantTextures,
+    bool PlantDetail = true,
+    bool ReedShapes = true,
+    bool CropShapes = true,
+    bool BushTextures = true,
+    bool FruitTreeColors = true,
+    LodLeafShape LeafShape = LodLeafShape.Cubes)
 {
+    // What the Plants tab's switches come to. Plant Detail is one switch over all of them and
+    // keeps their positions, so turning it back on restores the player's own choices.
+    public bool PlantTexturesOn => PlantDetail && PlantTextures;
+    public bool ReedShapesOn => PlantDetail && ReedShapes;
+    public bool CropShapesOn => PlantDetail && CropShapes;
+    public bool BushTexturesOn => PlantDetail && BushTextures;
+    public bool FruitTreeColorsOn => PlantDetail && FruitTreeColors;
+
+    /// <summary>A leaf plane is cut out by its sheet, so with no sheets leaves stay cubes.</summary>
+    public LodLeafShape LeafShapeOn => PlantTexturesOn ? LeafShape : LodLeafShape.Cubes;
+
     /// <summary>
     /// What a fresh install draws, and what the Defaults button restores.
     ///
@@ -88,7 +105,8 @@ internal readonly record struct LodVisualSettings(
         HalfBlockTerrain: false,
         WaterEffects: false,
         DistantAntiAliasing: false,
-        PlantTextures: false);
+        PlantTextures: false,
+        PlantDetail: false);
 
     /// <summary>
     /// Quality without seam blending's block textures and speckle, the one Moderate-cost

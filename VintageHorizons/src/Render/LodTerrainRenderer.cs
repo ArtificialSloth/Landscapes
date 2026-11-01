@@ -577,6 +577,23 @@ public partial class LodTerrainRenderer : IRenderer
     /// </summary>
     public bool PlantTexturesEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Whether reeds and ferns stand on crossed planes at level 0. Off they take the flat patch
+    /// coarser levels draw. Decides what geometry exists, so a change needs <see cref="RemeshAll"/>.
+    /// </summary>
+    public bool ReedShapesEnabled { get; set; } = true;
+
+    /// <summary>The same for crops, whose flat patch is the opaque one.</summary>
+    public bool CropShapesEnabled { get; set; } = true;
+
+    /// <summary>
+    /// What level 0 draws leaves as. Past level 0 they are cubes whatever this says, and a leaf
+    /// with no texture slot stays one. A change needs <see cref="RemeshAll"/>.
+    /// </summary>
+    public LodLeafShape LeafShape { get; set; } = LodLeafShape.Cubes;
+
+    bool[]? leafTable;
+
     /// <summary>Slots serve seam blending and plant textures, so either keeps them alive.</summary>
     bool TextureSlotsWanted => blendPipelineEnabled || PlantTexturesEnabled;
 
@@ -2880,7 +2897,16 @@ public partial class LodTerrainRenderer : IRenderer
         System.Func<int, (int X, int Z)>? wallColors = blockTextures == null
             ? null
             : wallColorsOf ??= blockId => blockTextures.WallColorsFor(capi.World.GetBlock(blockId));
-        crossedShapeOf ??= blockId => LodBlockPolicy.CrossedShapeOf(capi.World.GetBlock(blockId));
+        crossedShapeOf ??= blockId =>
+        {
+            Block? block = capi.World.GetBlock(blockId);
+            return (block is Vintagestory.GameContent.BlockCrop ? CropShapesEnabled : ReedShapesEnabled)
+                ? LodBlockPolicy.CrossedShapeOf(block)
+                : LodBlockPolicy.CrossedShapeAsMat;
+        };
+        bool[]? leafPlanes = LeafShape != LodLeafShape.Cubes
+            ? leafTable ??= LodBlockPolicy.LeafTable(capi.World.Blocks)
+            : null;
 
         // Two budgets. Starting a background reload costs this thread almost nothing
         // (enqueue a key), whereas building a mesh snapshot is real work, so charging a
@@ -2982,16 +3008,18 @@ public partial class LodTerrainRenderer : IRenderer
             }
 
             var neighbors = new SectionSnapshot?[neighborSections.Length];
+            bool[]? leafPlanesHere = LodWorld.KeyLevel(best) == 0 ? leafPlanes : null;
             long contentRevision = world.ContentRevision(best);
             long renderRevision = world.RenderDirty.Revision(best);
             for (int d = 0; d < neighborSections.Length; d++)
             {
                 if (neighborSections[d] != null)
-                    neighbors[d] = SectionSnapshot.Of(neighborSections[d]!, includeTextureSlots);
+                    neighbors[d] = SectionSnapshot.Of(neighborSections[d]!, includeTextureSlots,
+                        leafPlanes: leafPlanesHere);
             }
 
             SectionSnapshot self = SectionSnapshot.Of(
-                section, includeTextureSlots, wallColors, crossedShapeOf);
+                section, includeTextureSlots, wallColors, crossedShapeOf, leafPlanesHere);
 
             // Same-world publication needs a finer identity than WorldEpoch. If a mesh-visible
             // capture or neighbour-edge invalidation landed while these immutable inputs were
@@ -3026,6 +3054,7 @@ public partial class LodTerrainRenderer : IRenderer
                 SuppressUnknownWaterWalls = suppressUnknownWaterWalls,
                 EmitTextureSlots = includeTextureSlots,
                 TextureModeRevision = textureModeRevision,
+                LeafShape = LeafShape,
             });
         }
 

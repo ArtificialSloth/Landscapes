@@ -32,6 +32,9 @@ public sealed class LodSaveSnapshot
     public int[] PaletteColors = Array.Empty<int>();
     public byte[] PaletteFlags = Array.Empty<byte>();
 
+    /// <summary>Each palette entry's <see cref="LodPaletteEntry.Variant"/>, or empty when none has one.</summary>
+    public string?[] PaletteVariants = Array.Empty<string?>();
+
     public ulong[] Runs = Array.Empty<ulong>();
     public int[] ColumnStart = Array.Empty<int>();
     public bool[] Captured = Array.Empty<bool>();
@@ -45,6 +48,7 @@ public sealed class LodSaveSnapshot
         var codes = new string[count];
         var colors = new int[count];
         var flags = new byte[count];
+        string?[] variants = Array.Empty<string?>();
 
         for (int i = 0; i < count; i++)
         {
@@ -53,6 +57,11 @@ public sealed class LodSaveSnapshot
             codes[i] = block?.Code?.ToShortString() ?? "";
             colors[i] = e.Color;
             flags[i] = e.Flags;
+            if (e.Variant != null)
+            {
+                if (variants.Length == 0) variants = new string?[count];
+                variants[i] = e.Variant;
+            }
         }
 
         return new LodSaveSnapshot
@@ -65,6 +74,7 @@ public sealed class LodSaveSnapshot
             PaletteCodes = codes,
             PaletteColors = colors,
             PaletteFlags = flags,
+            PaletteVariants = variants,
             Runs = (ulong[])section.Runs.Clone(),
             ColumnStart = (int[])section.ColumnStart.Clone(),
             Captured = (bool[])section.Captured.Clone(),

@@ -90,6 +90,12 @@ public partial class VintageHorizonsModSystem
         Entry(lines, ".dlband", visual.SeamBand);
         Entry(lines, ".dltexture", visual.BlockTextures);
         Entry(lines, "Plant Textures", visual.PlantTextures);
+        Entry(lines, "Plant Detail", visual.PlantDetail);
+        Entry(lines, "Reed and Fern Shapes", visual.ReedShapes);
+        Entry(lines, "Crop Shapes", visual.CropShapes);
+        Entry(lines, "Berry Bush Textures", visual.BushTextures);
+        Entry(lines, "Fruit Tree Colors", visual.FruitTreeColors);
+        Entry(lines, "Leaf Shape", visual.LeafShape.ToString());
         Entry(lines, ".dltint field", visual.ClimateTint);
         Entry(lines, "climate tint range", BlocksPerVoxel(visual.ClimateTintRange));
         Entry(lines, ".dltint climatewide", visual.FarBiomeColours);

@@ -1724,7 +1724,7 @@ public static class StaticAssetChecks
         c.True(pipeline.Contains("tintSlot, ResolveTextureSlot(block)", StringComparison.Ordinal)
             && pipeline.Contains("TextureSlotsEnabled && block != null", StringComparison.Ordinal),
             "live palette registration resolves slots only while the pipeline is enabled");
-        c.True(renderer.Contains("section, includeTextureSlots, wallColors, crossedShapeOf)",
+        c.True(renderer.Contains("section, includeTextureSlots, wallColors, crossedShapeOf, leafPlanesHere)",
                 StringComparison.Ordinal)
             && renderer.Contains("section, includeTextureSlots, includeWallColors: wallColors != null,",
                 StringComparison.Ordinal),

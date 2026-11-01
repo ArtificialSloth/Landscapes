@@ -18,9 +18,12 @@ void main()
 #include lodsurfacecolor.fsh
     // A reed's crossed plane wears the sheet the game's own far model wears, at every distance
     // the planes reach rather than only in the band. The game's reeds take no shading by facing.
-    if (vhFaceAxis == 4)
+    // Leaves (5) tile their sheet and sit at about a cube's mean shade, its tops brighter, so a
+    // tree does not change brightness where the planes hand over to cubes.
+    if (vhFaceAxis >= 4)
     {
-        shade = 1.0;
+        shade = vhFaceAxis == 5 ? mix(0.78, 0.95, abs(normal.y)) : 1.0;
+        vec2 vhSheetUv = vhFaceAxis == 5 ? fract(vhPlaneUv) : vhPlaneUv;
         vec4 vhSheet = vhBlockSlot >= 0
             ? texelFetch(blockTable, ivec2(vhBlockSlot, 0), 0)
             : vec4(0.0);
@@ -32,14 +35,14 @@ void main()
             float vhSheetMip = log2(max(max(vhSheetFootprint.x, vhSheetFootprint.y), 1.0));
             // Past three levels a tile starts to borrow its neighbours in the shared atlas.
             float vhSheetLod = min(max(vhSheetMip - blockTextureDetail, 0.0), 3.0);
-            vec4 vhFoliage = textureLod(blockAtlas, vhSheet.xy + vhPlaneUv * vhSheetSize, vhSheetLod);
+            vec4 vhFoliage = textureLod(blockAtlas, vhSheet.xy + vhSheetUv * vhSheetSize, vhSheetLod);
             vec4 vhMeanRow = texelFetch(blockTable, ivec2(vhBlockSlot, 2), 0);
             vec4 vhCob = vec4(0.0);
             if (vhMeanRow.a > 0.5)
             {
                 vec4 vhCobs = texelFetch(blockTable, ivec2(vhBlockSlot, 3), 0);
                 vhCob = textureLod(blockAtlas,
-                    vhCobs.xy + vhPlaneUv * (vhCobs.zw - vhCobs.xy), vhSheetLod);
+                    vhCobs.xy + vhSheetUv * (vhCobs.zw - vhCobs.xy), vhSheetLod);
             }
 
             // Mips average thin stems with the clear pixels around them, so a fixed test would
@@ -67,7 +70,7 @@ void main()
     // per vertex they were three dependent fetches and eleven floats of flat varying paid by
     // every vertex in the view, textures on or off. See lodterrainbody.vsh's vhBlockSlot.
     if (!translucent && blockTextureEnabled == 1 && bandWeight > 0.0 && vhBlockSlot >= 0
-        && vhFaceAxis != 4)
+        && vhFaceAxis < 4)
     {
         // Row 0 is the atlas rectangle. An empty one means the slot describes no texture,
         // which is the same "nothing to draw here" the vertex stage used to answer with a

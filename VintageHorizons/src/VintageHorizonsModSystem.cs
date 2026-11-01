@@ -64,6 +64,20 @@ public class VintageHorizonsConfig
     public bool SeamBand = true;
     public bool BlockTextures = true;
     public bool PlantTextures = true;
+
+    /// <summary>
+    /// The Plants tab: one switch over everything on it, and one for each thing it holds. Off
+    /// draws the cheaper form. See <see cref="LodVisualSettings"/>.
+    /// </summary>
+    public bool PlantDetail = true;
+    public bool ReedShapes = true;
+    public bool CropShapes = true;
+    public bool BushTextures = true;
+    public bool FruitTreeColors = true;
+
+    /// <summary>What level 0 draws leaves as. Cubes until the owner has chosen among the trial's shapes.</summary>
+    public LodLeafShape LeafShape = LodLeafShape.Cubes;
+
     public bool ClimateTint = true;
 
     /// <summary>
@@ -372,18 +386,26 @@ public partial class VintageHorizonsModSystem : ModSystem
             config.LodThresholds, config.DetailDistance));
 
         blockTextures = new LodBlockTextureRegistry(ResolveBlockTexture);
+        LodVisualSettings startupVisuals = ConfiguredVisualSettings();
+        fruitTreeColors = startupVisuals.FruitTreeColorsOn;
         pipeline = new LodPipeline(capi, Mod.Logger, DescribePalette,
             block => (byte)TintSlotOf(block),
-            block => block.EntityClass != null ? 0 : StableColorOf(block),
+            block => block.EntityClass != null && !LodBlockPolicy.IsFruitFoliage(block)
+                ? 0 : StableColorOf(block),
             // The stable colour travels with the slot: a textured quad carries the slot
             // INSTEAD of its colour, in the same field, so the table has to hand the colour
             // back wherever the texture is not shown.
-            block => (ushort)blockTextures.SlotFor(
-                // The table's colour replaces the palette's on a textured quad, so a block
-                // that may hold a slot must not hand it the zero that means "keep yours".
-                block, block.EntityClass != null && !LodBlockPolicy.IsBerryBush(block)
-                    ? 0 : StableColorOf(block)),
-            textureSlotsEnabled: config.BlendPipeline || config.PlantTextures);
+            block => LodBlockPolicy.IsFruitFoliage(block)
+                ? FruitFoliageLook(block, null).TextureSlot
+                : (ushort)blockTextures.SlotFor(
+                    // The table's colour replaces the palette's on a textured quad, so a block
+                    // that may hold a slot must not hand it the zero that means "keep yours".
+                    block, block.EntityClass != null && !LodBlockPolicy.IsBerryBush(block)
+                        ? 0 : StableColorOf(block)),
+            textureSlotsEnabled: config.BlendPipeline || startupVisuals.PlantTexturesOn)
+        {
+            VariantLook = (blockId, variant) => FruitFoliageLook(capi.World.Blocks[blockId], variant),
+        };
         pipeline.TrackPhaseAllocations = allocationTelemetryEnabled;
 
         // Repairs a cache written while a block lookup was poisoned, which saved sections
@@ -405,7 +427,10 @@ public partial class VintageHorizonsModSystem : ModSystem
             WaterSeamStripBlocks = config.WaterSeamStripBlocks,
             SuppressUnknownWaterWalls = config.SuppressUnknownWaterWalls,
             TextureSlotSourceReady = pipeline.TextureSlotsPrepared,
-            PlantTexturesEnabled = config.PlantTextures,
+            PlantTexturesEnabled = startupVisuals.PlantTexturesOn,
+            ReedShapesEnabled = startupVisuals.ReedShapesOn,
+            CropShapesEnabled = startupVisuals.CropShapesOn,
+            LeafShape = startupVisuals.LeafShapeOn,
             BlendPipelineEnabled = config.BlendPipeline,
             OpaqueBackfaceCulling =
                 Environment.GetEnvironmentVariable("VINTAGEHORIZONS_BACKFACE_CULLING") != "0",
@@ -1240,7 +1265,11 @@ public partial class VintageHorizonsModSystem : ModSystem
         Block block = capi.World.Blocks[blockId];
 
         int color;
-        if (block.EntityClass != null)
+        if (LodBlockPolicy.IsFruitFoliage(block))
+        {
+            color = StableColorOf(block);
+        }
+        else if (block.EntityClass != null)
         {
             paletteSamplePos.Set(blockX, blockY, blockZ);
             int sampled = block.GetColorWithoutTint(capi, paletteSamplePos);
@@ -1290,6 +1319,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// </summary>
     int StableColorOf(Block block)
     {
+        if (LodBlockPolicy.IsFruitFoliage(block)) return FruitFoliageLook(block, null).Color;
         block = AppearanceOf(block);
         if (stableColorByBlockId.TryGetValue(block.BlockId, out int cached)) return cached;
 
@@ -1425,6 +1455,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// <summary>Tint slot for a block, with the untinted share its colour carries.</summary>
     int TintSlotOf(Block block)
     {
+        if (LodBlockPolicy.IsFruitFoliage(block)) return FruitFoliageLook(block, null).TintSlot;
         block = AppearanceOf(block);
         if (!TryTopSoilColor(block, out _, out _) && TryModelPartColor(block, out ModelPartColor parts))
         {
@@ -1436,6 +1467,87 @@ public partial class VintageHorizonsModSystem : ModSystem
         return tints.SlotFor(block, TryTopSoilColor(block, out _, out LodUntintedShare share)
             ? share
             : LodUntintedShare.None);
+    }
+
+    /// <summary>The Fruit Tree Colors switch as it stands; off, every variant reads as the block's look.</summary>
+    bool fruitTreeColors = true;
+
+    readonly Dictionary<string, (byte TintSlot, int Color, ushort TextureSlot)> fruitLooks = new();
+
+    /// <summary>
+    /// A fruit tree's look: a variant's species and state, or with no variant - a tree captured
+    /// before variants, or the switch off - plain leaves. Every species' leaf art is the same grey,
+    /// so that look serves them all and an existing cache draws green at once.
+    /// </summary>
+    (byte TintSlot, int Color, ushort TextureSlot) FruitFoliageLook(Block block, string? variant)
+    {
+        if (block is not Vintagestory.GameContent.BlockFruitTreeFoliage foliage
+            || foliage.foliageProps.Count == 0) return default;
+
+        string key = fruitTreeColors && variant != null ? variant : "";
+        if (fruitLooks.TryGetValue(key, out var known)) return known;
+
+        string treeType = foliage.foliageProps.Keys.First();
+        Vintagestory.GameContent.EnumFoliageState state = Vintagestory.GameContent.EnumFoliageState.Plain;
+        if (key.Length > 0 && LodFruitTrees.TryParse(key, out string named, out var namedState)
+            && foliage.foliageProps.ContainsKey(named))
+        {
+            treeType = named;
+            state = namedState;
+        }
+
+        var look = ReadFruitLook(foliage, foliage.foliageProps[treeType], key, state);
+        fruitLooks[key] = look;
+        return look;
+    }
+
+    (byte TintSlot, int Color, ushort TextureSlot) ReadFruitLook(
+        Vintagestory.GameContent.BlockFruitTreeFoliage foliage,
+        Vintagestory.GameContent.DynFoliageProperties props, string key,
+        Vintagestory.GameContent.EnumFoliageState state)
+    {
+        const string SheetName = "largeleaves-plain";
+
+        (float R, float G, float B) Mean(string name, (float R, float G, float B) otherwise)
+        {
+            if (!props.Textures.TryGetValue(name, out CompositeTexture? texture) || texture?.Base == null)
+                return otherwise;
+            TexturePixels? pixels = ReadTexturePixels(texture.Base.Clone()
+                .WithPathPrefixOnce("textures/").WithPathAppendixOnce(".png"));
+            if (pixels == null) return otherwise;
+            TextureMean mean = RegionMean(pixels.Argb, pixels.Width, pixels.Height, null, 0, 0);
+            return mean.Coverage > 0f ? (mean.R, mean.G, mean.B) : otherwise;
+        }
+
+        (float R, float G, float B) leaf = Mean(SheetName, (159f, 159f, 159f));
+        var parts = LodFruitTrees.PartsOf(state, leaf,
+            Mean("largeblossom", leaf), Mean(state == Vintagestory.GameContent.EnumFoliageState.Ripe
+                ? "fruit-ripe" : "fruit-fruiting", leaf), Mean("bark", leaf)).ToList();
+
+        byte tintSlot = (byte)LodTintRegistry.SlotNone;
+        float r, g, b;
+        if (LodModelParts.TryCompose(parts, out r, out g, out b, out LodUntintedShare share))
+        {
+            Block? tintFrom = BlockWithColorMaps(props.ClimateColorMap, props.SeasonColorMap)
+                ?? BlockWithColorMaps("climatePlantTint", "seasonalFoliage")
+                ?? tints.PlantTintFallback;
+            tintSlot = (byte)tints.SlotFor(tintFrom, share);
+        }
+        else
+        {
+            // Nothing on the tree takes a tint: a plain weighted mean of what is on it.
+            float weight = parts.Sum(part => part.Weight);
+            r = parts.Sum(part => part.R * part.Weight) / weight;
+            g = parts.Sum(part => part.G * part.Weight) / weight;
+            b = parts.Sum(part => part.B * part.Weight) / weight;
+        }
+
+        int color = PackMean(new TextureMean(r, g, b, 1f));
+        TextureAtlasPosition? sheet = props.GetOrLoadTexture(capi, SheetName);
+        int mean = PackMean(new TextureMean(leaf.R, leaf.G, leaf.B, 1f));
+        int slot = sheet == null ? LodBlockTextureRegistry.NoSlot : blockTextures.SlotForVariant(
+            foliage, key, color, new LodBlockTextureRegistry.BlockTexture(sheet, null, mean, mean));
+        return (tintSlot, color, (ushort)slot);
     }
 
     readonly Dictionary<int, Block> appearanceByBlockId = new();
@@ -5526,7 +5638,15 @@ public partial class VintageHorizonsModSystem : ModSystem
             HalfBlockTerrain: renderer.HalfBlockLevels > 0,
             WaterEffects: renderer.WaterFresnel,
             DistantAntiAliasing: renderer.DistantAntiAliasing,
-            PlantTextures: renderer.PlantTexturesEnabled);
+            // The renderer holds what these come to with Plant Detail applied, so the switches
+            // themselves are read from where they are kept.
+            PlantTextures: config.PlantTextures,
+            PlantDetail: config.PlantDetail,
+            ReedShapes: config.ReedShapes,
+            CropShapes: config.CropShapes,
+            BushTextures: config.BushTextures,
+            FruitTreeColors: config.FruitTreeColors,
+            LeafShape: config.LeafShape);
 
     /// <summary>What the config file says, for startup and for when no renderer exists.</summary>
     LodVisualSettings ConfiguredVisualSettings() => new(
@@ -5539,7 +5659,13 @@ public partial class VintageHorizonsModSystem : ModSystem
         HalfBlockTerrain: config.HalfBlockTerrain,
         WaterEffects: config.WaterEffects,
         DistantAntiAliasing: config.DistantAntiAliasing,
-        PlantTextures: config.PlantTextures);
+        PlantTextures: config.PlantTextures,
+        PlantDetail: config.PlantDetail,
+        ReedShapes: config.ReedShapes,
+        CropShapes: config.CropShapes,
+        BushTextures: config.BushTextures,
+        FruitTreeColors: config.FruitTreeColors,
+        LeafShape: config.LeafShape);
 
     /// <summary>What the config file says for the anti-aliasing dials, for when no renderer exists.</summary>
     LodTaaDials ConfiguredTaaDials() => new(config.TaaReachPixels, config.TaaNudge,
@@ -5562,6 +5688,12 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.SeamBand = v.SeamBand;
         config.BlockTextures = v.BlockTextures;
         config.PlantTextures = v.PlantTextures;
+        config.PlantDetail = v.PlantDetail;
+        config.ReedShapes = v.ReedShapes;
+        config.CropShapes = v.CropShapes;
+        config.BushTextures = v.BushTextures;
+        config.FruitTreeColors = v.FruitTreeColors;
+        config.LeafShape = v.LeafShape;
         config.ClimateTint = v.ClimateTint;
         config.ClimateTintRange = v.ClimateTintRange;
         config.LeafSeasonColours = v.LeafSeasonColours;
@@ -5575,18 +5707,27 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// SHAPE changed.
     ///
     /// <para>
-    /// Only two of these change geometry - the blend pipeline, because a textured quad carries
-    /// a slot instead of a colour, and half-block terrain, because a slab's surface sits half a
-    /// block lower and needs the walls around it. The rest are shader uniforms and take effect
-    /// on the next frame. Re-meshing for those too would stall the client for a second on a
-    /// setting that did not need it.
+    /// Few of these change geometry: the blend pipeline, because a textured quad carries a slot
+    /// instead of a colour; half-block terrain, because a slab's surface sits half a block lower
+    /// and needs the walls around it; the plant shapes; and fruit tree colours, which live in the
+    /// mesh. The rest are shader uniforms and take effect on the next frame. Re-meshing for those
+    /// too would stall the client for a second on a setting that did not need it.
     /// </para>
     /// </summary>
     void ApplyVisualSettings(LodVisualSettings v)
     {
-        bool shapeChanged = renderer.HalfBlockLevels > 0 != v.HalfBlockTerrain;
+        bool fruitChanged = fruitTreeColors != v.FruitTreeColorsOn;
+        bool shapeChanged = renderer.HalfBlockLevels > 0 != v.HalfBlockTerrain
+            || renderer.ReedShapesEnabled != v.ReedShapesOn
+            || renderer.CropShapesEnabled != v.CropShapesOn
+            || renderer.LeafShape != v.LeafShapeOn
+            || fruitChanged;
 
-        renderer.PlantTexturesEnabled = v.PlantTextures;
+        renderer.PlantTexturesEnabled = v.PlantTexturesOn;
+        renderer.ReedShapesEnabled = v.ReedShapesOn;
+        renderer.CropShapesEnabled = v.CropShapesOn;
+        renderer.LeafShape = v.LeafShapeOn;
+        blockTextures.BushTexturesVisible = v.BushTexturesOn;
         ApplyBlendPipeline(v.BlendPipeline);
         renderer.BandEnabled = v.SeamBand;
         renderer.BlockTexturesEnabled = v.BlockTextures;
@@ -5602,6 +5743,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         // A pass after the terrain, not a change to it: no re-mesh.
         renderer.DistantAntiAliasing = v.DistantAntiAliasing;
 
+        fruitTreeColors = v.FruitTreeColorsOn;
+        if (fruitChanged) pipeline.RefreshVariantLooks();
         if (shapeChanged) renderer.RemeshAll();
     }
 

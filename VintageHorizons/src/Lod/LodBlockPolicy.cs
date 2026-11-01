@@ -11,6 +11,28 @@ namespace VintageHorizons;
 ///
 /// Which tint applies is a separate question, answered client-side by LodTintRegistry.
 /// </summary>
+/// <summary>
+/// How level 0 draws a leaf block, nearest first in cost to a cube: the owner's trial of what can
+/// stand in for one (2026-11-01). Past level 0 leaves stay cubes whatever this says.
+/// </summary>
+public enum LodLeafShape : byte
+{
+    /// <summary>Solid cubes. What every build before 0.5.2-dev.12 drew.</summary>
+    Cubes,
+
+    /// <summary>Two see-through planes crossing each visible leaf block.</summary>
+    Planes,
+
+    /// <summary>The same, with a see-through flat plane merged across the open tops.</summary>
+    PlanesWithTops,
+
+    /// <summary>Two planes across each two-block cell holding visible leaves.</summary>
+    Clusters,
+
+    /// <summary>The same, with a flat plane through the top of each stack of cells.</summary>
+    ClustersWithTops,
+}
+
 public static class LodBlockPolicy
 {
     public static byte FlagsFor(Block block)
@@ -99,6 +121,30 @@ public static class LodBlockPolicy
 
     /// <summary>Any other value is a crop's height in quarter blocks, standing on the ground.</summary>
     public const int CrossedQuartersPerBlock = 4;
+
+    /// <summary>A crossed plant with its shape switched off: the flat patch coarser levels draw.</summary>
+    public const byte CrossedShapeAsMat = 254;
+
+    /// <summary>Leaves drawn as planes (<see cref="LodLeafShape"/>), which never come from storage.</summary>
+    public const byte CrossedShapeLeaf = 255;
+
+    /// <summary>
+    /// Which block ids are leaves, for mesh jobs, which do not touch the block registry. By
+    /// material, so a mod's tree counts, branchy leaves included.
+    /// </summary>
+    public static bool[] LeafTable(IList<Block> blocks)
+    {
+        var table = new bool[blocks.Count];
+        for (int id = 0; id < table.Length; id++)
+            table[id] = blocks[id]?.BlockMaterial == EnumBlockMaterial.Leaves;
+        return table;
+    }
+
+    /// <summary>
+    /// Fruit tree foliage: one block for every species, whose look is its block entity's
+    /// (<see cref="LodFruitTrees"/>).
+    /// </summary>
+    public static bool IsFruitFoliage(Block block) => block is BlockFruitTreeFoliage;
 
     /// <summary>
     /// The sheets the game draws a crop's own planes with, in order of preference. Each is one

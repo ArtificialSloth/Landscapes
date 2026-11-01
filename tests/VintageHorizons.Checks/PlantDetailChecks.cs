@@ -1,0 +1,289 @@
+using System.IO.Compression;
+using Vintagestory.API.Common;
+using Vintagestory.GameContent;
+
+namespace VintageHorizons.Checks;
+
+/// <summary>
+/// The Plants tab's promises: leaves in each shape cost what their rule says and cover nothing,
+/// a plant switched off draws its cheaper form, one switch governs all of it, and a fruit tree's
+/// variant survives the trip through storage while older readers can still read the row.
+/// </summary>
+public static class PlantDetailChecks
+{
+    const int Leaf = 1;
+    const int Stone = 2;
+    static readonly bool[] Leaves = { false, true, false };
+
+    public static void Run(Check c)
+    {
+        Switches(c);
+        LeafShapes(c);
+        LeavesCoverNothing(c);
+        SwitchedOffPlants(c);
+        VariantsInThePalette(c);
+        VariantsInStorage(c);
+        FruitTreeParts(c);
+        Wiring(c);
+    }
+
+    static void Switches(Check c)
+    {
+        LodVisualSettings on = LodVisualSettings.Default with { LeafShape = LodLeafShape.Planes };
+        c.True(on.PlantTexturesOn && on.ReedShapesOn && on.CropShapesOn && on.BushTexturesOn
+                && on.FruitTreeColorsOn && on.LeafShapeOn == LodLeafShape.Planes,
+            "every plant feature is on by default");
+
+        LodVisualSettings off = on with { PlantDetail = false };
+        c.False(off.PlantTexturesOn || off.ReedShapesOn || off.CropShapesOn || off.BushTexturesOn
+                || off.FruitTreeColorsOn,
+            "Plant Detail off turns every one of them off");
+        c.Eq(LodLeafShape.Cubes, off.LeafShapeOn, "and leaves go back to cubes");
+        c.True(off.PlantTextures && off.LeafShape == LodLeafShape.Planes,
+            "keeping the switches' own positions for when it comes back on");
+
+        c.Eq(LodLeafShape.Cubes, (on with { PlantTextures = false }).LeafShapeOn,
+            "a leaf plane has nothing to cut it out with Plant Textures off");
+
+        c.False(LodVisualSettings.Performance.PlantDetail, "Performance gives plants up");
+        c.True(LodVisualSettings.Quality.PlantDetail && LodVisualSettings.Balanced.PlantDetail,
+            "Quality and Balanced keep them");
+        c.Eq(LodLeafShape.Cubes, LodVisualSettings.Default.LeafShape,
+            "no player gets a trial shape until the owner has chosen one");
+        c.Eq(LodLeafShape.Cubes, new VintageHorizonsConfig().LeafShape, "a fresh config says the same");
+    }
+
+    /// <summary>A tree crown: a 3x3 block of leaves four high, whose middle column is walled in.</summary>
+    static LodSection Crown()
+    {
+        var columns = new List<(int, ulong[])>();
+        for (int z = 10; z < 13; z++)
+        {
+            for (int x = 10; x < 13; x++)
+                columns.Add((LodSection.ColumnIndex(x, z), new[] { LodSection.PackRun(0, 104, 100) }));
+        }
+        LodSection section = Fixtures.Section(columns.ToArray());
+        section.Palette.Clear();
+        section.Palette.Add(new LodPaletteEntry { BlockId = Leaf, Color = 0x336633, TextureSlot = 7 });
+        return section;
+    }
+
+    static MeshResult Mesh(LodSection section, LodLeafShape shape)
+    {
+        bool[]? table = shape == LodLeafShape.Cubes ? null : Leaves;
+        return LodMesher.BuildMesh(new MeshJob
+        {
+            Key = 0,
+            Self = SectionSnapshot.Of(section, crossedShapes: _ => LodBlockPolicy.CrossedShapeByFlags,
+                leafPlanes: table),
+            Neighbors = new SectionSnapshot?[4],
+            EmitTextureSlots = true,
+            LeafShape = shape,
+        });
+    }
+
+    static int Planes(MeshResult mesh)
+    {
+        int planes = 0;
+        for (int q = 0; q < mesh.PackedOpaqueQuadCount; q++)
+        {
+            if (LodPackedQuadFormat.FaceOf(mesh.PackedOpaqueQuads, q) >= LodPackedFace.DiagonalRising) planes++;
+        }
+        return planes;
+    }
+
+    static void LeafShapes(Check c)
+    {
+        LodSection crown = Crown();
+        c.Eq(0, Planes(Mesh(crown, LodLeafShape.Cubes)), "cubes draw no planes");
+
+        // Eight outer columns merge up their height. The middle column's sides are all leaves, so
+        // only its top block and its bottom block can be seen: two stretches, not one.
+        MeshResult planes = Mesh(crown, LodLeafShape.Planes);
+        c.Eq((8 + 2) * 2, Planes(planes), "two planes for each unbroken visible stretch of a column");
+        c.Eq(planes.PackedOpaqueQuadCount, Planes(planes), "and nothing else");
+
+        MeshResult tops = Mesh(crown, LodLeafShape.PlanesWithTops);
+        c.Eq(Planes(planes) + 1, Planes(tops), "the canopy's tops merge into one flat plane");
+        c.Eq(tops.PackedOpaqueQuadCount, Planes(tops), "which is a plane, not a solid top");
+
+        // The crown spans x and z 10..12, so two-block cells 5 and 6 on each axis and heights
+        // 50 and 51: four stacks of cells.
+        MeshResult clusters = Mesh(crown, LodLeafShape.Clusters);
+        c.Eq(4 * 2, Planes(clusters), "cells stack, and each stack is two planes");
+        c.Eq(4 * 3, Planes(Mesh(crown, LodLeafShape.ClustersWithTops)), "tops add a flat plane to each stack");
+        c.True(clusters.PackedOpaqueQuadCount < planes.PackedOpaqueQuadCount,
+            "clusters are the cheapest in faces");
+    }
+
+    static void LeavesCoverNothing(Check c)
+    {
+        // A stone pillar beside a leaf block: as cubes the leaf hides its side, as planes it must not.
+        LodSection section = Fixtures.Section(
+            (LodSection.ColumnIndex(10, 10), new[] { LodSection.PackRun(0, 104, 100) }),
+            (LodSection.ColumnIndex(11, 10), new[] { LodSection.PackRun(1, 104, 100) }));
+        section.Palette.Clear();
+        section.Palette.Add(new LodPaletteEntry { BlockId = Leaf, Color = 0x336633, TextureSlot = 7 });
+        section.Palette.Add(new LodPaletteEntry { BlockId = Stone, Color = 0x777777 });
+
+        int cubes = Mesh(section, LodLeafShape.Cubes).PackedOpaqueQuadCount;
+        MeshResult planes = Mesh(section, LodLeafShape.Planes);
+        // Stone's top, bottom and four walls, and the leaf's two planes.
+        c.Eq(6 + 2, planes.PackedOpaqueQuadCount, "the stone keeps the wall a cube of leaves would hide");
+        c.True(cubes > 0, "and a cube of leaves is still drawn the old way");
+
+        section.Palette[0] = section.Palette[0] with { TextureSlot = 0 };
+        c.Eq(0, Planes(Mesh(section, LodLeafShape.Planes)),
+            "a leaf with no texture slot has nothing to cut a plane out with, and stays a cube");
+    }
+
+    static void SwitchedOffPlants(Check c)
+    {
+        LodSection section = Fixtures.Section(
+            (LodSection.ColumnIndex(10, 10), new[] { LodSection.PackRun(0, 101, 100) }));
+        section.Palette.Clear();
+        section.Palette.Add(new LodPaletteEntry
+        {
+            BlockId = Leaf, Color = 0x336633, Flags = LodPaletteEntry.FlagCrossed,
+        });
+
+        MeshResult Build(byte shape) => LodMesher.BuildMesh(new MeshJob
+        {
+            Key = 0,
+            Self = SectionSnapshot.Of(section, crossedShapes: _ => shape),
+            Neighbors = new SectionSnapshot?[4],
+        });
+
+        c.Eq(2, Planes(Build(LodBlockPolicy.CrossedQuartersPerBlock)), "a crop stands on two planes");
+        MeshResult mat = Build(LodBlockPolicy.CrossedShapeAsMat);
+        c.Eq(0, Planes(mat), "switched off it draws none");
+        c.Eq(1, mat.PackedOpaqueQuadCount, "only the one flat patch coarser levels draw");
+    }
+
+    static void VariantsInThePalette(Check c)
+    {
+        var section = new LodSection();
+        int cherry = section.FindOrAddPaletteEntry(5, 1, 0, variant: "cherry:plain");
+        int pear = section.FindOrAddPaletteEntry(5, 2, 0, variant: "pear:plain");
+        int plain = section.FindOrAddPaletteEntry(5, 3, 0);
+        c.True(cherry != pear && pear != plain, "one block id holds a palette entry per variant");
+        c.Eq(cherry, section.FindOrAddPaletteEntry(5, 9, 0, variant: "cherry:plain"),
+            "and finds each again");
+
+        var other = new LodSection();
+        other.ReplaceColumns(ColumnWith(LodSection.PackRun(
+            other.FindOrAddPaletteEntry(5, 1, 0, variant: "cherry:ripe"), 104, 100)), out _);
+        section.MergeFrom(other, LodMergeMode.FillMissing);
+        c.True(section.Palette.Any(e => e.Variant == "cherry:ripe"), "a merge keeps a variant");
+    }
+
+    static ulong[]?[] ColumnWith(ulong run)
+    {
+        var batch = new ulong[]?[LodSection.GridSize * LodSection.GridSize];
+        batch[0] = new[] { run };
+        return batch;
+    }
+
+    static void VariantsInStorage(Check c)
+    {
+        var section = new LodSection();
+        section.FindOrAddPaletteEntry(0, 11, 0);
+        int cherry = section.FindOrAddPaletteEntry(0, 22, 0, variant: "cherry:flowering");
+        section.ReplaceColumns(ColumnWith(LodSection.PackRun(cherry, 104, 100)), out _);
+
+        LodSaveSnapshot snapshot = Fixtures.Snapshot(section);
+        snapshot.PaletteVariants = new[] { null, "cherry:flowering" };
+        byte[] blob = LodStore.Serialize(snapshot);
+        LodSection? back = new LodStore(null!).DeserializeForeign(blob, null);
+        c.Eq("cherry:flowering", back?.Palette[cherry].Variant, "a variant survives a save");
+        c.Eq(null, back?.Palette[0].Variant, "and the entry beside it has none");
+
+        snapshot.PaletteVariants = Array.Empty<string?>();
+        byte[] without = LodStore.Serialize(snapshot);
+        c.True(new LodStore(null!).DeserializeForeign(without, null) != null,
+            "a section with no fruit tree reads back");
+
+        // A row from before variants ends after its snow tails: this one, less its two-byte count.
+        LodSection? older = new LodStore(null!).DeserializeForeign(WithoutLastTwoBytes(without), null);
+        c.True(older != null && older.Palette.All(e => e.Variant == null),
+            "a row written before variants reads back as a section with none");
+
+        snapshot.PaletteVariants = new string?[] { null, new string('x', LodStore.MaxVariantBytes + 1) };
+        c.True(new LodStore(null!).DeserializeForeign(LodStore.Serialize(snapshot), null) == null,
+            "a variant longer than any real one refuses the blob");
+    }
+
+    static byte[] WithoutLastTwoBytes(byte[] blob)
+    {
+        using var inflated = new MemoryStream();
+        using (var input = new MemoryStream(blob, 1, blob.Length - 1))
+        using (var inflate = new DeflateStream(input, CompressionMode.Decompress))
+            inflate.CopyTo(inflated);
+
+        using var output = new MemoryStream();
+        output.WriteByte(blob[0]);
+        using (var deflate = new DeflateStream(output, CompressionLevel.Fastest, leaveOpen: true))
+            deflate.Write(inflated.GetBuffer(), 0, (int)inflated.Length - 2);
+        return output.ToArray();
+    }
+
+    static void FruitTreeParts(Check c)
+    {
+        var leaf = (100f, 100f, 100f);
+        var blossom = (240f, 200f, 220f);
+        var fruit = (200f, 40f, 40f);
+        var bark = (60f, 50f, 40f);
+        List<LodModelParts.Part> Parts(EnumFoliageState state) =>
+            LodFruitTrees.PartsOf(state, leaf, blossom, fruit, bark).ToList();
+
+        c.True(Parts(EnumFoliageState.Plain).All(part => part.Tinted), "a tree in leaf takes the whole tint");
+        c.False(Parts(EnumFoliageState.Flowering).Any(part => part.Tinted),
+            "a tree in blossom shows no leaves, so nothing on it does");
+        c.False(Parts(EnumFoliageState.DormantNoLeaves).Any(part => part.Tinted)
+                || Parts(EnumFoliageState.Dead).Any(part => part.Tinted),
+            "nor does a bare or dead one");
+        c.True(LodModelParts.TryCompose(Parts(EnumFoliageState.Ripe), out float r, out _, out float b,
+                out LodUntintedShare share) && r > b && share.R > 0f,
+            "ripe fruit reddens a tree, and the tint leaves the fruit alone");
+
+        c.True(LodFruitTrees.TryParse(LodFruitTrees.VariantOf("pinkapple", EnumFoliageState.Flowering),
+                out string type, out EnumFoliageState state)
+                && type == "pinkapple" && state == EnumFoliageState.Flowering,
+            "a variant reads back as what it was made from");
+        c.False(LodFruitTrees.TryParse("nonsense", out _, out _)
+                || LodFruitTrees.TryParse("cherry:sideways", out _, out _),
+            "and one this build cannot read is refused");
+        c.True(ReferenceEquals(LodFruitTrees.VariantOf("pear", EnumFoliageState.Ripe),
+                LodFruitTrees.VariantOf("pear", EnumFoliageState.Ripe)),
+            "one tree's blocks share one string, which is how capture compares them");
+    }
+
+    static void Wiring(Check c)
+    {
+        string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
+        foreach (string row in new[] { "plant-detail", "fruit-tree-colors", "crop-shapes", "reed-shapes",
+            "plant-textures", "bush-textures", "leaf-shape" })
+        {
+            c.True(dialog.Contains($"\"{row}\"", StringComparison.Ordinal), $"the Plants tab has {row}");
+        }
+
+        string mod = Source("VintageHorizonsModSystem.cs");
+        foreach (string name in new[] { "PlantDetail", "ReedShapes", "CropShapes", "BushTextures",
+            "FruitTreeColors", "LeafShape" })
+        {
+            c.True(mod.Contains($"config.{name} = v.{name};", StringComparison.Ordinal)
+                    && mod.Contains($"{name}: config.{name}", StringComparison.Ordinal),
+                $"{name} reaches the config file and comes back out of it");
+        }
+        c.True(mod.Contains("|| renderer.LeafShape != v.LeafShapeOn", StringComparison.Ordinal)
+                && mod.Contains("|| renderer.CropShapesEnabled != v.CropShapesOn", StringComparison.Ordinal),
+            "a shape switch re-meshes, since it decides what geometry exists");
+
+        string renderer = Source("Render", "LodTerrainRenderer.cs");
+        c.True(renderer.Contains("LodWorld.KeyLevel(best) == 0 ? leafPlanes : null", StringComparison.Ordinal),
+            "only level 0 draws leaves as planes");
+    }
+
+    static string Source(params string[] path) => File.ReadAllText(Path.Combine(
+        new[] { GameAssemblies.RepoRoot, "VintageHorizons", "src" }.Concat(path).ToArray()));
+}
