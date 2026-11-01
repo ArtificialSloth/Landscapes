@@ -1095,12 +1095,9 @@ public static class LodMesher
         int color = self.WallColor(pid, true);
         byte alpha = AlphaFor(flags, self.PaletteTintSlots[pid]);
         byte shape = self.CrossedShape(pid);
-        float height = shape switch
-        {
-            LodBlockPolicy.CrossedShapeCrop => 1f,
-            LodBlockPolicy.CrossedShapeTallCrop => 2f,
-            _ => (flags & LodPaletteEntry.FlagHalf) != 0 ? ShortReedBlocks : TallReedBlocks,
-        };
+        float height = shape != LodBlockPolicy.CrossedShapeByFlags
+            ? shape / (float)LodBlockPolicy.CrossedQuartersPerBlock
+            : (flags & LodPaletteEntry.FlagHalf) != 0 ? ShortReedBlocks : TallReedBlocks;
         float y0 = yBottom * 0.5f - (shape == LodBlockPolicy.CrossedShapeByFlags ? 0.5f : 0f);
         float y1 = yBottom * 0.5f + height - (onWater ? 1f : 0f);
         float x0 = cx, x1 = cx + 1, z0 = cz, z1 = cz + 1;

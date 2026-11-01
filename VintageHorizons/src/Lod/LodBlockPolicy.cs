@@ -97,22 +97,42 @@ public static class LodBlockPolicy
     /// <summary>A reed or fern, whose planes follow its flags (see LodMesher).</summary>
     public const byte CrossedShapeByFlags = 0;
 
-    /// <summary>A crop on planes a block tall, standing on the ground as the game's own do.</summary>
-    public const byte CrossedShapeCrop = 1;
+    /// <summary>Any other value is a crop's height in quarter blocks, standing on the ground.</summary>
+    public const int CrossedQuartersPerBlock = 4;
 
-    /// <summary>A crop on the game's two-block planes.</summary>
-    public const byte CrossedShapeTallCrop = 2;
+    /// <summary>
+    /// The sheets the game draws a crop's own planes with, in order of preference. Each is one
+    /// picture of the plant. Crops built from parts - cabbage, cassava - hold none.
+    /// </summary>
+    public static readonly string[] CropSheetNames = { "crop", "e", "s", "all", "0" };
+
+    /// <summary>
+    /// Fennel and licorice instead cross several sheets of leaves, each a sparse part of the
+    /// plant, which layer into one picture (LodBushTile.ComposePlant).
+    /// </summary>
+    public static readonly string[] CropLayerNames = { "large1", "large2", "large3", "small1", "small2" };
+
+    public static bool HasCropPicture(Block block) => block.Textures != null
+        && (CropSheetNames.Any(block.Textures.ContainsKey) || block.Textures.ContainsKey(CropLayerNames[0]));
 
     /// <summary>
     /// How a crossed plant stands. Not a flag: flags are stored in the palette and every bit of
-    /// the byte is taken, and this is only ever wanted while meshing.
+    /// the byte is taken, and this is only ever wanted while meshing. A picture shows the plant's
+    /// real size inside its sheet, so its plane is the sheet's full height. A plain plane is
+    /// solid, so it has to grow with the crop or a seedling draws as a block.
     /// </summary>
     public static byte CrossedShapeOf(Block? block)
     {
-        if (block is not BlockCrop) return CrossedShapeByFlags;
-        return block.Shape?.Base?.Path?.Contains("tall", StringComparison.Ordinal) == true
-            ? CrossedShapeTallCrop
-            : CrossedShapeCrop;
+        if (block is not BlockCrop crop) return CrossedShapeByFlags;
+        bool tall = block.Shape?.Base?.Path?.Contains("tall", StringComparison.Ordinal) == true
+            || block.Code?.Path?.Contains("sunflower", StringComparison.Ordinal) == true;
+        int full = (tall ? 2 : 1) * CrossedQuartersPerBlock;
+        if (HasCropPicture(block)) return (byte)full;
+
+        int stages = crop.CropProps?.GrowthStages ?? 0;
+        return stages > 0 && block.Code != null && int.TryParse(block.LastCodePart(), out int stage)
+            ? (byte)Math.Clamp(full * stage / stages, 1, full)
+            : (byte)full;
     }
 
     /// <summary>

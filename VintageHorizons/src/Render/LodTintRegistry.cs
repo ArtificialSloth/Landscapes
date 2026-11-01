@@ -343,6 +343,14 @@ public class LodTintRegistry
     public Block? PlantTintFallback;
 
     /// <summary>
+    /// Whether a plant naming no colour map borrows that tint. A crop does not: its art is full
+    /// colour and the game draws it untinted, so green on top turned rye orange and fennel
+    /// nearly black (owner screenshots, 2026-10-31).
+    /// </summary>
+    bool TakesPlantFallback(Block block) => block.BlockMaterial == EnumBlockMaterial.Plant
+        && PlantTintFallback != null && block is not Vintagestory.GameContent.BlockCrop;
+
+    /// <summary>
     /// Slot for this block, registering a new one if this (map pair, untinted share,
     /// frostable state) is unseen. The share is part of the key because two blocks on the
     /// same colour maps can still need different amounts of it - full, sparse and very
@@ -359,8 +367,8 @@ public class LodTintRegistry
 
         if (climate == null && season == null)
         {
-            return block.BlockMaterial == EnumBlockMaterial.Plant && PlantTintFallback != null
-                ? SlotFor(PlantTintFallback, LodUntintedShare.None)
+            return TakesPlantFallback(block)
+                ? SlotFor(PlantTintFallback!, LodUntintedShare.None)
                 : SlotNone;
         }
 
@@ -396,8 +404,8 @@ public class LodTintRegistry
 
         if (climate == null && season == null)
         {
-            return block.BlockMaterial == EnumBlockMaterial.Plant && PlantTintFallback != null
-                ? PeekSlot(PlantTintFallback, LodUntintedShare.None)
+            return TakesPlantFallback(block)
+                ? PeekSlot(PlantTintFallback!, LodUntintedShare.None)
                 : SlotNone;
         }
 

@@ -379,7 +379,10 @@ public partial class VintageHorizonsModSystem : ModSystem
             // INSTEAD of its colour, in the same field, so the table has to hand the colour
             // back wherever the texture is not shown.
             block => (ushort)blockTextures.SlotFor(
-                block, block.EntityClass != null ? 0 : StableColorOf(block)),
+                // The table's colour replaces the palette's on a textured quad, so a block
+                // that may hold a slot must not hand it the zero that means "keep yours".
+                block, block.EntityClass != null && !LodBlockPolicy.IsBerryBush(block)
+                    ? 0 : StableColorOf(block)),
             textureSlotsEnabled: config.BlendPipeline || config.PlantTextures);
         pipeline.TrackPhaseAllocations = allocationTelemetryEnabled;
 
@@ -1565,17 +1568,14 @@ public partial class VintageHorizonsModSystem : ModSystem
     }
 
     /// <summary>
-    /// The sheets the game draws a crop's planes with, in order of preference. Crops built from
-    /// parts - cabbage, sunflower, cassava - hold no such sheet, only pieces of a model, which a
-    /// plane would show as a jumble. They get no slot and their planes draw plain.
+    /// The picture a crop's planes wear: its own sheet, or fennel and licorice's layered leaves.
+    /// Every crop's clear pixels store its mean. A crop built from parts has neither, since a
+    /// plane would show pieces of a model as a jumble, so it gets no slot and draws plain.
     /// </summary>
-    static readonly string[] CropSheetNames = { "crop", "e", "s", "all", "0" };
-
-    /// <summary>The picture a crop's planes wear. Every crop's clear pixels store its mean.</summary>
     LodBlockTextureRegistry.BlockTexture ResolveCropSheet(Block block)
     {
         if (block.Textures == null) return default;
-        foreach (string name in CropSheetNames)
+        foreach (string name in LodBlockPolicy.CropSheetNames)
         {
             if (!block.Textures.TryGetValue(name, out CompositeTexture? sheet)
                 || sheet?.Baked == null || !IsUsableAtlasTexture(sheet.Baked.TextureSubId)) continue;
@@ -1587,12 +1587,19 @@ public partial class VintageHorizonsModSystem : ModSystem
                 capi.BlockTextureAtlas.Positions[sheet.Baked.TextureSubId], null, mean, mean,
                 ClearPixelsHoldMean: true);
         }
-        return default;
+
+        layeredTiles ??= BuildLayeredTiles();
+        return layeredTiles.TryGetValue(CropTileKey(block), out var tile) && tile is { } found
+            ? new LodBlockTextureRegistry.BlockTexture(found.Position, null, found.Mean, found.Mean,
+                ClearPixelsHoldMean: true)
+            : default;
     }
 
-    // Each bush type's layered tile, by the folder its leaf sheets live in; null where none could
-    // be built. Filled once, the first time a bush asks.
-    Dictionary<string, (TextureAtlasPosition Position, int Mean)?>? bushTiles;
+    static string CropTileKey(Block block) => "crop:" + block.BlockId;
+
+    // Each layered tile: a bush type's, by the folder its leaf sheets live in, and a layered crop's
+    // by block. Null where none could be built. Filled once, the first time one is asked for.
+    Dictionary<string, (TextureAtlasPosition Position, int Mean)?>? layeredTiles;
 
     static string? BushLeafFolder(Block block)
     {
@@ -1610,20 +1617,47 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// </summary>
     LodBlockTextureRegistry.BlockTexture ResolveBushTile(Block block)
     {
-        bushTiles ??= BuildBushTiles();
+        layeredTiles ??= BuildLayeredTiles();
         string? folder = BushLeafFolder(block);
-        return folder != null && bushTiles.TryGetValue(folder, out var tile) && tile is { } found
+        return folder != null && layeredTiles.TryGetValue(folder, out var tile) && tile is { } found
             ? new LodBlockTextureRegistry.BlockTexture(found.Position, null, found.Mean, found.Mean)
             : default;
     }
 
-    Dictionary<string, (TextureAtlasPosition Position, int Mean)?> BuildBushTiles()
+    Dictionary<string, (TextureAtlasPosition Position, int Mean)?> BuildLayeredTiles()
     {
         var tiles = new Dictionary<string, (TextureAtlasPosition Position, int Mean)?>();
         var pages = new HashSet<int>();
+
+        void Insert(string key, int size, (int[] Pixels, int Mean)? composed)
+        {
+            tiles[key] = null;
+            if (composed is not { } made) return;
+            var bitmap = new BakedBitmap { TexturePixels = made.Pixels, Width = size, Height = size };
+            if (!capi.BlockTextureAtlas.InsertTexture(bitmap, out _, out TextureAtlasPosition position)) return;
+            tiles[key] = (position, LodBushTile.ToStoredColor(made.Mean));
+            pages.Add(position.atlasNumber);
+        }
+
         foreach (Block block in capi.World.Blocks)
         {
-            if (block == null || block.Code == null || !LodBlockPolicy.IsBerryBush(block)) continue;
+            if (block == null || block.Code == null) continue;
+            if (block is Vintagestory.GameContent.BlockCrop && block.Textures != null)
+            {
+                var layers = new List<(int Width, int Height, int[] Argb)>();
+                foreach (string name in LodBlockPolicy.CropLayerNames)
+                {
+                    if (!block.Textures.TryGetValue(name, out CompositeTexture? layer) || layer?.Base == null) continue;
+                    TexturePixels? pixels = ReadTexturePixels(layer.Base.Clone()
+                        .WithPathPrefixOnce("textures/").WithPathAppendixOnce(".png"));
+                    if (pixels != null) layers.Add((pixels.Width, pixels.Height, pixels.Argb));
+                }
+                if (layers.Count > 0)
+                    Insert(CropTileKey(block), layers[0].Width, LodBushTile.ComposePlant(layers));
+                continue;
+            }
+
+            if (!LodBlockPolicy.IsBerryBush(block)) continue;
             string? folder = BushLeafFolder(block);
             if (folder == null || tiles.ContainsKey(folder)) continue;
 
@@ -1638,13 +1672,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 }
             }
 
-            tiles[folder] = null;
-            if (LodBushTile.Compose(sheets) is not { } composed) continue;
-            int size = sheets[0].Width;
-            var bitmap = new BakedBitmap { TexturePixels = composed.Pixels, Width = size, Height = size };
-            if (!capi.BlockTextureAtlas.InsertTexture(bitmap, out _, out TextureAtlasPosition position)) continue;
-            tiles[folder] = (position, composed.Mean);
-            pages.Add(position.atlasNumber);
+            Insert(folder, sheets.Count > 0 ? sheets[0].Width : 0, LodBushTile.Compose(sheets));
         }
 
         // Queued, so it runs on the main thread after the uploads, whichever thread asked. The
