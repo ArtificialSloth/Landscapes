@@ -395,13 +395,14 @@ public partial class VintageHorizonsModSystem : ModSystem
             block => (byte)TintSlotOf(block),
             block => block.EntityClass != null && !LodBlockPolicy.IsFruitFoliage(block)
                     && !LodBlockPolicy.IsFruitWood(block)
+                    && !LodBlockPolicy.HasNoLookOfItsOwn(block)
                 ? 0 : StableColorOf(block),
             // The stable colour travels with the slot: a textured quad carries the slot
             // INSTEAD of its colour, in the same field, so the table has to hand the colour
             // back wherever the texture is not shown.
             block => LodBlockPolicy.IsFruitFoliage(block)
                 ? FruitFoliageLook(block, null).TextureSlot
-                : LodBlockPolicy.IsFruitWood(block) ? (ushort)0
+                : LodBlockPolicy.IsFruitWood(block) || LodBlockPolicy.HasNoLookOfItsOwn(block) ? (ushort)0
                 : (ushort)blockTextures.SlotFor(
                     // The table's colour replaces the palette's on a textured quad, so a block
                     // that may hold a slot must not hand it the zero that means "keep yours".
@@ -1274,7 +1275,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         Block block = capi.World.Blocks[blockId];
 
         int color;
-        if (LodBlockPolicy.IsFruitFoliage(block) || LodBlockPolicy.IsFruitWood(block))
+        if (LodBlockPolicy.IsFruitFoliage(block) || LodBlockPolicy.IsFruitWood(block)
+            || LodBlockPolicy.HasNoLookOfItsOwn(block))
         {
             color = StableColorOf(block);
         }
@@ -1286,9 +1288,9 @@ public partial class VintageHorizonsModSystem : ModSystem
             // The last resort is what the entity answered, when it answered with a real colour.
             // A sampled placeholder means the entity was not there to ask: the game draws an
             // entity block from what the entity holds, never as the missing-texture image, so
-            // that last resort is neutral grey rather than near-white. A chiselled block
-            // rarely gets here now - capture records it as its most visible material
-            // (LodChiselStandIn) - but clutter and bookshelves still do.
+            // that last resort is neutral grey rather than near-white. Clutter and bookshelves
+            // get here; a chiselled block is its most visible material (LodChiselStandIn), or
+            // HasNoLookOfItsOwn when none shows.
             color = RepairPlaceholder(block, sampled,
                 fallback: IsPlaceholderRgb(sampled) ? LodPaletteRepair.UnknownBlockColor : sampled);
         }
@@ -1330,6 +1332,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     {
         if (LodBlockPolicy.IsFruitFoliage(block)) return FruitFoliageLook(block, null).Color;
         if (LodBlockPolicy.IsFruitWood(block)) return FruitWoodColor;
+        if (LodBlockPolicy.HasNoLookOfItsOwn(block)) return StructureWoodColor;
         block = AppearanceOf(block);
         if (stableColorByBlockId.TryGetValue(block.BlockId, out int cached)) return cached;
 
@@ -1475,10 +1478,17 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// </summary>
     static readonly int FruitWoodColor = PackMean(new TextureMean(116f, 92f, 67f, 1f));
 
+    /// <summary>
+    /// What a structure's HasNoLookOfItsOwn blocks draw as: the game's rotten beam, the commonest
+    /// beam in its ruins, and within two shades of a ruin's roof in a vanilla shot (56,50,39).
+    /// </summary>
+    static readonly int StructureWoodColor = PackMean(new TextureMean(54f, 46f, 33f, 1f));
+
     int TintSlotOf(Block block)
     {
         if (LodBlockPolicy.IsFruitFoliage(block)) return FruitFoliageLook(block, null).TintSlot;
         if (LodBlockPolicy.IsFruitWood(block)) return LodTintRegistry.SlotNone;
+        if (LodBlockPolicy.HasNoLookOfItsOwn(block)) return LodTintRegistry.SlotNone;
         block = AppearanceOf(block);
         if (!TryTopSoilColor(block, out _, out _) && TryModelPartColor(block, out ModelPartColor parts))
         {
@@ -2635,7 +2645,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         // Deliberately the same answer capture gives, so a repaired entry cannot become
         // a colour step against the section next to it. The repair has only a block id
-        // to go on, so a chiselled block repairs to neutral grey here and gets its real
+        // to go on, so a chiselled block repairs to structure wood here and gets its real
         // materials on the next capture.
         return StableColorOf(capi.World.Blocks[blockId]);
     }

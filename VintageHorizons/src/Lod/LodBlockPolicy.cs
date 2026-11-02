@@ -249,6 +249,14 @@ public static class LodBlockPolicy
     public static bool IsFruitWood(Block block) => block is BlockFruitTreeBranch;
 
     /// <summary>
+    /// A block in a structure that shows nothing of itself: a chisel still a chisel after capture,
+    /// which means an invisible collider, often holding the beams of a roof, and a multiblock's
+    /// filler, the top of a door or a banner. Their own colour is a meta texture or the
+    /// missing-texture image, and ruins drew pale with it.
+    /// </summary>
+    public static bool HasNoLookOfItsOwn(Block block) => block is BlockMicroBlock or BlockMultiblock;
+
+    /// <summary>
     /// Which block ids are a fruit tree's trunk and branches, for mesh jobs. The game draws these
     /// as a thin model its foliage hides; here each is a whole block.
     /// </summary>

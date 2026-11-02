@@ -652,6 +652,18 @@ public static class PlantDetailChecks
                     StringComparison.Ordinal),
             "a fruit tree's wood takes its one bark colour and no plant tint, wherever a colour is asked for");
 
+        c.True(LodBlockPolicy.HasNoLookOfItsOwn(new BlockMicroBlock())
+                && LodBlockPolicy.HasNoLookOfItsOwn(new BlockMultiblock())
+                && !LodBlockPolicy.HasNoLookOfItsOwn(new Block()),
+            "a leftover chisel and a multiblock's filler show nothing of themselves, an ordinary block does");
+        c.True(mod.Contains("if (LodBlockPolicy.HasNoLookOfItsOwn(block)) return StructureWoodColor;", StringComparison.Ordinal)
+                && mod.Contains("if (LodBlockPolicy.HasNoLookOfItsOwn(block)) return LodTintRegistry.SlotNone;",
+                    StringComparison.Ordinal)
+                && mod.Contains("&& !LodBlockPolicy.HasNoLookOfItsOwn(block)", StringComparison.Ordinal)
+                && mod.Contains("|| LodBlockPolicy.HasNoLookOfItsOwn(block) ? (ushort)0", StringComparison.Ordinal)
+                && mod.Contains("|| LodBlockPolicy.HasNoLookOfItsOwn(block))", StringComparison.Ordinal),
+            "the pale ruin blocks take structure wood wherever a colour is asked for, so a stored colour corrects on load");
+
         c.True(mod.Contains("found ??= ColorMapCarrier(climate, season);", StringComparison.Ordinal)
                 && mod.Contains("if (block.Textures == null) return null;", StringComparison.Ordinal),
             "a season named only inside a model reaches the tint table, so small ferns turn as the game's do");
