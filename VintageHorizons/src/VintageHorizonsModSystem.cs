@@ -437,6 +437,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             VineShapesEnabled = startupVisuals.VineShapesOn,
             ForageMarkersEnabled = startupVisuals.ForageMarkersOn,
             FlowerSheetsEnabled = startupVisuals.FlowerSheetsOn,
+            BushSheetsEnabled = startupVisuals.BushSheetsOn,
             CropShapesEnabled = startupVisuals.CropShapesOn,
             LeafShape = startupVisuals.LeafShapeOn,
             BlendPipelineEnabled = config.BlendPipeline,
@@ -1332,6 +1333,12 @@ public partial class VintageHorizonsModSystem : ModSystem
         block = AppearanceOf(block);
         if (stableColorByBlockId.TryGetValue(block.BlockId, out int cached)) return cached;
 
+        if (TryMushroomCapColor(block, out int capColor))
+        {
+            stableColorByBlockId[block.BlockId] = capColor;
+            return capColor;
+        }
+
         // Grass-covered ground is composited, not painted, and the engine's own answer for
         // it is both incomplete and byte-swapped. Build it from the atlas instead.
         if (TryTopSoilColor(block, out int composite, out _))
@@ -1752,6 +1759,67 @@ public partial class VintageHorizonsModSystem : ModSystem
         return new LodBlockTextureRegistry.BlockTexture(stem.Position, petals.Position, mean, mean);
     }
 
+    /// <summary>
+    /// The colour of a mushroom's cap, from the parts of its model that wear the cap's picture. A
+    /// mushroom's own colour lookup answers something else entirely, and the cap is what a player
+    /// tells one from another by.
+    /// </summary>
+    bool TryMushroomCapColor(Block block, out int color)
+    {
+        color = 0;
+        if (block.Code?.Path?.StartsWith("mushroom-", StringComparison.Ordinal) != true
+            || block.Shape?.Base == null) return false;
+        try
+        {
+            Shape? shape = LoadBlockShape(block.Shape.Base);
+            if (shape?.Elements == null || shape.Textures == null
+                || !shape.Textures.TryGetValue(LodBlockPolicy.MushroomCapTexture, out AssetLocation? cap)) return false;
+            TexturePixels? pixels = ReadTexturePixels(cap.Clone()
+                .WithPathPrefixOnce("textures/").WithPathAppendixOnce(".png"));
+            if (pixels == null) return false;
+
+            double red = 0, green = 0, blue = 0, weight = 0;
+            void Visit(ShapeElement[] elements)
+            {
+                foreach (ShapeElement element in elements)
+                {
+                    if (element == null) continue;
+                    if (element.From is { Length: 3 } from && element.To is { Length: 3 } to
+                        && element.FacesResolved != null)
+                    {
+                        double dx = Math.Abs(to[0] - from[0]), dy = Math.Abs(to[1] - from[1]);
+                        double dz = Math.Abs(to[2] - from[2]);
+                        // BlockFacing order: north, east, south, west, up, down. The underside is pores.
+                        for (int i = 0; i < element.FacesResolved.Length && i < 5; i++)
+                        {
+                            ShapeElementFace? face = element.FacesResolved[i];
+                            if (face is not { Enabled: true } || face.Texture != LodBlockPolicy.MushroomCapTexture) continue;
+                            double area = i switch { 0 or 2 => dx * dy, 1 or 3 => dz * dy, _ => dx * dz };
+                            TextureMean mean = RegionMean(pixels.Argb, pixels.Width, pixels.Height, face.Uv,
+                                shape.TextureWidth, shape.TextureHeight);
+                            double share = area * mean.Coverage;
+                            red += mean.R * share;
+                            green += mean.G * share;
+                            blue += mean.B * share;
+                            weight += share;
+                        }
+                    }
+                    if (element.Children != null) Visit(element.Children);
+                }
+            }
+            Visit(shape.Elements);
+            if (weight <= 0) return false;
+            color = PackMean(new TextureMean((float)(red / weight), (float)(green / weight), (float)(blue / weight), 1f));
+            return true;
+        }
+        catch (Exception e)
+        {
+            Mod.Logger.Notification("Could not read the cap of '{0}'; it keeps the ordinary colour. {1}",
+                block.Code, e.Message);
+            return false;
+        }
+    }
+
     /// <summary>The picture a vine hangs as: the one the game baked first of its alternates.</summary>
     LodBlockTextureRegistry.BlockTexture ResolveVineSheet(Block block)
     {
@@ -1782,15 +1850,16 @@ public partial class VintageHorizonsModSystem : ModSystem
     }
 
     /// <summary>
-    /// A bush's tile (<see cref="LodBushTile"/>), which reaches the seam band as any other block
-    /// texture does. Every type is built together so the atlas regenerates its mipmaps once.
+    /// A bush's picture (<see cref="LodBushTile"/>), which its sheets wear. Every type is built
+    /// together so the atlas regenerates its mipmaps once.
     /// </summary>
     LodBlockTextureRegistry.BlockTexture ResolveBushTile(Block block)
     {
         layeredTiles ??= BuildLayeredTiles();
         string? folder = BushLeafFolder(block);
         return folder != null && layeredTiles.TryGetValue(folder, out var tile) && tile is { } found
-            ? new LodBlockTextureRegistry.BlockTexture(found.Position, null, found.Mean, found.Mean)
+            ? new LodBlockTextureRegistry.BlockTexture(found.Position, null, found.Mean, found.Mean,
+                ClearPixelsHoldMean: true)
             : default;
     }
 
@@ -1842,7 +1911,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 }
             }
 
-            Insert(folder, sheets.Count > 0 ? sheets[0].Width : 0, LodBushTile.Compose(sheets));
+            Insert(folder, sheets.Count > 0 ? sheets[0].Width : 0, LodBushTile.ComposePlant(sheets));
         }
 
         // Queued, so it runs on the main thread after the uploads, whichever thread asked. The
@@ -2182,7 +2251,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         // A colour map on the block tints every part alike, which is what the game does with it,
         // so only a block naming none can be tinting part by part.
         if (block.ClimateColorMapResolved != null || block.SeasonColorMapResolved != null) return null;
-        if (block.Textures == null || block.Textures.Count == 0) return null;
+        if (block.Textures == null) return null;
 
         try
         {
@@ -2295,10 +2364,15 @@ public partial class VintageHorizonsModSystem : ModSystem
                     // BlockFacing order: north, east, south, west, up, down.
                     double area = i switch { 0 or 2 => dx * dy, 1 or 3 => dz * dy, _ => dx * dz };
                     if (area <= 0) continue;
-                    if (!block.Textures.TryGetValue(face.Texture, out CompositeTexture? texture)
-                        || texture?.Base == null) continue;
+                    // A small fern names its pictures in its model alone.
+                    AssetLocation? art = block.Textures.TryGetValue(face.Texture, out CompositeTexture? texture)
+                        ? texture?.Base
+                        : shape.Textures != null && shape.Textures.TryGetValue(face.Texture, out AssetLocation? named)
+                            ? named
+                            : null;
+                    if (art == null) continue;
 
-                    AssetLocation location = texture.Base.Clone()
+                    AssetLocation location = art.Clone()
                         .WithPathPrefixOnce("textures/").WithPathAppendixOnce(".png");
                     if (!pixels.TryGetValue(location, out TexturePixels? read))
                     {
@@ -2404,8 +2478,30 @@ public partial class VintageHorizonsModSystem : ModSystem
             found = candidate;
             break;
         }
+        found ??= ColorMapCarrier(climate, season);
         blocksByColorMaps[(climate, season)] = found;
         return found;
+    }
+
+    /// <summary>
+    /// A block in name only, to carry a pair of maps to the tint table, which reads them from a
+    /// block. A small fern's season is named only inside its model, so no block in the game has
+    /// that pair, and the tint fell back to one with no season at all.
+    /// </summary>
+    Block? ColorMapCarrier(string? climate, string? season)
+    {
+        if (capi.World is not ClientMain game) return null;
+        ColorMap? climateMap = null, seasonMap = null;
+        if (climate != null && !game.ColorMaps.TryGetValue(climate, out climateMap)) return null;
+        if (season != null && !game.ColorMaps.TryGetValue(season, out seasonMap)) return null;
+        return new Block
+        {
+            Code = new AssetLocation("dodenslandscapes", $"tint-{climate}-{season}"),
+            ClimateColorMap = climate,
+            SeasonColorMap = season,
+            ClimateColorMapResolved = climateMap,
+            SeasonColorMapResolved = seasonMap,
+        };
     }
 
     readonly Dictionary<(AssetLocation Location, bool RightHalf), TextureMean> textureMeans = new();
@@ -5793,6 +5889,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             || renderer.VineShapesEnabled != v.VineShapesOn
             || renderer.ForageMarkersEnabled != v.ForageMarkersOn
             || renderer.FlowerSheetsEnabled != v.FlowerSheetsOn
+            || renderer.BushSheetsEnabled != v.BushSheetsOn
             || renderer.CropShapesEnabled != v.CropShapesOn
             || renderer.LeafShape != v.LeafShapeOn
             || fruitChanged;
@@ -5802,6 +5899,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         renderer.VineShapesEnabled = v.VineShapesOn;
         renderer.ForageMarkersEnabled = v.ForageMarkersOn;
         renderer.FlowerSheetsEnabled = v.FlowerSheetsOn;
+        renderer.BushSheetsEnabled = v.BushSheetsOn;
         renderer.CropShapesEnabled = v.CropShapesOn;
         renderer.LeafShape = v.LeafShapeOn;
         blockTextures.BushTexturesVisible = v.BushTexturesOn;

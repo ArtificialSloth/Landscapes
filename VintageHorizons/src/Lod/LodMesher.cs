@@ -378,6 +378,12 @@ public static class LodMesher
 
                     bool isThin = (self.PaletteFlags[pid] & LodPaletteEntry.FlagThin) != 0;
 
+                    if (self.IsBushSheet(pid))
+                    {
+                        AddBushSheets(job, opaque, self, pid, cx, cz, run);
+                        continue;
+                    }
+
                     if (self.IsCanopyWood(pid))
                     {
                         int canopy = CanopyStart(job, self, cx, cz, run);
@@ -1337,6 +1343,26 @@ public static class LodMesher
             return s.IsLeafPlane(LodSection.RunPaletteId(run));
         }
         return false;
+    }
+
+    /// <summary>How wide and tall the game draws a bush, whatever its size: two blocks.</summary>
+    const int BushSheetBlocks = 2;
+
+    /// <summary>
+    /// A bush as the game builds one, from planes of leaves: two crossing and one lying through
+    /// them, three faces against a cube's five. It takes a leaf's shade, and its picture is one
+    /// across each plane. Packed coordinates are whole blocks and end at the section's edge, so
+    /// it stands up to half a block off centre, which nothing at this distance shows.
+    /// </summary>
+    static void AddBushSheets(MeshJob job, Buffers buf, SectionSnapshot self, int pid, int cx, int cz, ulong run)
+    {
+        int x = Math.Min(cx, LodSection.GridSize - BushSheetBlocks);
+        int z = Math.Min(cz, LodSection.GridSize - BushSheetBlocks);
+        int y0 = LodSection.RunYBottom(run);
+        int shade = AddLeafPlanes(job, buf, self, pid, x, z, BushSheetBlocks, y0, y0 + BushSheetBlocks);
+        AddFlatPlane(buf, self.WallColor(pid, true),
+            AlphaFor(self.PaletteFlags[pid], self.PaletteTintSlots[pid]),
+            x, y0 + 1.25f, z, x + BushSheetBlocks, z + BushSheetBlocks, self.PaletteTextureSlots[pid], shade);
     }
 
     /// <summary>How far to each side a stack of leaves looks for more of the tree.</summary>

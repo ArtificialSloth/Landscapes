@@ -47,6 +47,9 @@ internal readonly record struct LodVisualSettings(
     public bool FlowerSheetsOn => PlantTexturesOn && FlowerSheets;
     public bool CropShapesOn => PlantDetail && CropShapes;
     public bool BushTexturesOn => PlantDetail && BushTextures;
+
+    /// <summary>A bush's sheet is cut out by its picture, so with no pictures it is a block.</summary>
+    public bool BushSheetsOn => PlantTexturesOn && BushTextures;
     public bool FruitTreeColorsOn => PlantDetail && FruitTreeColors;
 
     /// <summary>A leaf plane is cut out by its sheet, so with no sheets leaves stay cubes.</summary>

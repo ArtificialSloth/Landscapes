@@ -96,7 +96,7 @@ public partial class VintageHorizonsModSystem
         Entry(lines, "Forage Markers", visual.ForageMarkers);
         Entry(lines, "Flower Sheets", visual.FlowerSheets);
         Entry(lines, "Crop Shapes", visual.CropShapes);
-        Entry(lines, "Berry Bush Textures", visual.BushTextures);
+        Entry(lines, "Berry Bush Sheets", visual.BushTextures);
         Entry(lines, "Fruit Tree Colors", visual.FruitTreeColors);
         Entry(lines, "Leaf Shape", visual.LeafShape.ToString());
         Entry(lines, ".dltint field", visual.ClimateTint);

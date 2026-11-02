@@ -41,6 +41,7 @@ public class SectionSnapshot
     const byte CanopyLeaf = 1;
     const byte CanopyWood = 2;
     const byte CanopyResin = 3;
+    const byte CanopyBush = 4;
 
     /// <summary>
     /// Which palette entries are leaf planes or the wood of a fruit tree, only where leaves are
@@ -55,6 +56,8 @@ public class SectionSnapshot
     public bool IsCanopyWood(int pid) => (uint)pid < (uint)PaletteCanopy.Length && PaletteCanopy[pid] == CanopyWood;
 
     public bool IsResinLog(int pid) => (uint)pid < (uint)PaletteCanopy.Length && PaletteCanopy[pid] == CanopyResin;
+
+    public bool IsBushSheet(int pid) => (uint)pid < (uint)PaletteCanopy.Length && PaletteCanopy[pid] == CanopyBush;
 
     /// <summary>The colour a wall of this palette entry draws at, along X or along Z.</summary>
     public int WallColor(int pid, bool xWall)
@@ -101,10 +104,15 @@ public class SectionSnapshot
     /// <param name="resinLogs">
     /// Block ids that are logs holding resin, where this level marks them; otherwise null.
     /// </param>
+    /// <param name="bushSheets">
+    /// Block ids that are berry bushes, where this level stands them up as sheets; otherwise null.
+    /// Like a leaf plane a bush then covers nothing, so neighbours need it too, and one with no
+    /// texture slot stays a cube.
+    /// </param>
     public static SectionSnapshot Of(LodSection s, bool includeTextureSlots = true,
         System.Func<int, (int X, int Z)>? wallColors = null,
         System.Func<int, byte>? crossedShapes = null, bool[]? leafPlanes = null,
-        bool[]? canopyWood = null, bool[]? resinLogs = null)
+        bool[]? canopyWood = null, bool[]? resinLogs = null, bool[]? bushSheets = null)
     {
         var colors = new int[s.Palette.Count];
         var flags = new byte[s.Palette.Count];
@@ -115,7 +123,7 @@ public class SectionSnapshot
         int[] wallX = wallColors != null ? new int[s.Palette.Count] : Array.Empty<int>();
         int[] wallZ = wallColors != null ? new int[s.Palette.Count] : Array.Empty<int>();
         byte[] shapes = crossedShapes != null ? new byte[s.Palette.Count] : Array.Empty<byte>();
-        byte[] canopy = leafPlanes != null || resinLogs != null
+        byte[] canopy = leafPlanes != null || resinLogs != null || bushSheets != null
             ? new byte[s.Palette.Count]
             : Array.Empty<byte>();
         for (int i = 0; i < s.Palette.Count; i++)
@@ -125,7 +133,13 @@ public class SectionSnapshot
             slots[i] = s.Palette[i].TintSlot;
             if (includeTextureSlots) textureSlots[i] = s.Palette[i].TextureSlot;
             if (wallColors != null) (wallX[i], wallZ[i]) = wallColors(s.Palette[i].BlockId);
-            if (leafPlanes != null && includeTextureSlots && textureSlots[i] != 0
+            if (bushSheets != null && includeTextureSlots && textureSlots[i] != 0
+                && (uint)s.Palette[i].BlockId < (uint)bushSheets.Length && bushSheets[s.Palette[i].BlockId])
+            {
+                flags[i] |= LodPaletteEntry.FlagCrossed;
+                canopy[i] = CanopyBush;
+            }
+            else if (leafPlanes != null && includeTextureSlots && textureSlots[i] != 0
                 && (uint)s.Palette[i].BlockId < (uint)leafPlanes.Length && leafPlanes[s.Palette[i].BlockId])
             {
                 flags[i] |= LodPaletteEntry.FlagCrossed;

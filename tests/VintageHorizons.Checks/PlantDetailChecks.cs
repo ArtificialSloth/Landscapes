@@ -25,6 +25,7 @@ public static class PlantDetailChecks
         GrassUnderTrees(c);
         ForageMarkers(c);
         FlowerSheets(c);
+        BushSheets(c);
         UltraPreset(c);
         FruitWoodInTheCanopy(c);
         SwitchedOffPlants(c);
@@ -348,6 +349,62 @@ public static class PlantDetailChecks
         c.Eq(0, Planes(Build(LodBlockPolicy.CrossedShapeFlower)), "and with no picture to wear, so is it then");
     }
 
+    static void BushSheets(Check c)
+    {
+        Block[] registry =
+        {
+            Named("air", EnumBlockMaterial.Air),
+            Named("fruitingbush-wild-blackberry-free", EnumBlockMaterial.Plant),
+            Named("fruitingbush-wild-blackberry-snow", EnumBlockMaterial.Snow),
+        };
+        bool[] bushes = LodBlockPolicy.BushTable(registry);
+        c.True(bushes[1], "a bush stands as sheets");
+        c.False(bushes[2], "and a snowed-over one does not");
+
+        // A bush with a stone pillar beside it, and one at the far corner of the section.
+        int last = LodSection.GridSize - 1;
+        LodSection section = Fixtures.Section(
+            (LodSection.ColumnIndex(10, 10), new[] { LodSection.PackRun(0, 101, 100) }),
+            (LodSection.ColumnIndex(11, 10), new[] { LodSection.PackRun(1, 104, 100) }),
+            (LodSection.ColumnIndex(last, last), new[] { LodSection.PackRun(0, 101, 100) }));
+        section.Palette.Clear();
+        section.Palette.Add(new LodPaletteEntry { BlockId = 1, Color = 0x336633, TextureSlot = 7 });
+        section.Palette.Add(new LodPaletteEntry { BlockId = Stone, Color = 0x777777 });
+        bool[] table = { false, true, false };
+
+        MeshResult Build(bool[]? sheets) => LodMesher.BuildMesh(new MeshJob
+        {
+            Key = 0,
+            Self = SectionSnapshot.Of(section, crossedShapes: _ => LodBlockPolicy.CrossedShapeByFlags,
+                bushSheets: sheets),
+            Neighbors = new SectionSnapshot?[4],
+            EmitTextureSlots = true,
+        });
+
+        MeshResult sheets = Build(table);
+        c.Eq(3 * 2, Planes(sheets), "two crossing planes and one lying through them, for each bush");
+        c.Eq(0, Planes(Build(null)), "and with the switch off, a block");
+
+        int widest = 0;
+        for (int q = 0; q < sheets.PackedOpaqueQuadCount; q++)
+        {
+            if (LodPackedQuadFormat.FaceOf(sheets.PackedOpaqueQuads, q) < LodPackedFace.DiagonalRising) continue;
+            uint geometry = sheets.PackedOpaqueQuads[q * LodPackedQuadFormat.WordsPerQuad];
+            widest = Math.Max(widest, (int)((geometry >> 7) & 127u) - (int)(geometry & 127u));
+            c.True(((geometry >> 7) & 127u) <= LodSection.GridSize, "and stays inside its section");
+        }
+        c.Eq(2, widest, "two blocks across, as the game draws it");
+        c.Eq(7, LodPackedQuadFormat.TextureSlot(sheets.PackedOpaqueQuads[2]), "in its own picture");
+
+        section.Palette[0] = section.Palette[0] with { TextureSlot = 0 };
+        c.Eq(0, Planes(Build(table)), "with no picture to wear it stays a block");
+
+        LodVisualSettings on = LodVisualSettings.Default;
+        c.True(on.BushSheetsOn, "bush sheets are on by default");
+        c.False((on with { PlantTextures = false }).BushSheetsOn, "a sheet needs Plant Textures");
+        c.False((on with { BushTextures = false }).BushSheetsOn, "and has its own switch");
+    }
+
     static void UltraPreset(Check c)
     {
         LodVisualSettings ultra = LodVisualSettings.Ultra;
@@ -587,6 +644,12 @@ public static class PlantDetailChecks
                 && mod.Contains("LodBlockPolicy.IsFruitFoliage(block) || LodBlockPolicy.IsFruitWood(block)",
                     StringComparison.Ordinal),
             "a fruit tree's wood takes its one bark colour and no plant tint, wherever a colour is asked for");
+
+        c.True(mod.Contains("found ??= ColorMapCarrier(climate, season);", StringComparison.Ordinal)
+                && mod.Contains("if (block.Textures == null) return null;", StringComparison.Ordinal),
+            "a season named only inside a model reaches the tint table, so small ferns turn as the game's do");
+        c.True(mod.Contains("TryMushroomCapColor(block, out int capColor)", StringComparison.Ordinal),
+            "a mushroom takes the colour of its cap");
 
         string renderer = Source("Render", "LodTerrainRenderer.cs");
         c.True(renderer.Contains("LodWorld.KeyLevel(best) == 0 ? leafPlanes : null", StringComparison.Ordinal),

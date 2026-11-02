@@ -325,8 +325,11 @@ public sealed class LodBlockTextureRegistry
         WriteWall(at + 24, at, resolved.WallZ);
         WriteWallColor(at + 32, resolved.WallX, stableColor);
         WriteWallColor(at + 36, resolved.WallZ, stableColor);
-        if (block.BlockMaterial == EnumBlockMaterial.Leaves || block is Vintagestory.GameContent.BlockVines)
+        if (block.BlockMaterial == EnumBlockMaterial.Leaves || block is Vintagestory.GameContent.BlockVines
+            || LodBlockPolicy.IsBerryBush(block))
+        {
             table[at + 39] = TilesOnPlanes;
+        }
 
         Version++;
         return slot;

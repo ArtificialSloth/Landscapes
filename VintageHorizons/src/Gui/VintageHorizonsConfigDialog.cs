@@ -504,8 +504,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             v => v.PlantTextures,
             (v, on) => v with { PlantTextures = on }),
 
-        new("bush-textures", "Berry Bush Textures",
-            "Gives berry bushes a leafy texture inside the seam band. Off draws them in plain color.",
+        new("bush-textures", "Berry Bush Sheets",
+            "Stands berry bushes up as see-through sheets of leaves, as the game builds them. Off "
+            + "draws a plain block of their color. Needs Plant Textures.",
             "Low",
             v => v.BushTextures,
             (v, on) => v with { BushTextures = on }),

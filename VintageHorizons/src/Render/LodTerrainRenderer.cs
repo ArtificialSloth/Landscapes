@@ -585,6 +585,7 @@ public partial class LodTerrainRenderer : IRenderer
     public bool VineShapesEnabled { get; set; } = true;
     public bool ForageMarkersEnabled { get; set; } = true;
     public bool FlowerSheetsEnabled { get; set; }
+    public bool BushSheetsEnabled { get; set; } = true;
 
     /// <summary>The same for crops, whose flat patch is the opaque one.</summary>
     public bool CropShapesEnabled { get; set; } = true;
@@ -598,6 +599,7 @@ public partial class LodTerrainRenderer : IRenderer
     bool[]? leafTable;
     bool[]? fruitWoodTable;
     bool[]? resinTable;
+    bool[]? bushTable;
 
     /// <summary>Slots serve seam blending and plant textures, so either keeps them alive.</summary>
     bool TextureSlotsWanted => blendPipelineEnabled || PlantTexturesEnabled;
@@ -2920,6 +2922,9 @@ public partial class LodTerrainRenderer : IRenderer
         bool[]? resinLogs = ForageMarkersEnabled
             ? resinTable ??= LodBlockPolicy.ResinTable(capi.World.Blocks)
             : null;
+        bool[]? bushSheets = BushSheetsEnabled
+            ? bushTable ??= LodBlockPolicy.BushTable(capi.World.Blocks)
+            : null;
 
         // Two budgets. Starting a background reload costs this thread almost nothing
         // (enqueue a key), whereas building a mesh snapshot is real work, so charging a
@@ -3022,18 +3027,19 @@ public partial class LodTerrainRenderer : IRenderer
 
             var neighbors = new SectionSnapshot?[neighborSections.Length];
             bool[]? leafPlanesHere = LodWorld.KeyLevel(best) == 0 ? leafPlanes : null;
+            bool[]? bushSheetsHere = LodWorld.KeyLevel(best) == 0 ? bushSheets : null;
             long contentRevision = world.ContentRevision(best);
             long renderRevision = world.RenderDirty.Revision(best);
             for (int d = 0; d < neighborSections.Length; d++)
             {
                 if (neighborSections[d] != null)
                     neighbors[d] = SectionSnapshot.Of(neighborSections[d]!, includeTextureSlots,
-                        leafPlanes: leafPlanesHere);
+                        leafPlanes: leafPlanesHere, bushSheets: bushSheetsHere);
             }
 
             SectionSnapshot self = SectionSnapshot.Of(
                 section, includeTextureSlots, wallColors, crossedShapeOf, leafPlanesHere, fruitWoodTable,
-                LodWorld.KeyLevel(best) == 0 ? resinLogs : null);
+                LodWorld.KeyLevel(best) == 0 ? resinLogs : null, bushSheetsHere);
 
             // Same-world publication needs a finer identity than WorldEpoch. If a mesh-visible
             // capture or neighbour-edge invalidation landed while these immutable inputs were

@@ -191,6 +191,9 @@ public static class LodBlockPolicy
         return table;
     }
 
+    /// <summary>The name a mushroom's model gives the picture on its cap.</summary>
+    public const string MushroomCapTexture = "cap";
+
     public static bool IsVineShape(byte shape) =>
         shape is >= CrossedShapeVineNorth and <= CrossedShapeVineWest;
 
@@ -294,6 +297,18 @@ public static class LodBlockPolicy
     /// </summary>
     public static bool IsBerryBush(Block block) =>
         block.Code?.Path?.StartsWith("fruitingbush-", StringComparison.Ordinal) == true;
+
+    /// <summary>
+    /// Which block ids are berry bushes that can stand as sheets, for mesh jobs. A bush under snow
+    /// is the snow's.
+    /// </summary>
+    public static bool[] BushTable(IList<Block> blocks)
+    {
+        var table = new bool[blocks.Count];
+        for (int id = 0; id < table.Length; id++)
+            table[id] = blocks[id] is { } block && IsBerryBush(block) && block.BlockMaterial == EnumBlockMaterial.Plant;
+        return table;
+    }
 
     /// <summary>Sedge and ferns stand about half as tall as reeds, and a cut reed is a stub.</summary>
     static byte CrossedFlags(Block block) =>
