@@ -4942,7 +4942,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         capi.ChatCommands.Create("dlwater")
             .WithDescription("How distant water meets the game's own. No argument reports the settings. "
                 + "off | a number of chunks | edge <chunks> | fresnel on|off | glint <0-1> | "
-                + "foam <0-2> | shore <0-2> | depth on|off | alpha <0.05-2> | clarity <blocks> | "
+                + "foam <0-2> | shore <0-2>|paint | depth on|off | alpha <0.05-2> | clarity <blocks> | "
                 + "wave <blocks> | walls on|off | murk on|off | surface on|off | coverage on|off | "
                 + "texture on|off | pipeline oit|opaque | "
                 + "junction on|off | log | capture.")
@@ -5146,14 +5146,23 @@ public partial class VintageHorizonsModSystem : ModSystem
                             $"[Landscapes] foam {renderer.WaterFoam:0.00}. Look now.");
 
                     case "shore":
+                        if (value == "paint")
+                        {
+                            renderer.WaterShorePaint = !renderer.WaterShorePaint;
+                            return TextCommandResult.Success(renderer.WaterShorePaint
+                                ? "[Landscapes] shore paint on: distant water shows the foam term, "
+                                    + "white where it is full and black where there is none."
+                                : "[Landscapes] shore paint off.");
+                        }
                         if (!TryParseSetting(value, out float shore))
                         {
                             return TextCommandResult.Success(
                                 $"[Landscapes] shore foam {renderer.WaterShoreFoam:0.00}. 0 to 2. One is "
                                 + "the game's own strength on shallow water; 0 turns it off and reads "
-                                + "no depth. This session only.");
+                                + "no depth. paint shows the term itself. This session only.");
                         }
                         renderer.WaterShoreFoam = shore;
+                        renderer.WaterShorePaint = false;
                         return TextCommandResult.Success(
                             $"[Landscapes] shore foam {renderer.WaterShoreFoam:0.00}. Look now.");
 

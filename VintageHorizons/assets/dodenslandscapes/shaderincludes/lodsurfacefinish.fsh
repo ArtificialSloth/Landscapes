@@ -70,7 +70,7 @@
             // a guessed depth produced bright, opaque foam patches across the ocean.
             float diff = 0.0;
 #if defined(VH_WATER_OIT) && FOAMEFFECT > 0
-            if (waterShoreFoam > 0.0)
+            if (waterShoreFoam != 0.0)
             {
                 // chunkliquid.fsh's depth difference: vanilla sums 25 samples over 16, and five
                 // spread across the same footprint keep that scale for a fifth of the reads.
@@ -90,17 +90,23 @@
                 float fineNoise = (noise2 - noise1) / 2.0
                     * (1.0 - smoothstep(0.25, 1.0, pixelBlocks));
                 diff = upness * clamp(1.0 - gap * 1500.0 + fineNoise, 0.0, 1.0)
-                    * waterShoreFoam;
+                    * abs(waterShoreFoam);
             }
 #endif
             float grain = upness
                 * (gnoise(vec3(a * 0.4, b * 0.4, vhWaterFlow)) / 2.0 + noise2 / 2.0 + 0.5) / 2.0;
             float bright = (terraColor.r + terraColor.g + terraColor.b) / 3.0;
-            terraColor.rgb += vec3(max(0.0, bright * (diff * 0.3 * waterAmount + grain / 10.0 * foamAmount)));
+            // Vanilla's `bright` is rgba, the light on the surface, and `light` above is that same
+            // term. Taken from the water's own dark colour, shore foam comes out about 5x too faint.
+            float surfaceLight = (light.r + light.g + light.b) / 3.0;
+            terraColor.rgb += vec3(max(0.0, surfaceLight * diff * 0.3 * waterAmount
+                + bright * grain / 10.0 * foamAmount));
             terraColor.a += (
                 max(0.0, diff / 16.0 * waterAmount
                     + grain / (12.0 - 8.0 * min(1.0, vhWindSpeed)) * foamAmount)
                 + waterVn / 4.0 * foamAmount) / clamp(waterFresnelValue, 0.5, 1.0);
+            // .dlwater shore paint: what the depth read found, white at the shore.
+            if (waterShoreFoam < 0.0) terraColor = vec4(vec3(diff), 1.0);
         }
 
         // Specular sun glint. Vanilla also scales this by a shadow-map sample; distant open

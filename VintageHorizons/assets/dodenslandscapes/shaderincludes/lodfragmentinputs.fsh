@@ -108,7 +108,8 @@ uniform int waterFresnel;
 uniform float waterGlint;
 uniform float waterFoam;
 
-// How strong shore foam is, 0 to 2, where one is vanilla's own strength. Zero reads no depth.
+// How strong shore foam is, 0 to 2, where one is vanilla's own strength. Zero reads no depth;
+// below zero paints the term itself, for `.dlwater shore paint`.
 //
 // Vanilla's foam term is a SHALLOW-water effect and nothing else. It reads the depth buffer to
 // find how far the bed is behind the surface and multiplies that by 1500, so deep water drives

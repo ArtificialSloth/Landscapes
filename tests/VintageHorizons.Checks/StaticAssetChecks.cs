@@ -3007,9 +3007,9 @@ public static class StaticAssetChecks
             "five samples keep the scale of vanilla's 25 summed over 16");
         c.True(water.Contains("smoothstep(0.25, 1.0, pixelBlocks)", StringComparison.Ordinal),
             "the fine noise fades by the pixel's size in the world, not by a distance");
-        c.True(water.Contains("diff * 0.3 * waterAmount + grain / 10.0 * foamAmount",
-                StringComparison.Ordinal),
-            "the accepted 1.6 stays on the grain and shore foam stands at its own strength");
+        c.True(water.Contains("surfaceLight * diff * 0.3 * waterAmount", StringComparison.Ordinal)
+            && water.Contains("bright * grain / 10.0 * foamAmount", StringComparison.Ordinal),
+            "shore foam scales by the light, as vanilla's rgba does, and the accepted 1.6 stays on the grain");
         c.True(water.Contains("uniform float vhZFar;", StringComparison.Ordinal)
             && !water.Contains("linearDepth(gl_FragCoord.z)", StringComparison.Ordinal),
             "shore foam takes its planes under its own names and leaves the accepted murk's alone");

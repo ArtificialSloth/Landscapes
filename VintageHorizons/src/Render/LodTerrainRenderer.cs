@@ -1006,6 +1006,9 @@ public partial class LodTerrainRenderer : IRenderer
     }
     float waterShoreFoam = 1f;
 
+    /// <summary>Paints what the depth read finds in place of the water. Diagnostic only.</summary>
+    public bool WaterShorePaint { get; set; }
+
     /// <summary>
     /// The highest pre-texture Fresnel alpha cached water may reach, 0.05 to 2. Vanilla clamps
     /// this exact intermediate value to 2 before climate-mapped texture alpha and foam reduce or
@@ -6187,7 +6190,7 @@ public partial class LodTerrainRenderer : IRenderer
         prog.Uniform("waterTextureTintSlot", WaterSurfaceTintSlot);
         prog.Uniform("waterGlint", waterGlint);
         prog.Uniform("waterFoam", waterFoam);
-        prog.Uniform("waterShoreFoam", waterShoreFoam);
+        prog.Uniform("waterShoreFoam", WaterShorePaint ? -1f : waterShoreFoam);
         prog.Uniform("waterMaxAlpha", Math.Clamp(WaterMaxAlpha, 0.05f, 2f));
 
         // Everything the engine's own liquid shader reads, under mod-owned names so no
