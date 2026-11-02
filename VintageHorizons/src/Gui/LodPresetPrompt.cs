@@ -37,8 +37,8 @@ internal sealed class LodPresetPrompt : GuiDialog
     internal const string Title = "Doden's Landscapes: choose a preset";
 
     internal const string IntroText =
-        "How much of the distant landscape should be drawn? Quality shows everything the mod can "
-        + "do. If your frame rate suffers, pick a lighter preset.\n\n"
+        "How much of the distant landscape should be drawn? Quality is the mod's full look. If "
+        + "your frame rate suffers, pick a lighter preset.\n\n"
         + "You can change this, or any single setting, any time in the game's Settings on the "
         + "Landscapes page, or by typing .dlconfig in chat.";
 
@@ -58,9 +58,9 @@ internal sealed class LodPresetPrompt : GuiDialog
             .AddStaticText(IntroText, CairoFont.WhiteSmallText(),
                 ElementBounds.Fixed(Margin, TitleBar + 10, Width - 2 * Margin, IntroHeight));
 
-        for (int i = 0; i < LodPreset.All.Length; i++)
+        for (int i = 0; i < LodPreset.FirstRun.Length; i++)
         {
-            LodPreset preset = LodPreset.All[i];
+            LodPreset preset = LodPreset.FirstRun[i];
             double x = Margin + i * (columnWidth + ColumnGap);
             string label = preset == LodPreset.Quality ? preset.Name + " (default)" : preset.Name;
             composer.AddButton(label, () => OnChoose(preset),

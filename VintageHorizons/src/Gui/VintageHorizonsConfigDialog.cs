@@ -490,6 +490,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             v => v.ForageMarkers,
             (v, on) => v with { ForageMarkers = on }),
 
+        new("flower-sheets", "Flower Sheets",
+            "Purely for the look: stands each nearby flower up as its own picture. On in Ultra. Off "
+            + "draws a flat patch of its color. Needs Plant Textures.",
+            "Low",
+            v => v.FlowerSheets,
+            (v, on) => v with { FlowerSheets = on }),
+
         new("plant-textures", "Plant Textures",
             "Puts the game's own pictures on crop, reed and fern planes, and cuts leaf planes out. "
             + "Off draws those planes in plain color, and leaves as cubes whatever Leaf Shape says.",
@@ -1971,6 +1978,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 ReedShapes = plants.ReedShapes,
                 VineShapes = plants.VineShapes,
                 ForageMarkers = plants.ForageMarkers,
+                FlowerSheets = plants.FlowerSheets,
                 CropShapes = plants.CropShapes,
                 BushTextures = plants.BushTextures,
                 FruitTreeColors = plants.FruitTreeColors,

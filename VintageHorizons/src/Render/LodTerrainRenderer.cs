@@ -584,6 +584,7 @@ public partial class LodTerrainRenderer : IRenderer
     public bool ReedShapesEnabled { get; set; } = true;
     public bool VineShapesEnabled { get; set; } = true;
     public bool ForageMarkersEnabled { get; set; } = true;
+    public bool FlowerSheetsEnabled { get; set; }
 
     /// <summary>The same for crops, whose flat patch is the opaque one.</summary>
     public bool CropShapesEnabled { get; set; } = true;
@@ -2906,6 +2907,7 @@ public partial class LodTerrainRenderer : IRenderer
             Block? block = capi.World.GetBlock(blockId);
             bool on = block is Vintagestory.GameContent.BlockVines ? VineShapesEnabled
                 : block != null && LodBlockPolicy.IsGroundMarker(block) ? ForageMarkersEnabled
+                : block != null && LodBlockPolicy.IsFlower(block) ? FlowerSheetsEnabled
                 : block is Vintagestory.GameContent.BlockCrop ? CropShapesEnabled : ReedShapesEnabled;
             return on
                 ? LodBlockPolicy.CrossedShapeOf(block)

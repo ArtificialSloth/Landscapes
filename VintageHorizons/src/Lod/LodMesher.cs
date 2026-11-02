@@ -396,8 +396,11 @@ public static class LodMesher
                     // says everything the planes would. It takes the mat's height, opaque. A
                     // fern is thin cover out there, and takes the path below. Switched off, a
                     // crossed plant draws that way at level 0 too.
+                    // A flower with no sheet to wear stays the patch it has always been.
                     bool planes = step == 1 && IsCrossedRun(self, run)
-                        && self.CrossedShape(pid) != LodBlockPolicy.CrossedShapeAsMat;
+                        && self.CrossedShape(pid) != LodBlockPolicy.CrossedShapeAsMat
+                        && (self.CrossedShape(pid) != LodBlockPolicy.CrossedShapeFlower
+                            || FlowerSheet(job, self, pid) != 0);
                     // A vine is a sheet on what holds it, which past level 0 is under a voxel of
                     // nothing, so there it draws nothing at all.
                     if (IsCrossedRun(self, run) && LodBlockPolicy.IsVineShape(self.CrossedShape(pid)))
@@ -1190,11 +1193,23 @@ public static class LodMesher
     static void AddMarker(Buffers buf, SectionSnapshot self, int pid, int cx, int cz, int yBottom)
     {
         byte flags = (byte)(self.PaletteFlags[pid] & ~LodPaletteEntry.FlagThin);
+        byte shape = self.CrossedShape(pid);
         float y0 = yBottom * 0.5f;
-        float y1 = y0 + (self.CrossedShape(pid) == LodBlockPolicy.CrossedShapeMushroom ? 0.5f : 0.25f);
+        float y1 = y0 + shape switch
+        {
+            LodBlockPolicy.CrossedShapeMushroom => 0.5f,
+            LodBlockPolicy.CrossedShapeFlower => 1f,
+            _ => 0.25f,
+        };
         AddQuad(buf, LodPackedFace.DiagonalRising, 1, self.PaletteColors[pid],
-            AlphaFor(flags, self.PaletteTintSlots[pid]), cx, y0, cz, cx, y0, cz, cx, y1, cz, cx, y1, cz);
+            AlphaFor(flags, self.PaletteTintSlots[pid]), cx, y0, cz, cx, y0, cz, cx, y1, cz, cx, y1, cz,
+            shape == LodBlockPolicy.CrossedShapeFlower ? self.PaletteTextureSlots[pid] : 0);
     }
+
+    static int FlowerSheet(MeshJob job, SectionSnapshot self, int pid) =>
+        job.EmitTextureSlots && (uint)pid < (uint)self.PaletteTextureSlots.Length
+            ? self.PaletteTextureSlots[pid]
+            : 0;
 
     /// <summary>Resin's amber, as colours are stored: blue, green, red.</summary>
     const int ResinColor = 0x1E96EB;

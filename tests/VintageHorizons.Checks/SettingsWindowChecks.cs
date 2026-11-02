@@ -92,7 +92,7 @@ public static class SettingsWindowChecks
         string mod = Source("VintageHorizonsModSystem.cs");
         string prompt = Source("Gui", "LodPresetPrompt.cs");
         c.False(new VintageHorizonsConfig().PresetPromptShown, "a fresh install asks for a preset once");
-        c.True(prompt.Contains("for (int i = 0; i < LodPreset.All.Length; i++)", StringComparison.Ordinal)
+        c.True(prompt.Contains("for (int i = 0; i < LodPreset.FirstRun.Length; i++)", StringComparison.Ordinal)
                 && prompt.Contains("closed();", StringComparison.Ordinal)
                 && mod.Contains("config.PresetPromptShown = true;", StringComparison.Ordinal),
             "the prompt offers every preset and, however it closes, is not shown again");

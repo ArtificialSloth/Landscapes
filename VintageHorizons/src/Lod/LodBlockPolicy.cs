@@ -116,7 +116,23 @@ public static class LodBlockPolicy
     /// is planes already, so a cube was only ever a block-shaped patch of its colour.
     /// </summary>
     public static bool IsCrossedPlant(Block block) =>
-        IsReedOrFern(block) || block is BlockCrop || block is BlockVines;
+        IsReedOrFern(block) || block is BlockCrop || block is BlockVines || IsFlower(block);
+
+    /// <summary>
+    /// A flower, which draws as a colour patch unless its sheet is switched on. By its dash, so a
+    /// flower pot is not one.
+    /// </summary>
+    public static bool IsFlower(Block block) => block.BlockMaterial == EnumBlockMaterial.Plant
+        && block.Code?.Path?.StartsWith("flower-", StringComparison.Ordinal) == true;
+
+    /// <summary>
+    /// A flower's art is two pictures, its tinted stem and its petals, under names that vary by the
+    /// model it uses. They layer on one sheet as a cattail's leaves and cobs do.
+    /// </summary>
+    public static readonly string[] FlowerStemNames =
+        { "northTinted1", "stem1", "flower1Tinted", "flower2Tinted", "leaves1" };
+
+    public static readonly string[] FlowerPetalNames = { "north1", "petal1", "flower1", "flower2" };
 
     /// <summary>The crossed plants capture has to look above the rain map for, with the markers (<see cref="ReedTable"/>).</summary>
     static bool IsReedOrFern(Block block) =>
@@ -147,7 +163,11 @@ public static class LodBlockPolicy
     public const byte CrossedShapeMushroom = 248;
     public const byte CrossedShapeLooseItem = 249;
 
-    public static bool IsMarkerShape(byte shape) => shape is CrossedShapeMushroom or CrossedShapeLooseItem;
+    /// <summary>A flower's picture on the same one quad, a block tall.</summary>
+    public const byte CrossedShapeFlower = 247;
+
+    public static bool IsMarkerShape(byte shape) =>
+        shape is CrossedShapeMushroom or CrossedShapeLooseItem or CrossedShapeFlower;
 
     /// <summary>
     /// What a player walks the land looking for and that is far smaller than a block: mushrooms,
@@ -248,6 +268,7 @@ public static class LodBlockPolicy
     public static byte CrossedShapeOf(Block? block)
     {
         if (block is BlockVines) return VineShapeOf(block.Code?.Path);
+        if (block != null && IsFlower(block)) return CrossedShapeFlower;
         if (block != null && IsGroundMarker(block))
         {
             return block.Code!.Path.StartsWith("mushroom-", StringComparison.Ordinal)

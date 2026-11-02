@@ -73,6 +73,7 @@ public class VintageHorizonsConfig
     public bool ReedShapes = true;
     public bool VineShapes = true;
     public bool ForageMarkers = true;
+    public bool FlowerSheets;
     public bool CropShapes = true;
     public bool BushTextures = true;
     public bool FruitTreeColors = true;
@@ -435,6 +436,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             ReedShapesEnabled = startupVisuals.ReedShapesOn,
             VineShapesEnabled = startupVisuals.VineShapesOn,
             ForageMarkersEnabled = startupVisuals.ForageMarkersOn,
+            FlowerSheetsEnabled = startupVisuals.FlowerSheetsOn,
             CropShapesEnabled = startupVisuals.CropShapesOn,
             LeafShape = startupVisuals.LeafShapeOn,
             BlendPipelineEnabled = config.BlendPipeline,
@@ -1721,6 +1723,35 @@ public partial class VintageHorizonsModSystem : ModSystem
             : default;
     }
 
+    /// <summary>
+    /// A flower's two pictures: its stem as the sheet, which takes the plant tint, and its petals
+    /// laid over it, which do not. No extra art on the atlas, as with a cattail's cobs.
+    /// </summary>
+    LodBlockTextureRegistry.BlockTexture ResolveFlowerSheets(Block block)
+    {
+        (TextureAtlasPosition? Position, AssetLocation? Location) Sheet(string[] names)
+        {
+            foreach (string name in names)
+            {
+                if (block.Textures != null && block.Textures.TryGetValue(name, out CompositeTexture? own)
+                    && own?.Baked != null && IsUsableAtlasTexture(own.Baked.TextureSubId))
+                    return (capi.BlockTextureAtlas.Positions[own.Baked.TextureSubId], own.Baked.BakedName ?? own.Base);
+            }
+            return default;
+        }
+
+        var stem = Sheet(LodBlockPolicy.FlowerStemNames);
+        var petals = Sheet(LodBlockPolicy.FlowerPetalNames);
+        if (stem.Position == null) (stem, petals) = (petals, default);
+        if (stem.Position == null || stem.Location == null) return default;
+
+        TexturePixels? pixels = ReadTexturePixels(stem.Location.Clone()
+            .WithPathPrefixOnce("textures/").WithPathAppendixOnce(".png"));
+        if (pixels == null) return default;
+        int mean = PackMean(RegionMean(pixels.Argb, pixels.Width, pixels.Height, null, 0, 0));
+        return new LodBlockTextureRegistry.BlockTexture(stem.Position, petals.Position, mean, mean);
+    }
+
     /// <summary>The picture a vine hangs as: the one the game baked first of its alternates.</summary>
     LodBlockTextureRegistry.BlockTexture ResolveVineSheet(Block block)
     {
@@ -1824,6 +1855,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     LodBlockTextureRegistry.BlockTexture ResolveBlockTextureFor(Block block)
     {
         if (block is Vintagestory.GameContent.BlockVines) return ResolveVineSheet(block);
+        if (LodBlockPolicy.IsFlower(block)) return ResolveFlowerSheets(block);
         if (block is Vintagestory.GameContent.BlockCrop) return ResolveCropSheet(block);
         if (LodBlockPolicy.IsCrossedPlant(block)) return ResolveReedSheets(block);
         if (LodBlockPolicy.IsBerryBush(block)) return ResolveBushTile(block);
@@ -5678,7 +5710,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             FruitTreeColors: config.FruitTreeColors,
             LeafShape: config.LeafShape,
             VineShapes: config.VineShapes,
-            ForageMarkers: config.ForageMarkers);
+            ForageMarkers: config.ForageMarkers,
+            FlowerSheets: config.FlowerSheets);
 
     /// <summary>What the config file says, for startup and for when no renderer exists.</summary>
     LodVisualSettings ConfiguredVisualSettings() => new(
@@ -5699,7 +5732,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         FruitTreeColors: config.FruitTreeColors,
         LeafShape: config.LeafShape,
         VineShapes: config.VineShapes,
-        ForageMarkers: config.ForageMarkers);
+        ForageMarkers: config.ForageMarkers,
+        FlowerSheets: config.FlowerSheets);
 
     /// <summary>What the config file says for the anti-aliasing dials, for when no renderer exists.</summary>
     LodTaaDials ConfiguredTaaDials() => new(config.TaaReachPixels, config.TaaNudge,
@@ -5726,6 +5760,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.ReedShapes = v.ReedShapes;
         config.VineShapes = v.VineShapes;
         config.ForageMarkers = v.ForageMarkers;
+        config.FlowerSheets = v.FlowerSheets;
         config.CropShapes = v.CropShapes;
         config.BushTextures = v.BushTextures;
         config.FruitTreeColors = v.FruitTreeColors;
@@ -5757,6 +5792,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             || renderer.ReedShapesEnabled != v.ReedShapesOn
             || renderer.VineShapesEnabled != v.VineShapesOn
             || renderer.ForageMarkersEnabled != v.ForageMarkersOn
+            || renderer.FlowerSheetsEnabled != v.FlowerSheetsOn
             || renderer.CropShapesEnabled != v.CropShapesOn
             || renderer.LeafShape != v.LeafShapeOn
             || fruitChanged;
@@ -5765,6 +5801,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         renderer.ReedShapesEnabled = v.ReedShapesOn;
         renderer.VineShapesEnabled = v.VineShapesOn;
         renderer.ForageMarkersEnabled = v.ForageMarkersOn;
+        renderer.FlowerSheetsEnabled = v.FlowerSheetsOn;
         renderer.CropShapesEnabled = v.CropShapesOn;
         renderer.LeafShape = v.LeafShapeOn;
         blockTextures.BushTexturesVisible = v.BushTexturesOn;

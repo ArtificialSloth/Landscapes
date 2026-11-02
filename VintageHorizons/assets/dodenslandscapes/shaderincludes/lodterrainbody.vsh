@@ -75,19 +75,23 @@ void main()
         // A marker (LodMesher.AddMarker): a square at the middle of its column, facing the camera,
         // which from any distance these are seen at is a tiny cube for one quad. Never under two
         // pixels across, or three for resin (face 7), which also stands out in front of its log.
+        // One with a texture is a flower, a picture rather than a mark, and keeps its true size.
+        bool vhMarkerSheet = (vhGeometry & 0x80000000u) != 0u;
         vec3 vhMarkerCentre = vec3(vhX0 + 0.5, (vhY0 + vhY1) * 0.5, vhZ0 + 0.5);
         vec3 vhToCamera = -(vhRecordOrigin.xyz + vhMarkerCentre);
         float vhMarkerDistance = max(length(vhToCamera), 0.001);
         vhToCamera /= vhMarkerDistance;
         if (vhFace == 7u) vhMarkerCentre += vhToCamera * 0.75;
         float vhMarkerHalf = (vhY1 - vhY0) * 0.5;
-        if (vhTaaBlockScale > 0.0)
+        if (vhTaaBlockScale > 0.0 && !vhMarkerSheet)
             vhMarkerHalf = max(vhMarkerHalf, (vhFace == 7u ? 1.5 : 1.0) * vhMarkerDistance / vhTaaBlockScale);
         vec3 vhMarkerRight = normalize(cross(vec3(0.0, 1.0, 0.0), vhToCamera) + vec3(0.0001, 0.0, 0.0));
         vec3 vhMarkerUp = cross(vhToCamera, vhMarkerRight);
         vertexPositionIn = vhMarkerCentre
             + vhMarkerRight * (vhLogicalCorner == 1u || vhLogicalCorner == 2u ? vhMarkerHalf : -vhMarkerHalf)
             + vhMarkerUp * (vhLogicalCorner < 2u ? -vhMarkerHalf : vhMarkerHalf);
+        if (vhMarkerSheet)
+            vhPlaneUv = vec2(vhLogicalCorner == 1u || vhLogicalCorner == 2u ? 1.0 : 0.0, vhLogicalCorner < 2u ? 1.0 : 0.0);
     }
     else if (vhFace >= 6u && vhY0 == vhY1)
     {

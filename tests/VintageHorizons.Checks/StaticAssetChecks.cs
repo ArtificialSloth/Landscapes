@@ -2718,8 +2718,8 @@ public static class StaticAssetChecks
                 && dialog.Contains("on => OnVisualChanged(row, on));", StringComparison.Ordinal),
             "each visual row is a switch bound to its own row rather than a hand-written pair");
         c.True(dialog.Contains("LodPreset.All.Select(preset => preset.Name).Append(\"Custom\")", StringComparison.Ordinal)
-            && LodPreset.All.Select(preset => preset.Name).SequenceEqual(new[] { "Performance", "Balanced", "Quality" }),
-            "and the three presets are offered");
+            && LodPreset.All.Select(preset => preset.Name).SequenceEqual(new[] { "Performance", "Balanced", "Quality", "Ultra" }),
+            "and the four presets are offered");
         c.True(LodPreset.Performance.DrawDistance == 2048 && LodPreset.Balanced.DrawDistance == 4096
                 && LodPreset.Quality.DrawDistance == 8192,
             "each preset carries its cached draw distance (owner, 2026-10-19)");

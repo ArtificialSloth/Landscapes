@@ -24,6 +24,8 @@ public static class PlantDetailChecks
         VineSheets(c);
         GrassUnderTrees(c);
         ForageMarkers(c);
+        FlowerSheets(c);
+        UltraPreset(c);
         FruitWoodInTheCanopy(c);
         SwitchedOffPlants(c);
         VariantsInThePalette(c);
@@ -312,6 +314,55 @@ public static class PlantDetailChecks
             "which wear no picture, so need no Plant Textures");
     }
 
+    static void FlowerSheets(Check c)
+    {
+        Block flower = Named("flower-catmint-free", EnumBlockMaterial.Plant);
+        c.Eq((byte)(LodPaletteEntry.FlagThin | LodPaletteEntry.FlagCrossed), LodBlockPolicy.FlagsFor(flower),
+            "a flower is thin past level 0 and may stand at it");
+        c.Eq(LodBlockPolicy.CrossedShapeFlower, LodBlockPolicy.CrossedShapeOf(flower), "as a sheet");
+        c.False(LodBlockPolicy.IsFlower(Named("flowerpot-burned", EnumBlockMaterial.Ceramic)), "a flower pot is not one");
+
+        LodSection ground = Fixtures.Section(
+            (LodSection.ColumnIndex(10, 12), new[] { LodSection.PackRun(0, 101, 100) }));
+        ground.Palette.Clear();
+        ground.Palette.Add(new LodPaletteEntry
+        {
+            BlockId = 1, Color = 0x2244AA, TextureSlot = 9,
+            Flags = (byte)(LodPaletteEntry.FlagThin | LodPaletteEntry.FlagCrossed),
+        });
+        MeshResult Build(byte shape) => LodMesher.BuildMesh(new MeshJob
+        {
+            Key = 0,
+            Self = SectionSnapshot.Of(ground, crossedShapes: _ => shape),
+            Neighbors = new SectionSnapshot?[4],
+            EmitTextureSlots = true,
+        });
+
+        MeshResult sheet = Build(LodBlockPolicy.CrossedShapeFlower);
+        c.Eq(1, sheet.PackedOpaqueQuadCount, "one quad, the same as the patch it replaces");
+        c.Eq(9, LodPackedQuadFormat.TextureSlot(sheet.PackedOpaqueQuads[2]), "wearing the flower's picture");
+        c.Eq(101f, (sheet.PackedOpaqueQuads[1] >> 16) * 0.25f, "a block tall");
+        c.Eq(0, Planes(Build(LodBlockPolicy.CrossedShapeAsMat)), "switched off it is the patch again");
+
+        ground.Palette[0] = ground.Palette[0] with { TextureSlot = 0 };
+        c.Eq(0, Planes(Build(LodBlockPolicy.CrossedShapeFlower)), "and with no picture to wear, so is it then");
+    }
+
+    static void UltraPreset(Check c)
+    {
+        LodVisualSettings ultra = LodVisualSettings.Ultra;
+        c.True(ultra.PlantTexturesOn && ultra.ReedShapesOn && ultra.CropShapesOn && ultra.BushTexturesOn
+                && ultra.VineShapesOn && ultra.ForageMarkersOn && ultra.FruitTreeColorsOn && ultra.FlowerSheetsOn,
+            "Ultra has every plant feature");
+        c.True(ultra.FarBiomeColours, "and the far biome colors Quality holds back");
+        c.Eq(LodLeafShape.ClustersWithTops, ultra.LeafShapeOn, "and the chosen leaf shape");
+        c.False(LodVisualSettings.Quality.FlowerSheetsOn, "flowers are Ultra's, being purely for the look");
+        c.Eq("Ultra", ultra.PresetName, "it names itself");
+        c.Eq(LodAutoThresholds.MinTargetPixels, LodPreset.Ultra.TargetPixels, "at the finest detail target");
+        c.Eq(LodPreset.Ultra, LodPreset.All[^1], "above Quality in the list");
+        c.False(LodPreset.FirstRun.Contains(LodPreset.Ultra), "and not on the first-run prompt, which has three places");
+    }
+
     static void GrassUnderTrees(Check c)
     {
         var grass = new Block
@@ -498,14 +549,14 @@ public static class PlantDetailChecks
     static void Wiring(Check c)
     {
         string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
-        foreach (string row in new[] { "plant-detail", "fruit-tree-colors", "crop-shapes", "reed-shapes", "vine-shapes", "forage-markers",
+        foreach (string row in new[] { "plant-detail", "fruit-tree-colors", "crop-shapes", "reed-shapes", "vine-shapes", "forage-markers", "flower-sheets",
             "plant-textures", "bush-textures", "leaf-shape" })
         {
             c.True(dialog.Contains($"\"{row}\"", StringComparison.Ordinal), $"the Plants tab has {row}");
         }
 
         string mod = Source("VintageHorizonsModSystem.cs");
-        foreach (string name in new[] { "PlantDetail", "ReedShapes", "VineShapes", "ForageMarkers", "CropShapes", "BushTextures",
+        foreach (string name in new[] { "PlantDetail", "ReedShapes", "VineShapes", "ForageMarkers", "FlowerSheets", "CropShapes", "BushTextures",
             "FruitTreeColors", "LeafShape" })
         {
             c.True(mod.Contains($"config.{name} = v.{name};", StringComparison.Ordinal)

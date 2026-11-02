@@ -33,7 +33,8 @@ internal readonly record struct LodVisualSettings(
     bool FruitTreeColors = true,
     LodLeafShape LeafShape = LodLeafShape.ClustersWithTops,
     bool VineShapes = true,
-    bool ForageMarkers = true)
+    bool ForageMarkers = true,
+    bool FlowerSheets = false)
 {
     // What the Plants tab's switches come to. Plant Detail is one switch over all of them and
     // keeps their positions, so turning it back on restores the player's own choices.
@@ -43,6 +44,7 @@ internal readonly record struct LodVisualSettings(
     /// <summary>A vine's sheet is its picture, so with no sheets it is a flat patch.</summary>
     public bool VineShapesOn => PlantTexturesOn && VineShapes;
     public bool ForageMarkersOn => PlantDetail && ForageMarkers;
+    public bool FlowerSheetsOn => PlantTexturesOn && FlowerSheets;
     public bool CropShapesOn => PlantDetail && CropShapes;
     public bool BushTexturesOn => PlantDetail && BushTextures;
     public bool FruitTreeColorsOn => PlantDetail && FruitTreeColors;
@@ -136,6 +138,16 @@ internal readonly record struct LodVisualSettings(
     public static LodVisualSettings Quality => Default;
 
     /// <summary>
+    /// Everything there is: what Quality holds back for its cost, and what is purely for the look
+    /// (owner, 2026-11-01: an "Ultra" above Quality for very high visual fidelity).
+    /// </summary>
+    public static LodVisualSettings Ultra => Default with
+    {
+        ClimateTintRange = FullClimateTintRange,
+        FlowerSheets = true,
+    };
+
+    /// <summary>
     /// Which named preset this matches, or null for a hand-made combination. Used only to
     /// light the matching button in the settings window.
     /// </summary>
@@ -143,6 +155,7 @@ internal readonly record struct LodVisualSettings(
         this == Performance ? "Performance"
         : this == Balanced ? "Balanced"
         : this == Quality ? "Quality"
+        : this == Ultra ? "Ultra"
         : null;
 }
 
@@ -173,7 +186,18 @@ internal sealed record LodPreset(string Code, string Name, LodVisualSettings Vis
         LodVisualSettings.Quality, 8192, true, 8192, true, LodAutoThresholds.DefaultTargetPixels,
         "Cached terrain and Farseer to 8,192 blocks at full detail, with every effect but far biome colors.");
 
-    public static readonly LodPreset[] All = { Performance, Balanced, Quality };
+    /// <summary>Everything on, at the finest detail target there is, which also carries level 0 further out.</summary>
+    public static readonly LodPreset Ultra = new("ultra", "Ultra",
+        LodVisualSettings.Ultra, 8192, true, 8192, true, LodAutoThresholds.MinTargetPixels,
+        "Everything: flower sheets, far biome colors and the finest detail, to 8,192 blocks.");
+
+    public static readonly LodPreset[] All = { Performance, Balanced, Quality, Ultra };
+
+    /// <summary>
+    /// What a new player is asked to pick from, which is about what their machine can carry. Ultra
+    /// waits in the settings window for someone who has seen the rest.
+    /// </summary>
+    public static readonly LodPreset[] FirstRun = { Performance, Balanced, Quality };
 
     /// <summary>The preset these values are, or null for a hand-made combination.</summary>
     public static LodPreset? Matching(LodVisualSettings visuals, int drawDistance,
