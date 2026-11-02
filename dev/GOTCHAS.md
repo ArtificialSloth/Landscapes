@@ -6002,3 +6002,60 @@ for a block carrying the pair, which none does. Both fell quietly back to plain 
 pair of maps to the tint table. Season pages cap at 32, and the game ships 26 maps of both kinds, so this fits, but it is a limit.
 
 **Found:** 2026-11-01, Session 121 (0.5.2-dev.17).
+
+### G326 - The mesher draws from cave culling's copy, not from the snapshot you built
+
+**Trigger:** adding a field to `SectionSnapshot`, or the same plant drawing two ways in one shot.
+
+**Trap:** `LodCaveCull` rebuilds the snapshot by hand for any section with a sealed cave, and the mesher reads `cave.Self`. The
+copy left out `PaletteCanopy`, so in those sections alone `IsBushSheet`, `IsCanopyWood` and `IsResinLog` answered false while
+the snapshot's `FlagCrossed` stayed. Bushes fell through to `AddCrossedPlanes`: one block wide, 2.75 tall, the picture tiling per
+block. Changing `AddBushSheets` did nothing for them, and dev.18 spent a build on that. Run heights in the cache were all 1.
+
+**Safer action:** a new field goes on the copy too. `PlantDetailChecks` now requires the copy to name every public field. When a
+shape on screen disagrees with the code that should draw it, measure it against the selection box and ask which path has
+those numbers.
+
+**Found:** 2026-11-01, Session 122 (0.5.2-dev.20; introduced with the field in dev.13).
+
+### G327 - One column with no top costs its whole 32-block cell, and shows as seam fog
+
+**Trigger:** anything that stops drawing a block a run below it relies on; a fog bank over open country.
+
+**Trap:** a run's top face is dropped when the run above covers it. dev.13 stopped fruit wood at the foliage, and foliage beside
+the foot trimmed the whole run, so the wood covered the soil and then drew nothing: a one-block hole to the sky.
+`LodMeshGroundCoverage` calls a cell covered only if every column has an opaque top, on purpose, so that one hole left the
+cell uncovered. Farseer stayed under it and the seam fog stood there, spreading well past the cell, so a one-block fault
+read as a weather problem.
+
+**Safer action:** what stops being drawn must stop covering. `SectionSnapshot.Of` sets `FlagCutout` on canopy wood, here and in
+neighbours' snapshots, so walls beside it keep their faces too. A fog bank in open land means a hole first: turn the fog off
+and look at the ground.
+
+**Found:** 2026-11-01, Session 122 (0.5.2-dev.22; dev.20's fix for G326 had spread it into sealed-cave sections).
+
+### G328 - A hover name is not a block, and some blocks show nothing of themselves
+
+**Trigger:** a block pale or wrong on distant terrain, with a name that has no block type.
+
+**Trap:** "Aged roofing" is a chiselled block's `blockName` in the schematics. Its material is `meta-selectablecollider`, and
+the roof on screen is `BEBehaviorSupportBeam` beams stored on it. Capture refuses Meta as a stand-in, so it stays a chisel, and
+the game's colour for it is the meta texture, 212 grey. `multiblock-monolithic-*` fillers have the shape `basic/nothing`; the
+main block draws them, and with no art they stored the placeholder. Neither looks like a colour bug in the code that asks.
+
+**Safer action:** read the schematic: `BlockEntities` are Ascii85 tree attributes, ids through `BlockCodes`. Count meta-only
+chisels there, 7,982 of 59,707. `LodBlockPolicy.HasNoLookOfItsOwn` gives both one colour across all of G322's paths.
+
+**Found:** 2026-11-01, Session 122 (0.5.2-dev.19; dating from 0.4.62).
+
+### G329 - An F12 is the biggest spike in a hitch report
+
+**Trigger:** reading frames of 300 ms or more in `client-debug.log`, or lows that fall in single minutes.
+
+**Trap:** saving a screenshot holds one frame for about 320-360 ms, in the `finfr` step. An owner comparing shots takes pairs, so a
+session's worst frames and its 0.1% lows can be entirely his own screenshots, and they look like a recurring stall.
+
+**Safer action:** before reading anything into a spike, line its time up against the files in `Pictures\Vintagestory`. A frame's
+minute start plus its `+Ns` is the clock time. Judge lows from minutes with no screenshot.
+
+**Found:** 2026-11-01, Session 122 (eight of eight on dev.19).

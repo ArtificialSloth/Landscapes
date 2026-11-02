@@ -4,9 +4,9 @@
 
 ## Start here
 
-Read [Session 121](sessions/SESSION_121.md), then [Session 120](sessions/SESSION_120.md). **0.5.2-dev.18**
-(`39d14bd`, not pushed) is the current test build: the void and the terrain pool fixed, every plant redrawn, a Plants
-tab, Forage Markers, Flower Sheets and an Ultra preset, section "What Session 121 left open" below. It declares game
+Read [Session 122](sessions/SESSION_122.md), then [Session 121](sessions/SESSION_121.md). **0.5.2-dev.22**
+(`37cf29d`, not pushed) is the current test build: Distant Lights on top of Session 121's plants, Plants tab, Forage
+Markers, Flower Sheets and Ultra preset, sections "What Session 122 left open" and "What Session 121 left open" below. It declares game
 1.22.0, compiles on 1.22.7 and is intended for 1.22.5+ (owner, no more testing below that). Player reports, with their
 evidence, are in the git-ignored `dev/PLAYER_REPORTS.md`.
 **0.5.1 is the latest release**: the owner-played 0.5.1-dev.7, promoted on 2026-10-22 with only the two
@@ -23,9 +23,26 @@ every dial on a Developer tab shown by Developer options, settled decision 64), 
 distance, Farseer, the seam fog and the automatic LOD target with Quality as the default and a first-run
 prompt (decision 63), let the vanilla floor hold only L1 (decision 35), held the seam fog for 5 s at
 login, and made Generate's Settings button unpause the game; it carries Session 116's review fixes. The
-fast tier passes (26,875 assertions at 0.5.2-dev.18). Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
+fast tier passes (26,938 assertions at 0.5.2-dev.22). Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
 is solved for him by the all-cores garbage collector, an opt-in switch on General (0.4.134, settled
 decision 54), and the game's chunk thread rests when it has nothing to do (0.4.132, settled decision 53).
+
+### What Session 122 left open
+
+- **Distant Lights' cost:** no on/off pair yet. Toggle it at one fixed spot, at night, in a lit area.
+- **Distant Lights in the presets:** on in Balanced, Quality and Ultra, off in Performance, by the agent's call. Part of the
+  preset review below.
+- **Distant Lights on NVIDIA:** the new shader code has only compiled on the owner's AMD card.
+- **Limits accepted for now:** top surfaces only, so roofs and treetops stay dark and ground under trees records nothing;
+  a wall takes the light of the ground at its foot; cached water is unlit; land gains light only as chunks load again, and a
+  `FingerprintRule` bump would force one re-sweep per world. Past 1,024 lit sections the rest stay unlit, counted and not
+  logged, and surface lava was not measured against that.
+- **Small lag spikes (set aside by the owner, 2026-11-01):** 20-50 ms frames while moving, from mixed sources. Not solved. If he
+  raises them again, line frames up against screenshots first (G329) and ask for the clock time of one he felt.
+- **Structures, seen and left:** the lantern is a solid orange cube, an awning flat grey, banners and door tops dark above
+  their first block, and collider shells dark cubes where the game draws nothing (decision 74).
+- **Pale stored colours not looked at:** `drycarcass-*` and `glass-vintage`.
+- **`flower-croton-*` and `flower-rafflesia-*`** use other picture names and stay patches with Flower Sheets on.
 
 ### What Session 121 left open
 
@@ -33,12 +50,6 @@ decision 54), and the game's chunk thread rests when it has nothing to do (0.4.1
   Flowers may go on in Quality ("may want that turned on"). Ultra's Far Biome Colors and 1-pixel target were the agent's
   choices. Ultra has not been run, so take a frame-rate reading at the pine spot, where Quality with these plants held
   255/140 on dev.13.
-- **dev.18 is unplayed:** bush height (1.25 blocks) and mushroom colours (the cap picture, no plant tint). Look at a
-  puffball and a bush against vanilla.
-- **Berries on bushes:** offered, no answer yet. Would be a palette variant like a fruit tree's, so a bush shows what it was
-  doing when last loaded. Ripe bushes are useful to the player.
-- **A ruin draws pale (seen at 18:48, not raised by him):** Aged roofing and stone came out cream against vanilla's dark wood.
-  Not investigated; start from G180-G183.
 - **Not reported on:** resin at distance, flint and ore in the open, Vine Sheets and Forage Markers off, cattails after the
   fern fix (same code, may have shifted colour), fruit tree species past plain green.
 - **Anti-aliasing from vanilla's edge:** whether leaf shimmer is gone and whether it smears while moving needs his eye. No

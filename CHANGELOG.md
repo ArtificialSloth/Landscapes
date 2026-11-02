@@ -8,6 +8,28 @@ first.
 
 ## [Unreleased]
 
+## [0.5.2-dev.22] - 2026-11-01
+
+**A test build: lights on distant ground, and several fixes found in play.** The fast checks pass with 0 failures on game
+1.22.0 and 1.22.7 (26,938 assertions). This entry covers dev.19 to dev.22.
+
+**New: Distant Lights.** Lamps, torches and lava light the ground around them on cached terrain, in their own colour,
+out to the edge of the cache. It is seen at night, and daylight all but hides it, as it does up close. Walls stop the
+light as they do in the game. It lights the top surface only, so roofs, treetops and ground under trees stay dark, and
+cached water is unlit. Land you have already explored gains its lights as its chunks load again. It works on servers
+without the mod. It has its own switch on General, and Performance turns it off.
+
+**Fog in open country and holes under fruit trees are fixed.** A fruit trunk trimmed away at low foliage left a one-block
+hole to the sky, and one hole was enough to bring the seam fog down over open land. Existing terrain is fixed at once.
+
+**Berry bushes no longer stand three blocks tall.** In sections with a sealed cave they drew as reeds. Resin marks and
+fruit trunks had the same fault in those sections.
+
+**Ruins are no longer pale.** Roofs that drew cream now draw dark wood, and so do door tops and the upper parts of
+banners. Existing terrain is fixed at once.
+
+**Lupines** now stand as their own picture when Flower Sheets is on, a block and a half tall.
+
 ## [0.5.2-dev.18] - 2026-11-01
 
 **A test build: plants drawn as what they are, and two fixes for a short cached distance.** The fast checks pass with 0

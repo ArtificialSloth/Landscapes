@@ -4,20 +4,37 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-11-01`
-**Mod version:** `0.5.2-dev.18` - a test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; commit `5b595dd`, not pushed; fast tier 26,664 assertions, 0 failures on game 1.22.0 and 1.22.7. **The latest release is 0.5.1**, the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
+**Mod version:** `0.5.2-dev.22` - a test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; commit `37cf29d`, not pushed; fast tier 26,938 assertions, 0 failures on game 1.22.0 and 1.22.7. **The latest release is 0.5.1**, the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083`, 0.5.0 `2826b2e`, 0.5.1-dev.2 `621ac7c`, 0.5.1-dev.3 `6b46739`, 0.5.1-dev.4 `102d1e1`, 0.5.1-dev.5 `939af75`, 0.5.1-dev.6 `4421cc3`, 0.5.1-dev.7 `9fa0026`, 0.5.1 `7959339`, 0.5.2-dev.1 `0fc55ef`, 0.5.2-dev.2 `ccd72be`, 0.5.2-dev.3 `07f1aed`, 0.5.2-dev.4 `8216b6f`, 0.5.2-dev.5 `21730b3`, 0.5.2-dev.6 `e2fb684`, 0.5.2-dev.7 `5b595dd`; everything through 0.5.1 pushed to `main` on `DodenGruva/Landscapes` (now public) on 2026-10-22; the history was rewritten to his GitHub no-reply address on 2026-10-13
+**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083`, 0.5.0 `2826b2e`, 0.5.1-dev.2 `621ac7c`, 0.5.1-dev.3 `6b46739`, 0.5.1-dev.4 `102d1e1`, 0.5.1-dev.5 `939af75`, 0.5.1-dev.6 `4421cc3`, 0.5.1-dev.7 `9fa0026`, 0.5.1 `7959339`, 0.5.2-dev.1 `0fc55ef`, 0.5.2-dev.2 `ccd72be`, 0.5.2-dev.3 `07f1aed`, 0.5.2-dev.4 `8216b6f`, 0.5.2-dev.5 `21730b3`, 0.5.2-dev.6 `e2fb684`, 0.5.2-dev.7 `5b595dd`, 0.5.2-dev.18 `39d14bd`, 0.5.2-dev.19 `a331c86`, 0.5.2-dev.20 `6205660`, 0.5.2-dev.21 `c59e268`, 0.5.2-dev.22 `37cf29d`; everything through 0.5.1 pushed to `main` on `DodenGruva/Landscapes` (now public) on 2026-10-22; the history was rewritten to his GitHub no-reply address on 2026-10-13
 **Target:** intended for Vintage Story 1.22.5+; declares 1.22.0, where it was briefly tested; compiled on 1.22.7; .NET 10
-**Source files:** `161` C# files under `VintageHorizons/src`
+**Source files:** `163` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
 
+**0.5.2-dev.22, Distant Lights and fixes from play (2026-11-01).** Session 122, dev.19 to dev.22. Copy-installed to both
+Mods folders, not pushed. 26,938 assertions, 0 failures on 1.22.0 and 1.22.7. Compatibility numbers stay 1/4/6, with a
+fourth append-only tail in format 4 for block light. His last session ran dev.22; shaders compiled first time on all four
+builds on his AMD card. Owner on dev.22: "Your fix for the fruit trees and fog worked. Everything looks good."
+
+- **Distant Lights (decision 73):** lamps, torches and lava light cached ground, read from the game's finished light per
+  column. Owner: "seems to work great", with a night shot of warm pools far away. Frame cost unmeasured, no on/off pair.
+  NVIDIA unproven. Land gains light only as chunks load again.
+- **Fog in open land (G327):** fruit trunks trimmed to nothing left holes to the sky, and one hole costs its 32-block cell
+  the Farseer handoff. Fixed in dev.22; the check fails without the fix. Other fog banks coming from trunks is inferred.
+- **Three-tall bushes (G326):** cave culling's section copy dropped `PaletteCanopy`. Fixed in dev.20, with a check that the
+  copy carries every field.
+- **Pale ruins (decision 74, G328):** invisible chisels and multiblock fillers draw as structure wood. Owner saw the roofs.
+- **Lupines:** wear sheets, a block and a half tall.
+- **Berries:** studied and dropped by the owner; a cluster is under a pixel at cached distance.
+- **Spikes:** frames of about 350 ms are F12 screenshots (G329). Small spikes are unexplained, set aside by the owner.
+
 **0.5.2-dev.18, plants drawn as what they are (2026-11-01).** Session 121, dev.8 to dev.18. Copy-installed to both Mods
 folders, not pushed. 26,875 assertions, 0 failures on 1.22.0 and 1.22.7. Compatibility numbers stay 1/4/6, with a third
-append-only tail in format 4 for fruit tree variants. dev.18 is unplayed; his last session was dev.17.
+append-only tail in format 4 for fruit tree variants.
 
 - **A short Cache distance:** the void is closed (dev.8, replay 4,832,311 void cells to 0, owner: looks good, G316). The
   missing ground was an arena ceiling sized from that distance (dev.11, G317); inferred from page counts, not tested by

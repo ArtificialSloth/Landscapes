@@ -279,8 +279,16 @@ palette entry per variant. Older format-4 readers stop before it and ignore it. 
 variants, an index past the palette or an oversized string refuses the blob. The blob travels unchanged over the wire.
 Terrain-run meaning does not change, so blob format and schema meaning remain 4/6.
 
+**Append-only block light within format 4 (0.5.2-dev.21, Session 122).** A fourth tail follows the variants: a `ushort`
+count of lit columns, then a `ushort` column and a `ushort` value for each (`LodBlockLight`: level in bits 0-4, hue in 5-10,
+saturation from 11 up, the game's own numbers). A section with none spends two bytes. Older format-4 readers stop before
+it and ignore it. A row with no tail reads as no light, and a count past the column total or a column past the grid
+refuses the blob. It travels unchanged over the wire. Terrain-run meaning does not change, so blob format and schema
+meaning remain 4/6.
+
 **Packed quads are not persisted, so these need no bump (dev.13-dev.15).** Word 2's slot field gives bits 20-23 to a
 leaf's buried shade, and a record with no footprint on faces 6 or 7 is a marker. Meshes are rebuilt on every load.
+`LodGpuSectionRecord`'s reserved float at offset 28 became the light tile in dev.21; it is rebuilt every frame.
 
 ## Database schema-meaning ledger
 

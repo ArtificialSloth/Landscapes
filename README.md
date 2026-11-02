@@ -89,8 +89,9 @@ The first time you join a world, a window asks you to pick a preset; Quality is 
 - **General** shows the LOD distances as a bar you can drag (hover the title for what each handle
   does), the **Automatic (Recommended)** switch, and the visual features in two columns, each with a
   rough cost (Low, Moderate, High). Most of what distant terrain costs is how much is drawn, so the
-  draw distance and the preset matter more than any single feature. **Load terrain while paused** and **Developer options**
-  sit beside Defaults. Defaults restores Quality.
+  draw distance and the preset matter more than any single feature. **Distant Lights** lets lamps, torches and lava light
+  the ground on cached terrain at night; land you have already explored gains it as its chunks load again.
+  **Load terrain while paused** and **Developer options** sit beside Defaults. Defaults restores Quality.
 - **Plants** holds Plant Detail, one switch over every plant feature, and a switch for each, off being its
   cheaper form: Leaf Shape (Leaf Clusters with Tops by default), Fruit Tree Colors, Crop Shapes, Reed and Fern
   Shapes, Vine Sheets, Forage Markers (mushrooms, flint, ore and resin), Flower Sheets, Plant Textures and Berry Bush

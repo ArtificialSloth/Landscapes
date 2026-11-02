@@ -801,7 +801,20 @@ live until the exact replacement persistence revision is acknowledged.
     them. Bushes are two crossed planes and a flat one, wearing their sparse sheets layered into one picture
     (`ComposePlant`), a block and a quarter tall by the screen rather than the model (G323). Fruit trees carry their
     species and state as a palette variant, so a tree shows what it did when last loaded, and their wood stops at the
-    canopy in one brown. Colour comes from the art the plant shows: a mushroom's cap, a fern's season from its model.
+    canopy in one brown, covering nothing there (G327). Colour comes from the art the plant shows: a mushroom's cap, a
+    fern's season from its model. Berries are not drawn: a cluster is under a pixel at cached distance (owner, 2026-11-01).
+73. **Distant light is the game's finished light, copied per column** (owner, 2026-11-01; 0.5.2-dev.21). Capture reads the cell
+    above the rain-map top, observed captures only, so walls stop it and an open torch counts though it is never a run.
+    `LodSection.BlockLight` is replaced whole. Mips keep the brightest of four, so a torch outlasts its level. Lit sections
+    hold a 64x64 tile in one texture, one texel per column at any level, named by the section record's float at offset 28;
+    an unlit section pays one comparison. A tile is written when a section is sent to be meshed, since it belongs to a place.
+    The shader mixes as `applyLight` does, so daylight all but hides it. Terrain programs only: cached water is unlit. The
+    General switch Distant Lights gives the tiles up. Rejected: lamp dots (about 2 pixels at 1,000 blocks), working light out
+    from `LightPositions` (it would pass through walls), quads split by light (packed quads have no spare bits).
+74. **What shows nothing of its own draws as structure wood** (2026-11-01; 0.5.2-dev.19). A chisel still a chisel after capture has
+    no visible material, and a multiblock filler has no art. Both take one colour, the game's rotten beam, through all of
+    G322's paths, so stored caches correct on load. This narrows decision 36's neutral grey for chisels. Collider shells stay
+    as dark cubes so huge gears keep a shape, though the game draws nothing there (G328).
 
 ## Concurrency invariants
 
