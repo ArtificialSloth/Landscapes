@@ -164,7 +164,7 @@ internal static class VintageHorizonsConfigLayout
 /// rather than guessed - with the all-cores collector beside them. Plants holds one switch over
 /// every plant feature and one for each of them. Generate controls the
 /// server-owned, explicitly confirmed savegame generator and remains read-only when the player
-/// lacks permission. Developer holds every tuning dial, in three groups picked from a drop-down,
+/// lacks permission. Developer holds every tuning dial, in four groups picked from sub-tabs,
 /// and shows only while General's Developer options switch is on.
 /// </para>
 /// <para>
@@ -218,7 +218,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     const int AntiAliasingGroup = 0;
     const int FarseerLookGroup = 1;
     const int SeamFogGroup = 2;
-    static readonly string[] DeveloperGroupNames = { "Anti-aliasing", "Farseer look", "Seam fog" };
+    const int SeamBandGroup = 3;
+    static readonly string[] DeveloperGroupNames = { "Anti-aliasing", "Farseer look", "Seam fog", "Seam band" };
 
     // The anti-aliasing rows: where each slider starts, how wide it is, and the row pitch.
     const double DialSliderX = VintageHorizonsConfigLayout.DialSliderX;
@@ -378,12 +379,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// true. Water used to say "Varies", which told a player nothing (owner, 2026-10-19); it is
     /// Low, with when it costs more in its tip.
     /// </summary>
-    readonly record struct VisualRow(
+    internal readonly record struct VisualRow(
         string Key, string Title, string Tip, string Cost,
         Func<LodVisualSettings, bool> Read,
         Func<LodVisualSettings, bool, LodVisualSettings> Write);
 
-    static readonly VisualRow[] Rows =
+    internal static readonly VisualRow[] Rows =
     {
         new("seam-blending", "Vanilla and LOD Seam Blending",
             "Blends the vanilla terrain with LOD terrain using vanilla textures and speckle "
@@ -460,7 +461,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     };
 
     /// <summary>The Plants tab's switches. Each off draws the cheaper form; see each one's tip.</summary>
-    static readonly VisualRow[] PlantRows =
+    internal static readonly VisualRow[] PlantRows =
     {
         new("fruit-tree-colors", "Fruit Tree Colors",
             "Draws each fruit tree in its own species' colors: in leaf, in blossom, in fruit or bare. "
@@ -523,7 +524,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// <summary>The leaf shapes, in the order the drop-down shows them.</summary>
     static readonly LodLeafShape[] LeafShapes = Enum.GetValues<LodLeafShape>();
 
-    static string LeafShapeName(LodLeafShape shape) => shape switch
+    internal static string LeafShapeName(LodLeafShape shape) => shape switch
     {
         LodLeafShape.Planes => "Crossed Planes",
         LodLeafShape.PlanesWithTops => "Crossed Planes with Tops",
@@ -560,13 +561,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     static readonly string[] PresetNames =
         LodPreset.All.Select(preset => preset.Name).Append("Custom").ToArray();
 
-    readonly record struct SilhouetteRow(
+    internal readonly record struct SilhouetteRow(
         string Key, string Title, string Tip, int Min, int Max, int Step,
         Func<LodSilhouetteSettings, int> Read,
         Func<LodSilhouetteSettings, int, LodSilhouetteSettings> Write,
         Func<int, string> Label);
 
-    static readonly SilhouetteRow[] SilhouetteRows =
+    internal static readonly SilhouetteRow[] SilhouetteRows =
     {
         new("sil-sky", "Sky-height tint", "How strongly height above or below sea level changes the sampled sky colour.",
             0, 100, 1, s => (int)MathF.Round(s.SkyTint * 10),
@@ -1163,7 +1164,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     /// <summary>
     /// Every tuning dial, one group at a time from the sub-tabs at the top of the page:
-    /// anti-aliasing, Farseer's look and reach, or the seam fog (a drop-down until 0.4.170, owner).
+    /// anti-aliasing, Farseer's look and reach, the seam fog (a drop-down until 0.4.170, owner), or
+    /// the seam band's reach (0.5.2-dev.28, owner).
     /// They show their effect as they move; Defaults resets only the group on show.
     /// </summary>
     void ComposeDeveloper(GuiComposer composer)
@@ -1179,7 +1181,47 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(78), Width - 2 * Margin, 22));
 
         if (developerGroup == AntiAliasingGroup) ComposeAntiAliasingDials(composer);
+        else if (developerGroup == SeamBandGroup) ComposeSeamBandDials(composer);
         else ComposeSilhouetteDials(composer, developerGroup == SeamFogGroup);
+    }
+
+    const string BandReachTip =
+        "How far the seam band reaches past vanilla's edge, as a share of level 0: the strip where "
+        + "distant ground wears the game's textures and speckle and blends into vanilla terrain. "
+        + "Further hides the change of look further out and costs more. The presets set it: "
+        + "Balanced 33%, Quality 66%, Ultra 100%, which is as far as the band's textures go. Has no "
+        + "effect while the band is off. Save keeps it. (.dlband reach)";
+
+    /// <summary>
+    /// The seam band's reach (owner, 2026-11-02: a slider, on the Developer tab only). Like the
+    /// detail target it is a preset's number, so it waits for Save rather than showing at once.
+    /// </summary>
+    void ComposeSeamBandDials(GuiComposer composer)
+    {
+        double y = VintageHorizonsConfigLayout.DialRowsY;
+        composer.AddStaticText("Band reach", CairoFont.WhiteSmallishText(),
+            ElementBounds.Fixed(Margin, Y(y + 3), DialSliderX - Margin - 12, 26));
+        composer.AddHoverText(BandReachTip, CairoFont.WhiteSmallText(), 380,
+            ElementBounds.Fixed(Margin, Y(y - 2), DialSliderX - Margin - 12, 34), "tip-band-reach");
+        composer.AddSlider(OnBandReachChanged,
+            ElementBounds.Fixed(DialSliderX, Y(y), DialSliderWidth, 30), "band-reach");
+        composer.AddDynamicText(BandReachLabel(), CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(DialSliderX + DialSliderWidth + 15, Y(y + 4), 110, 22),
+            "band-reach-label");
+    }
+
+    /// <summary>The band reach in the slider's whole percent; the presets' shares land on its steps.</summary>
+    int BandReachPercent() => (int)MathF.Round(pendingVisuals.BandReach * 100);
+
+    string BandReachLabel() => $"{BandReachPercent()}% of L0";
+
+    bool OnBandReachChanged(int percent)
+    {
+        pendingVisuals = pendingVisuals with { BandReach = Math.Clamp(percent, 0, 100) / 100f };
+        if (ShowingGroup(SeamBandGroup))
+            activeComposer!.GetDynamicText("band-reach-label")
+                .SetNewText(BandReachLabel(), false, true, false);
+        return true;
     }
 
     void ComposeAntiAliasingDials(GuiComposer composer)
@@ -1292,6 +1334,15 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             target.ShowTextWhenResting = false;
             target.OnSliderTooltip = value => $"{value / 100f:0.00} px";
             activeComposer.GetSwitch("taa-show").On = pendingShowTaa;
+            return;
+        }
+
+        if (developerGroup == SeamBandGroup)
+        {
+            GuiElementSlider reach = activeComposer.GetSlider("band-reach");
+            reach.SetValues(BandReachPercent(), 0, 100, 1);
+            reach.ShowTextWhenResting = false;
+            reach.OnSliderTooltip = value => $"{value}% of L0";
             return;
         }
 
@@ -1961,6 +2012,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 taa.Preview(pendingTaa, pendingShowTaa);
                 pendingTargetPixels = LodPreset.Quality.TargetPixels;
                 RefreshAutomaticValues();
+            }
+            else if (developerGroup == SeamBandGroup)
+            {
+                pendingVisuals = pendingVisuals with { BandReach = LodPreset.Quality.Visuals.BandReach };
             }
             else
             {

@@ -3940,6 +3940,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             });
 
         RegisterSilhouetteCommand();
+        RegisterSetCommand();
 
         // Named apart from ".dlwhy" on purpose. This one answers "why is that coarse",
         // the other answers "why is that missing", and registering both under one name
