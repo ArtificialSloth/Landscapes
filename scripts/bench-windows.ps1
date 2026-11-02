@@ -81,7 +81,21 @@ param(
     [ValidateRange(1, 100000)]
     [int]$ReadinessMaxWorkAgeFrames = 900,
     [switch]$ReuseServer,
-    [switch]$Watch
+    [switch]$Watch,
+    # Which build to deploy. Debug stays the default so earlier results remain comparable;
+    # a cost benchmark wants Release, since Debug inflates every CPU-side number.
+    [ValidateSet('Debug', 'Release')]
+    [string]$Configuration = 'Debug',
+    # Other mods to load beside this one, as zip files or mod folders, so a run can match a
+    # player's own set. Copied into the sandbox; the sources are only read.
+    [string[]]$ExtraMods,
+    # Start from the player's own graphics and gameplay numbers (clientsettings.json's int,
+    # float and bool settings). Mod paths, disabled mods, key bindings and window positions
+    # stay the sandbox's, and the frame cap and vsync are still forced off below.
+    [switch]$PlayerSettings,
+    # Overrides the game's view distance in blocks, applied after -PlayerSettings.
+    [ValidateRange(32, 1536)]
+    [int]$ViewDistance
 )
 
 $ErrorActionPreference = 'Stop'
@@ -140,7 +154,7 @@ function Assert-FreshAssembly {
     if ($newest.LastWriteTimeUtc -gt $artifact.LastWriteTimeUtc) {
         $relativeInput = [IO.Path]::GetRelativePath($repoRoot, $newest.FullName)
         $relativeArtifact = [IO.Path]::GetRelativePath($repoRoot, $artifact.FullName)
-        throw "Benchmark assembly is stale: $relativeInput is newer than $relativeArtifact. Build Debug before running."
+        throw "Benchmark assembly is stale: $relativeInput is newer than $relativeArtifact. Build $Configuration before running."
     }
 }
 
@@ -908,8 +922,8 @@ $requiredInputs = @(
     (Join-Path $game 'Vintagestory.dll'),
     (Join-Path $game 'VintagestoryServer.dll'),
     $routePath,
-    (Join-Path $repoRoot 'VintageHorizons/bin/Debug/net10.0/Mods/dodenslandscapes'),
-    (Join-Path $repoRoot 'bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/dodenslandscapesbench')
+    (Join-Path $repoRoot "VintageHorizons/bin/$Configuration/net10.0/Mods/dodenslandscapes"),
+    (Join-Path $repoRoot "bench/VintageHorizonsBench/bin/$Configuration/net10.0/Mods/dodenslandscapesbench")
 )
 if ($serverConfigPath) { $requiredInputs += $serverConfigPath }
 foreach ($required in $requiredInputs) {
@@ -974,11 +988,11 @@ if ($null -ne $seedRecords.serverCache) {
         (Join-Path $serverCacheDir ([string]$seedRecords.serverCache.name))
 }
 Assert-FreshAssembly `
-    (Join-Path $repoRoot 'VintageHorizons/bin/Debug/net10.0/Mods/dodenslandscapes/DodensLandscapes.dll') `
+    (Join-Path $repoRoot "VintageHorizons/bin/$Configuration/net10.0/Mods/dodenslandscapes/DodensLandscapes.dll") `
     (Join-Path $repoRoot 'VintageHorizons/VintageHorizons.csproj') `
     (Join-Path $repoRoot 'VintageHorizons/src')
 Assert-FreshAssembly `
-    (Join-Path $repoRoot 'bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/dodenslandscapesbench/VintageHorizonsBench.dll') `
+    (Join-Path $repoRoot "bench/VintageHorizonsBench/bin/$Configuration/net10.0/Mods/dodenslandscapesbench/VintageHorizonsBench.dll") `
     (Join-Path $repoRoot 'bench/VintageHorizonsBench/VintageHorizonsBench.csproj') `
     (Join-Path $repoRoot 'bench/VintageHorizonsBench/src')
 $prelaunchCacheFiles = @(Get-ClientCacheFiles)
@@ -1030,10 +1044,19 @@ if (-not $IntegratedSingleplayer -and $null -eq $server) {
     New-Item -ItemType Directory -Path $serverMods | Out-Null
 }
 
-Copy-Item -LiteralPath (Join-Path $repoRoot 'VintageHorizons/bin/Debug/net10.0/Mods/dodenslandscapes') -Destination $clientMods -Recurse
-Copy-Item -LiteralPath (Join-Path $repoRoot 'bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/dodenslandscapesbench') -Destination $clientMods -Recurse
+Copy-Item -LiteralPath (Join-Path $repoRoot "VintageHorizons/bin/$Configuration/net10.0/Mods/dodenslandscapes") -Destination $clientMods -Recurse
+Copy-Item -LiteralPath (Join-Path $repoRoot "bench/VintageHorizonsBench/bin/$Configuration/net10.0/Mods/dodenslandscapesbench") -Destination $clientMods -Recurse
 if (-not $IntegratedSingleplayer -and $null -eq $server -and $ServerMod) {
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'VintageHorizons/bin/Debug/net10.0/Mods/dodenslandscapes') -Destination $serverMods -Recurse
+    Copy-Item -LiteralPath (Join-Path $repoRoot "VintageHorizons/bin/$Configuration/net10.0/Mods/dodenslandscapes") -Destination $serverMods -Recurse
+}
+foreach ($extra in @($ExtraMods | Where-Object { $_ })) {
+    $extraPath = [IO.Path]::GetFullPath($extra)
+    if (-not (Test-Path -LiteralPath $extraPath)) { throw "Extra mod not found: $extraPath" }
+    Copy-Item -LiteralPath $extraPath -Destination $clientMods -Recurse
+    # A dedicated server needs the content mods too, or the save will not load as it was made.
+    if (-not $IntegratedSingleplayer -and $null -eq $server) {
+        Copy-Item -LiteralPath $extraPath -Destination $serverMods -Recurse
+    }
 }
 if ($serverConfigPath) {
     $serverConfigDir = if ($IntegratedSingleplayer) {
@@ -1064,7 +1087,19 @@ if (Test-Path -LiteralPath $realSettingsPath) {
             $settings.stringSettings[$key] = $realSettings.stringSettings[$key]
         }
     }
+    if ($PlayerSettings) {
+        foreach ($group in @('intSettings', 'floatSettings', 'boolSettings')) {
+            if (-not $realSettings.ContainsKey($group)) { continue }
+            if (-not $settings.ContainsKey($group)) { $settings[$group] = @{} }
+            foreach ($entry in $realSettings[$group].GetEnumerator()) {
+                $settings[$group][$entry.Key] = $entry.Value
+            }
+        }
+    }
+} elseif ($PlayerSettings) {
+    throw "-PlayerSettings needs the player's settings at $realSettingsPath"
 }
+if ($ViewDistance) { $settings.intSettings.viewDistance = $ViewDistance }
 $settings.intSettings.vsyncMode = if ($Watch) { 1 } else { 0 }
 $settings.intSettings.maxFps = if ($Watch) { 60 } else { 0 }
 $settings | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settingsPath -Encoding utf8
@@ -1322,6 +1357,10 @@ try {
         statsEnabled = -not [bool]$DisableStats
         gpuStatsEnabled = [bool]$GpuStats
         autoCommand = if ($AutoCommand) { $AutoCommand } else { $null }
+        configuration = $Configuration
+        extraMods = @($ExtraMods | Where-Object { $_ } | ForEach-Object { Split-Path -Leaf $_ })
+        playerSettings = [bool]$PlayerSettings
+        viewDistance = $settings.intSettings.viewDistance
         gpuRenderer = if ($GpuRenderer) { $GpuRenderer } else { $null }
         gpuArena = if ($GpuArena) { $GpuArena } else { $null }
         gpuArenaMb = if ($GpuArenaMb) { $GpuArenaMb } else { $null }
