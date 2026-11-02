@@ -44,6 +44,7 @@ layout(location = 3) out vec4 outGPosition;
 #include fogandlight.fsh
 #include skycolor.fsh
 #include underwatereffects.fsh
+#include lodwatermurk.fsh
 #include lodsilhouettecolor.fsh
 
 bool vhSilhouetteReplaced(ivec2 cell)
@@ -94,7 +95,7 @@ void main()
     vec3 worldPosInSky = normalize(worldPos.xyz) * 250.0;
     getSkyColorAt(worldPosInSky, sunPosition, 0.25, clamp(dayLight, 0.0, 1.0), horizonFog,
         skyColor, skyGlow);
-    float murkiness = max(0.0, getSkyMurkiness() - 14.0 * fogDensityIn);
+    float murkiness = max(0.0, vhSkyMurkiness() - 14.0 * fogDensityIn);
     skyColor.rgb = applyUnderwaterEffects(skyColor.rgb, murkiness);
     skyGlow.y *= clamp((dayLight - 0.05) * 2.0 - 50.0 * murkiness, 0.0, 1.0);
 

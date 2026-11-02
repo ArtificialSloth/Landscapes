@@ -130,6 +130,25 @@ public partial class LodTerrainRenderer
         }
     }
 
+    /// <summary>
+    /// This frame's majority pass drew the full-resolution image and the vanilla-only snapshot
+    /// beside it, so this mod's own readers can see exactly where water is (lodwatermurk.fsh).
+    /// </summary>
+    bool ExactWaterDepthReady => WaterDepthMajority && waterDepthCompletedThisFrame
+        && waterJunctionSnapshotReady && waterFullDepthTexture != 0 && waterVanillaDepthTexture != 0;
+
+    /// <summary>For every program that includes lodwatermurk.fsh, before it draws.</summary>
+    void BindExactWaterDepth(IShaderProgram target)
+    {
+        bool exact = ExactWaterDepthReady;
+        target.Uniform("vhExactWaterDepth", exact ? 1 : 0);
+        if (!exact) return;
+        target.BindTexture2D("vanillaWaterDepth", waterVanillaDepthTexture,
+            LodTerrainSamplerLayout.VanillaWaterDepth);
+        target.BindTexture2D("vhCachedWaterDepth", waterFullDepthTexture,
+            LodTerrainSamplerLayout.CachedWaterDepth);
+    }
+
     void DisposeWaterFullDepthResources()
     {
         if (waterFullDepthFramebuffer != 0) GL.DeleteFramebuffer(waterFullDepthFramebuffer);

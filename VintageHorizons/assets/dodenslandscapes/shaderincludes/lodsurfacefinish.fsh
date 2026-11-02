@@ -148,7 +148,7 @@
     float groundFog = fogAmount;
     if (!translucent && waterGroundMurk == 1)
     {
-        groundMurk = getUnderwaterMurkiness();
+        groundMurk = vhUnderwaterMurkiness();
         groundFog = clamp(fogAmount - 50.0 * groundMurk, 0.0, 1.0);
     }
     terraColor = applyFog(terraColor, groundFog);
@@ -186,7 +186,7 @@
         // so feeding it here would leave a faint glow burning all night.
         float skyLight = lightSkyDayLight == 1 ? skyDayLight : dayLight;
         getSkyColorAt(worldPosInSky, sunPosition, 0.25, clamp(skyLight, 0.0, 1.0), horizonFog, skyColor, skyGlow);
-        float murkiness = max(0.0, getSkyMurkiness() - 14.0 * fogDensityIn);
+        float murkiness = max(0.0, vhSkyMurkiness() - 14.0 * fogDensityIn);
         skyColor.rgb = applyUnderwaterEffects(skyColor.rgb, murkiness);
         skyGlow.y *= clamp((dayLight - 0.05) * 2.0 - 50.0 * murkiness, 0.0, 1.0);
 

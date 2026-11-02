@@ -7261,6 +7261,7 @@ public partial class LodTerrainRenderer : IRenderer
         if (seasonColumnTexture != null)
             target.BindTexture2D("seasonColumn", seasonColumnTexture.TextureId,
                 SeasonColumnUnit);
+        BindExactWaterDepth(target);
     }
 
     void DrawWaterMeshes()

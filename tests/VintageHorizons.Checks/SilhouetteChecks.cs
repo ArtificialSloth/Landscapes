@@ -1927,8 +1927,10 @@ public static class SilhouetteChecks
             LodTerrainSamplerLayout.Configure(program);
             c.Eq(program.textureLocations.Count, program.textureLocations.Values.Distinct().Count(),
                 "the silhouette program has no sampler aliases after layout configuration");
-            c.True(program.textureLocations.Values.All(unit => unit < 16),
-                "the silhouette program stays within the baseline fragment-unit limit");
+            // A unit number is held to the combined limit, 48 at the least on OpenGL 3.3.
+            // The 16 a fragment stage is promised counts samplers it actually reads.
+            c.True(program.textureLocations.Values.All(unit => unit < 48),
+                "the silhouette program stays within the baseline combined-unit limit");
             foreach (var binding in LodTerrainSamplerLayout.Bindings)
                 if (program.textureLocations.TryGetValue(binding.Name, out int unit))
                     c.Eq(binding.Unit, unit, "the silhouette program binds " + binding.Name + " where the terrain programs do");

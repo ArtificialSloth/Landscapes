@@ -107,5 +107,30 @@ public static class WaterDepthPassChecks
             "the junction test reads the quarter snapshot at the right texel when drawing at full size");
         c.True(pass.Contains("waterCaptureDirectory != null && !majority"),
             "the capture's mask-only reference is not drawn into the quarter image ahead of a majority resolve");
+
+        // Exact readers (0.5.2-dev.26): even resolved, the quarter image leaves a rim at every
+        // shore, and cached ground under it also loses its fog.
+        string shaders = Path.Combine(root, "VintageHorizons", "assets", "dodenslandscapes");
+        string murk = File.ReadAllText(Path.Combine(shaders, "shaderincludes", "lodwatermurk.fsh"));
+        string finish = File.ReadAllText(Path.Combine(shaders, "shaderincludes", "lodsurfacefinish.fsh"));
+        string farseer = File.ReadAllText(Path.Combine(shaders, "shaders", "lodsilhouette.fsh"));
+        string silhouettePass = File.ReadAllText(Path.Combine(root, "VintageHorizons", "src", "Render", "LodTerrainRenderer.Silhouette.cs"));
+        c.True(murk.Contains("return min(vhVanillaWaterDepthAt(pixel), cached);")
+            && murk.Contains("texelFetch(vhCachedWaterDepth,"),
+            "exact readers take cached water from the full-resolution image and vanilla's from its own snapshot");
+        c.True(murk.Contains("if (vhExactWaterDepth == 0) return getUnderwaterMurkiness();")
+            && murk.Contains("if (vhExactWaterDepth == 0) return getSkyMurkiness();"),
+            "without this frame's images the engine's own helpers answer, as before");
+        c.True(!finish.Contains("getUnderwaterMurkiness()") && !finish.Contains("getSkyMurkiness()")
+            && !farseer.Contains("getSkyMurkiness()"),
+            "cached ground, its fade to the sky and Farseer all read the exact picture");
+        c.True(full.Contains("WaterDepthMajority && waterDepthCompletedThisFrame")
+            && full.Contains("&& waterJunctionSnapshotReady"),
+            "the exact picture is used only when this frame drew both images");
+        c.True(renderer.Contains("BindExactWaterDepth(target);")
+            && silhouettePass.Contains("BindExactWaterDepth(p);"),
+            "every program that reads it binds it before drawing");
+        c.True(LodTerrainSamplerLayout.Bindings.Contains(("vhCachedWaterDepth", LodTerrainSamplerLayout.CachedWaterDepth)),
+            "the full-resolution image has a reserved unit the engine cannot hand to a table");
     }
 }

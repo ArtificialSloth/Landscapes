@@ -443,10 +443,8 @@ layout(location = 3) out vec4 outGPosition;
 #include underwatereffects.fsh
 #include lodsilhouettecolor.fsh
 
-// Immutable vanilla-only depth, never the attached liquid-depth destination. The depth
-// and OIT surface passes both read the same snapshot so a clear boundary pixel cannot get
-// cached murk coverage without the cached surface that belongs over it.
-uniform sampler2D vanillaWaterDepth;
+// Declares vanillaWaterDepth, the vanilla-only snapshot the junction test below reads too.
+#include lodwatermurk.fsh
 uniform int waterJunctionDepth;
 // Takes a pixel of the target being drawn to its texel in that snapshot: 1 when drawing the
 // quarter image itself, about 0.25 when the majority pass draws at full resolution.

@@ -160,9 +160,11 @@ public static class StaticAssetChecks
             && vanillaMurk.Contains("cameraUnderwater > 0.7"),
             "the shared helper uses screen-space water depth and the engine's submerged-camera guard");
         c.True(fragment.Contains("#include underwatereffects.fsh")
-            && fragment.Contains("groundMurk = getUnderwaterMurkiness();"),
-            "cached ground calls the same engine helper instead of approximating optical depth");
-        c.True(fragment.Contains("if (!translucent && waterGroundMurk == 1)\n    {\n        groundMurk = getUnderwaterMurkiness();"),
+            && fragment.Contains("groundMurk = vhUnderwaterMurkiness();")
+            && fragment.Contains("if (vhExactWaterDepth == 0) return getUnderwaterMurkiness();")
+            && fragment.Contains("return clamp(max(0.0, fdepth - ldepth) * 350.0, 0.0, 1.0);"),
+            "cached ground uses the engine helper's own formula instead of approximating optical depth");
+        c.True(fragment.Contains("if (!translucent && waterGroundMurk == 1)\n    {\n        groundMurk = vhUnderwaterMurkiness();"),
             "the extra depth reads apply to ground alone and remain independently switchable");
         c.True(fragment.Contains("groundFog = clamp(fogAmount - 50.0 * groundMurk, 0.0, 1.0);"),
             "cached ground uses vanilla's fog-removal coefficient");
@@ -3011,7 +3013,8 @@ public static class StaticAssetChecks
             && water.Contains("bright * grain / 10.0 * foamAmount", StringComparison.Ordinal),
             "shore foam scales by the light, as vanilla's rgba does, and the accepted 1.6 stays on the grain");
         c.True(water.Contains("uniform float vhZFar;", StringComparison.Ordinal)
-            && !water.Contains("linearDepth(gl_FragCoord.z)", StringComparison.Ordinal),
+            && water.Contains("float ownDepth = vhLinearDepth(gl_FragCoord.z);", StringComparison.Ordinal)
+            && !water.Contains("ownDepth = linearDepth(", StringComparison.Ordinal),
             "shore foam takes its planes under its own names and leaves the accepted murk's alone");
         c.True(rend.Contains("float waterShoreFoam = 1f;", StringComparison.Ordinal)
             && mod.Contains("shore <0-2>", StringComparison.Ordinal),

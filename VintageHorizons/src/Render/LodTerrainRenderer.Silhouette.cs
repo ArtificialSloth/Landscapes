@@ -362,6 +362,7 @@ public partial class LodTerrainRenderer
         p.Uniform("silhouetteLightLevelBias", SilhouetteLightLevelBias);
         p.Uniform("silhouetteFadeBias", SilhouetteFadeBias);
         p.Uniform("silhouetteSeaLevel", capi.World.SeaLevel);
+        BindExactWaterDepth(p);
 
         foreach (SilhouetteFrameDraw draw in silhouetteFrameDraws)
         {
