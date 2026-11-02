@@ -1345,24 +1345,37 @@ public static class LodMesher
         return false;
     }
 
-    /// <summary>How wide and tall the game draws a bush, whatever its size: two blocks.</summary>
+    /// <summary>How wide the game draws a bush, whatever its size.</summary>
     const int BushSheetBlocks = 2;
 
     /// <summary>
+    /// How tall a bush stands. The model's planes say two blocks, but a bush in the game stands
+    /// about this tall beside its selection box (owner's screenshots, 2026-11-01), and at two it
+    /// floated as a crown over bare ground. A plane this short wears the top of the picture.
+    /// </summary>
+    const float BushSheetHeight = 1.25f;
+
+    /// <summary>
     /// A bush as the game builds one, from planes of leaves: two crossing and one lying through
-    /// them, three faces against a cube's five. It takes a leaf's shade, and its picture is one
-    /// across each plane. Packed coordinates are whole blocks and end at the section's edge, so
-    /// it stands up to half a block off centre, which nothing at this distance shows.
+    /// them, three faces against a cube's five, in a leaf's shade. Packed coordinates are whole
+    /// blocks and end at the section's edge, so it stands up to half a block off centre, which
+    /// nothing at this distance shows.
     /// </summary>
     static void AddBushSheets(MeshJob job, Buffers buf, SectionSnapshot self, int pid, int cx, int cz, ulong run)
     {
         int x = Math.Min(cx, LodSection.GridSize - BushSheetBlocks);
         int z = Math.Min(cz, LodSection.GridSize - BushSheetBlocks);
         int y0 = LodSection.RunYBottom(run);
-        int shade = AddLeafPlanes(job, buf, self, pid, x, z, BushSheetBlocks, y0, y0 + BushSheetBlocks);
-        AddFlatPlane(buf, self.WallColor(pid, true),
-            AlphaFor(self.PaletteFlags[pid], self.PaletteTintSlots[pid]),
-            x, y0 + 1.25f, z, x + BushSheetBlocks, z + BushSheetBlocks, self.PaletteTextureSlots[pid], shade);
+        int color = self.WallColor(pid, true);
+        byte alpha = AlphaFor(self.PaletteFlags[pid], self.PaletteTintSlots[pid]);
+        int textureSlot = self.PaletteTextureSlots[pid];
+        int shade = LeafBuried(job, self, x, z, BushSheetBlocks, y0, y0 + 1);
+        float x1 = x + BushSheetBlocks, z1 = z + BushSheetBlocks, y1 = y0 + BushSheetHeight;
+        AddQuad(buf, LodPackedFace.DiagonalRising, 1, color, alpha,
+            x, y0, z, x1, y0, z1, x1, y1, z1, x, y1, z, textureSlot, shade);
+        AddQuad(buf, LodPackedFace.DiagonalFalling, 1, color, alpha,
+            x, y0, z1, x1, y0, z, x1, y1, z, x, y1, z1, textureSlot, shade);
+        AddFlatPlane(buf, color, alpha, x, y0 + 0.75f, z, x1, z1, textureSlot, shade);
     }
 
     /// <summary>How far to each side a stack of leaves looks for more of the tree.</summary>

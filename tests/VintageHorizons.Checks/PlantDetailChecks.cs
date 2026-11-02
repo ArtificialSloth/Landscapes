@@ -394,6 +394,13 @@ public static class PlantDetailChecks
             c.True(((geometry >> 7) & 127u) <= LodSection.GridSize, "and stays inside its section");
         }
         c.Eq(2, widest, "two blocks across, as the game draws it");
+        float tallest = 0f;
+        for (int q = 0; q < sheets.PackedOpaqueQuadCount; q++)
+        {
+            if (LodPackedQuadFormat.FaceOf(sheets.PackedOpaqueQuads, q) < LodPackedFace.DiagonalRising) continue;
+            tallest = Math.Max(tallest, (sheets.PackedOpaqueQuads[q * LodPackedQuadFormat.WordsPerQuad + 1] >> 16) * 0.25f);
+        }
+        c.Eq(101.25f, tallest, "and a block and a quarter tall from the ground, not floating at two");
         c.Eq(7, LodPackedQuadFormat.TextureSlot(sheets.PackedOpaqueQuads[2]), "in its own picture");
 
         section.Palette[0] = section.Palette[0] with { TextureSlot = 0 };
@@ -650,6 +657,14 @@ public static class PlantDetailChecks
             "a season named only inside a model reaches the tint table, so small ferns turn as the game's do");
         c.True(mod.Contains("TryMushroomCapColor(block, out int capColor)", StringComparison.Ordinal),
             "a mushroom takes the colour of its cap");
+        c.Eq("cap", LodBlockPolicy.MushroomCapTexture(new[] { "cap", "stipe", "pores" }), "a model may name it");
+        c.Eq("puffball", LodBlockPolicy.MushroomCapTexture(new[] { "puffball" }), "or use the mushroom's own name");
+        c.Eq("kingbolete", LodBlockPolicy.MushroomCapTexture(new[] { "pores", "kingbolete" }), "beside its underside");
+        c.Eq("honeymushroom", LodBlockPolicy.MushroomCapTexture(new[] { "gills", "honeymushroom" }), "whichever comes first");
+        c.Eq(null, LodBlockPolicy.MushroomCapTexture(new[] { "pores" }), "and with nothing else it answers nothing");
+        c.True(Source("Render", "LodTintRegistry.cs").Contains("block is not Vintagestory.GameContent.BlockMushroom",
+                StringComparison.Ordinal),
+            "a mushroom takes no plant tint, which turned white ones orange");
 
         string renderer = Source("Render", "LodTerrainRenderer.cs");
         c.True(renderer.Contains("LodWorld.KeyLevel(best) == 0 ? leafPlanes : null", StringComparison.Ordinal),

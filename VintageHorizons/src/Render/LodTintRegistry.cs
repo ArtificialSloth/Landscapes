@@ -345,10 +345,12 @@ public class LodTintRegistry
     /// <summary>
     /// Whether a plant naming no colour map borrows that tint. A crop does not: its art is full
     /// colour and the game draws it untinted, so green on top turned rye orange and fennel
-    /// nearly black (owner screenshots, 2026-10-31).
+    /// nearly black (owner screenshots, 2026-10-31). Nor does a mushroom, for the same reason: a
+    /// white puffball came out orange (owner screenshots, 2026-11-01).
     /// </summary>
     bool TakesPlantFallback(Block block) => block.BlockMaterial == EnumBlockMaterial.Plant
-        && PlantTintFallback != null && block is not Vintagestory.GameContent.BlockCrop;
+        && PlantTintFallback != null && block is not Vintagestory.GameContent.BlockCrop
+        && block is not Vintagestory.GameContent.BlockMushroom;
 
     /// <summary>
     /// Slot for this block, registering a new one if this (map pair, untinted share,

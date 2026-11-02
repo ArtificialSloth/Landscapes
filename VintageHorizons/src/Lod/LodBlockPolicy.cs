@@ -191,8 +191,21 @@ public static class LodBlockPolicy
         return table;
     }
 
-    /// <summary>The name a mushroom's model gives the picture on its cap.</summary>
-    public const string MushroomCapTexture = "cap";
+    /// <summary>
+    /// Which of a mushroom's pictures shows on its cap. Some models name one "cap"; most give it the
+    /// mushroom's own name beside the underside's. Null with nothing to choose from.
+    /// </summary>
+    public static string? MushroomCapTexture(IEnumerable<string> names)
+    {
+        string? found = null;
+        foreach (string name in names)
+        {
+            if (name == "cap") return name;
+            if (name is "pores" or "gills" or "stipe" or "mane") continue;
+            found ??= name;
+        }
+        return found;
+    }
 
     public static bool IsVineShape(byte shape) =>
         shape is >= CrossedShapeVineNorth and <= CrossedShapeVineWest;

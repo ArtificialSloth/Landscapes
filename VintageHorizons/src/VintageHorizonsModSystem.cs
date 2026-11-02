@@ -1773,8 +1773,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         {
             Shape? shape = LoadBlockShape(block.Shape.Base);
             if (shape?.Elements == null || shape.Textures == null
-                || !shape.Textures.TryGetValue(LodBlockPolicy.MushroomCapTexture, out AssetLocation? cap)) return false;
-            TexturePixels? pixels = ReadTexturePixels(cap.Clone()
+                || LodBlockPolicy.MushroomCapTexture(shape.Textures.Keys) is not { } capName) return false;
+            TexturePixels? pixels = ReadTexturePixels(shape.Textures[capName].Clone()
                 .WithPathPrefixOnce("textures/").WithPathAppendixOnce(".png"));
             if (pixels == null) return false;
 
@@ -1793,7 +1793,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                         for (int i = 0; i < element.FacesResolved.Length && i < 5; i++)
                         {
                             ShapeElementFace? face = element.FacesResolved[i];
-                            if (face is not { Enabled: true } || face.Texture != LodBlockPolicy.MushroomCapTexture) continue;
+                            if (face is not { Enabled: true } || face.Texture != capName) continue;
                             double area = i switch { 0 or 2 => dx * dy, 1 or 3 => dz * dy, _ => dx * dz };
                             TextureMean mean = RegionMean(pixels.Argb, pixels.Width, pixels.Height, face.Uv,
                                 shape.TextureWidth, shape.TextureHeight);
