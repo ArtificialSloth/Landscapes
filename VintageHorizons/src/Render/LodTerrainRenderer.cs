@@ -467,13 +467,31 @@ public partial class LodTerrainRenderer : IRenderer
     public bool BandEnabled { get; set; } = true;
 
     /// <summary>
-    /// How far past the seam the correction reaches, in blocks. Absolute rather than scaled
-    /// by view distance: the step being hidden is a fixed number of colour levels wherever
-    /// the seam happens to sit, so the number of steps needed does not change when it moves.
-    /// About twenty 8-block steps for a measured step of ~21 levels, which puts each step
-    /// near the eye's threshold on a flat field.
+    /// How far past the seam the correction reaches, in blocks. Follows
+    /// <see cref="BandReachShare"/> of level 0 beyond vanilla's edge (owner, 2026-11-02), which
+    /// replaced a fixed 128: level 0 is where the band's block textures live, so the band now
+    /// grows with it. Setting it pins a width for the session, as `.dlband width` did before.
     /// </summary>
-    public float BandWidthBlocks { get; set; } = BandDefaultWidthBlocks;
+    public float BandWidthBlocks
+    {
+        get => bandWidthPinnedBlocks ?? bandWidthDerivedBlocks;
+        set => bandWidthPinnedBlocks = value;
+    }
+
+    float? bandWidthPinnedBlocks;
+    float bandWidthDerivedBlocks = BandDefaultWidthBlocks;
+
+    public bool BandWidthPinned => bandWidthPinnedBlocks.HasValue;
+    public void UnpinBandWidth() => bandWidthPinnedBlocks = null;
+
+    /// <summary>The share of level 0 beyond vanilla's edge the band covers, 0 to 1.</summary>
+    public float BandReachShare
+    {
+        get => bandReachShare;
+        set => bandReachShare = Math.Clamp(float.IsFinite(value) ? value : LodVisualSettings.QualityBandReach, 0f, 1f);
+    }
+
+    float bandReachShare = LodVisualSettings.QualityBandReach;
 
     /// <summary>
     /// Blocks per visible step in the ramp. Never finer than the stored 8-block cell, and
@@ -553,8 +571,10 @@ public partial class LodTerrainRenderer : IRenderer
     /// seasonal row (0.3.187, confined to level 0 in 0.3.193), so a single chunk holds real
     /// colour variety before this term is added at all - and against that, the same amount
     /// reads as texture again. The number is unchanged; what it sits on is not.
+    ///
+    /// 0.1 on the owner's call, 2026-11-02, after playing with it there.
     /// </summary>
-    public float BandSpeckle { get; set; } = 0.15f;
+    public float BandSpeckle { get; set; } = 0.1f;
 
     /// <summary>
     /// How close to the camera cached terrain stops being drawn, in blocks, while the mask is

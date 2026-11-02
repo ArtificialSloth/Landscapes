@@ -35,8 +35,18 @@ internal readonly record struct LodVisualSettings(
     bool VineShapes = true,
     bool ForageMarkers = true,
     bool FlowerSheets = false,
-    bool DistantLights = true)
+    bool DistantLights = true,
+    float BandReach = LodVisualSettings.QualityBandReach)
 {
+    /// <summary>
+    /// How far the seam band reaches, as a share of level 0 beyond vanilla's edge: Balanced a
+    /// third, Quality two thirds, Ultra all of it (owner, 2026-11-02). Level 0 is where the band's
+    /// block textures live, so all of it is as far as the band can go.
+    /// </summary>
+    public const float BalancedBandReach = 0.33f;
+    public const float QualityBandReach = 0.66f;
+    public const float UltraBandReach = 1f;
+
     // What the Plants tab's switches come to. Plant Detail is one switch over all of them and
     // keeps their positions, so turning it back on restores the player's own choices.
     public bool PlantTexturesOn => PlantDetail && PlantTextures;
@@ -119,7 +129,8 @@ internal readonly record struct LodVisualSettings(
         DistantAntiAliasing: false,
         PlantTextures: false,
         PlantDetail: false,
-        DistantLights: false);
+        DistantLights: false,
+        BandReach: BalancedBandReach);
 
     /// <summary>
     /// Quality without seam blending's block textures and speckle, the one Moderate-cost
@@ -137,7 +148,8 @@ internal readonly record struct LodVisualSettings(
         HalfBlockTerrain: true,
         WaterEffects: true,
         DistantAntiAliasing: true,
-        PlantTextures: true);
+        PlantTextures: true,
+        BandReach: BalancedBandReach);
 
     /// <summary>Every default visual feature, while keeping costly far biome colour off.</summary>
     public static LodVisualSettings Quality => Default;
@@ -150,6 +162,7 @@ internal readonly record struct LodVisualSettings(
     {
         ClimateTintRange = FullClimateTintRange,
         FlowerSheets = true,
+        BandReach = UltraBandReach,
     };
 
     /// <summary>

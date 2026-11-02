@@ -433,6 +433,30 @@ public static class PlantDetailChecks
         c.Eq(LodAutoThresholds.MinTargetPixels, LodPreset.Ultra.TargetPixels, "at the finest detail target");
         c.Eq(LodPreset.Ultra, LodPreset.All[^1], "above Quality in the list");
         c.False(LodPreset.FirstRun.Contains(LodPreset.Ultra), "and not on the first-run prompt, which has three places");
+
+        // Seam band reach (owner, 2026-11-02): all of level 0 on Ultra, 66% on Quality, 33% on Balanced.
+        c.Eq(1f, LodVisualSettings.Ultra.BandReach, "Ultra's band reaches the end of level 0");
+        c.Eq(0.66f, LodVisualSettings.Quality.BandReach, "Quality's two thirds of it");
+        c.Eq(0.33f, LodVisualSettings.Balanced.BandReach, "Balanced's a third");
+        c.Eq(LodVisualSettings.QualityBandReach, new VintageHorizonsConfig().BandReach,
+            "a config file without the key loads as Quality's reach");
+        c.Eq(935f - 256f, LodTerrainRenderer.BandWidthFor(1f, 935, 256, 0),
+            "full reach is level 0 beyond vanilla's edge");
+        c.True(Math.Abs(LodTerrainRenderer.BandWidthFor(0.66f, 935, 256, 0) - 0.66f * 679f) < 0.01f,
+            "a share of it is that share");
+        c.Eq(8f, LodTerrainRenderer.BandWidthFor(1f, 200, 256, 0),
+            "level 0 inside vanilla's edge leaves one cell, never a negative band");
+        c.Eq((LodTerrainRenderer.BandMaxCapacityCells / 4 - 1) * 8f - 40f,
+            LodTerrainRenderer.BandWidthFor(1f, 4000, 32, 40),
+            "and no reach outruns the seam field, where the ramp would be cut to a hard line");
+        string taa = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot,
+            "VintageHorizons/src/Render/LodTerrainRenderer.Taa.cs"));
+        c.True(taa.Contains("lodTargetPixels, (int)Math.Ceiling(view + LodSection.SectionBlocks))[0]"),
+            "level 0 is measured before the band stretches it, so the two cannot feed each other");
+        string renderer = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot,
+            "VintageHorizons/src/Render/LodTerrainRenderer.cs"));
+        c.True(renderer.Contains("public float BandSpeckle { get; set; } = 0.1f;"),
+            "speckle is 0.1 by default (owner, 2026-11-02)");
     }
 
     static void GrassUnderTrees(Check c)

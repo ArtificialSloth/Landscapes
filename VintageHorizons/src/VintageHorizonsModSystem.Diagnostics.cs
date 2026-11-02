@@ -148,7 +148,9 @@ public partial class VintageHorizonsModSystem
         Heading(lines, ".VHBAND");
         Entry(lines, ".dlband", renderer.BandEnabled);
         Entry(lines, ".dlband shape", renderer.BandDebugPaint);
-        Entry(lines, ".dlband width", Number(renderer.BandWidthBlocks, "0") + " blocks");
+        Entry(lines, ".dlband width", Number(renderer.BandWidthBlocks, "0") + " blocks"
+            + (renderer.BandWidthPinned ? " (pinned)" : ""));
+        Entry(lines, ".dlband reach", Number(renderer.BandReachShare, "0.00") + " of level 0");
         Entry(lines, ".dlband step", Number(renderer.BandStepBlocks, "0") + " blocks");
         Entry(lines, ".dlband inner", renderer.BandInnerDerived
             ? "auto (" + Number(renderer.BandInnerBlocks, "0") + " blocks)"

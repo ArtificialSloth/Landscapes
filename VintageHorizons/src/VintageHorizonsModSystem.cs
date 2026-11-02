@@ -90,6 +90,12 @@ public class VintageHorizonsConfig
     /// </summary>
     public float ClimateTintRange = LodVisualSettings.CloseClimateTintRange;
 
+    /// <summary>
+    /// How far the seam band reaches, as a share of level 0 beyond vanilla's edge. Set by the
+    /// presets; `.dlband reach` sets it by hand. See <see cref="LodVisualSettings.BandReach"/>.
+    /// </summary>
+    public float BandReach = LodVisualSettings.QualityBandReach;
+
     public bool LeafSeasonColours = true;
     public bool HalfBlockTerrain = true;
     public bool WaterEffects = true;
@@ -4344,7 +4350,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         // the next build disagree with what it says it does.
         capi.ChatCommands.Create("dlband")
             .WithDescription("Blend the seam between game terrain and distant terrain. "
-                + "No argument reports the settings. on | off | shape | map | speckle | width | step | inner | strength | darken | saturate | sink | overlap.")
+                + "No argument reports the settings. on | off | shape | map | speckle | width | reach | step | inner | strength | darken | saturate | sink | overlap.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
                       capi.ChatCommands.Parsers.OptionalWord("value"),
                       capi.ChatCommands.Parsers.OptionalWord("green"),
@@ -4391,14 +4397,35 @@ public partial class VintageHorizonsModSystem : ModSystem
                             $"[Landscapes] shape view {(renderer.BandDebugPaint ? "on" : "off")}.");
 
                     case "width":
+                        if (value is "auto")
+                        {
+                            renderer.UnpinBandWidth();
+                            return TextCommandResult.Success(
+                                $"[Landscapes] band width follows the reach again: {renderer.BandWidthBlocks:0} blocks.");
+                        }
                         if (!TryParseSetting(value, out float width))
                             return TextCommandResult.Success(
-                                $"[Landscapes] band width {renderer.BandWidthBlocks:0} blocks. "
-                                + "Give a number of blocks. Wider hides a bigger colour step but "
-                                + "covers more ground.");
+                                $"[Landscapes] band width {renderer.BandWidthBlocks:0} blocks"
+                                + (renderer.BandWidthPinned ? " (pinned)" : $" ({renderer.BandReachShare:0.00} of level 0)")
+                                + ". Give a number of blocks to pin it for this session, or 'auto' to "
+                                + "follow the reach. Wider hides a bigger colour step but covers more ground.");
                         renderer.BandWidthBlocks = GameMath.Clamp(width, 8f, 2048f);
                         return TextCommandResult.Success(
-                            $"[Landscapes] band width {renderer.BandWidthBlocks:0} blocks.");
+                            $"[Landscapes] band width pinned at {renderer.BandWidthBlocks:0} blocks.");
+
+                    case "reach":
+                        if (!TryParseSetting(value, out float reach))
+                            return TextCommandResult.Success(
+                                $"[Landscapes] reach {renderer.BandReachShare:0.00} of level 0 beyond the seam, "
+                                + $"{renderer.BandWidthBlocks:0} blocks now. 0 to 1: Balanced 0.33, Quality 0.66, "
+                                + "Ultra 1, which is as far as the band's block textures go. Saved.");
+                        renderer.BandReachShare = Math.Clamp(reach, 0f, 1f);
+                        renderer.UnpinBandWidth();
+                        config.BandReach = renderer.BandReachShare;
+                        SaveConfig();
+                        return TextCommandResult.Success(
+                            $"[Landscapes] reach {renderer.BandReachShare:0.00} of level 0 (saved); the band "
+                            + "settles on its new width within a frame.");
 
                     case "step":
                         if (!TryParseSetting(value, out float step))
@@ -4501,7 +4528,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
                     default:
                         return TextCommandResult.Success(
-                            "[Landscapes] on | off | shape | speckle | width | step | inner | strength | darken | saturate | sink | overlap.");
+                            "[Landscapes] on | off | shape | speckle | width | reach | step | inner | strength | darken | saturate | sink | overlap.");
                 }
             });
 
@@ -5852,7 +5879,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             VineShapes: config.VineShapes,
             ForageMarkers: config.ForageMarkers,
             FlowerSheets: config.FlowerSheets,
-            DistantLights: renderer.DistantLightsEnabled);
+            DistantLights: renderer.DistantLightsEnabled,
+            BandReach: renderer.BandReachShare);
 
     /// <summary>What the config file says, for startup and for when no renderer exists.</summary>
     LodVisualSettings ConfiguredVisualSettings() => new(
@@ -5875,7 +5903,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         VineShapes: config.VineShapes,
         ForageMarkers: config.ForageMarkers,
         FlowerSheets: config.FlowerSheets,
-        DistantLights: config.DistantLights);
+        DistantLights: config.DistantLights,
+        BandReach: Math.Clamp(config.BandReach, 0f, 1f));
 
     /// <summary>What the config file says for the anti-aliasing dials, for when no renderer exists.</summary>
     LodTaaDials ConfiguredTaaDials() => new(config.TaaReachPixels, config.TaaNudge,
@@ -5910,6 +5939,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.LeafShape = v.LeafShape;
         config.ClimateTint = v.ClimateTint;
         config.ClimateTintRange = v.ClimateTintRange;
+        config.BandReach = v.BandReach;
         config.LeafSeasonColours = v.LeafSeasonColours;
         config.HalfBlockTerrain = v.HalfBlockTerrain;
         config.WaterEffects = v.WaterEffects;
@@ -5954,6 +5984,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         blockTextures.BushTexturesVisible = v.BushTexturesOn;
         ApplyBlendPipeline(v.BlendPipeline);
         renderer.BandEnabled = v.SeamBand;
+        renderer.BandReachShare = v.BandReach;
         renderer.BlockTexturesEnabled = v.BlockTextures;
         renderer.ClimateFieldTint = v.ClimateTint;
         renderer.ClimateFadeBlocks = Math.Max(0f, v.ClimateTintRange);

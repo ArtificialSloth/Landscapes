@@ -804,6 +804,7 @@ public partial class LodTerrainRenderer
             screenYScale = projection[5];
         }
 
+        UpdateBandWidth();
         if (!autoLodThresholds)
         {
             autoAppliedThresholds = null;
@@ -831,6 +832,39 @@ public partial class LodTerrainRenderer
         AutoThresholdSummary = DescribeAutoValues(wanted);
         capi.Logger.Detail("[Landscapes] automatic LOD thresholds applied: {0}",
             AutoThresholdSummary);
+    }
+
+    (int, float, float, float, float, bool, double) bandWidthKey;
+
+    /// <summary>
+    /// The band's width as its reach share of level 0 beyond vanilla's edge. Level 0 is taken
+    /// before the band stretches it (<see cref="AutoThresholdFloorBlocks"/>): measured after,
+    /// a full-reach band would push level 0 out by its own width every time it was worked out.
+    /// Recomputed only when an input moves, so it allocates nothing on an ordinary frame.
+    /// </summary>
+    void UpdateBandWidth()
+    {
+        float view = ApprovedViewDistance();
+        var key = (screenRenderHeight, screenYScale, view, lodTargetPixels, bandReachShare,
+            autoLodThresholds, autoLodThresholds ? 0 : LodWorld.DetailDistance);
+        if (key == bandWidthKey) return;
+        bandWidthKey = key;
+        double levelZero = autoLodThresholds && screenRenderHeight > 0
+            ? LodAutoThresholds.Compute(LodScreenScale.BlockScale(screenRenderHeight, screenYScale),
+                lodTargetPixels, (int)Math.Ceiling(view + LodSection.SectionBlocks))[0]
+            : LodWorld.DetailDistance;
+        bandWidthDerivedBlocks = BandWidthFor(bandReachShare, levelZero, view, BandInnerBlocks);
+    }
+
+    /// <summary>The share of level 0 between vanilla's edge and level 1, within what the seam field holds.</summary>
+    internal static float BandWidthFor(float share, double levelZero, float view, float inner)
+    {
+        // The seam field reaches at most a quarter of its capacity past vanilla, one cell of it slack.
+        float limit = (BandMaxCapacityCells / 4 - 1) * VanillaSeamDistanceField.CellBlocks
+            - Math.Max(0f, inner);
+        float width = Math.Clamp(share, 0f, 1f) * Math.Max(0f, (float)levelZero - view);
+        return Math.Clamp(width, VanillaSeamDistanceField.CellBlocks,
+            Math.Max(VanillaSeamDistanceField.CellBlocks, limit));
     }
 
     /// <summary>
