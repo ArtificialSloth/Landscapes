@@ -262,6 +262,10 @@ uniform vec2 blockAtlasSize;
 uniform sampler2D blockTable;
 
 uniform int blockTextureEnabled;
+
+// Lit sections' block light (LodBlockLightTiles), and whether there is any to read.
+uniform sampler2D blockLightTiles;
+uniform int blockLightEnabled;
 uniform float blockTextureStrength;
 uniform float blockTextureMipLimit;
 

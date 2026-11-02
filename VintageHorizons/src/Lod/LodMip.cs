@@ -17,6 +17,7 @@ public sealed class MipJob
     public required ulong[] SnowStateObservedBits;
     public required ulong[] SnowCoveredBits;
     public required LodPaletteEntry[] Palette;
+    public ushort[]? BlockLight;
 }
 
 /// <summary>
@@ -32,6 +33,9 @@ public sealed class MipResult
     public required ulong[] SnowStateObservedBits;
     public required ulong[] SnowCoveredBits;
     public required LodPaletteEntry[] ChildPalette;
+
+    /// <summary>The quadrant's light by parent column, null with none.</summary>
+    public ushort[]? BlockLight;
     public bool Failed;
 }
 
@@ -77,6 +81,7 @@ public static class LodMip
             SnowStateObservedBits = (ulong[])child.SnowStateObservedBits.Clone(),
             SnowCoveredBits = (ulong[])child.SnowCoveredBits.Clone(),
             Palette = child.Palette.ToArray(),
+            BlockLight = child.BlockLight,
         };
     }
 
@@ -92,6 +97,7 @@ public static class LodMip
         var batch = new ulong[]?[gs * gs];
         var snowStateObservedBits = new ulong[LodSection.SnowStateObservedWordCount];
         var snowCoveredBits = new ulong[LodSection.SnowStateObservedWordCount];
+        ushort[]? blockLight = null;
 
         // The four child columns are described by where they sit in the child's own run
         // array, rather than copied out of it. Copying cost four allocations per parent
@@ -108,12 +114,20 @@ public static class LodMip
                 int captured = 0;
                 int snowCovered = 0;
                 bool allCapturedSnowStatesObserved = true;
+                ushort brightest = 0;
                 for (int dz = 0; dz < 2; dz++)
                 {
                     for (int dx = 0; dx < 2; dx++)
                     {
                         int ci = LodSection.ColumnIndex(px * 2 + dx, pz * 2 + dz);
                         if (!job.Captured[ci]) continue;
+                        // The brightest of the four, not their mean: one torch is one column,
+                        // and it should still be there when a column is a neighbourhood.
+                        if (job.BlockLight != null
+                            && LodBlockLight.Level(job.BlockLight[ci]) > LodBlockLight.Level(brightest))
+                        {
+                            brightest = job.BlockLight[ci];
+                        }
                         if ((job.SnowStateObservedBits[ci >> 6] & (1UL << (ci & 63))) == 0)
                             allCapturedSnowStatesObserved = false;
                         else if ((job.SnowCoveredBits[ci >> 6] & (1UL << (ci & 63))) != 0)
@@ -128,6 +142,8 @@ public static class LodMip
                 int parentCol = LodSection.ColumnIndex(
                     job.Qx * half + px, job.Qz * half + pz);
                 batch[parentCol] = MergeColumns(job.Runs, colStart, colEnd, captured);
+                if (brightest != 0)
+                    (blockLight ??= new ushort[gs * gs])[parentCol] = brightest;
                 if (allCapturedSnowStatesObserved)
                 {
                     snowStateObservedBits[parentCol >> 6] |= 1UL << (parentCol & 63);
@@ -149,6 +165,7 @@ public static class LodMip
             SnowStateObservedBits = snowStateObservedBits,
             SnowCoveredBits = snowCoveredBits,
             ChildPalette = job.Palette,
+            BlockLight = blockLight,
         };
     }
 
@@ -235,7 +252,9 @@ public static class LodMip
             }
         }
 
+        bool lightChanged = parent.SetLight(batch, result.BlockLight);
         int contentEdges = parent.ReplaceColumns(batch, out contentChanged);
+        contentChanged |= lightChanged;
         return contentEdges | snowStateEdges;
     }
 

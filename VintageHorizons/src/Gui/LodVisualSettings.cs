@@ -34,7 +34,8 @@ internal readonly record struct LodVisualSettings(
     LodLeafShape LeafShape = LodLeafShape.ClustersWithTops,
     bool VineShapes = true,
     bool ForageMarkers = true,
-    bool FlowerSheets = false)
+    bool FlowerSheets = false,
+    bool DistantLights = true)
 {
     // What the Plants tab's switches come to. Plant Detail is one switch over all of them and
     // keeps their positions, so turning it back on restores the player's own choices.
@@ -117,7 +118,8 @@ internal readonly record struct LodVisualSettings(
         WaterEffects: false,
         DistantAntiAliasing: false,
         PlantTextures: false,
-        PlantDetail: false);
+        PlantDetail: false,
+        DistantLights: false);
 
     /// <summary>
     /// Quality without seam blending's block textures and speckle, the one Moderate-cost

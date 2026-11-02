@@ -1307,7 +1307,11 @@ public class LodPipeline
         // runs into resident RAM without dirtying the L0 mesh, the persistent row or the mip
         // obligation. MarkChanged already does the right thing with EdgeNone: it advances the
         // revisions and skips all four neighbours. See G138.
+        // Light moves no block, so it joins the same answer: the mesh keeps its geometry, and the
+        // row, the mip and the section's light tile all still have to hear about it.
+        bool lightChanged = result.SnowStateObserved && section.SetLight(batch, result.BlockLight);
         int touchedEdges = section.ReplaceColumns(batch, out bool contentChanged);
+        contentChanged |= lightChanged;
         if (contentChanged)
         {
             World.MarkChanged(result.SectionKey, touchedEdges);

@@ -1097,6 +1097,27 @@ public class LodStore : SQLiteDBConnection
                 w.Write((ushort)i);
                 w.Write(variant);
             }
+
+            // Fourth append-compatible format-4 tail: the columns block light reaches, as
+            // column and value pairs. Nearly every section has none and spends two bytes.
+            int lit = 0;
+            if (snap.BlockLight is { } light)
+            {
+                foreach (ushort value in light)
+                {
+                    if (value != 0) lit++;
+                }
+            }
+            w.Write((ushort)lit);
+            if (lit > 0)
+            {
+                for (int col = 0; col < snap.BlockLight!.Length; col++)
+                {
+                    if (snap.BlockLight[col] == 0) continue;
+                    w.Write((ushort)col);
+                    w.Write(snap.BlockLight[col]);
+                }
+            }
         }
 
         return ms.ToArray();
@@ -1253,6 +1274,26 @@ public class LodStore : SQLiteDBConnection
                     e.Variant = Encoding.UTF8.GetString(variantUtf8);
                     section.Palette[index] = e;
                     if (deferredCodes == null) Reclassify(section, index, e.BlockId);
+                }
+            }
+
+            // Absent on a row written before block light: its ground stays unlit until the
+            // column is next captured.
+            byte[] litCount = r.ReadBytes(sizeof(ushort));
+            if (litCount.Length == sizeof(ushort))
+            {
+                int lit = BinaryPrimitives.ReadUInt16LittleEndian(litCount);
+                if (lit > total) return null;
+                if (lit > 0)
+                {
+                    var light = new ushort[total];
+                    for (int i = 0; i < lit; i++)
+                    {
+                        int col = r.ReadUInt16();
+                        if (col >= total) return null;
+                        light[col] = r.ReadUInt16();
+                    }
+                    section.BlockLight = light;
                 }
             }
 

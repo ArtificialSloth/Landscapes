@@ -20,7 +20,8 @@ internal readonly record struct LodGpuSectionFacts(
     int MaskOriginZ,
     byte OpenEdges,
     float BoxMinY = 0f,
-    float BoxMaxY = 0f)
+    float BoxMaxY = 0f,
+    float LightTile = 0f)
 {
     public const byte OpenMinusX = 1 << 0;
     public const byte OpenPlusX = 1 << 1;
@@ -40,7 +41,7 @@ internal static class LodGpuSectionRecord
     public const int SectionSizeOffset = 12;    // float, blocks along one edge
     public const int NoiseOriginOffset = 16;    // vec2 stable world x/z
     public const int ColumnBlocksOffset = 24;   // float
-    public const int ReservedFloatOffset = 28;  // float, keeps the vec4 whole
+    public const int LightTileOffset = 28;      // float, LodBlockLightTiles.TileNumber
     public const int MaskOriginOffset = 32;     // ivec2 whole vanilla chunks
     public const int ReservedIntOffset = 40;    // ivec2, keeps the vec4 whole
     public const int OpenEdgesOffset = 48;      // vec4 in -X, +X, -Z, +Z order
@@ -57,7 +58,7 @@ internal static class LodGpuSectionRecord
         Write(destination, NoiseOriginOffset, facts.NoiseOriginX);
         Write(destination, NoiseOriginOffset + 4, facts.NoiseOriginZ);
         Write(destination, ColumnBlocksOffset, facts.ColumnBlocks);
-        Write(destination, ReservedFloatOffset, 0f);
+        Write(destination, LightTileOffset, facts.LightTile);
         BinaryPrimitives.WriteInt32LittleEndian(
             destination[MaskOriginOffset..], facts.MaskOriginX);
         BinaryPrimitives.WriteInt32LittleEndian(

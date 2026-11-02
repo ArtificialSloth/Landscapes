@@ -112,7 +112,7 @@ internal static class VintageHorizonsConfigLayout
 
     /// <summary>The rows' switches, sized to their 28-unit pitch.</summary>
     internal const double RowSwitchSize = 26;
-    internal const int VisualRowCount = 7;
+    internal const int VisualRowCount = 8;
 
     /// <summary>
     /// The feature rows run down the left column under Farseer first, then the right column under
@@ -449,6 +449,14 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             "Low",
             v => v.DistantAntiAliasing,
             (v, on) => v with { DistantAntiAliasing = on }),
+
+        new("distant-lights", "Distant Lights",
+            "Lamps, torches and lava light the ground around them on cached terrain, seen most at "
+            + "night. Land already cached gains its lights when you next load it. Off, cached terrain "
+            + "is lit by the sky alone.",
+            "Low",
+            v => v.DistantLights,
+            (v, on) => v with { DistantLights = on }),
     };
 
     /// <summary>The Plants tab's switches. Each off draws the cheaper form; see each one's tip.</summary>

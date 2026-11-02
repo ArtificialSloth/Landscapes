@@ -66,6 +66,7 @@ public static class Program
         ("pure", "far distance", FarDistanceChecks.Run),
         ("pure", "crops and bushes", CropBushChecks.Run),
         ("pure", "plant detail", PlantDetailChecks.Run),
+        ("pure", "distant lights", BlockLightChecks.Run),
         ("pure", "benchmark routes", BenchRouteChecks.Run),
         ("pure", "mesher", MesherChecks.Run),
         ("pure", "server config", ConfigChecks.Run),

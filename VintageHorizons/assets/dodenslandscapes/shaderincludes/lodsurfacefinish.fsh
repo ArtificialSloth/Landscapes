@@ -15,6 +15,27 @@
     if (lightDayBoost == 1 && band != 1)
         light *= 1.0 + max(0.0, shadowIntensity * 2.0 - 1.66) / 1.5;
 
+#ifdef VH_BLOCK_LIGHT
+    // Lamps, torches and lava, mixed in as applyLight in fogandlight.vsh mixes them: colour by
+    // brightness, with the sun's term counted twice, then the brighter of the two as the level.
+    // So daylight all but hides it, as it does on vanilla ground. Texels are column centres, and
+    // the half texel at each edge stops the filter reading the next section's tile.
+    if (blockLightEnabled == 1 && vhLightTile.x >= 0.0)
+    {
+        vec3 vhBlockLight = 1.05 * textureLod(blockLightTiles,
+            (vhLightTile + clamp(vhLightTexel, vec2(0.5), vec2(63.5))) / 2048.0, 0.0).rgb;
+        float vhBlockLevel = (vhBlockLight.r + vhBlockLight.g + vhBlockLight.b) / 3.0;
+        if (vhBlockLevel > 0.0)
+        {
+            float vhSunLevel = (light.r + light.g + light.b) / 3.0;
+            vec3 vhMixed = (2.0 * vhSunLevel * light + vhBlockLevel * vhBlockLight)
+                / (2.0 * vhSunLevel + vhBlockLevel);
+            light = vhMixed * max(vhSunLevel, vhBlockLevel)
+                / max((vhMixed.r + vhMixed.g + vhMixed.b) / 3.0, 0.001);
+        }
+    }
+#endif
+
     vec4 terraColor = vec4(albedo, outAlpha);
     terraColor.rgb *= shade * light;
 

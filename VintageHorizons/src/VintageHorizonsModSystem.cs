@@ -77,6 +77,7 @@ public class VintageHorizonsConfig
     public bool CropShapes = true;
     public bool BushTextures = true;
     public bool FruitTreeColors = true;
+    public bool DistantLights = true;
 
     /// <summary>What level 0 draws leaves as. Cubes until the owner has chosen among the trial's shapes.</summary>
     public LodLeafShape LeafShape = LodLeafShape.ClustersWithTops;
@@ -439,6 +440,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             ForageMarkersEnabled = startupVisuals.ForageMarkersOn,
             FlowerSheetsEnabled = startupVisuals.FlowerSheetsOn,
             BushSheetsEnabled = startupVisuals.BushSheetsOn,
+            DistantLightsEnabled = startupVisuals.DistantLights,
             CropShapesEnabled = startupVisuals.CropShapesOn,
             LeafShape = startupVisuals.LeafShapeOn,
             BlendPipelineEnabled = config.BlendPipeline,
@@ -5817,7 +5819,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             LeafShape: config.LeafShape,
             VineShapes: config.VineShapes,
             ForageMarkers: config.ForageMarkers,
-            FlowerSheets: config.FlowerSheets);
+            FlowerSheets: config.FlowerSheets,
+            DistantLights: renderer.DistantLightsEnabled);
 
     /// <summary>What the config file says, for startup and for when no renderer exists.</summary>
     LodVisualSettings ConfiguredVisualSettings() => new(
@@ -5839,7 +5842,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         LeafShape: config.LeafShape,
         VineShapes: config.VineShapes,
         ForageMarkers: config.ForageMarkers,
-        FlowerSheets: config.FlowerSheets);
+        FlowerSheets: config.FlowerSheets,
+        DistantLights: config.DistantLights);
 
     /// <summary>What the config file says for the anti-aliasing dials, for when no renderer exists.</summary>
     LodTaaDials ConfiguredTaaDials() => new(config.TaaReachPixels, config.TaaNudge,
@@ -5867,6 +5871,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.VineShapes = v.VineShapes;
         config.ForageMarkers = v.ForageMarkers;
         config.FlowerSheets = v.FlowerSheets;
+        config.DistantLights = v.DistantLights;
         config.CropShapes = v.CropShapes;
         config.BushTextures = v.BushTextures;
         config.FruitTreeColors = v.FruitTreeColors;
@@ -5900,6 +5905,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             || renderer.ForageMarkersEnabled != v.ForageMarkersOn
             || renderer.FlowerSheetsEnabled != v.FlowerSheetsOn
             || renderer.BushSheetsEnabled != v.BushSheetsOn
+            || renderer.DistantLightsEnabled != v.DistantLights
             || renderer.CropShapesEnabled != v.CropShapesOn
             || renderer.LeafShape != v.LeafShapeOn
             || fruitChanged;
@@ -5910,6 +5916,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         renderer.ForageMarkersEnabled = v.ForageMarkersOn;
         renderer.FlowerSheetsEnabled = v.FlowerSheetsOn;
         renderer.BushSheetsEnabled = v.BushSheetsOn;
+        renderer.DistantLightsEnabled = v.DistantLights;
         renderer.CropShapesEnabled = v.CropShapesOn;
         renderer.LeafShape = v.LeafShapeOn;
         blockTextures.BushTexturesVisible = v.BushTexturesOn;

@@ -61,6 +61,7 @@ public static class Fixtures
             Captured = (bool[])section.Captured.Clone(),
             SnowStateObservedBits = (ulong[])section.SnowStateObservedBits.Clone(),
             SnowCoveredBits = (ulong[])section.SnowCoveredBits.Clone(),
+            BlockLight = section.BlockLight,
         };
     }
 

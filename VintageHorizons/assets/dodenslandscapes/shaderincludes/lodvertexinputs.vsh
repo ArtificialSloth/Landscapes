@@ -107,6 +107,11 @@ flat out int vhFaceAxis;
 // Where a fragment sits on a reed's sheet, 0 to 1 across and top to bottom. Zero elsewhere.
 out vec2 vhPlaneUv;
 
+// Where a fragment sits in its section's block light tile, in texels, and where that tile sits in
+// the tile texture, negative with none. noiseOrigin.w holds the tile's number plus one.
+out vec2 vhLightTexel;
+flat out vec2 vhLightTile;
+
 // ---- Per-section facts ------------------------------------------------------
 //
 // Everything in this block describes the SECTION being drawn rather than the vertex.

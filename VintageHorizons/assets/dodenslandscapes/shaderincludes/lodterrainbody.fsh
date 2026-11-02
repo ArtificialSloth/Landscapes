@@ -1,5 +1,10 @@
 #include lodfragmentinputs.fsh
 #include lodownership.fsh
+#ifndef VH_WATER_DEPTH
+#define VH_BLOCK_LIGHT 1
+in vec2 vhLightTexel;
+flat in vec2 vhLightTile;
+#endif
 void main()
 {
 #include lodownershiptest.fsh

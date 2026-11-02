@@ -213,6 +213,13 @@ void main()
 #endif
 #include lodvertexsurface.vsh
 
+    // LodBlockLightTiles: 64 texels to a tile at every level, 32 tiles to a row.
+    vhLightTexel = vertexPositionIn.xz / sectionSize * 64.0;
+    float vhLightTileIndex = noiseOrigin.w - 1.0;
+    vhLightTile = vhLightTileIndex < 0.0
+        ? vec2(-1.0)
+        : vec2(mod(vhLightTileIndex, 32.0), floor(vhLightTileIndex / 32.0)) * 64.0;
+
     // Distant anti-aliasing: move the finished position by this frame's sub-pixel offset,
     // weighted by how many pixels one block spans here. gl_Position.w is the view depth. This
     // ramp is the second half of the resolve's, where history is already at full share.

@@ -258,9 +258,17 @@ public static class ChiselStandInChecks
             return chunk;
         }
 
+        /// <summary>Its out parameter has to be given a value, or the proxy unboxes a null.</summary>
+        internal static object NoLight(object?[] args)
+        {
+            args[1] = 0;
+            return (ushort)0;
+        }
+
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) => targetMethod?.Name switch
         {
             nameof(IWorldChunk.UnpackAndReadBlock) => blockAt!((int)args![0]!),
+            nameof(IWorldChunk.Unpack_AndReadLight) => NoLight(args!),
             "get_" + nameof(IWorldChunk.Disposed) => false,
             "get_" + nameof(IWorldChunk.BlockEntities) => entities,
             _ => throw new NotSupportedException("capture reached for IWorldChunk." + targetMethod?.Name),

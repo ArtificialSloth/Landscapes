@@ -587,6 +587,23 @@ public partial class LodTerrainRenderer : IRenderer
     public bool FlowerSheetsEnabled { get; set; }
     public bool BushSheetsEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Whether lit sections wear their block light (<see cref="LodBlockLightTiles"/>). Off gives the
+    /// tiles up, and a change needs <see cref="RemeshAll"/>, since tiles are written at meshing.
+    /// </summary>
+    public bool DistantLightsEnabled
+    {
+        get => distantLightsEnabled;
+        set
+        {
+            distantLightsEnabled = value;
+            if (!value) blockLightTiles.Clear();
+        }
+    }
+
+    bool distantLightsEnabled = true;
+    readonly LodBlockLightTiles blockLightTiles = new(LodTerrainSamplerLayout.BlockLightTiles);
+
     /// <summary>The same for crops, whose flat patch is the opaque one.</summary>
     public bool CropShapesEnabled { get; set; } = true;
 
@@ -3040,6 +3057,8 @@ public partial class LodTerrainRenderer : IRenderer
             SectionSnapshot self = SectionSnapshot.Of(
                 section, includeTextureSlots, wallColors, crossedShapeOf, leafPlanesHere, fruitWoodTable,
                 LodWorld.KeyLevel(best) == 0 ? resinLogs : null, bushSheetsHere);
+            if (DistantLightsEnabled)
+                blockLightTiles.Set(best, section.BlockLight, capi.World.BlockLightLevels);
 
             // Same-world publication needs a finer identity than WorldEpoch. If a mesh-visible
             // capture or neighbour-edge invalidation landed while these immutable inputs were
@@ -3221,6 +3240,7 @@ public partial class LodTerrainRenderer : IRenderer
     void RemoveMeshes(long key)
     {
         renderPaths.Remove(currentWorldEpoch(), key);
+        blockLightTiles.Release(key);
     }
 
     void RemoveMeshesLegacy(long worldEpoch, long key)
@@ -6065,6 +6085,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// The engine's automatic bindings are explicitly assigned by LodTerrainSamplerLayout;
     /// their declaration-order defaults do NOT reserve the low units for shared includes.
     /// </summary>
+    const int BlockLightUnit = LodTerrainSamplerLayout.BlockLightTiles;
     const int ReadinessMaskUnit = LodTerrainSamplerLayout.ReadinessMask;
     const int SeamFieldUnit = LodTerrainSamplerLayout.SeamField;
     const int BlockTableUnit = LodTerrainSamplerLayout.BlockTable;
@@ -6266,6 +6287,11 @@ public partial class LodTerrainRenderer : IRenderer
         // whatever texture happened to be on unit 0.
         if (blockTexturesLive && blockTableTexture != 0)
             prog.BindTexture2D("blockTable", blockTableTexture, BlockTableUnit);
+
+        bool blockLightOn = DistantLightsEnabled && blockLightTiles.TextureId != 0;
+        prog.Uniform("blockLightEnabled", blockLightOn ? 1 : 0);
+        if (blockLightOn)
+            prog.BindTexture2D("blockLightTiles", blockLightTiles.TextureId, BlockLightUnit);
 
         bool blockTexturesOn = blendPipelineEnabled && blockTexturesLive && blockTextures != null
             && blockTextures.AtlasTextureId > 0 && BlockTexturesEnabled;
@@ -7942,6 +7968,7 @@ public partial class LodTerrainRenderer : IRenderer
             | (HasNeighbourData(key, 1, 0) ? 0 : LodGpuSectionFacts.OpenPlusX)
             | (HasNeighbourData(key, 0, -1) ? 0 : LodGpuSectionFacts.OpenMinusZ)
             | (HasNeighbourData(key, 0, 1) ? 0 : LodGpuSectionFacts.OpenPlusZ));
+        float lightTile = blockLightTiles.TileNumber(key);
 
         // Six uniform uploads per section, and they are most of what the indirect path
         // exists to remove. During an indirect walk they are skipped: the same values go
@@ -7964,7 +7991,7 @@ public partial class LodTerrainRenderer : IRenderer
             // section's stable world origin or a fixed patch changes colour while flying.
             // This uniform does not affect geometry, so float precision at extreme world
             // coordinates can only soften the cosmetic variation, never move terrain.
-            prog.Uniform("noiseOrigin", (float)originX, (float)originZ, 0f, 0f);
+            prog.Uniform("noiseOrigin", (float)originX, (float)originZ, 0f, lightTile);
 
             // Ownership addressing uses this integer origin plus the section-local
             // position, never a summed world coordinate, so a fragment at a chunk edge
@@ -8011,7 +8038,8 @@ public partial class LodTerrainRenderer : IRenderer
                 // that disagrees with the one the CPU judged is how the two paths end up
                 // drawing different terrain.
                 (float)boxMinY,
-                (float)boxMaxY);
+                (float)boxMaxY,
+                lightTile);
         }
         return true;
     }
@@ -8909,6 +8937,7 @@ public partial class LodTerrainRenderer : IRenderer
     public void ClearMeshes()
     {
         renderPaths.Clear(currentWorldEpoch());
+        blockLightTiles.Clear();
     }
 
     /// <summary>
@@ -9004,6 +9033,7 @@ public partial class LodTerrainRenderer : IRenderer
         DisposeReadinessMaskTexture();
         DisposeSeamFieldTexture();
         DisposeBlockTableTexture();
+        blockLightTiles.Dispose();
         DisposeSkyWitnessResources();
         DisposeTaaResources();
         UnregisterSilhouetteFogStage();

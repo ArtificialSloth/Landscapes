@@ -41,10 +41,12 @@ public static class TerrainSamplerChecks
                 }
 
                 int originalLiquid = program.textureLocations["liquidDepth"];
+                // The engine counts by declaration, so which of ours it lands on moves with every
+                // sampler added. What matters is that it does land on one, which is the original bug.
                 c.True(LodTerrainSamplerLayout.Bindings.Any(binding =>
-                        binding.Name == "climateField" && binding.Unit == originalLiquid),
-                    variant + " reproduces the original liquid-depth/climate-field collision");
-                Console.WriteLine($"      {variant}: engine liquidDepth unit {originalLiquid} conflicts with climateField");
+                        binding.Name != "liquidDepth" && binding.Unit == originalLiquid),
+                    variant + " reproduces the original liquid-depth collision with one of ours");
+                Console.WriteLine($"      {variant}: engine liquidDepth unit {originalLiquid} conflicts with one of ours");
 
                 LodTerrainSamplerLayout.Configure(program);
                 c.Eq(program.textureLocations.Count, program.textureLocations.Values.Distinct().Count(),

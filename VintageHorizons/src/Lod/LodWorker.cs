@@ -259,6 +259,13 @@ public class CaptureResult
     /// </summary>
     public Dictionary<int, string>? RunVariants;
 
+    /// <summary>
+    /// What block light reaches each column's top (<see cref="LodBlockLight"/>), by section column,
+    /// or null with none. Read only with <see cref="SnowStateObserved"/>: a generated peek has no
+    /// lighting yet, and must not read as every lamp having gone out.
+    /// </summary>
+    public ushort[]? BlockLight;
+
     /// <summary>Blocks recorded as their material, and read chisels with no material to use.</summary>
     public int ChiselStandIns;
     public int ChiselsWithoutMaterial;
@@ -793,6 +800,7 @@ public class LodWorker : IDisposable
         Dictionary<int, int>? standInOriginals = null;
         int chiselStandIns = 0;
         Dictionary<int, string>? runVariants = null;
+        ushort[]? blockLight = null;
 
         // Rain map values can sit at/above map height on freshly streamed columns
         // (uninitialized sentinel) - clamp so the y walk stays inside the chunk stack.
@@ -817,6 +825,18 @@ public class LodWorker : IDisposable
                 }
 
                 int col = LodSection.ColumnIndex(colOffsetX + cx, colOffsetZ + cz);
+
+                // The cell above the top block is the one its top face is lit from.
+                int lightY = Math.Min(startY + 1, maxY);
+                if (job.SnowStateObserved && job.Chunks[lightY / ChunkSize] is { Disposed: false } lit)
+                {
+                    ushort word = lit.Unpack_AndReadLight(
+                        ((lightY % ChunkSize) * ChunkSize + lz) * ChunkSize + lx, out int saturation);
+                    ushort light = LodBlockLight.FromChunkLight(word, saturation);
+                    if (light != 0)
+                        (blockLight ??= new ushort[LodSection.GridSize * LodSection.GridSize])[col] = light;
+                }
+
                 runs.Clear();
                 int currentBlock = 0;
                 int currentChisel = 0; // the chisel under the run's top block, when it stands in
@@ -919,6 +939,7 @@ public class LodWorker : IDisposable
             ReadyAtMilliseconds = Environment.TickCount64,
             StandInOriginals = standInOriginals,
             RunVariants = runVariants,
+            BlockLight = blockLight,
             ChiselStandIns = chiselStandIns,
             ChiselsWithoutMaterial = chiselsWithoutMaterial,
         };

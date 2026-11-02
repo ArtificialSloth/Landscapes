@@ -212,7 +212,8 @@ public static class StoreChecks
             deflate.CopyTo(output);
             payload = output.ToArray();
         }
-        payload = payload[..^(LodSection.SnowStateObservedByteCount + sizeof(ushort))];
+        // The second snow map, and the empty variant and block light counts after it.
+        payload = payload[..^(LodSection.SnowStateObservedByteCount + 2 * sizeof(ushort))];
 
         byte[] legacy;
         using (var output = new MemoryStream())

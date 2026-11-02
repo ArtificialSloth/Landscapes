@@ -201,6 +201,7 @@ public static class ReedCaptureChecks
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) => targetMethod?.Name switch
         {
             nameof(IWorldChunk.UnpackAndReadBlock) => Read((int)args![0]!, (int)args![1]!),
+            nameof(IWorldChunk.Unpack_AndReadLight) => ChiselStandInChecks.ProxyChunk.NoLight(args!),
             "get_" + nameof(IWorldChunk.Disposed) => false,
             _ => throw new NotSupportedException("capture reached for IWorldChunk." + targetMethod?.Name),
         };

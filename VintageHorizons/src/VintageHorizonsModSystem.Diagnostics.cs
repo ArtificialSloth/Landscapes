@@ -99,6 +99,7 @@ public partial class VintageHorizonsModSystem
         Entry(lines, "Berry Bush Sheets", visual.BushTextures);
         Entry(lines, "Fruit Tree Colors", visual.FruitTreeColors);
         Entry(lines, "Leaf Shape", visual.LeafShape.ToString());
+        Entry(lines, "Distant Lights", visual.DistantLights);
         Entry(lines, ".dltint field", visual.ClimateTint);
         Entry(lines, "climate tint range", BlocksPerVoxel(visual.ClimateTintRange));
         Entry(lines, ".dltint climatewide", visual.FarBiomeColours);

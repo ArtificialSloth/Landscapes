@@ -182,6 +182,13 @@ public class LodSection
     public readonly ulong[] SnowCoveredBits = new ulong[SnowStateObservedWordCount];
 
     /// <summary>
+    /// Each column's <see cref="LodBlockLight"/> value, or null with no light anywhere in the
+    /// section, which is nearly every section. Replaced whole and never edited, as
+    /// <see cref="Runs"/> is, so a worker job may keep a reference.
+    /// </summary>
+    public ushort[]? BlockLight;
+
+    /// <summary>
     /// Set when a section was deserialized off the main thread: palette BlockIds are
     /// not resolved yet, because the game's block registry may only be touched from
     /// the main thread. Resolved and cleared on install, before anything reads ids.
@@ -204,6 +211,7 @@ public class LodSection
                 + Captured.LongLength
                 + SnowStateObservedBits.LongLength * sizeof(ulong)
                 + SnowCoveredBits.LongLength * sizeof(ulong)
+                + (BlockLight?.LongLength ?? 0L) * sizeof(ushort)
                 + Palette.Count * 12L;
             if (PendingPaletteCodes != null)
             {
@@ -450,6 +458,31 @@ public class LodSection
     }
 
     /// <summary>
+    /// Take the light of every column <paramref name="written"/> holds, before
+    /// <see cref="ReplaceColumns"/> clears the ones whose runs did not change. A lamp can come or
+    /// go with no block moving in the column it lights, so light has its own answer: whether
+    /// anything changed. <paramref name="light"/> is by column, null for no light at all.
+    /// </summary>
+    public bool SetLight(ulong[]?[] written, ushort[]? light)
+    {
+        if (BlockLight == null && light == null) return false;
+
+        ushort[]? next = null;
+        for (int col = 0; col < written.Length; col++)
+        {
+            if (written[col] == null) continue;
+            ushort value = light != null ? light[col] : (ushort)0;
+            if ((BlockLight != null ? BlockLight[col] : 0) == value) continue;
+            next ??= BlockLight != null ? (ushort[])BlockLight.Clone() : new ushort[GridSize * GridSize];
+            next[col] = value;
+        }
+        if (next == null) return false;
+
+        BlockLight = Array.TrueForAll(next, value => value == 0) ? null : next;
+        return true;
+    }
+
+    /// <summary>
     /// Merge another copy of this same section key into this one, column by column.
     ///
     /// The other copy comes from the server half's cache. A far section is typically copied
@@ -523,7 +556,9 @@ public class LodSection
 
         // ReplaceColumns clears every entry whose runs were already identical, so what is left
         // afterwards is exactly the set of columns whose content moved.
+        bool lightChanged = SetLight(batch, source.BlockLight);
         int contentEdges = ReplaceColumns(batch, out bool contentChanged);
+        contentChanged |= lightChanged;
         int moved = 0;
         foreach (ulong[]? written in batch)
         {
