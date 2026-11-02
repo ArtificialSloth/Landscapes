@@ -131,7 +131,7 @@ public static class WaterJunctionChecks
             "VintageHorizons/assets/dodenslandscapes/shaderincludes/lodownershiptest.fsh"));
         c.True(ownership.Contains("#if defined(VH_WATER_DEPTH) || defined(VH_WATER_OIT)")
             && ownership.Contains("owned && ownershipBand == 1 && waterJunctionDepth == 1")
-            && ownership.Contains("texelFetch(vanillaWaterDepth, ivec2(gl_FragCoord.xy), 0).r == 1.0")
+            && ownership.Contains("ivec2(gl_FragCoord.xy * vhWaterDepthTexelScale), 0).r == 1.0")
             && ownership.Contains("vanillaWaterDepth, gl_FragCoord.xy / frameSize.xy).r")
             && ownership.Contains("vanillaWaterClear = vanillaWaterDepthAtPixel == 1.0")
             && ownership.Contains("vanillaOwnsCell(cellX + dx, cellY, cellZ + dz, ownershipBand)"),

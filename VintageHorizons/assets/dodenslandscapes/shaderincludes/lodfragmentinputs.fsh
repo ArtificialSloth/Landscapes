@@ -448,6 +448,9 @@ layout(location = 3) out vec4 outGPosition;
 // cached murk coverage without the cached surface that belongs over it.
 uniform sampler2D vanillaWaterDepth;
 uniform int waterJunctionDepth;
+// Takes a pixel of the target being drawn to its texel in that snapshot: 1 when drawing the
+// quarter image itself, about 0.25 when the majority pass draws at full resolution.
+uniform vec2 vhWaterDepthTexelScale = vec2(1.0);
 
 // Full-resolution OIT revealage copied after vanilla liquid and before cached water. The
 // copy is immutable while this shader draws, so it is safe to sample even though the live

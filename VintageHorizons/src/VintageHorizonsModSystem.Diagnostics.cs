@@ -227,6 +227,7 @@ public partial class VintageHorizonsModSystem
         Entry(lines, ".dlwater coverage", renderer.WaterDepthCoverage);
         Entry(lines, ".dlwater junction", renderer.WaterJunctionDepth);
         Entry(lines, ".dlwater repair", renderer.WaterDepthRepair);
+        Entry(lines, ".dlwater majority", renderer.WaterDepthMajority);
     }
 
     void AddGpuConfiguration(List<string> lines)

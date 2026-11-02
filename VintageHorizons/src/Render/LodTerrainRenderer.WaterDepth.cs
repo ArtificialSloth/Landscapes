@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using OpenTK.Graphics.OpenGL4;
 using Vintagestory.API.Client;
+using Vintagestory.API.MathTools;
 using Vintagestory.Client.NoObf;
 
 namespace VintageHorizons;
@@ -104,6 +105,7 @@ public partial class LodTerrainRenderer
         waterCaptureDirectory = null;
         DisposeWaterOitCoverageResources();
         DisposeWaterRepairResources();
+        DisposeWaterFullDepthResources();
     }
 
     void PrepareBeforeFrame(float dt)
@@ -142,6 +144,7 @@ public partial class LodTerrainRenderer
         waterDepthShaderOk = waterDepthProg.Compile();
         if (waterDepthShaderOk) LodTerrainSamplerLayout.Configure(waterDepthProg);
         LoadWaterRepairShader();
+        LoadWaterResolveShader();
         waterDepthFailed = false;
         waterJunctionFailed = false;
         if (waterDepthShaderOk)
@@ -226,8 +229,14 @@ public partial class LodTerrainRenderer
                         "required water junction-depth snapshot failed", e);
                 }
             }
-            GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, target.FboId);
-            GL.Viewport(0, 0, target.Width, target.Height);
+            bool majority = WaterDepthMajority;
+            Vec2f texelScale = new(1f, 1f);
+            if (majority) texelScale = BindFullWaterDepth(target);
+            else
+            {
+                GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, target.FboId);
+                GL.Viewport(0, 0, target.Width, target.Height);
+            }
             GL.Disable(EnableCap.Blend);
             GL.Disable(EnableCap.CullFace);
             GL.Disable(EnableCap.ScissorTest);
@@ -243,6 +252,7 @@ public partial class LodTerrainRenderer
             ApplyFrameUniforms(prog, ApprovedViewDistance());
             prog.Uniform("maskDebug", 0);
             prog.Uniform("waterJunctionDepth", 0);
+            prog.Uniform("vhWaterDepthTexelScale", texelScale);
             if (junctionReady)
                 prog.BindTexture2D("vanillaWaterDepth", waterVanillaDepthTexture,
                     LodTerrainSamplerLayout.VanillaWaterDepth);
@@ -250,7 +260,8 @@ public partial class LodTerrainRenderer
             // A requested capture also records the old mask-only result in this exact
             // frame. Ordinary frames need one mesh traversal. Depth-min composition
             // makes the diagnostic traversal observational: it cannot change the result.
-            if (junctionReady && waterCaptureDirectory != null)
+            // Majority draws elsewhere and resolves afterwards, so there it would not be.
+            if (junctionReady && waterCaptureDirectory != null && !majority)
             {
                 DrawWaterDepthMeshes(cullSq);
                 CaptureWaterImage("02-mask-only-liquid-depth", EnumFrameBuffer.LiquidDepth, depth: true);
@@ -259,6 +270,7 @@ public partial class LodTerrainRenderer
             prog.Uniform("waterJunctionDepth", junctionReady ? 1 : 0);
             DrawWaterDepthMeshes(cullSq);
             prog.Stop();
+            if (majority) ResolveWaterDepthMajority(target);
             CaptureWaterImage("02a-unrepaired-liquid-depth", EnumFrameBuffer.LiquidDepth, depth: true);
             RepairWaterDepth(target);
             if (!RequiredWaterDepthPrerequisitesAvailable(out string completionFailure))

@@ -4944,7 +4944,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                 + "off | a number of chunks | edge <chunks> | fresnel on|off | glint <0-1> | "
                 + "foam <0-2> | shore <0-2>|paint | depth on|off | alpha <0.05-2> | clarity <blocks> | "
                 + "wave <blocks> | walls on|off | murk on|off | surface on|off | coverage on|off | "
-                + "texture on|off | pipeline oit|opaque | "
+                + "texture on|off | pipeline oit|opaque | majority on|off | "
                 + "junction on|off | log | capture.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
                       capi.ChatCommands.Parsers.OptionalWord("value"))
@@ -5025,6 +5025,17 @@ public partial class VintageHorizonsModSystem : ModSystem
                             + (renderer.WaterDepthRepair ? "on" : "off") + ". Immediate, no rebuild. Session only.";
                         capi.Logger.Notification(repairReply);
                         return TextCommandResult.Success(repairReply);
+
+                    case "majority":
+                        if (value != "on" && value != "off")
+                            return TextCommandResult.Success($"[Landscapes] water-depth majority {(renderer.WaterDepthMajority ? "on" : "off")}. "
+                                + "On decides distant water's share of the game's water-depth image at full screen size; "
+                                + "off draws it the old quarter-size way. Use .dlwater majority on/off.");
+                        renderer.WaterDepthMajority = value == "on";
+                        string majorityReply = "[Landscapes] water-depth majority "
+                            + (renderer.WaterDepthMajority ? "on" : "off") + ". Immediate, no rebuild. Session only.";
+                        capi.Logger.Notification(majorityReply);
+                        return TextCommandResult.Success(majorityReply);
 
                     case "capture":
                         renderer.RequestWaterCapture();

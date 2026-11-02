@@ -111,7 +111,9 @@
         // No neighbour depth interpolation, geometry expansion or surface overlap.
         bool vanillaWaterClear;
 #ifdef VH_WATER_DEPTH
-        vanillaWaterClear = texelFetch(vanillaWaterDepth, ivec2(gl_FragCoord.xy), 0).r == 1.0;
+        // The snapshot is quarter resolution; the majority pass draws at full resolution.
+        vanillaWaterClear = texelFetch(vanillaWaterDepth,
+            ivec2(gl_FragCoord.xy * vhWaterDepthTexelScale), 0).r == 1.0;
 #else
         // OIT is full resolution while the engine liquid target is quarter resolution.
         // This is the same normalized lookup underwatereffects.fsh uses for liquidDepth.

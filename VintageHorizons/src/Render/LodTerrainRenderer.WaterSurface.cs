@@ -92,6 +92,9 @@ public partial class LodTerrainRenderer
         else if (WaterDepthRepair && (!waterRepairShaderOk || waterRepairFailed
             || waterRepairProg == null || waterRepairProg.LoadError))
             failure = "the requested water-depth repair shader/pass is unavailable";
+        else if (WaterDepthMajority && (!waterResolveShaderOk || waterResolveFailed
+            || waterResolveProg == null || waterResolveProg.LoadError))
+            failure = "the water-depth majority shader/pass is unavailable";
         else if (WaterJunctionDepth && waterJunctionFailed)
             failure = "the requested water junction-depth snapshot failed";
         return failure.Length == 0;

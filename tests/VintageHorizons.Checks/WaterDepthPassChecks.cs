@@ -80,5 +80,32 @@ public static class WaterDepthPassChecks
         c.True(pass.Contains("UnregisterRenderer(prepareStageRenderer, EnumRenderStage.Before)")
             && pass.Contains("UnregisterRenderer(waterDepthStageRenderer, EnumRenderStage.Before)"),
             "both additional callbacks unregister on world teardown");
+
+        // Majority coverage (0.5.2-dev.25): a quarter texel took cached water from its centre
+        // sample alone, so sub-texel water toggled with every one-pixel turn.
+        string full = File.ReadAllText(Path.Combine(root, "VintageHorizons", "src", "Render", "LodTerrainRenderer.WaterDepthFull.cs"));
+        string resolve = File.ReadAllText(Path.Combine(root, "VintageHorizons", "assets", "dodenslandscapes", "shaders", "lodwaterresolve.fsh"));
+        string ownership = File.ReadAllText(Path.Combine(root, "VintageHorizons", "assets", "dodenslandscapes", "shaderincludes", "lodownershiptest.fsh"));
+        c.True(full.Contains("public bool WaterDepthMajority { get; set; } = true;"),
+            "majority coverage is on by default and can be switched off to compare");
+        c.True(full.Contains("EnumFrameBuffer.Primary") && full.Contains("GL.Clear(ClearBufferMask.DepthBufferBit);")
+            && full.Contains("GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, waterFullDepthFramebuffer);"),
+            "cached water is drawn at the primary framebuffer's size into a cleared image of our own");
+        int drawn = pass.IndexOf("DrawWaterDepthMeshes(cullSq);\n            prog.Stop();", StringComparison.Ordinal);
+        if (drawn < 0) drawn = pass.IndexOf("DrawWaterDepthMeshes(cullSq);\r\n            prog.Stop();", StringComparison.Ordinal);
+        int resolved = pass.IndexOf("if (majority) ResolveWaterDepthMajority(target);", StringComparison.Ordinal);
+        int repaired = pass.IndexOf("RepairWaterDepth(target);", StringComparison.Ordinal);
+        c.True(drawn > 0 && resolved > drawn && repaired > resolved,
+            "the quarter image is resolved after the full draw and before hole repair");
+        c.True(resolve.Contains("if (total == 0 || water * 2 < total) discard;")
+            && resolve.Contains("gl_FragDepth = sum / float(water);"),
+            "a quarter texel takes cached water only where at least half its pixels are water");
+        c.True(!full.Contains("GL.DepthFunc(") && !full.Contains("GL.Clear(ClearBufferMask.DepthBufferBit);\n        GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, quarter"),
+            "the resolve composes under the pass's Less test and never clears the quarter image");
+        c.True(ownership.Contains("ivec2(gl_FragCoord.xy * vhWaterDepthTexelScale)")
+            && pass.Contains("prog.Uniform(\"vhWaterDepthTexelScale\", texelScale);"),
+            "the junction test reads the quarter snapshot at the right texel when drawing at full size");
+        c.True(pass.Contains("waterCaptureDirectory != null && !majority"),
+            "the capture's mask-only reference is not drawn into the quarter image ahead of a majority resolve");
     }
 }

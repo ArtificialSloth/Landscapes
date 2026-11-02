@@ -33,6 +33,7 @@ public partial class LodTerrainRenderer
             {
                 version = typeof(LodTerrainRenderer).Assembly.GetName().Version?.ToString(),
                 frameCounter, WaterGroundMurk, WaterDepthCoverage, WaterSurfaceVisible, WaterDepthRepair,
+                WaterDepthMajority,
                 WaterSurfaceTexture, WaterSurfaceTextureStatus,
                 WaterSurfaceTextureSlot, WaterSurfaceTintSlot,
                 WaterSeamStripBlocks, waterDepthShaderOk, waterDepthFailed, WaterJunctionDepth,
