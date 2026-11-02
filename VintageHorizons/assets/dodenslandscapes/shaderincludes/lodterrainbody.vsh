@@ -70,6 +70,25 @@ void main()
             : vhLogicalCorner == 2u ? vec3(vhX1, vhY1, vhZ0)
             : vec3(vhX1, vhY0, vhZ0);
     }
+    else if (vhFace >= 6u && vhX0 == vhX1 && vhZ0 == vhZ1)
+    {
+        // A marker (LodMesher.AddMarker): a square at the middle of its column, facing the camera,
+        // which from any distance these are seen at is a tiny cube for one quad. Never under two
+        // pixels across, or three for resin (face 7), which also stands out in front of its log.
+        vec3 vhMarkerCentre = vec3(vhX0 + 0.5, (vhY0 + vhY1) * 0.5, vhZ0 + 0.5);
+        vec3 vhToCamera = -(vhRecordOrigin.xyz + vhMarkerCentre);
+        float vhMarkerDistance = max(length(vhToCamera), 0.001);
+        vhToCamera /= vhMarkerDistance;
+        if (vhFace == 7u) vhMarkerCentre += vhToCamera * 0.75;
+        float vhMarkerHalf = (vhY1 - vhY0) * 0.5;
+        if (vhTaaBlockScale > 0.0)
+            vhMarkerHalf = max(vhMarkerHalf, (vhFace == 7u ? 1.5 : 1.0) * vhMarkerDistance / vhTaaBlockScale);
+        vec3 vhMarkerRight = normalize(cross(vec3(0.0, 1.0, 0.0), vhToCamera) + vec3(0.0001, 0.0, 0.0));
+        vec3 vhMarkerUp = cross(vhToCamera, vhMarkerRight);
+        vertexPositionIn = vhMarkerCentre
+            + vhMarkerRight * (vhLogicalCorner == 1u || vhLogicalCorner == 2u ? vhMarkerHalf : -vhMarkerHalf)
+            + vhMarkerUp * (vhLogicalCorner < 2u ? -vhMarkerHalf : vhMarkerHalf);
+    }
     else if (vhFace >= 6u && vhY0 == vhY1)
     {
         // A leaf canopy's flat plane (LodMesher.AddFlatPlane): a crossed plane with no height.
@@ -164,8 +183,10 @@ void main()
             float((vhColor >> 16u) & 255u),
             float(vhColor >> 24u)) / 255.0;
     }
-    // The foot of a reed bed sits in its own shade, which is most of what gives it depth.
-    if (vhFaceAxis == 4 && vhLogicalCorner < 2u) vertexColorIn.rgb *= 0.55;
+    // The foot of a reed bed sits in its own shade, which is most of what gives it depth. Resin is
+    // the one marker kept one flat colour, so it stays amber at two pixels.
+    if (vhFaceAxis == 4 && vhLogicalCorner < 2u && !(vhFace == 7u && vhX0 == vhX1 && vhZ0 == vhZ1))
+        vertexColorIn.rgb *= 0.55;
 #endif
 
     // The established expanded mesh has no spare vertex attribute, so an opaque textured

@@ -481,6 +481,15 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             v => v.VineShapes,
             (v, on) => v with { VineShapes = on }),
 
+        new("forage-markers", "Forage Markers",
+            "Marks mushrooms, loose flint, loose ore and resin with a tiny square that always faces "
+            + "you, kept big enough to see. Off draws mushrooms, flint and ore as a flat patch of "
+            + "their color, and resin logs as plain logs. Land already explored shows new finds as "
+            + "its chunks load again; resin shows at once.",
+            "Low",
+            v => v.ForageMarkers,
+            (v, on) => v with { ForageMarkers = on }),
+
         new("plant-textures", "Plant Textures",
             "Puts the game's own pictures on crop, reed and fern planes, and cuts leaf planes out. "
             + "Off draws those planes in plain color, and leaves as cubes whatever Leaf Shape says.",
@@ -1961,6 +1970,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 PlantTextures = plants.PlantTextures,
                 ReedShapes = plants.ReedShapes,
                 VineShapes = plants.VineShapes,
+                ForageMarkers = plants.ForageMarkers,
                 CropShapes = plants.CropShapes,
                 BushTextures = plants.BushTextures,
                 FruitTreeColors = plants.FruitTreeColors,

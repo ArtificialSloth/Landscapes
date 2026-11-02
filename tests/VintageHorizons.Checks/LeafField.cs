@@ -72,6 +72,7 @@ public static class LeafField
 
         var blocks = new Dictionary<string, long>();
         var supports = new Dictionary<string, long>();
+        var forage = new Dictionary<string, long>();
         int gs = LodSection.GridSize;
         foreach (long key in sample)
         {
@@ -108,6 +109,12 @@ public static class LeafField
                     {
                         string path = Path(run);
                         long height = LodSection.RunYTop(run) - LodSection.RunYBottom(run);
+                        foreach (string useful in UsefulPrefixes)
+                        {
+                            if (!path.StartsWith(useful, StringComparison.Ordinal)) continue;
+                            byte usefulFlags = section.Palette[LodSection.RunPaletteId(run)].Flags;
+                            Add(forage, $"{useful,-18} {(canopy ? "under leaves" : "open sky   ")} flags {usefulFlags}", height);
+                        }
                         if (path.StartsWith("wildvine", StringComparison.Ordinal))
                         {
                             string side = path.Substring(path.LastIndexOf('-') + 1);
@@ -144,11 +151,23 @@ public static class LeafField
         foreach ((string code, long count) in blocks.OrderByDescending(pair => pair.Value).Take(30))
             Console.WriteLine($"  {count,10:n0}  {code}");
         Console.WriteLine();
+        Console.WriteLine("  things a player looks for, in blocks, wherever they stand");
+        foreach ((string what, long count) in forage.OrderBy(pair => pair.Key))
+            Console.WriteLine($"  {count,10:n0}  {what}");
+        Console.WriteLine();
         Console.WriteLine("  what holds a vine up");
         foreach ((string side, long count) in supports.OrderBy(pair => pair.Key))
             Console.WriteLine($"  {count,10:n0}  {side}");
         return 0;
     }
+
+    static readonly string[] UsefulPrefixes =
+    {
+        "mushroom", "looseflints", "loosestones", "looseores", "looseboulders", "looserubble", "stick",
+        "fruitingbush", "flower", "herb", "crop", "wildbeehive", "skep", "beehive", "log-resin",
+        "rafflesia", "waterlily", "lichen", "hanginglichen", "pumpkin", "bamboo", "saguarocactus",
+        "barrelcactus", "reedpapyrus", "tallplant",
+    };
 
     static void Add(Dictionary<string, long> tally, string key, long amount) =>
         tally[key] = tally.GetValueOrDefault(key) + amount;

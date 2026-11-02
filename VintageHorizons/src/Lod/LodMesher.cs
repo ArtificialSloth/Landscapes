@@ -407,7 +407,11 @@ public static class LodMesher
                     }
                     if (IsCrossedRun(self, run) && (planes || !isThin))
                     {
-                        if (planes)
+                        if (planes && LodBlockPolicy.IsMarkerShape(self.CrossedShape(pid)))
+                        {
+                            AddMarker(opaque, self, pid, cx, cz, yBottom);
+                        }
+                        else if (planes)
                         {
                             bool onWater = r + 1 < runs.Length && IsWaterRun(self, runs[r + 1]);
                             AddCrossedPlanes(opaque, self, pid, cx, cz, yBottom, onWater,
@@ -505,6 +509,7 @@ public static class LodMesher
                     CollectSide(vf, job, self, cave, S, cx, cz, cx, cz + 1,
                         yTop, yBottom, pid, isTranslucent, solidCoverOnly, half, surfaceHalfOnly,
                         cutoutsCover, waterSurface);
+                    if (step == 1 && self.IsResinLog(pid)) AddResinMarkers(opaque, cx, cz, run);
                 }
             }
         }
@@ -1175,6 +1180,38 @@ public static class LodMesher
             AlphaFor(self.PaletteFlags[pid], self.PaletteTintSlots[pid]),
             x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0, textureSlot,
             LeafBuried(job, self, cx, cz, 1, y0, y1));
+    }
+
+    /// <summary>
+    /// A small thing on the ground as one quad: a record with no footprint, which is how the vertex
+    /// stage knows to raise a square at the middle of the column and turn it to the camera. Its
+    /// height is the square's size. Opaque, as a crossed plant is.
+    /// </summary>
+    static void AddMarker(Buffers buf, SectionSnapshot self, int pid, int cx, int cz, int yBottom)
+    {
+        byte flags = (byte)(self.PaletteFlags[pid] & ~LodPaletteEntry.FlagThin);
+        float y0 = yBottom * 0.5f;
+        float y1 = y0 + (self.CrossedShape(pid) == LodBlockPolicy.CrossedShapeMushroom ? 0.5f : 0.25f);
+        AddQuad(buf, LodPackedFace.DiagonalRising, 1, self.PaletteColors[pid],
+            AlphaFor(flags, self.PaletteTintSlots[pid]), cx, y0, cz, cx, y0, cz, cx, y1, cz, cx, y1, cz);
+    }
+
+    /// <summary>Resin's amber, as colours are stored: blue, green, red.</summary>
+    const int ResinColor = 0x1E96EB;
+
+    /// <summary>
+    /// Each block of a resin log wears a marker of amber, in no colour of the block's own. The other
+    /// diagonal says it stands out in front of its log, on the camera's side, so a tree with resin
+    /// shows it from every direction. Logs are already stored, so this needs no new capture.
+    /// </summary>
+    static void AddResinMarkers(Buffers buf, int cx, int cz, ulong run)
+    {
+        int top = LodSection.RunYTop(run);
+        for (int y = LodSection.RunYBottom(run); y < top; y++)
+        {
+            AddQuad(buf, LodPackedFace.DiagonalFalling, 1, ResinColor, AlphaFor(0, LodTintRegistry.SlotNone),
+                cx, y + 0.25f, cz, cx, y + 0.25f, cz, cx, y + 0.75f, cz, cx, y + 0.75f, cz);
+        }
     }
 
     /// <summary>One cell of a coarser leaf grid (<see cref="LodLeafShape.Clusters"/>), by cell index.</summary>

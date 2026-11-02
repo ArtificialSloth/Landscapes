@@ -61,6 +61,14 @@ public static class LodBlockPolicy
         // from the live Block whenever stored sections load, so existing caches gain the
         // correction without re-exploration.
 
+        // Too small for a block, and worth finding: a marker at level 0 and a mat past it. The
+        // owner does not want the loose stones that lie everywhere drawn at all.
+        if (IsGroundMarker(block)) return (byte)(LodPaletteEntry.FlagThin | LodPaletteEntry.FlagCrossed);
+        if (block.Code?.Path?.StartsWith("loosestones-", StringComparison.Ordinal) == true)
+        {
+            return LodPaletteEntry.FlagSkip;
+        }
+
         // Sparse, mostly-transparent ground cover. As solid LOD cubes these come out as
         // pale grey blobs, because their textures average toward the transparent pixels.
         // Not all of EnumBlockMaterial.Plant: skipping every plant was tried and
@@ -110,7 +118,7 @@ public static class LodBlockPolicy
     public static bool IsCrossedPlant(Block block) =>
         IsReedOrFern(block) || block is BlockCrop || block is BlockVines;
 
-    /// <summary>The crossed plants capture has to look above the rain map for (<see cref="ReedTable"/>).</summary>
+    /// <summary>The crossed plants capture has to look above the rain map for, with the markers (<see cref="ReedTable"/>).</summary>
     static bool IsReedOrFern(Block block) =>
         block is BlockReeds
         || (block.BlockMaterial == EnumBlockMaterial.Plant && block.Code?.Path is { } path
@@ -134,6 +142,34 @@ public static class LodBlockPolicy
     public const byte CrossedShapeVineEast = 251;
     public const byte CrossedShapeVineSouth = 252;
     public const byte CrossedShapeVineWest = 253;
+
+    /// <summary>A marker's size: a mushroom half a block across, a piece of flint or ore a quarter.</summary>
+    public const byte CrossedShapeMushroom = 248;
+    public const byte CrossedShapeLooseItem = 249;
+
+    public static bool IsMarkerShape(byte shape) => shape is CrossedShapeMushroom or CrossedShapeLooseItem;
+
+    /// <summary>
+    /// What a player walks the land looking for and that is far smaller than a block: mushrooms,
+    /// loose flint and loose ore. Each is one small square turned to the camera, which at these
+    /// distances reads the same as a tiny cube at a sixth of its faces.
+    /// </summary>
+    public static bool IsGroundMarker(Block block) => block.Code?.Path is { } path
+        && (path.StartsWith("mushroom-", StringComparison.Ordinal)
+            || path.StartsWith("looseflints-", StringComparison.Ordinal)
+            || path.StartsWith("looseores-", StringComparison.Ordinal));
+
+    /// <summary>
+    /// Which block ids are logs holding resin. A harvested log is <c>log-resinharvested-</c>, so
+    /// the marker goes when the resin does. A table, as mesh jobs do not touch the block registry.
+    /// </summary>
+    public static bool[] ResinTable(IList<Block> blocks)
+    {
+        var table = new bool[blocks.Count];
+        for (int id = 0; id < table.Length; id++)
+            table[id] = blocks[id]?.Code?.Path?.StartsWith("log-resin-", StringComparison.Ordinal) == true;
+        return table;
+    }
 
     public static bool IsVineShape(byte shape) =>
         shape is >= CrossedShapeVineNorth and <= CrossedShapeVineWest;
@@ -171,6 +207,12 @@ public static class LodBlockPolicy
     public static bool IsFruitFoliage(Block block) => block is BlockFruitTreeFoliage;
 
     /// <summary>
+    /// A fruit tree's trunk or branch. It carries a block entity, but its colour does not depend
+    /// on it, and asking at a position answered near-black, which the plant tint then turned green.
+    /// </summary>
+    public static bool IsFruitWood(Block block) => block is BlockFruitTreeBranch;
+
+    /// <summary>
     /// Which block ids are a fruit tree's trunk and branches, for mesh jobs. The game draws these
     /// as a thin model its foliage hides; here each is a whole block.
     /// </summary>
@@ -206,6 +248,12 @@ public static class LodBlockPolicy
     public static byte CrossedShapeOf(Block? block)
     {
         if (block is BlockVines) return VineShapeOf(block.Code?.Path);
+        if (block != null && IsGroundMarker(block))
+        {
+            return block.Code!.Path.StartsWith("mushroom-", StringComparison.Ordinal)
+                ? CrossedShapeMushroom
+                : CrossedShapeLooseItem;
+        }
         if (block is not BlockCrop crop) return CrossedShapeByFlags;
         bool tall = block.Shape?.Base?.Path?.Contains("tall", StringComparison.Ordinal) == true
             || block.Code?.Path?.Contains("sunflower", StringComparison.Ordinal) == true;
@@ -271,7 +319,7 @@ public static class LodBlockPolicy
     {
         var table = new bool[blocks.Count];
         for (int id = 0; id < table.Length; id++)
-            table[id] = blocks[id] is { } block && IsReedOrFern(block);
+            table[id] = blocks[id] is { } block && (IsReedOrFern(block) || IsGroundMarker(block));
         return table;
     }
 

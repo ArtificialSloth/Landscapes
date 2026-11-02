@@ -32,7 +32,8 @@ internal readonly record struct LodVisualSettings(
     bool BushTextures = true,
     bool FruitTreeColors = true,
     LodLeafShape LeafShape = LodLeafShape.ClustersWithTops,
-    bool VineShapes = true)
+    bool VineShapes = true,
+    bool ForageMarkers = true)
 {
     // What the Plants tab's switches come to. Plant Detail is one switch over all of them and
     // keeps their positions, so turning it back on restores the player's own choices.
@@ -41,6 +42,7 @@ internal readonly record struct LodVisualSettings(
 
     /// <summary>A vine's sheet is its picture, so with no sheets it is a flat patch.</summary>
     public bool VineShapesOn => PlantTexturesOn && VineShapes;
+    public bool ForageMarkersOn => PlantDetail && ForageMarkers;
     public bool CropShapesOn => PlantDetail && CropShapes;
     public bool BushTexturesOn => PlantDetail && BushTextures;
     public bool FruitTreeColorsOn => PlantDetail && FruitTreeColors;

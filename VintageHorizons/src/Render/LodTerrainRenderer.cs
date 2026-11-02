@@ -583,6 +583,7 @@ public partial class LodTerrainRenderer : IRenderer
     /// </summary>
     public bool ReedShapesEnabled { get; set; } = true;
     public bool VineShapesEnabled { get; set; } = true;
+    public bool ForageMarkersEnabled { get; set; } = true;
 
     /// <summary>The same for crops, whose flat patch is the opaque one.</summary>
     public bool CropShapesEnabled { get; set; } = true;
@@ -595,6 +596,7 @@ public partial class LodTerrainRenderer : IRenderer
 
     bool[]? leafTable;
     bool[]? fruitWoodTable;
+    bool[]? resinTable;
 
     /// <summary>Slots serve seam blending and plant textures, so either keeps them alive.</summary>
     bool TextureSlotsWanted => blendPipelineEnabled || PlantTexturesEnabled;
@@ -2903,6 +2905,7 @@ public partial class LodTerrainRenderer : IRenderer
         {
             Block? block = capi.World.GetBlock(blockId);
             bool on = block is Vintagestory.GameContent.BlockVines ? VineShapesEnabled
+                : block != null && LodBlockPolicy.IsGroundMarker(block) ? ForageMarkersEnabled
                 : block is Vintagestory.GameContent.BlockCrop ? CropShapesEnabled : ReedShapesEnabled;
             return on
                 ? LodBlockPolicy.CrossedShapeOf(block)
@@ -2912,6 +2915,9 @@ public partial class LodTerrainRenderer : IRenderer
             ? leafTable ??= LodBlockPolicy.LeafTable(capi.World.Blocks)
             : null;
         fruitWoodTable ??= LodBlockPolicy.FruitWoodTable(capi.World.Blocks);
+        bool[]? resinLogs = ForageMarkersEnabled
+            ? resinTable ??= LodBlockPolicy.ResinTable(capi.World.Blocks)
+            : null;
 
         // Two budgets. Starting a background reload costs this thread almost nothing
         // (enqueue a key), whereas building a mesh snapshot is real work, so charging a
@@ -3024,7 +3030,8 @@ public partial class LodTerrainRenderer : IRenderer
             }
 
             SectionSnapshot self = SectionSnapshot.Of(
-                section, includeTextureSlots, wallColors, crossedShapeOf, leafPlanesHere, fruitWoodTable);
+                section, includeTextureSlots, wallColors, crossedShapeOf, leafPlanesHere, fruitWoodTable,
+                LodWorld.KeyLevel(best) == 0 ? resinLogs : null);
 
             // Same-world publication needs a finer identity than WorldEpoch. If a mesh-visible
             // capture or neighbour-edge invalidation landed while these immutable inputs were

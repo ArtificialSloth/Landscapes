@@ -72,6 +72,7 @@ public class VintageHorizonsConfig
     public bool PlantDetail = true;
     public bool ReedShapes = true;
     public bool VineShapes = true;
+    public bool ForageMarkers = true;
     public bool CropShapes = true;
     public bool BushTextures = true;
     public bool FruitTreeColors = true;
@@ -392,12 +393,14 @@ public partial class VintageHorizonsModSystem : ModSystem
         pipeline = new LodPipeline(capi, Mod.Logger, DescribePalette,
             block => (byte)TintSlotOf(block),
             block => block.EntityClass != null && !LodBlockPolicy.IsFruitFoliage(block)
+                    && !LodBlockPolicy.IsFruitWood(block)
                 ? 0 : StableColorOf(block),
             // The stable colour travels with the slot: a textured quad carries the slot
             // INSTEAD of its colour, in the same field, so the table has to hand the colour
             // back wherever the texture is not shown.
             block => LodBlockPolicy.IsFruitFoliage(block)
                 ? FruitFoliageLook(block, null).TextureSlot
+                : LodBlockPolicy.IsFruitWood(block) ? (ushort)0
                 : (ushort)blockTextures.SlotFor(
                     // The table's colour replaces the palette's on a textured quad, so a block
                     // that may hold a slot must not hand it the zero that means "keep yours".
@@ -431,6 +434,7 @@ public partial class VintageHorizonsModSystem : ModSystem
             PlantTexturesEnabled = startupVisuals.PlantTexturesOn,
             ReedShapesEnabled = startupVisuals.ReedShapesOn,
             VineShapesEnabled = startupVisuals.VineShapesOn,
+            ForageMarkersEnabled = startupVisuals.ForageMarkersOn,
             CropShapesEnabled = startupVisuals.CropShapesOn,
             LeafShape = startupVisuals.LeafShapeOn,
             BlendPipelineEnabled = config.BlendPipeline,
@@ -1267,7 +1271,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         Block block = capi.World.Blocks[blockId];
 
         int color;
-        if (LodBlockPolicy.IsFruitFoliage(block))
+        if (LodBlockPolicy.IsFruitFoliage(block) || LodBlockPolicy.IsFruitWood(block))
         {
             color = StableColorOf(block);
         }
@@ -1322,6 +1326,7 @@ public partial class VintageHorizonsModSystem : ModSystem
     int StableColorOf(Block block)
     {
         if (LodBlockPolicy.IsFruitFoliage(block)) return FruitFoliageLook(block, null).Color;
+        if (LodBlockPolicy.IsFruitWood(block)) return FruitWoodColor;
         block = AppearanceOf(block);
         if (stableColorByBlockId.TryGetValue(block.BlockId, out int cached)) return cached;
 
@@ -1455,9 +1460,16 @@ public partial class VintageHorizonsModSystem : ModSystem
     readonly BlockPos colorProbePos = new(0, 0, 0);
 
     /// <summary>Tint slot for a block, with the untinted share its colour carries.</summary>
+    /// <summary>
+    /// The brown of the game's fruit tree trunks. Every species but olive is within a few shades of
+    /// it, and a trunk's block does not say which species it is.
+    /// </summary>
+    static readonly int FruitWoodColor = PackMean(new TextureMean(116f, 92f, 67f, 1f));
+
     int TintSlotOf(Block block)
     {
         if (LodBlockPolicy.IsFruitFoliage(block)) return FruitFoliageLook(block, null).TintSlot;
+        if (LodBlockPolicy.IsFruitWood(block)) return LodTintRegistry.SlotNone;
         block = AppearanceOf(block);
         if (!TryTopSoilColor(block, out _, out _) && TryModelPartColor(block, out ModelPartColor parts))
         {
@@ -5665,7 +5677,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             BushTextures: config.BushTextures,
             FruitTreeColors: config.FruitTreeColors,
             LeafShape: config.LeafShape,
-            VineShapes: config.VineShapes);
+            VineShapes: config.VineShapes,
+            ForageMarkers: config.ForageMarkers);
 
     /// <summary>What the config file says, for startup and for when no renderer exists.</summary>
     LodVisualSettings ConfiguredVisualSettings() => new(
@@ -5685,7 +5698,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         BushTextures: config.BushTextures,
         FruitTreeColors: config.FruitTreeColors,
         LeafShape: config.LeafShape,
-        VineShapes: config.VineShapes);
+        VineShapes: config.VineShapes,
+        ForageMarkers: config.ForageMarkers);
 
     /// <summary>What the config file says for the anti-aliasing dials, for when no renderer exists.</summary>
     LodTaaDials ConfiguredTaaDials() => new(config.TaaReachPixels, config.TaaNudge,
@@ -5711,6 +5725,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.PlantDetail = v.PlantDetail;
         config.ReedShapes = v.ReedShapes;
         config.VineShapes = v.VineShapes;
+        config.ForageMarkers = v.ForageMarkers;
         config.CropShapes = v.CropShapes;
         config.BushTextures = v.BushTextures;
         config.FruitTreeColors = v.FruitTreeColors;
@@ -5741,6 +5756,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         bool shapeChanged = renderer.HalfBlockLevels > 0 != v.HalfBlockTerrain
             || renderer.ReedShapesEnabled != v.ReedShapesOn
             || renderer.VineShapesEnabled != v.VineShapesOn
+            || renderer.ForageMarkersEnabled != v.ForageMarkersOn
             || renderer.CropShapesEnabled != v.CropShapesOn
             || renderer.LeafShape != v.LeafShapeOn
             || fruitChanged;
@@ -5748,6 +5764,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         renderer.PlantTexturesEnabled = v.PlantTexturesOn;
         renderer.ReedShapesEnabled = v.ReedShapesOn;
         renderer.VineShapesEnabled = v.VineShapesOn;
+        renderer.ForageMarkersEnabled = v.ForageMarkersOn;
         renderer.CropShapesEnabled = v.CropShapesOn;
         renderer.LeafShape = v.LeafShapeOn;
         blockTextures.BushTexturesVisible = v.BushTexturesOn;

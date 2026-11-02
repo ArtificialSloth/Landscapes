@@ -23,6 +23,7 @@ public static class PlantDetailChecks
         BuriedLeaves(c);
         VineSheets(c);
         GrassUnderTrees(c);
+        ForageMarkers(c);
         FruitWoodInTheCanopy(c);
         SwitchedOffPlants(c);
         VariantsInThePalette(c);
@@ -224,6 +225,93 @@ public static class PlantDetailChecks
         c.False((on with { PlantDetail = false }).VineShapesOn, "and Plant Detail governs it");
     }
 
+    static Block Named(string path, EnumBlockMaterial material) => new()
+    {
+        Code = new AssetLocation("game", path),
+        BlockMaterial = material,
+    };
+
+    static void ForageMarkers(Check c)
+    {
+        byte marker = (byte)(LodPaletteEntry.FlagThin | LodPaletteEntry.FlagCrossed);
+        c.Eq(marker, LodBlockPolicy.FlagsFor(Named("mushroom-flyagaric-normal", EnumBlockMaterial.Plant)),
+            "a mushroom is a marker");
+        c.Eq(marker, LodBlockPolicy.FlagsFor(Named("looseflints-flint-free", EnumBlockMaterial.Stone)),
+            "so is loose flint");
+        c.Eq(marker, LodBlockPolicy.FlagsFor(Named("looseores-nativecopper-granite-free", EnumBlockMaterial.Ore)),
+            "and loose ore");
+        c.Eq(LodPaletteEntry.FlagSkip, LodBlockPolicy.FlagsFor(Named("loosestones-granite-free", EnumBlockMaterial.Stone)),
+            "loose stones are not drawn at all");
+        c.Eq(LodBlockPolicy.CrossedShapeMushroom,
+            LodBlockPolicy.CrossedShapeOf(Named("mushroom-flyagaric-normal", EnumBlockMaterial.Plant)),
+            "a mushroom stands half a block");
+        c.Eq(LodBlockPolicy.CrossedShapeLooseItem,
+            LodBlockPolicy.CrossedShapeOf(Named("looseflints-flint-free", EnumBlockMaterial.Stone)),
+            "and flint a quarter");
+
+        Block[] registry =
+        {
+            Named("air", EnumBlockMaterial.Air),
+            Named("mushroom-flyagaric-normal", EnumBlockMaterial.Plant),
+            Named("looseores-nativecopper-granite-free", EnumBlockMaterial.Ore),
+            Named("loosestones-granite-free", EnumBlockMaterial.Stone),
+            Named("log-resin-pine-ud", EnumBlockMaterial.Wood),
+            Named("log-resinharvested-pine-ud", EnumBlockMaterial.Wood),
+        };
+        bool[] above = LodBlockPolicy.ReedTable(registry);
+        c.True(above[1] && above[2], "capture looks above the rain map for a mushroom and for ore");
+        c.False(above[3], "but not for the stones nobody wants drawn");
+        bool[] resin = LodBlockPolicy.ResinTable(registry);
+        c.True(resin[4], "a log holding resin is marked");
+        c.False(resin[5], "a harvested one is not");
+
+        LodSection ground = Fixtures.Section(
+            (LodSection.ColumnIndex(10, 12), new[] { LodSection.PackRun(0, 101, 100) }));
+        ground.Palette.Clear();
+        ground.Palette.Add(new LodPaletteEntry { BlockId = 1, Color = 0x2244AA, Flags = marker });
+        MeshResult Build(byte shape) => LodMesher.BuildMesh(new MeshJob
+        {
+            Key = 0,
+            Self = SectionSnapshot.Of(ground, crossedShapes: _ => shape),
+            Neighbors = new SectionSnapshot?[4],
+        });
+
+        MeshResult mushroom = Build(LodBlockPolicy.CrossedShapeMushroom);
+        c.Eq(1, mushroom.PackedOpaqueQuadCount, "a marker is one quad");
+        uint geometry = mushroom.PackedOpaqueQuads[0];
+        c.True((geometry & 127u) == 10u && ((geometry >> 7) & 127u) == 10u
+                && ((geometry >> 14) & 127u) == 12u && ((geometry >> 21) & 127u) == 12u,
+            "with no footprint, which is how the vertex stage knows it");
+        c.Eq((mushroom.PackedOpaqueQuads[1] >> 16) * 0.25f, 100.5f, "half a block tall from the ground");
+        c.Eq(0x2244AAu, mushroom.PackedOpaqueQuads[2] & 0xFFFFFFu, "in the block's own colour");
+        c.True((mushroom.PackedOpaqueQuads[2] >> 24) < LodTintRegistry.MaxSlots, "and opaque");
+        c.Eq(0, Planes(Build(LodBlockPolicy.CrossedShapeAsMat)), "switched off it is the flat patch");
+
+        LodSection log = Fixtures.Section(
+            (LodSection.ColumnIndex(10, 10), new[] { LodSection.PackRun(0, 103, 100) }));
+        log.Palette.Clear();
+        log.Palette.Add(new LodPaletteEntry { BlockId = 2, Color = 0x223344 });
+        int Markers(bool[]? table, long key = 0)
+        {
+            MeshResult mesh = LodMesher.BuildMesh(new MeshJob
+            {
+                Key = key,
+                Self = SectionSnapshot.Of(log, resinLogs: table),
+                Neighbors = new SectionSnapshot?[4],
+            });
+            return Planes(mesh);
+        }
+        bool[] logs = { false, false, true };
+        c.Eq(3, Markers(logs), "every block of a resin log wears a marker");
+        c.Eq(0, Markers(null), "with the switch off the table is not passed, and it is a plain log");
+        c.Eq(0, Markers(logs, LodWorld.SectionKey(1, 0, 0)), "and past level 0 there are none");
+
+        c.False((LodVisualSettings.Default with { PlantDetail = false }).ForageMarkersOn,
+            "Plant Detail governs the markers");
+        c.True((LodVisualSettings.Default with { PlantTextures = false }).ForageMarkersOn,
+            "which wear no picture, so need no Plant Textures");
+    }
+
     static void GrassUnderTrees(Check c)
     {
         var grass = new Block
@@ -410,14 +498,14 @@ public static class PlantDetailChecks
     static void Wiring(Check c)
     {
         string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
-        foreach (string row in new[] { "plant-detail", "fruit-tree-colors", "crop-shapes", "reed-shapes", "vine-shapes",
+        foreach (string row in new[] { "plant-detail", "fruit-tree-colors", "crop-shapes", "reed-shapes", "vine-shapes", "forage-markers",
             "plant-textures", "bush-textures", "leaf-shape" })
         {
             c.True(dialog.Contains($"\"{row}\"", StringComparison.Ordinal), $"the Plants tab has {row}");
         }
 
         string mod = Source("VintageHorizonsModSystem.cs");
-        foreach (string name in new[] { "PlantDetail", "ReedShapes", "VineShapes", "CropShapes", "BushTextures",
+        foreach (string name in new[] { "PlantDetail", "ReedShapes", "VineShapes", "ForageMarkers", "CropShapes", "BushTextures",
             "FruitTreeColors", "LeafShape" })
         {
             c.True(mod.Contains($"config.{name} = v.{name};", StringComparison.Ordinal)
@@ -441,6 +529,13 @@ public static class PlantDetailChecks
         c.True(mod.Contains("|| renderer.LeafShape != v.LeafShapeOn", StringComparison.Ordinal)
                 && mod.Contains("|| renderer.CropShapesEnabled != v.CropShapesOn", StringComparison.Ordinal),
             "a shape switch re-meshes, since it decides what geometry exists");
+
+        c.True(mod.Contains("if (LodBlockPolicy.IsFruitWood(block)) return FruitWoodColor;", StringComparison.Ordinal)
+                && mod.Contains("if (LodBlockPolicy.IsFruitWood(block)) return LodTintRegistry.SlotNone;",
+                    StringComparison.Ordinal)
+                && mod.Contains("LodBlockPolicy.IsFruitFoliage(block) || LodBlockPolicy.IsFruitWood(block)",
+                    StringComparison.Ordinal),
+            "a fruit tree's wood takes its one bark colour and no plant tint, wherever a colour is asked for");
 
         string renderer = Source("Render", "LodTerrainRenderer.cs");
         c.True(renderer.Contains("LodWorld.KeyLevel(best) == 0 ? leafPlanes : null", StringComparison.Ordinal),
