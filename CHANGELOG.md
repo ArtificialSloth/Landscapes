@@ -8,6 +8,47 @@ first.
 
 ## [Unreleased]
 
+## [0.5.2-dev.18] - 2026-11-01
+
+**A test build: plants drawn as what they are, and two fixes for a short cached distance.** The fast checks pass with 0
+failures on game 1.22.0 and 1.22.7 (26,875 assertions). This entry covers dev.8 to dev.18.
+
+**New Plants tab.** One Plant Detail switch over a switch for each feature, each falling back to something cheaper. Leaf
+Shape is a drop-down on the same tab. Plant Textures moved here from General. Performance turns Plant Detail off.
+
+**Leaves come in five shapes** out to about 620 blocks at default settings: Cubes, Crossed Planes, Crossed Planes with
+Tops, Leaf Clusters, and Leaf Clusters with Tops, which is the new default. At one forest spot it held 257 FPS against
+260 for cubes. Leaves deep in a tree sit darker, so you can tell one tree from the next.
+
+**Fruit trees** show their species and what they are doing: in leaf, in blossom, in fruit or bare. A tree shows what it
+was doing when last loaded. Existing trees turn plain green at once, and their trunks brown, and species arrive as
+chunks load again. Fruit Tree Colors is its own switch.
+
+**Vines** hang as flat sheets against what holds them. **Crops** stand on crossed planes and grow by stage.
+
+**Berry bushes** stand as see-through sheets of leaves, as the game builds them, instead of a block. Berries are not
+shown. The switch is now called Berry Bush Sheets.
+
+**Forage Markers:** mushrooms, loose flint and loose ore are now found on open ground, as small squares kept big enough
+to see. Resin logs show a flat amber mark, so a resin tree stands out from any side. Land you have already explored
+shows new finds as its chunks load again; resin shows at once.
+
+**Flower Sheets** stand flowers up as their own picture. Purely for the look, so it is a separate switch, off by default.
+
+**New preset: Ultra**, above Quality in the settings window: everything on, far biome colors, and the finest detail.
+Expect it to cost noticeably more than Quality.
+
+**Colors:** the small ferns follow their season, mushrooms show their cap color rather than a tinted guess, and bushes
+and crops no longer draw black or orange.
+
+**Anti-aliasing** now runs at full strength from the edge of the game's own terrain outward.
+
+**Removed from distant terrain:** loose stones, which are not drawn at all now, and tall grass under trees, which was
+half-height blocks and is a flat patch.
+
+**Cached distance:** with it below the explored distance, Farseer and the fog now meet the terrain, closing the void.
+Very short distances no longer lose ground after a few minutes. The slider moves in 128-block steps above 1,024.
+
 ## [0.5.2-dev.7] - 2026-10-31
 
 **A test build: plants at distance, and a shorter cached distance.** The fast checks pass with 0 failures on game

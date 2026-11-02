@@ -780,9 +780,28 @@ live until the exact replacement persistence revision is acknowledged.
     The Plant Textures setting (Quality and Balanced on, Performance off) keeps the plain tapered planes as its off
     state, with no remesh. Rejected: a single camera-facing spike (owner: lackluster), a plain cube (a third of the
     real height), grass (owner: probably never). G312-G314.
-68. **Block textures stay inside the seam band** (owner, 2026-10-31; 0.5.2-dev.6). Leaf textures past it were built and
-    removed: nothing shows past about 500 blocks. This closes the far-texture avenue; only crossed plants wear
-    texture beyond the band. Rejected: see-through leaf blocks, +26.84% level-0 quads. G315.
+68. **Textures on cubes stay inside the seam band** (owner, 2026-10-31; 0.5.2-dev.6; narrowed 2026-11-01). Leaf textures
+    on cubes past it were built and removed: nothing shows past about 500 blocks. This closes that avenue. See-through
+    plants wear their sheets to the end of level 0 at the owner's direction, since a plane needs its sheet to have a
+    shape at all. Rejected: see-through leaf blocks, +26.84% level-0 quads. G315.
+69. **Every plant feature is a switch with a cheaper form** (owner, 2026-11-01; 0.5.2-dev.12). The Plants tab: Plant Detail
+    over a switch per feature, keeping their positions, and Leaf Shape. Off is a flat patch, plain colour or cube, and
+    removes the cost. Plant Textures gates what a sheet cuts out. Performance turns Plant Detail off.
+70. **Leaves are Leaf Clusters with Tops at level 0** (owner, 2026-11-01; 0.5.2-dev.12-dev.14). Two planes across each
+    two-block cell holding a visible leaf, merged up the stack, a flat plane through its top. Any visible leaf fills its
+    cell, which rounds gappy trees and costs 74-82% of cubes' quads. A leaf plane is a crossed plant only in the private
+    `SectionSnapshot`, level 0 only, and neighbours are told so cover agrees. Quads carry `LeafBuried`; flat tops dissolve
+    edge-on. Cubes and three other shapes stay in the drop-down. Rejected: Crossed Planes with Tops. G319.
+71. **A small useful thing is one quad facing the camera** (owner, 2026-11-01; 0.5.2-dev.15-dev.16). A packed record with no
+    footprint is a marker: mushrooms and loose flint and ore at no less than two pixels, flowers at true size on their
+    own picture, resin as flat amber in front of its log at three. They read as tiny cubes at a sixth of the faces.
+    Capture looks above the rain map for the ground ones (`ReedTable`). Loose stones are not drawn. Past level 0 they
+    are mats, as ferns are. Flower Sheets is cosmetic and separate; Forage Markers covers the useful ones.
+72. **Plants are drawn from what the game draws** (owner, 2026-11-01). Vines are one flat sheet per run on the side that holds
+    them. Bushes are two crossed planes and a flat one, wearing their sparse sheets layered into one picture
+    (`ComposePlant`), a block and a quarter tall by the screen rather than the model (G323). Fruit trees carry their
+    species and state as a palette variant, so a tree shows what it did when last loaded, and their wood stops at the
+    canopy in one brown. Colour comes from the art the plant shows: a mushroom's cap, a fern's season from its model.
 
 ## Concurrency invariants
 

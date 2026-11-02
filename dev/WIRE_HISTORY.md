@@ -272,6 +272,16 @@ layer proves bare ground. A partial tail is corrupt and rejected. The two comple
 uncompressed bytes per section before deflate and do not change terrain-run meaning, so blob
 format and schema meaning remain 4/6.
 
+**Append-only palette variants within format 4 (0.5.2-dev.12, Session 121).** A third tail follows the snow tails: a
+`ushort` count, then for each entry that has one a `ushort` palette index and a length-prefixed string of at most 128
+bytes, such as `cherry:flowering`. A fruit tree's species and state live in its block entity, so one block id holds a
+palette entry per variant. Older format-4 readers stop before it and ignore it. A row with no tail reads as no
+variants, an index past the palette or an oversized string refuses the blob. The blob travels unchanged over the wire.
+Terrain-run meaning does not change, so blob format and schema meaning remain 4/6.
+
+**Packed quads are not persisted, so these need no bump (dev.13-dev.15).** Word 2's slot field gives bits 20-23 to a
+leaf's buried shade, and a record with no footprint on faces 6 or 7 is a marker. Meshes are rebuilt on every load.
+
 ## Database schema-meaning ledger
 
 | Schema | Released | Meaning |

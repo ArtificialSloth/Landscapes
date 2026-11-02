@@ -4,11 +4,11 @@
 
 ## Start here
 
-Read [Session 120](sessions/SESSION_120.md), then [Session 119](sessions/SESSION_119.md). **0.5.2-dev.7**
-(`5b595dd`, not pushed) is the current test build: the first ModDB reports fixed in dev.2, reeds and ferns drawn at
-distance as textured crossed planes, a Plant Textures setting, and the cached distance down to 256, section "What
-Session 120 left open" below. It declares game 1.22.0, compiles on 1.22.7 and is intended for 1.22.5+ (owner, no more
-testing below that). Player reports, with their evidence, are in the git-ignored `dev/PLAYER_REPORTS.md`.
+Read [Session 121](sessions/SESSION_121.md), then [Session 120](sessions/SESSION_120.md). **0.5.2-dev.18**
+(`39d14bd`, not pushed) is the current test build: the void and the terrain pool fixed, every plant redrawn, a Plants
+tab, Forage Markers, Flower Sheets and an Ultra preset, section "What Session 121 left open" below. It declares game
+1.22.0, compiles on 1.22.7 and is intended for 1.22.5+ (owner, no more testing below that). Player reports, with their
+evidence, are in the git-ignored `dev/PLAYER_REPORTS.md`.
 **0.5.1 is the latest release**: the owner-played 0.5.1-dev.7, promoted on 2026-10-22 with only the two
 version strings changed (commit `7959339`, not tagged) and pushed. It fixes the packed shader on NVIDIA 617,
 sweeps all explored land nearest a player first, adds the import popup and progress line, and fixes the
@@ -23,15 +23,40 @@ every dial on a Developer tab shown by Developer options, settled decision 64), 
 distance, Farseer, the seam fog and the automatic LOD target with Quality as the default and a first-run
 prompt (decision 63), let the vanilla floor hold only L1 (decision 35), held the seam fog for 5 s at
 login, and made Generate's Settings button unpause the game; it carries Session 116's review fixes. The
-fast tier passes (26,664 assertions at 0.5.2-dev.7). Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
+fast tier passes (26,875 assertions at 0.5.2-dev.18). Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
 is solved for him by the all-cores garbage collector, an opt-in switch on General (0.4.134, settled
 decision 54), and the game's chunk thread rests when it has nothing to do (0.4.132, settled decision 53).
 
+### What Session 121 left open
+
+- **Preset review, at the end of this work (owner):** he will go through every preset and re-designate what each holds.
+  Flowers may go on in Quality ("may want that turned on"). Ultra's Far Biome Colors and 1-pixel target were the agent's
+  choices. Ultra has not been run, so take a frame-rate reading at the pine spot, where Quality with these plants held
+  255/140 on dev.13.
+- **dev.18 is unplayed:** bush height (1.25 blocks) and mushroom colours (the cap picture, no plant tint). Look at a
+  puffball and a bush against vanilla.
+- **Berries on bushes:** offered, no answer yet. Would be a palette variant like a fruit tree's, so a bush shows what it was
+  doing when last loaded. Ripe bushes are useful to the player.
+- **A ruin draws pale (seen at 18:48, not raised by him):** Aged roofing and stone came out cream against vanilla's dark wood.
+  Not investigated; start from G180-G183.
+- **Not reported on:** resin at distance, flint and ore in the open, Vine Sheets and Forage Markers off, cattails after the
+  fern fix (same code, may have shifted colour), fruit tree species past plain green.
+- **Anti-aliasing from vanilla's edge:** whether leaf shimmer is gone and whether it smears while moving needs his eye. No
+  frame-rate pair was taken; his later sessions held 243-281 FPS across different scenes.
+- **Limits accepted for now:** mushrooms on trunks are captured only under leaves, and vines on open cliffs not at all, since
+  capture looks one block above the rain map. Open-ground finds reach explored land only as chunks load again;
+  forcing it means a `FingerprintRule` bump and one re-sweep per world. Fruit trees show no separate fruit. Each vine
+  type uses one of its six pictures. A texture reload would invalidate the layered tiles, not handled.
+- **If the pine carpet returns:** the next step is a cell filling only with more than one leaf in it. Held back in case it
+  hollows birches.
+- **Pending from dev.9-dev.11:** whether terrain should end at the number set (at view 256, terrain ends at 1,280 for Cache
+  1,280-1,792); a seam band slider, for which level 1 would have to carry texture slots (`step == 1`); the pool test (384
+  and 512, relog, fly 10+ minutes) and the short-cap seam, where Farseer can poke through near a very short cap; a lower
+  cap frees little memory (at 384, 504 sections resident and 153 drawn); refused sections never retry; fennel as the
+  "flax" he saw is inferred.
+
 ### What Session 120 left open
 
-- **Void between a short Cache distance and Farseer (owner, seen on 0.5.2-dev.7):** with the Cache distance set
-  lower than the explored distance, the cached terrain ends where it should, but Farseer and the fog curtain stay
-  out at the edge of explored land, leaving a jarring empty gap between them. Not investigated yet.
 - **Plants, still to look at:** cattails and ferns are owner-approved. Not reported on: the Plant Textures switch and
   whether each preset sets it, reeds in water, tule and sedge in the open, and shimmer on far stems. Plant Textures is
   on in Balanced by the agent's choice, for the owner to confirm. Cached land gains open-air reeds only when captured again; forcing it would mean a `FingerprintRule` bump and one full

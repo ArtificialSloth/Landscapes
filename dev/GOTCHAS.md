@@ -5872,3 +5872,133 @@ mean-preserving pattern has nothing left to show. See-through leaf blocks are wo
 Silhouette and shape do the work at that size, which is why crossed planes succeeded where texture did not.
 
 **Found:** 2026-10-31, Session 120 (0.5.2-dev.5, removed in dev.6).
+
+### G316 - Terrain ends at the fade, on a circle
+
+**Trigger:** deciding whether cached terrain covers a cell, for Farseer, the fog or a replay.
+
+**Trap:** residency says nothing about drawing. The cap cuts the draw by section centre, coarse sections stay resident past
+it, and the shader discards past the fade's end (`dist > 1.0` in `lodownershiptest.fsh`). A replay that leaves out the
+discard looks perfect while the real result keeps a ring of void.
+
+**Safer action:** count a cell only if its section passes the shared cap test and the whole cell is inside the terrain's
+end (`LodFarDistance.CellInsideTerrain`), and model the discard in any replay. Snap the camera to its chunk for that test:
+each ownership flip rebuilds the seam mask and prepares a fog field on the render thread. Keep the fog's disc inside the
+terrain's end (`TerrainFogEndMarginBlocks`), or a curtain rings the dissolved edge.
+
+**Found:** 2026-10-31, Session 121 (0.5.2-dev.8).
+
+### G317 - An arena ceiling sized from a setting that does not bound the demand
+
+**Trigger:** tying a memory limit to a player setting; holes in cached ground with `REQUIRED PACKED TERRAIN PATH FAILED`.
+
+**Trap:** arena pages are one 8 MiB page per region per level, so they follow what is resident, and a short Cache distance
+barely changes that: 23 pages at 30 s on 512 and 8,192 alike. A pool sized for 384 held 21. A refused section is never
+retried, so the holes stay until login. `frag 0.94` with committed far above live is normal, each page holding a free
+tail, and is not a leak.
+
+**Safer action:** keep the ceiling at the full horizon (`UnlimitedDrawDistanceBlocks`); it is a cap, committed on demand. If
+holes return, read the `mirror.Describe()` line first. A pool that can still fill would need refused sections to retry.
+
+**Found:** 2026-10-31, Session 121 (0.5.2-dev.11). The cause is inferred from page counts, not seen on the counter.
+
+### G318 - A setting read back from the config on save has to reach the config first
+
+**Trigger:** adding a visual setting the renderer holds only in a reduced form, as the plant switches are.
+
+**Trap:** `CurrentVisualSettings` reads those switches from the config because the renderer holds what they come to.
+`SaveConfig` writes `CurrentVisualSettings` back. With a renderer present, `ApplyGuiConfig` used to reach only the renderer,
+so a choice applied and drew, the file kept the old value, the window reopened on it, and the next Save restored it.
+
+**Safer action:** `ApplyGuiConfig` calls `WriteVisualSettings` first, with or without a renderer. `PlantDetailChecks` pins it.
+
+**Found:** 2026-11-01, Session 121 (owner on 0.5.2-dev.12, fixed in dev.13).
+
+### G319 - A flat see-through plane is a solid bar edge-on
+
+**Trigger:** a cut-out plane lying flat, seen at a low angle; bright lines across a canopy.
+
+**Trap:** mips stretch along the glancing axis and the alpha test's cut-outs blur solid, so a flat leaf top reads as an opaque
+stripe. Raising its shade above the planes around it, as dev.13 did, makes that worse.
+
+**Safer action:** dissolve it by how much of the sheet faces the camera, the ratio of its two screen footprints in
+`lodterrainbody.fsh`, here between 30 and 14 degrees, and give it the planes' shade.
+
+**Found:** 2026-11-01, Session 121 (0.5.2-dev.13, fixed in dev.14).
+
+### G320 - Brightness across screenshots mixes the time of day
+
+**Trigger:** reading a percentage from two shots taken minutes apart, above all across a game restart.
+
+**Trap:** the agent called pines 15% too dark and planned a lift. Bare rock had fallen 16% and ground 9% between the shots, and
+the owner spotted it. Corrected, the pines were within about 2%.
+
+**Safer action:** measure something the change cannot touch in the same shots, rock or open ground, and correct for it, or ask
+for the pair to be taken with `/time set`. A sky with different clouds is not a reference.
+
+**Found:** 2026-11-01, Session 121.
+
+### G321 - Removing cover shows what was always there
+
+**Trigger:** a block appears after a change, and the most recent similar change looks guilty.
+
+**Trap:** tall grass drew as half-height cubes under trees and the owner suspected the cattail change. The reed code only looks
+above the rain map for reeds and ferns. Under a tree the rain map starts at the canopy, so capture has always walked down
+through that grass, and cube leaves hid it until dev.12. Out in the open rain passes through it, so it is never captured,
+and raising capture for it would lift every meadow by a block (G312).
+
+**Safer action:** before blaming a change, count the block in a cache (`leaffield --under`) and ask what used to cover it.
+
+**Found:** 2026-11-01, Session 121 (seen on 0.5.2-dev.13, fixed in dev.14).
+
+### G322 - A block entity's colour is sampled, and a tint hides how wrong it is
+
+**Trigger:** a block with an `EntityClass` drawing the wrong colour.
+
+**Trap:** `DescribePalette` asks such a block at its position, and the palette delegates hand 0 for it, which on a textured quad
+reads as black (bushes, dev.9). A fruit tree's wood came back near-black, the plant tint then made it dark green, and it
+looked like a plausible colour.
+
+**Safer action:** where a block's colour does not depend on its entity, exempt it in all of `DescribePalette`, the colour
+delegate, the slot delegate, `StableColorOf` and `TintSlotOf`. Missing one leaves a stale or black result. `IsBerryBush`,
+`IsFruitFoliage` and `IsFruitWood` are the pattern.
+
+**Found:** 2026-10-31 and 2026-11-01, Session 121 (0.5.2-dev.10 and dev.15).
+
+### G323 - A model's numbers are not its size on screen
+
+**Trigger:** sizing a stand-in from a shape file.
+
+**Trap:** a bush's planes run 32 units, two blocks, up the model, so dev.17 drew them two blocks tall and they floated as a crown
+over bare ground. In the game a bush stands about a block and a quarter beside its selection box.
+
+**Safer action:** size against a vanilla screenshot, using the selection box as the ruler, and treat the model as a first guess.
+
+**Found:** 2026-11-01, Session 121 (0.5.2-dev.17, corrected in dev.18).
+
+### G324 - The plant tint fallback, and picture names
+
+**Trigger:** a plant of the wrong colour, particularly white turning orange or yellow.
+
+**Trap:** `TakesPlantFallback` gives any block of material Plant with no colour maps the plant tint, meant for grey ferns. Crops
+and mushrooms are drawn untinted, so a white puffball came out orange, and rye did too. Separately, only a few mushroom
+models call their picture `cap`; most use the mushroom's own name beside `pores` or `gills`, so a lookup by that one name
+silently ran for few of them.
+
+**Safer action:** exclude a full-colour plant in `TakesPlantFallback`. Use `MushroomCapTexture`. When a fix for "these" is
+reported as not working on one of them, read that one's model before assuming the fix ran.
+
+**Found:** 2026-10-31 and 2026-11-01, Session 121 (0.5.2-dev.10 and dev.18).
+
+### G325 - A season can live only in a model
+
+**Trigger:** a plant the wrong colour for the season while the same plant looked right in another.
+
+**Trap:** the small ferns name `seasonalEaglefern` and the like on model elements, and their pictures in the model's own
+`textures`. `block.Textures` is empty for them, so `ReadModelPartColor` gave up, and even past that `BlockWithColorMaps` looks
+for a block carrying the pair, which none does. Both fell quietly back to plain plant tint with no season.
+
+**Safer action:** read a face's picture from the block, then the model. `ColorMapCarrier` makes a block in name only to take a
+pair of maps to the tint table. Season pages cap at 32, and the game ships 26 maps of both kinds, so this fits, but it is a limit.
+
+**Found:** 2026-11-01, Session 121 (0.5.2-dev.17).

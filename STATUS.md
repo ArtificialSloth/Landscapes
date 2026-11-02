@@ -3,17 +3,36 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-10-31`
-**Mod version:** `0.5.2-dev.7` - a test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; commit `5b595dd`, not pushed; fast tier 26,664 assertions, 0 failures on game 1.22.0 and 1.22.7. **The latest release is 0.5.1**, the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
+**Status date:** `2026-11-01`
+**Mod version:** `0.5.2-dev.18` - a test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; commit `5b595dd`, not pushed; fast tier 26,664 assertions, 0 failures on game 1.22.0 and 1.22.7. **The latest release is 0.5.1**, the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
 **Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083`, 0.5.0 `2826b2e`, 0.5.1-dev.2 `621ac7c`, 0.5.1-dev.3 `6b46739`, 0.5.1-dev.4 `102d1e1`, 0.5.1-dev.5 `939af75`, 0.5.1-dev.6 `4421cc3`, 0.5.1-dev.7 `9fa0026`, 0.5.1 `7959339`, 0.5.2-dev.1 `0fc55ef`, 0.5.2-dev.2 `ccd72be`, 0.5.2-dev.3 `07f1aed`, 0.5.2-dev.4 `8216b6f`, 0.5.2-dev.5 `21730b3`, 0.5.2-dev.6 `e2fb684`, 0.5.2-dev.7 `5b595dd`; everything through 0.5.1 pushed to `main` on `DodenGruva/Landscapes` (now public) on 2026-10-22; the history was rewritten to his GitHub no-reply address on 2026-10-13
 **Target:** intended for Vintage Story 1.22.5+; declares 1.22.0, where it was briefly tested; compiled on 1.22.7; .NET 10
-**Source files:** `159` C# files under `VintageHorizons/src`
+**Source files:** `161` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
+
+**0.5.2-dev.18, plants drawn as what they are (2026-11-01).** Session 121, dev.8 to dev.18. Copy-installed to both Mods
+folders, not pushed. 26,875 assertions, 0 failures on 1.22.0 and 1.22.7. Compatibility numbers stay 1/4/6, with a third
+append-only tail in format 4 for fruit tree variants. dev.18 is unplayed; his last session was dev.17.
+
+- **A short Cache distance:** the void is closed (dev.8, replay 4,832,311 void cells to 0, owner: looks good, G316). The
+  missing ground was an arena ceiling sized from that distance (dev.11, G317); inferred from page counts, not tested by
+  flying at 384 or 512, though his sessions since show no packed failure.
+- **Leaves (decision 70):** Leaf Clusters with Tops is the default, chosen by the owner from shot pairs. 74-82% of cubes'
+  quads on two worlds; 257/141 FPS against 260/145 at one pine spot. Shaded by how buried they are.
+- **Plants tab (decision 69):** Plant Detail over a switch per feature; saving proved by his config (G318).
+- **Owner-seen and good:** crops, vines ("look good"), flowers ("look great, actually"), stripes gone, the fruit tree slit
+  gone, ferns and bushes "looks better" on dev.17.
+- **Changed since his last look (dev.18):** bushes a block and a quarter tall, mushrooms from the right picture with no plant
+  tint. Harness-tested only.
+- **Forage Markers (decision 71):** mushrooms, flint, ore and amber resin. Seen in play, with mushroom colour fixed since;
+  no report on resin, flint or ore in the open.
+- **Ultra:** not run. Everything on, far biome colors, 1-pixel detail. The owner re-designates all presets at the end.
+- **Anti-aliasing** runs at full strength from vanilla's edge; shimmer and smearing still need his eye.
 
 **0.5.2-dev.7, plants and a shorter cached distance (2026-10-31).** Session 120. Copy-installed to both Mods folders,
 not pushed. His dev.7 session compiled every shader path first time and held 232-257 FPS (a median frame of 3.8-4.1 ms).
@@ -1192,7 +1211,8 @@ It covers:
 
 ## Next work
 
-Begin with [Session 119](dev/sessions/SESSION_119.md) and the top of [TODO](dev/TODO.md).
+Begin with [Session 121](dev/sessions/SESSION_121.md) and the top of [TODO](dev/TODO.md): dev.18 to judge, the preset review
+the owner plans at the end of this work, berries on bushes, and the pale ruin.
 
 1. **Publishing 0.5.1, on the owner's calls:** 0.5.1 is played, promoted and pushed; the review's small
    observations and the unseen items of Sessions 117 and 119 are in TODO; run the game-launching check
