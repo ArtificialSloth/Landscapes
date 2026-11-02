@@ -4,9 +4,10 @@
 
 ## Start here
 
-Read [Session 122](sessions/SESSION_122.md), then [Session 121](sessions/SESSION_121.md). **0.5.2-dev.22**
-(`37cf29d`, not pushed) is the current test build: Distant Lights on top of Session 121's plants, Plants tab, Forage
-Markers, Flower Sheets and Ultra preset, sections "What Session 122 left open" and "What Session 121 left open" below. It declares game
+Read [Session 123](sessions/SESSION_123.md), then [Session 122](sessions/SESSION_122.md). **0.5.2-dev.27**
+(`61885d3`, not pushed) is the current test build: shore foam, the water blip fix and the band's reach per preset on top of
+Session 122's Distant Lights and Session 121's plants, sections "What Session 123 left open", "What Session 122 left open"
+and "What Session 121 left open" below. The next session is the per-setting benchmark (owner). It declares game
 1.22.0, compiles on 1.22.7 and is intended for 1.22.5+ (owner, no more testing below that). Player reports, with their
 evidence, are in the git-ignored `dev/PLAYER_REPORTS.md`.
 **0.5.1 is the latest release**: the owner-played 0.5.1-dev.7, promoted on 2026-10-22 with only the two
@@ -26,6 +27,25 @@ login, and made Generate's Settings button unpause the game; it carries Session 
 fast tier passes (26,938 assertions at 0.5.2-dev.22). Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
 is solved for him by the all-cores garbage collector, an opt-in switch on General (0.4.134, settled
 decision 54), and the game's chunk thread rests when it has nothing to do (0.4.132, settled decision 53).
+
+### What Session 123 left open
+
+- **The per-setting benchmark, in a new session (owner).** Session 123 section 1 has the design: a copy of
+  `vintage cave tales-2` (cache `71c0c6af`) with his eight enabled mods and graphics settings (2560x1440 at 0.75 scale,
+  view 256), one setting at a time removed from everything-on and re-measured against a fresh baseline, in milliseconds,
+  five scenes, and each preset whole. Needed first: one `.dl` command that sets any window row by key (the Plants tab,
+  leaf shape and Distant Lights have none), the bench on a Release build (it deploys Debug), the sweep off in the copy,
+  then a 20-minute pilot. Ask before every launch; his game must be closed and the PC left alone.
+- **NVIDIA:** dev.23-dev.27 have not run there. The blips were worst there; shore foam's depth read and the new exact
+  readers are untested on it. The owner plans to test it.
+- **Costs unmeasured:** shore foam (`.dlwater shore 0`/`1`), the full-resolution water depth pass
+  (`.dlwater majority off`/`on`), and the wider band, whose seam field grows from 128 to 256 cells at Quality and Ultra.
+- **dev.27 unplayed:** the band's reach per preset and speckle 0.1. Performance holds Balanced's share with the band off.
+- **Water, not looked for:** far shore foam shimmer while moving; vanilla's weak-foam flag (bit 28 halves its brightness)
+  was not found set; one scene read cached shallows 20% brighter than vanilla at unmatched depths.
+- **With terrain off** a faint rim around water stays on the sky; it is the engine's sky and clouds reading the quarter
+  image, as they do for vanilla's own water.
+- **Preset review** (owner) still follows the benchmark; the band reach is now part of each preset.
 
 ### What Session 122 left open
 
@@ -582,10 +602,9 @@ terrain/seabed holes and was completely removed in 0.4.39.
   up, cached OIT water is suppressed only when revealage and liquid depth both prove vanilla
   liquid at that pixel. Liquid depth remains authoritative for underwater murk. Preserve alpha
   1.3 / foam 1.6 / clarity 40.
-- **Watch, do not tune, the movement-only open-water blips.** They were briefly reported away
-  from the seam and then could not be reproduced. If they return, capture while moving and locate
-  the mark in vanilla revealage, combined revealage, raw/repaired depth and final color before
-  changing repair, foam or glint.
+- **The movement-only blips are explained and mostly fixed** (Session 123, G332): cached water in the
+  quarter-size liquid depth, now resolved at full resolution by majority (0.5.2-dev.25-dev.26). What is
+  left is an NVIDIA check.
 - **Complete the continuity matrix:** repeated movement and chunk streaming, both sides of the
   junction, corners and LOD joins, same seabed through each surface, shallow/deep shores, below
   water, stale cache, resize/fullscreen, shader reload and world changes. Include unrelated OIT

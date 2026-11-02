@@ -6059,3 +6059,73 @@ session's worst frames and its 0.1% lows can be entirely his own screenshots, an
 minute start plus its `+Ns` is the clock time. Judge lows from minutes with no screenshot.
 
 **Found:** 2026-11-01, Session 122 (eight of eight on dev.19).
+
+### G330 - Vanilla's foam brightness is the light on the surface, not the water's colour
+
+**Trigger:** transcribing a term from `chunkliquid.fsh` into the cached water shader.
+
+**Trap:** vanilla adds `bright * (diff * 0.3 + noise / 10)`, where `bright` is the mean of `rgba`, the light falling on the
+surface, close to 1 in daylight. The cached shader's existing grain line took `bright` from the water's own dark colour,
+and dev.23's shore foam was copied from that line: about five times too faint, so the owner saw no foam at all while the
+depth read worked.
+
+**Safer action:** check what each vanilla variable is before copying a line that already uses it. The cached shader's
+`light` is vanilla's `rgba.rgb`. `.dlwater shore paint` shows the depth term itself, which separates a dead read from a
+faint one.
+
+**Found:** 2026-11-02, Session 123 (0.5.2-dev.23, fixed in dev.24).
+
+### G331 - `linearDepth` is a share of the far plane, and our programs keep fogandlight's default planes
+
+**Trigger:** reading depth in a mod shader, or comparing a depth-scaled vanilla effect with the mod installed.
+
+**Trap:** `fogandlight.fsh`'s `linearDepth` returns distance as a share of `zFar`, so its constants (foam's 1500, murk's
+350) shrink in blocks as the far plane grows. The mod lifts it from 3,000 to about 8,700 blocks, so vanilla's own foam
+fades at about 3.7 blocks of depth instead of 1.3, and it changes with Cache distance. Separately, our programs never
+upload `zNear`/`zFar`, so they keep the include's defaults, 0.3 and 1500, and the accepted underwater murk is tuned on that.
+
+**Safer action:** a new depth reader takes the planes under its own names (`vhZNear`, `vhZFar`). Never upload the real
+values to the shared names: that would change the accepted murk.
+
+**Found:** 2026-11-02, Session 123.
+
+### G332 - The quarter-size liquid depth takes each texel from its centre
+
+**Trigger:** marks near water that appear and vanish as the camera moves; anything drawn into `EnumFrameBuffer.LiquidDepth`.
+
+**Trap:** the engine's liquid depth is a quarter of the screen. Drawn straight into it, each texel took cached water from
+its centre sample alone, so a pond or shore sliver narrower than a texel was in or out by where it landed. Two captures
+a pixel apart measured about 870 texels claiming water over mostly dry blocks and 750 mostly-water texels with none; 98 of
+the first survived the turn. The sky, clouds, cached ground and Farseer all darken through that image, blurred, so each
+became a soft square, and cached ground under one also lost its fog.
+
+**Safer action:** decide cached water's share at full resolution by majority (`lodwaterresolve`), and give this mod's
+readers the exact images (`lodwatermurk.fsh`). To see it, `.dlgpu off` puts the marks on the sky, but ice and other opaque
+blocks in water vanish too and look like marks. `.dlwater coverage off` and `.dlwater majority off` are the A/Bs.
+
+**Found:** 2026-11-02, Session 123 (0.5.2-dev.25-dev.26; the blips of Sessions 79-82).
+
+### G333 - A band sized from the level 0 it stretches feeds itself
+
+**Trigger:** deriving anything from the applied automatic thresholds that also feeds `AutoThresholdFloorBlocks`.
+
+**Trap:** automatic thresholds keep level 0 out past vanilla's edge plus the band's width. A band whose width is a share of
+level 0 beyond vanilla's edge, read from those applied thresholds, would push level 0 out by its own width every time they
+were worked out.
+
+**Safer action:** take level 0 from `LodAutoThresholds.Compute` with the floor the band does not move (vanilla's edge plus
+one section), as `UpdateBandWidth` does, and recompute only when an input changes.
+
+**Found:** 2026-11-02, Session 123 (0.5.2-dev.27, caught before building).
+
+### G334 - A sampler unit number is not the per-stage sampler limit
+
+**Trigger:** a check failing "stays within the baseline fragment-unit limit" after a sampler is added.
+
+**Trap:** the checks held unit numbers under 16, but OpenGL's 16 counts samplers a stage actually reads. A unit's number only
+has to stay under the combined limit, 48 at least on OpenGL 3.3, and the terrain programs had already used 0-15.
+
+**Safer action:** units stay under 48 (`TerrainSamplerChecks`, `SilhouetteChecks`); count the samplers a stage reads when
+adding many.
+
+**Found:** 2026-11-02, Session 123 (units 16 and 17).

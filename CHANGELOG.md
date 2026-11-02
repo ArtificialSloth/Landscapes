@@ -8,6 +8,25 @@ first.
 
 ## [Unreleased]
 
+## [0.5.2-dev.27] - 2026-11-02
+
+**A test build: foam on distant shores, far fewer water blips, and a wider seam band.** The fast checks pass with 0
+failures on game 1.22.0 and 1.22.7 (26,998 assertions). This entry covers dev.23 to dev.27.
+
+**New: shore foam on distant water.** Shallow cached water now foams pale and mottled near the shore, as the game's own
+water does, under the Water Effects switch and the game's own foam setting. It works on existing terrain at once.
+
+**Water blips are mostly gone.** Small dark squares near water that came and went as the camera moved, worst on some
+NVIDIA cards, came from distant water being drawn into the game's quarter-size water-depth picture one coarse pixel at
+a time. Distant water's share of that picture is now decided at full screen size, and distant ground and Farseer read
+the exact picture. With terrain switched off, a faint rim around water on the sky remains; the game's own water has it
+too.
+
+**The seam band reaches further.** It now covers a share of the most detailed level beyond the game's own terrain: all of
+it on Ultra, two thirds on Quality, a third on Balanced. `.dlband reach` sets it by hand.
+
+**Seam speckle is gentler,** 0.1 instead of 0.15.
+
 ## [0.5.2-dev.22] - 2026-11-01
 
 **A test build: lights on distant ground, and several fixes found in play.** The fast checks pass with 0 failures on game

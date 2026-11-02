@@ -97,6 +97,10 @@ authorization, and build a terrain-first runtime regression case before implemen
 
 ## Watch item: open-water moving blips
 
+**Resolved in Session 123 (2026-11-02):** captured and explained as cached water drawn into the quarter-size liquid depth
+from each texel's centre (G332), and fixed in 0.5.2-dev.25-dev.26 by a full-resolution majority resolve and exact readers
+(decision 76). The paragraph below is the earlier state.
+
 The owner briefly saw small marks while moving, including away from the seam. A later capture
 placed one white mark in surface composition/glint rather than seabed/depth, but the owner then
 could not reproduce the symptom and asked not to hold the seam work for it. Do not tune glint,

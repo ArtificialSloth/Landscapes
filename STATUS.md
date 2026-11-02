@@ -3,17 +3,30 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-11-01`
-**Mod version:** `0.5.2-dev.22` - a test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; commit `37cf29d`, not pushed; fast tier 26,938 assertions, 0 failures on game 1.22.0 and 1.22.7. **The latest release is 0.5.1**, the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
+**Status date:** `2026-11-02`
+**Mod version:** `0.5.2-dev.27` - a test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; commit `61885d3`, not pushed; fast tier 26,998 assertions, 0 failures on game 1.22.0 and 1.22.7. **The latest release is 0.5.1**, the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083`, 0.5.0 `2826b2e`, 0.5.1-dev.2 `621ac7c`, 0.5.1-dev.3 `6b46739`, 0.5.1-dev.4 `102d1e1`, 0.5.1-dev.5 `939af75`, 0.5.1-dev.6 `4421cc3`, 0.5.1-dev.7 `9fa0026`, 0.5.1 `7959339`, 0.5.2-dev.1 `0fc55ef`, 0.5.2-dev.2 `ccd72be`, 0.5.2-dev.3 `07f1aed`, 0.5.2-dev.4 `8216b6f`, 0.5.2-dev.5 `21730b3`, 0.5.2-dev.6 `e2fb684`, 0.5.2-dev.7 `5b595dd`, 0.5.2-dev.18 `39d14bd`, 0.5.2-dev.19 `a331c86`, 0.5.2-dev.20 `6205660`, 0.5.2-dev.21 `c59e268`, 0.5.2-dev.22 `37cf29d`; everything through 0.5.1 pushed to `main` on `DodenGruva/Landscapes` (now public) on 2026-10-22; the history was rewritten to his GitHub no-reply address on 2026-10-13
+**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083`, 0.5.0 `2826b2e`, 0.5.1-dev.2 `621ac7c`, 0.5.1-dev.3 `6b46739`, 0.5.1-dev.4 `102d1e1`, 0.5.1-dev.5 `939af75`, 0.5.1-dev.6 `4421cc3`, 0.5.1-dev.7 `9fa0026`, 0.5.1 `7959339`, 0.5.2-dev.1 `0fc55ef`, 0.5.2-dev.2 `ccd72be`, 0.5.2-dev.3 `07f1aed`, 0.5.2-dev.4 `8216b6f`, 0.5.2-dev.5 `21730b3`, 0.5.2-dev.6 `e2fb684`, 0.5.2-dev.7 `5b595dd`, 0.5.2-dev.18 `39d14bd`, 0.5.2-dev.19 `a331c86`, 0.5.2-dev.20 `6205660`, 0.5.2-dev.21 `c59e268`, 0.5.2-dev.22 `37cf29d`, 0.5.2-dev.23 `e482117`, 0.5.2-dev.24 `239b0f5`, 0.5.2-dev.25 `6551457`, 0.5.2-dev.26 `ece970d`, 0.5.2-dev.27 `61885d3`; everything through 0.5.1 pushed to `main` on `DodenGruva/Landscapes` (now public) on 2026-10-22; the history was rewritten to his GitHub no-reply address on 2026-10-13
 **Target:** intended for Vintage Story 1.22.5+; declares 1.22.0, where it was briefly tested; compiled on 1.22.7; .NET 10
-**Source files:** `163` C# files under `VintageHorizons/src`
+**Source files:** `164` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
+
+**0.5.2-dev.27, shore foam, water blips and the band's reach (2026-11-02).** Session 123, dev.23 to dev.27. Copy-installed
+to both Mods folders, not pushed. 26,998 assertions, 0 failures on 1.22.0 and 1.22.7. Compatibility numbers stay 1/4/6;
+the client config gains `BandReach`. The owner played dev.23-dev.25 on his AMD card; dev.26 and dev.27 are not seen.
+
+- **Shore foam (decision 75, G330-G331):** the OIT water program reads the scene's depth as vanilla does. Owner on dev.24:
+  "Looks very good!"; 0.6 was "way too light", so strength stays 1.0. Cost unmeasured; far shimmer not looked for.
+- **Water blips (decision 76, G332):** cached water drawn into the quarter-size liquid depth from each texel's centre.
+  Resolved at full resolution by majority in dev.25, owner: "huge difference"; dev.26 gives cached ground, its sky fade
+  and Farseer the exact images; normal play "didn't seem to be an issue". NVIDIA, where they were worst, not yet tested.
+- **Band reach (decision 77, G333):** the seam band covers a share of level 0 beyond vanilla's edge, Ultra 1, Quality 0.66,
+  Balanced 0.33, replacing a fixed 128 blocks. Speckle 0.1 (was 0.15). Unplayed.
+- **Benchmark:** a per-setting sweep on a copy of `vintage cave tales-2` is designed and deferred to a new session.
 
 **0.5.2-dev.22, Distant Lights and fixes from play (2026-11-01).** Session 122, dev.19 to dev.22. Copy-installed to both
 Mods folders, not pushed. 26,938 assertions, 0 failures on 1.22.0 and 1.22.7. Compatibility numbers stay 1/4/6, with a
@@ -1228,17 +1241,14 @@ It covers:
 
 ## Next work
 
-Begin with [Session 121](dev/sessions/SESSION_121.md) and the top of [TODO](dev/TODO.md): dev.18 to judge, the preset review
-the owner plans at the end of this work, berries on bushes, and the pale ruin.
+Begin with [Session 123](dev/sessions/SESSION_123.md) and the top of [TODO](dev/TODO.md). Next is the per-setting
+benchmark in a new session (owner), designed in Session 123 section 1, then the owner's preset review, an NVIDIA test of
+dev.23-dev.27, and a 0.5.2 release when he promotes a played build.
 
-1. **Publishing 0.5.1, on the owner's calls:** 0.5.1 is played, promoted and pushed; the review's small
-   observations and the unseen items of Sessions 117 and 119 are in TODO; run the game-launching check
-   tiers (not run since the rename; ask before launching), tag 0.5.1 if he wants it, make
-   `DodenGruva/Landscapes` public (the history is there; the old `DodenGruva/Horizons`
-   fork still exposes his personal email and is his to delete), and create the ModDB page
-   at `mods.vintagestory.at/dodenslandscapes` with GNU GPL v3 as the licence, its sweep text updated. Open evidence worth
-   knowing before then: the 0.4.137 preview re-issue unseen in play, running beside the original
-   Vintage Horizons untested, and the notice's layout at other GUI scales unseen.
+1. **Publishing, on the owner's calls:** 0.5.1 is the latest release, pushed and live on ModDB
+   (`mods.vintagestory.at/show/mod/75034`), with `DodenGruva/Landscapes` public. 0.5.2-dev.1 to dev.27 are not pushed;
+   at release the changelog's dev sections fold into one entry. Still not run: the game-launching check tiers (ask
+   before launching). The old `DodenGruva/Horizons` fork is his to delete.
 2. **Ask the owner what comes next.** The stutter is solved for him; what it left:
    - **The bug report** to the game's developers is drafted; the owner sends it.
    - **The Server GC's first-minute collections** (56-139 ms while the world loads, G267).

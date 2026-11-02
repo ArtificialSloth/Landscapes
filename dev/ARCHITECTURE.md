@@ -815,6 +815,20 @@ live until the exact replacement persistence revision is acknowledged.
     no visible material, and a multiblock filler has no art. Both take one colour, the game's rotten beam, through all of
     G322's paths, so stored caches correct on load. This narrows decision 36's neutral grey for chisels. Collider shells stay
     as dark cubes so huge gears keep a shape, though the game draws nothing there (G328).
+75. **Shore foam reads the scene's depth in the OIT water program, as vanilla does** (2026-11-02; 0.5.2-dev.23-dev.24). The
+    transparent framebuffer shares the primary depth; with depth writes off the bed behind cached water is there to read.
+    Five samples keep vanilla's scale, with its own near and far planes (G331); brightness is the surface light (G330);
+    strength 1.0 by the owner, apart from the accepted 1.6 grain. No mesh or cache data. Rejected: depth carried in the mesh
+    (more geometry) and any assumed depth (it pinned foam over every ocean before).
+76. **Cached water's share of liquid depth is decided at full resolution, and our readers read it exactly** (2026-11-02;
+    0.5.2-dev.25-dev.26). Cached water depth is drawn at the primary framebuffer's size; a quarter texel takes it only where at
+    least half its pixels are water, under the same Less test, so vanilla's own water is untouched (G332). Cached ground, its
+    sky fade and Farseer use the engine's murk formulas over the full-resolution image and the vanilla-only snapshot. The
+    engine's own sky and clouds keep the quarter image. Stays inside the water stage: no ownership or mask change.
+77. **The seam band's width is a share of level 0 beyond vanilla's edge, set by the preset** (owner, 2026-11-02; 0.5.2-dev.27).
+    Ultra 1, Quality 0.66, Balanced 0.33; level 0 is where the band's textures live, so 1 is as far as it goes. Level 0 is
+    measured before the band stretches it (G333), and the width is capped where the seam field would cut the ramp. Replaced a
+    fixed 128 blocks.
 
 ## Concurrency invariants
 
