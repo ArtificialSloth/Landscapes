@@ -215,7 +215,7 @@ public partial class VintageHorizonsModSystem
         Entry(lines, ".dlwater fresnel", renderer.WaterFresnel);
         Entry(lines, ".dlwater glint", Number(renderer.WaterGlint, "0.00"));
         Entry(lines, ".dlwater foam", Number(renderer.WaterFoam, "0.00"));
-        Entry(lines, "water shallowness", Number(renderer.WaterShallowness, "0.00"));
+        Entry(lines, ".dlwater shore", Number(renderer.WaterShoreFoam, "0.00"));
         Entry(lines, ".dlwater depth", renderer.WaterDepthShading);
         Entry(lines, ".dlwater alpha", Number(renderer.WaterMaxAlpha, "0.00"));
         Entry(lines, ".dlwater clarity", Number(renderer.WaterClarity, "0.0") + " blocks");

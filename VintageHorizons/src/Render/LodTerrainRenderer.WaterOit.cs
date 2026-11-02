@@ -146,6 +146,12 @@ public partial class LodTerrainRenderer
                 if (surfaceJunctionReady)
                     prog.BindTexture2D("vanillaOitRevealage", waterVanillaRevealageTexture,
                         LodTerrainSamplerLayout.VanillaOitRevealage);
+                // The same depth texture and the same write-protected read as vanilla's liquid
+                // shader: this framebuffer shares it, and GL.DepthMask(false) above stands.
+                prog.BindTexture2D("vhShoreDepth", capi.Render.FrameBuffers[(int)EnumFrameBuffer.Primary].DepthTextureId,
+                    LodTerrainSamplerLayout.ShoreDepth);
+                prog.Uniform("vhZNear", capi.Render.ShaderUniforms.ZNear);
+                prog.Uniform("vhZFar", capi.Render.ShaderUniforms.ZFar);
                 foreach (long key in drawList)
                 {
                     if (!waterMeshes.TryGetValue(key, out MeshRef? mesh)) continue;

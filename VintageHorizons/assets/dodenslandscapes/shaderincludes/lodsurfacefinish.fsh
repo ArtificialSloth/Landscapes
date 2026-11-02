@@ -42,8 +42,7 @@
     // Vanilla's own two water surface terms, on the same band the ground's corrections use.
     // Both are transcribed from chunkliquid.fsh's cold-liquid branch for the case a distant
     // LOD lake is in: still water, so its flow vector is zero and the flow counter passes
-    // through; open water, so its depth-difference term is zero and drops out of the foam
-    // exactly. Applied AFTER lighting and before fog, where vanilla applies them.
+    // through. Applied AFTER lighting and before fog, where vanilla applies them.
     // Every cached water fragment, NOT the blend band.
     //
     // These were band-weighted for cost, and that was a mistake with a visible edge: the two
@@ -67,21 +66,41 @@
         if (waterFoam > 0.0)
         {
             float foamAmount = waterAmount * waterFoam;
-            // Zero means deep/open water. Vanilla's measured scene-depth term pins its
-            // shallow rim to zero there; feeding zero into the later noisy expression did
-            // not do that and still produced bright, opaque foam patches across the ocean.
-            float diff = waterShallowness > 0.0
-                ? upness * clamp(
-                    waterShallowness - noise1 / 2.0 + noise2 / 2.0, 0.0, 1.0)
-                : 0.0;
+            // Zero is deep water, and it has to stay exactly zero there. A noisy expression fed
+            // a guessed depth produced bright, opaque foam patches across the ocean.
+            float diff = 0.0;
+#if defined(VH_WATER_OIT) && FOAMEFFECT > 0
+            if (waterShoreFoam > 0.0)
+            {
+                // chunkliquid.fsh's depth difference: vanilla sums 25 samples over 16, and five
+                // spread across the same footprint keep that scale for a fifth of the reads.
+                ivec2 pixel = ivec2(gl_FragCoord.xy);
+                ivec2 lastPixel = textureSize(vhShoreDepth, 0) - ivec2(1);
+                float ownDepth = vhLinearDepth(gl_FragCoord.z);
+                float gapTotal = vhShoreGap(ownDepth, pixel, lastPixel)
+                    + vhShoreGap(ownDepth, pixel + ivec2(2, 0), lastPixel)
+                    + vhShoreGap(ownDepth, pixel + ivec2(-2, 0), lastPixel)
+                    + vhShoreGap(ownDepth, pixel + ivec2(0, 2), lastPixel)
+                    + vhShoreGap(ownDepth, pixel + ivec2(0, -2), lastPixel);
+                float gap = min(gapTotal * 5.0 / 16.0, 0.05 - waterVn / 10.0);
+
+                // The fine noise is finer than a block, so it can only sparkle once a pixel
+                // covers one. Keyed to the pixel's size in the world, never to a distance.
+                float pixelBlocks = max(length(dFdx(worldPos.xz)), length(dFdy(worldPos.xz)));
+                float fineNoise = (noise2 - noise1) / 2.0
+                    * (1.0 - smoothstep(0.25, 1.0, pixelBlocks));
+                diff = upness * clamp(1.0 - gap * 1500.0 + fineNoise, 0.0, 1.0)
+                    * waterShoreFoam;
+            }
+#endif
             float grain = upness
                 * (gnoise(vec3(a * 0.4, b * 0.4, vhWaterFlow)) / 2.0 + noise2 / 2.0 + 0.5) / 2.0;
             float bright = (terraColor.r + terraColor.g + terraColor.b) / 3.0;
-            terraColor.rgb += vec3(max(0.0, bright * (diff * 0.3 + grain / 10.0)) * foamAmount);
+            terraColor.rgb += vec3(max(0.0, bright * (diff * 0.3 * waterAmount + grain / 10.0 * foamAmount)));
             terraColor.a += (
-                max(0.0, diff / 16.0
-                    + grain / (12.0 - 8.0 * min(1.0, vhWindSpeed)))
-                + waterVn / 4.0) / clamp(waterFresnelValue, 0.5, 1.0) * foamAmount;
+                max(0.0, diff / 16.0 * waterAmount
+                    + grain / (12.0 - 8.0 * min(1.0, vhWindSpeed)) * foamAmount)
+                + waterVn / 4.0 * foamAmount) / clamp(waterFresnelValue, 0.5, 1.0);
         }
 
         // Specular sun glint. Vanilla also scales this by a shadow-map sample; distant open

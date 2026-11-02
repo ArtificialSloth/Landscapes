@@ -2997,14 +2997,25 @@ public static class StaticAssetChecks
 
         // Vanilla's foam is a shallow-water term; substituting zero depth pinned it on over
         // every ocean and is most of why cached water measured 1.7x vanilla's across a seam.
-        c.True(water.Contains("uniform float waterShallowness;", StringComparison.Ordinal)
-            && water.Contains("float diff = waterShallowness > 0.0", StringComparison.Ordinal)
-            && water.Contains("waterShallowness - noise1 / 2.0 + noise2 / 2.0",
-                StringComparison.Ordinal)
-            && water.Contains(": 0.0;", StringComparison.Ordinal),
-            "the foam term asks how shallow the water is and pins deep open water to zero");
-        c.True(rend.Contains("public float WaterShallowness { get; set; }", StringComparison.Ordinal),
-            "and open water - zero - is the default");
+        c.True(water.Contains("uniform float waterShoreFoam;", StringComparison.Ordinal)
+            && water.Contains("float diff = 0.0;", StringComparison.Ordinal)
+            && water.Contains("1.0 - gap * 1500.0 + fineNoise", StringComparison.Ordinal),
+            "the foam term measures the water's depth with vanilla's scale and is zero without it");
+        c.True(water.Contains("#if defined(VH_WATER_OIT) && FOAMEFFECT > 0", StringComparison.Ordinal),
+            "only the OIT program reads depth, and only with the game's own foam setting on");
+        c.True(water.Contains("gapTotal * 5.0 / 16.0", StringComparison.Ordinal),
+            "five samples keep the scale of vanilla's 25 summed over 16");
+        c.True(water.Contains("smoothstep(0.25, 1.0, pixelBlocks)", StringComparison.Ordinal),
+            "the fine noise fades by the pixel's size in the world, not by a distance");
+        c.True(water.Contains("diff * 0.3 * waterAmount + grain / 10.0 * foamAmount",
+                StringComparison.Ordinal),
+            "the accepted 1.6 stays on the grain and shore foam stands at its own strength");
+        c.True(water.Contains("uniform float vhZFar;", StringComparison.Ordinal)
+            && !water.Contains("linearDepth(gl_FragCoord.z)", StringComparison.Ordinal),
+            "shore foam takes its planes under its own names and leaves the accepted murk's alone");
+        c.True(rend.Contains("float waterShoreFoam = 1f;", StringComparison.Ordinal)
+            && mod.Contains("shore <0-2>", StringComparison.Ordinal),
+            "vanilla's own strength is the default and a live switch compares it");
         c.True(rend.Contains("set => waterFoam = Math.Clamp(value, 0f, 2f);",
                 StringComparison.Ordinal)
             && mod.Contains("foam <0-2>", StringComparison.Ordinal),

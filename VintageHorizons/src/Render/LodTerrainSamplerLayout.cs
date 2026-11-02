@@ -22,6 +22,7 @@ internal static class LodTerrainSamplerLayout
     internal const int ClimateMaps = 13;
     internal const int SeasonColumn = 14;
     internal const int VanillaOitRevealage = 15;
+    internal const int ShoreDepth = 16;
 
     internal static readonly (string Name, int Unit)[] Bindings =
     [
@@ -32,7 +33,7 @@ internal static class LodTerrainSamplerLayout
         ("vanillaWaterDepth", VanillaWaterDepth),
         ("slotTable", SlotTable), ("climateField", ClimateField),
         ("climateMaps", ClimateMaps), ("seasonColumn", SeasonColumn),
-        ("vanillaOitRevealage", VanillaOitRevealage)
+        ("vanillaOitRevealage", VanillaOitRevealage), ("vhShoreDepth", ShoreDepth)
     ];
 
     internal static void Configure(IShaderProgram program)

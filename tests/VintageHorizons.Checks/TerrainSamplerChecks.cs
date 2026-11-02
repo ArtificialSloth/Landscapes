@@ -55,7 +55,9 @@ public static class TerrainSamplerChecks
                 {
                     c.Eq(binding.Unit, program.textureLocations[binding.Name],
                         variant + " assigns " + binding.Name + " consistently for engine and explicit binds");
-                    c.True(binding.Unit < 16, variant + " stays within the baseline fragment-unit limit");
+                    // A unit number is held to the combined limit, 48 at the least on OpenGL 3.3.
+                    // The 16 a fragment stage is promised counts samplers it actually reads.
+                    c.True(binding.Unit < 48, variant + " stays within the baseline combined-unit limit");
                 }
                 var before = program.textureLocations.ToDictionary(pair => pair.Key, pair => pair.Value);
                 LodTerrainSamplerLayout.Configure(program);

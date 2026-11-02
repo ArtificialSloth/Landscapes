@@ -4942,8 +4942,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         capi.ChatCommands.Create("dlwater")
             .WithDescription("How distant water meets the game's own. No argument reports the settings. "
                 + "off | a number of chunks | edge <chunks> | fresnel on|off | glint <0-1> | "
-                + "foam <0-2> | depth on|off | alpha <0.05-2> | clarity <blocks> | wave <blocks> | "
-                + "walls on|off | murk on|off | surface on|off | coverage on|off | "
+                + "foam <0-2> | shore <0-2> | depth on|off | alpha <0.05-2> | clarity <blocks> | "
+                + "wave <blocks> | walls on|off | murk on|off | surface on|off | coverage on|off | "
                 + "texture on|off | pipeline oit|opaque | "
                 + "junction on|off | log | capture.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("part"),
@@ -5144,6 +5144,18 @@ public partial class VintageHorizonsModSystem : ModSystem
                         renderer.WaterFoam = foam;
                         return TextCommandResult.Success(
                             $"[Landscapes] foam {renderer.WaterFoam:0.00}. Look now.");
+
+                    case "shore":
+                        if (!TryParseSetting(value, out float shore))
+                        {
+                            return TextCommandResult.Success(
+                                $"[Landscapes] shore foam {renderer.WaterShoreFoam:0.00}. 0 to 2. One is "
+                                + "the game's own strength on shallow water; 0 turns it off and reads "
+                                + "no depth. This session only.");
+                        }
+                        renderer.WaterShoreFoam = shore;
+                        return TextCommandResult.Success(
+                            $"[Landscapes] shore foam {renderer.WaterShoreFoam:0.00}. Look now.");
 
                     case "depth":
                         if (value != "on" && value != "off")

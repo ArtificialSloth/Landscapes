@@ -75,8 +75,14 @@ public static class WaterOitChecks
         string expanded = ModShaderSource.Read(Path.Combine(shaders, "lodwateroit.fsh"));
         c.Eq(3, expanded.Split("OIT(outColor, vhWaterGlow.r);", StringSplitOptions.None).Length - 1,
             "ordinary output and both diagnostic early returns compose into OIT exactly once");
-        c.True(!expanded.Contains("sampler2D depthTex") && !expanded.Contains("sampler2D primaryDepth"),
-            "this stage-only step introduces no sampling of primary depth while it is attached");
+        c.True(expanded.Contains("uniform sampler2D vhShoreDepth;")
+            && oit.Contains("EnumFrameBuffer.Primary].DepthTextureId"),
+            "shore foam reads the opaque scene's depth, where the bed under cached water stands");
+        c.True(oit.IndexOf("GL.DepthMask(false);", StringComparison.Ordinal)
+                < oit.IndexOf("prog.BindTexture2D(\"vhShoreDepth\"", StringComparison.Ordinal),
+            "primary depth is only read with depth writes off, as vanilla's liquid shader reads it");
+        c.True(LodTerrainSamplerLayout.Bindings.Contains(("vhShoreDepth", LodTerrainSamplerLayout.ShoreDepth)),
+            "the shore depth unit is reserved, so the engine cannot give it to a table and the OIT draw restores it");
         c.True(expanded.Contains("uniform sampler2D vanillaOitRevealage;")
             && expanded.Contains("uniform int waterJunctionSurface;"),
             "the OIT variant alone can use the immutable full-resolution surface signal");

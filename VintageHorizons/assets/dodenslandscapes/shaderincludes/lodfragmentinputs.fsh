@@ -103,29 +103,26 @@ uniform int waterFresnel;
 //
 // What is NOT reproduced here is vanilla's shoreline rim, which it derives by sampling the
 // depth texture during OIT. This shader runs in the opaque stage where that same depth buffer
-// is the live render target, and sampling an attachment while it is bound is undefined - so
-// shore foam has to come from mesh data instead, and does not exist yet.
+// is the live render target, and sampling an attachment while it is bound is undefined. That
+// held for the opaque program; the OIT program draws the shore through vhShoreDepth below.
 uniform float waterGlint;
 uniform float waterFoam;
 
-// How shallow this shader should assume cached water is, 0 deep to 1 at the waterline.
+// How strong shore foam is, 0 to 2, where one is vanilla's own strength. Zero reads no depth.
 //
 // Vanilla's foam term is a SHALLOW-water effect and nothing else. It reads the depth buffer to
-// find how far the bed is behind the surface, caps that at 0.05 and multiplies by 1500, so any
-// water more than a block or two deep drives the term to exactly zero: `clamp(1 - diffTotal *
-// 1500 - ...)`. Foam is what vanilla draws at a shoreline, not on open water.
+// find how far the bed is behind the surface and multiplies that by 1500, so deep water drives
+// the term to exactly zero: `clamp(1 - diffTotal * 1500 - ...)`. Foam is what vanilla draws at
+// a shoreline, not on open water.
 //
-// This shader has no depth buffer to read, and for three builds it substituted ZERO for that
-// term - "infinitely shallow" - which pinned the effect at its maximum over every lake and
-// ocean in the world. It adds about `bright * 0.3`, so cached water was carrying roughly a
-// third of its own brightness as permanent shoreline foam, which is most of why it measured
+// The term is held apart from waterFoam, which amplifies open-water grain to the accepted 1.6:
+// that factor on the shore would stand 1.6x brighter than vanilla across the seam.
+//
+// Substituting a guess for the depth is what this must never go back to. For three builds that
+// guess was "infinitely shallow", which pinned the effect at its maximum over every lake and
+// ocean, about a third of the water's own brightness, and most of why cached water measured
 // 1.7x vanilla's across the seam and read as flat bright paint.
-//
-// Zero is vanilla's answer for the water this actually draws: 60% of submerged ground in the
-// owner's cache stands under 8 blocks or more and 38% under 24 or more. Real shoreline foam
-// needs the depth per fragment, which the water mesh does not carry yet; until it does, being
-// right about the open water is better than being wrong about all of it.
-uniform float waterShallowness;
+uniform float waterShoreFoam;
 
 // The highest PRE-TEXTURE Fresnel alpha cached water may reach, 0.05 to 2. Vanilla clamps
 // this intermediate value to 2 before climate-mapped texture alpha, foam and atmospheric fog
@@ -457,3 +454,31 @@ uniform int waterJunctionDepth;
 // surface-coverage holes in an owned boundary cell; ordinary vanilla pixels still win.
 uniform sampler2D vanillaOitRevealage;
 uniform int waterJunctionSurface;
+
+#ifdef VH_WATER_OIT
+// The opaque scene's depth, so the bed behind cached water. It stays attached to the
+// transparent framebuffer, read here with depth writes off as chunkliquid.fsh reads depthTex.
+// The near and far planes go under our own names: fogandlight.fsh's zNear and zFar keep their
+// defaults in these programs, and the accepted underwater murk is built on those.
+uniform sampler2D vhShoreDepth;
+uniform float vhZNear;
+uniform float vhZFar;
+
+// fogandlight.fsh's linearDepth: distance along the view as a share of the far plane. Vanilla's
+// 1500 is in those units, so shore foam reaches further the further the far plane stands. This
+// keeps that same scale, because vanilla's water beside us is drawn on it.
+float vhLinearDepth(float depthSample)
+{
+    depthSample = 2.0 * depthSample - 1.0;
+    return 2.0 * vhZNear / (vhZFar + vhZNear - depthSample * (vhZFar - vhZNear));
+}
+
+// One sample of chunkliquid.fsh's depth difference. Scene depth nearer than the water by more
+// than vanilla's 0.001 is something in front of it, such as grass, and does not count.
+float vhShoreGap(float ownDepth, ivec2 pixel, ivec2 lastPixel)
+{
+    float scene = texelFetch(vhShoreDepth, clamp(pixel, ivec2(0), lastPixel), 0).r;
+    float gap = ownDepth - vhLinearDepth(scene);
+    return gap < 0.001 ? abs(gap) : 0.0;
+}
+#endif

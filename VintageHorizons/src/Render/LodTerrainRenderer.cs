@@ -995,12 +995,16 @@ public partial class LodTerrainRenderer : IRenderer
                 : $"on (atlas slot {WaterSurfaceTextureSlot} pending upload)";
 
     /// <summary>
-    /// How shallow the water shader assumes cached water is, 0 to 1. Zero is vanilla's answer
-    /// for open water and the default; 1 is the "infinitely shallow" substitution every build
-    /// before this one made, which pinned vanilla's shoreline foam on over every ocean.
-    /// See `waterShallowness` in lodterrainbody.fsh.
+    /// How strong foam on shallow cached water is, 0 to 2. One is vanilla's own strength and the
+    /// default; zero reads no depth at all. Water Effects turns it off with the rest of the foam.
+    /// See `waterShoreFoam` in lodfragmentinputs.fsh.
     /// </summary>
-    public float WaterShallowness { get; set; }
+    public float WaterShoreFoam
+    {
+        get => waterShoreFoam;
+        set => waterShoreFoam = Math.Clamp(value, 0f, 2f);
+    }
+    float waterShoreFoam = 1f;
 
     /// <summary>
     /// The highest pre-texture Fresnel alpha cached water may reach, 0.05 to 2. Vanilla clamps
@@ -6183,7 +6187,7 @@ public partial class LodTerrainRenderer : IRenderer
         prog.Uniform("waterTextureTintSlot", WaterSurfaceTintSlot);
         prog.Uniform("waterGlint", waterGlint);
         prog.Uniform("waterFoam", waterFoam);
-        prog.Uniform("waterShallowness", Math.Clamp(WaterShallowness, 0f, 1f));
+        prog.Uniform("waterShoreFoam", waterShoreFoam);
         prog.Uniform("waterMaxAlpha", Math.Clamp(WaterMaxAlpha, 0.05f, 2f));
 
         // Everything the engine's own liquid shader reads, under mod-owned names so no
