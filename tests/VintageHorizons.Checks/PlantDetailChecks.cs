@@ -495,6 +495,30 @@ public static class PlantDetailChecks
         c.Eq(110f, Top(LodLeafShape.Planes, null), "without the table a trunk stands to its full height");
         c.Eq(106f, Top(LodLeafShape.Planes, wood), "with it, the wood stops where the foliage starts");
         c.Eq(110f, Top(LodLeafShape.Cubes, wood), "and cubes of leaves hide the trunk as they always did");
+
+        // Foliage down to the foot of the trunk trims all of it away. The ground beneath it must
+        // keep its top, or the column is a hole to the sky and costs its 32-block cell Farseer's
+        // handoff, which reads as seam fog in open country.
+        LodSection low = Fixtures.Section(
+            (LodSection.ColumnIndex(10, 10), new[] { LodSection.PackRun(1, 105, 100), LodSection.PackRun(2, 100, 90) }),
+            (LodSection.ColumnIndex(9, 10), new[] { LodSection.PackRun(0, 105, 100) }));
+        low.Palette.Clear();
+        low.Palette.Add(new LodPaletteEntry { BlockId = Leaf, Color = 0x336633, TextureSlot = 7 });
+        low.Palette.Add(new LodPaletteEntry { BlockId = Stone, Color = 0x222211 });
+        low.Palette.Add(new LodPaletteEntry { BlockId = 3, Color = 0x446622 });
+        MeshResult trimmed = LodMesher.BuildMesh(new MeshJob
+        {
+            Key = 0,
+            Self = SectionSnapshot.Of(low, crossedShapes: _ => LodBlockPolicy.CrossedShapeByFlags,
+                leafPlanes: Leaves, canopyWood: wood),
+            Neighbors = new SectionSnapshot?[4],
+            EmitTextureSlots = true,
+            LeafShape = LodLeafShape.Planes,
+        });
+        bool groundKeepsItsTop = Enumerable.Range(0, trimmed.PackedOpaqueQuadCount).Any(q =>
+            LodPackedQuadFormat.FaceOf(trimmed.PackedOpaqueQuads, q) == LodPackedFace.Top
+            && (trimmed.PackedOpaqueQuads[q * LodPackedQuadFormat.WordsPerQuad + 1] & 0xFFFFu) * 0.25f == 100f);
+        c.True(groundKeepsItsTop, "the ground under a trunk trimmed away keeps its top");
     }
 
     static void SwitchedOffPlants(Check c)

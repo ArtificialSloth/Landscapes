@@ -3051,7 +3051,7 @@ public partial class LodTerrainRenderer : IRenderer
             {
                 if (neighborSections[d] != null)
                     neighbors[d] = SectionSnapshot.Of(neighborSections[d]!, includeTextureSlots,
-                        leafPlanes: leafPlanesHere, bushSheets: bushSheetsHere);
+                        leafPlanes: leafPlanesHere, canopyWood: fruitWoodTable, bushSheets: bushSheetsHere);
             }
 
             SectionSnapshot self = SectionSnapshot.Of(

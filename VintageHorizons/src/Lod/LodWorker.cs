@@ -154,6 +154,9 @@ public class SectionSnapshot
             else if (leafPlanes != null && canopyWood != null
                 && (uint)s.Palette[i].BlockId < (uint)canopyWood.Length && canopyWood[s.Palette[i].BlockId])
             {
+                // It stops at the foliage, and low foliage stops it at its foot, so it covers
+                // nothing: the ground under it keeps its top, or the sky shows through there.
+                flags[i] |= LodPaletteEntry.FlagCutout;
                 canopy[i] = CanopyWood;
             }
             else if (resinLogs != null
