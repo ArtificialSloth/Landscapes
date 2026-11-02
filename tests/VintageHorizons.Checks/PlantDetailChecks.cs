@@ -322,6 +322,11 @@ public static class PlantDetailChecks
             "a flower is thin past level 0 and may stand at it");
         c.Eq(LodBlockPolicy.CrossedShapeFlower, LodBlockPolicy.CrossedShapeOf(flower), "as a sheet");
         c.False(LodBlockPolicy.IsFlower(Named("flowerpot-burned", EnumBlockMaterial.Ceramic)), "a flower pot is not one");
+        c.Eq(LodBlockPolicy.CrossedShapeTallFlower,
+            LodBlockPolicy.CrossedShapeOf(Named("flower-lupine-blue-free", EnumBlockMaterial.Plant)),
+            "a lupine stands taller than other flowers");
+        c.True(LodBlockPolicy.FlowerStemNames.Contains("plant1astem") && LodBlockPolicy.FlowerPetalNames.Contains("plant1a"),
+            "and its pictures have names of their own");
 
         LodSection ground = Fixtures.Section(
             (LodSection.ColumnIndex(10, 12), new[] { LodSection.PackRun(0, 101, 100) }));
@@ -343,6 +348,9 @@ public static class PlantDetailChecks
         c.Eq(1, sheet.PackedOpaqueQuadCount, "one quad, the same as the patch it replaces");
         c.Eq(9, LodPackedQuadFormat.TextureSlot(sheet.PackedOpaqueQuads[2]), "wearing the flower's picture");
         c.Eq(101f, (sheet.PackedOpaqueQuads[1] >> 16) * 0.25f, "a block tall");
+        MeshResult tall = Build(LodBlockPolicy.CrossedShapeTallFlower);
+        c.Eq(9, LodPackedQuadFormat.TextureSlot(tall.PackedOpaqueQuads[2]), "a lupine wears its picture the same way");
+        c.Eq(101.5f, (tall.PackedOpaqueQuads[1] >> 16) * 0.25f, "a block and a half tall");
         c.Eq(0, Planes(Build(LodBlockPolicy.CrossedShapeAsMat)), "switched off it is the patch again");
 
         ground.Palette[0] = ground.Palette[0] with { TextureSlot = 0 };
@@ -663,6 +671,15 @@ public static class PlantDetailChecks
                 && mod.Contains("|| LodBlockPolicy.HasNoLookOfItsOwn(block) ? (ushort)0", StringComparison.Ordinal)
                 && mod.Contains("|| LodBlockPolicy.HasNoLookOfItsOwn(block))", StringComparison.Ordinal),
             "the pale ruin blocks take structure wood wherever a colour is asked for, so a stored colour corrects on load");
+
+        // A section with a sealed cave is meshed from cave culling's copy. Leaving a field off that
+        // copy stood its bushes up as reeds, three blocks tall, in those sections alone.
+        string caveCull = Source("Lod", "LodCaveCull.cs");
+        foreach (System.Reflection.FieldInfo field in typeof(SectionSnapshot).GetFields())
+        {
+            c.True(field.IsStatic || caveCull.Contains(field.Name + " = ", StringComparison.Ordinal),
+                $"cave culling's copy of a section keeps {field.Name}");
+        }
 
         c.True(mod.Contains("found ??= ColorMapCarrier(climate, season);", StringComparison.Ordinal)
                 && mod.Contains("if (block.Textures == null) return null;", StringComparison.Ordinal),

@@ -405,7 +405,7 @@ public static class LodMesher
                     // A flower with no sheet to wear stays the patch it has always been.
                     bool planes = step == 1 && IsCrossedRun(self, run)
                         && self.CrossedShape(pid) != LodBlockPolicy.CrossedShapeAsMat
-                        && (self.CrossedShape(pid) != LodBlockPolicy.CrossedShapeFlower
+                        && (!LodBlockPolicy.IsFlowerShape(self.CrossedShape(pid))
                             || FlowerSheet(job, self, pid) != 0);
                     // A vine is a sheet on what holds it, which past level 0 is under a voxel of
                     // nothing, so there it draws nothing at all.
@@ -1205,11 +1205,12 @@ public static class LodMesher
         {
             LodBlockPolicy.CrossedShapeMushroom => 0.5f,
             LodBlockPolicy.CrossedShapeFlower => 1f,
+            LodBlockPolicy.CrossedShapeTallFlower => 1.5f,
             _ => 0.25f,
         };
         AddQuad(buf, LodPackedFace.DiagonalRising, 1, self.PaletteColors[pid],
             AlphaFor(flags, self.PaletteTintSlots[pid]), cx, y0, cz, cx, y0, cz, cx, y1, cz, cx, y1, cz,
-            shape == LodBlockPolicy.CrossedShapeFlower ? self.PaletteTextureSlots[pid] : 0);
+            LodBlockPolicy.IsFlowerShape(shape) ? self.PaletteTextureSlots[pid] : 0);
     }
 
     static int FlowerSheet(MeshJob job, SectionSnapshot self, int pid) =>

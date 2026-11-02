@@ -130,9 +130,9 @@ public static class LodBlockPolicy
     /// model it uses. They layer on one sheet as a cattail's leaves and cobs do.
     /// </summary>
     public static readonly string[] FlowerStemNames =
-        { "northTinted1", "stem1", "flower1Tinted", "flower2Tinted", "leaves1" };
+        { "northTinted1", "stem1", "flower1Tinted", "flower2Tinted", "leaves1", "plant1astem" };
 
-    public static readonly string[] FlowerPetalNames = { "north1", "petal1", "flower1", "flower2" };
+    public static readonly string[] FlowerPetalNames = { "north1", "petal1", "flower1", "flower2", "plant1a" };
 
     /// <summary>The crossed plants capture has to look above the rain map for, with the markers (<see cref="ReedTable"/>).</summary>
     static bool IsReedOrFern(Block block) =>
@@ -166,8 +166,13 @@ public static class LodBlockPolicy
     /// <summary>A flower's picture on the same one quad, a block tall.</summary>
     public const byte CrossedShapeFlower = 247;
 
+    /// <summary>A lupine, whose art stands a block and a half.</summary>
+    public const byte CrossedShapeTallFlower = 246;
+
+    public static bool IsFlowerShape(byte shape) => shape is CrossedShapeFlower or CrossedShapeTallFlower;
+
     public static bool IsMarkerShape(byte shape) =>
-        shape is CrossedShapeMushroom or CrossedShapeLooseItem or CrossedShapeFlower;
+        shape is CrossedShapeMushroom or CrossedShapeLooseItem || IsFlowerShape(shape);
 
     /// <summary>
     /// What a player walks the land looking for and that is far smaller than a block: mushrooms,
@@ -292,7 +297,12 @@ public static class LodBlockPolicy
     public static byte CrossedShapeOf(Block? block)
     {
         if (block is BlockVines) return VineShapeOf(block.Code?.Path);
-        if (block != null && IsFlower(block)) return CrossedShapeFlower;
+        if (block != null && IsFlower(block))
+        {
+            return block.Code!.Path.StartsWith("flower-lupine-", StringComparison.Ordinal)
+                ? CrossedShapeTallFlower
+                : CrossedShapeFlower;
+        }
         if (block != null && IsGroundMarker(block))
         {
             return block.Code!.Path.StartsWith("mushroom-", StringComparison.Ordinal)

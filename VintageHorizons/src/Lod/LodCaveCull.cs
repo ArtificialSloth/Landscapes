@@ -1314,6 +1314,7 @@ public static class LodCaveCull
             PaletteWallXColors = self.PaletteWallXColors,
             PaletteWallZColors = self.PaletteWallZColors,
             PaletteCrossedShapes = self.PaletteCrossedShapes,
+            PaletteCanopy = self.PaletteCanopy,
         };
     }
 
