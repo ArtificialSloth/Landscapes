@@ -121,6 +121,10 @@ public static class CropBushChecks
         c.True(mod.Contains("blockTextures.DenseLeavesShown = v.DenseLeavesOn;", StringComparison.Ordinal)
                 && registry.Contains("KeepDenseLeaves(slot, dense, resolved.DenseLeavesMean)", StringComparison.Ordinal),
             "Dense Leaves swaps a leaf slot's rows in the table, so it needs no remesh");
+        c.True(body.Contains("if (vhFaceAxis == 5)", StringComparison.Ordinal)
+                && body.Contains("1.0 - 0.6 * vhRagged * min(vhCorner.x, vhCorner.y)", StringComparison.Ordinal),
+            "standing leaf tiles lose their corners, and the ragged cut fades out along an edge so "
+                + "stacked tiles open no seam");
         c.True(cull.Contains("PaletteCrossedShapes = self.PaletteCrossedShapes", StringComparison.Ordinal),
             "the cave cull's rebuilt snapshot keeps how crops stand");
         c.True(body.Contains("texelFetch(blockTable, ivec2(vhBlockSlot, 1), 0).a > 1.5", StringComparison.Ordinal)

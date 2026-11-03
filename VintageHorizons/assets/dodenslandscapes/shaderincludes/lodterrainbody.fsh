@@ -42,6 +42,18 @@ void main()
             float vhDither = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
             if (vhFacing < mix(0.25, 0.5, vhDither)) discard;
         }
+        // A standing leaf tile is a rectangle, and with Dense Leaves its straight edges showed as
+        // square canopies (owner, 2026-11-03). Its corners are rounded off, unevenly, so each tile
+        // reads as a puff and stacked tiles notch between them, as the game's overlapping leaves
+        // do. Only the corners: the ragged cut fades to nothing along an edge, or every tile
+        // boundary up a stack would open a seam. Flat tops stay whole, or a canopy would be dots.
+        if (vhFaceAxis == 5)
+        {
+            const float vhCornerRadius = 0.6;
+            vec2 vhCorner = max(abs(vhSheetUv * 2.0 - 1.0) - (1.0 - vhCornerRadius), 0.0) / vhCornerRadius;
+            float vhRagged = fract(sin(dot(floor(vhSheetUv * 16.0), vec2(12.9898, 78.233))) * 43758.5453);
+            if (dot(vhCorner, vhCorner) > 1.0 - 0.6 * vhRagged * min(vhCorner.x, vhCorner.y)) discard;
+        }
         vec4 vhSheet = vhBlockSlot >= 0
             ? texelFetch(blockTable, ivec2(vhBlockSlot, 0), 0)
             : vec4(0.0);
