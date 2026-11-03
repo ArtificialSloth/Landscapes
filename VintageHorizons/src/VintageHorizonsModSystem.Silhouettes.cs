@@ -59,8 +59,10 @@ public partial class VintageHorizonsModSystem
     {
         capi.ChatCommands.Create("dlsilhouette")
             .WithDescription("Horizon silhouettes: on, off, log or stats. The command is "
-                + "session-only; the settings tab saves the switch.")
-            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("action"))
+                + "session-only; the settings tab saves the switch. For testing, coverage cached, "
+                + "fresh or check picks how tile coverage is worked out.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalWord("action"),
+                capi.ChatCommands.Parsers.OptionalWord("mode"))
             .HandleWith(args =>
             {
                 string action = args.Parsers[0].IsMissing
@@ -68,6 +70,9 @@ public partial class VintageHorizonsModSystem
                     : ((string)args[0]).ToLowerInvariant();
                 switch (action)
                 {
+                    case "coverage":
+                        return SetSilhouetteCoverageMode(args.Parsers[1].IsMissing
+                            ? null : ((string)args[1]).ToLowerInvariant());
                     case "on":
                         LodSilhouetteSettings on = CurrentSilhouetteSettings() with { Enabled = true };
                         ApplySilhouetteSettings(on);
@@ -81,7 +86,7 @@ public partial class VintageHorizonsModSystem
                         break;
                     default:
                         return TextCommandResult.Error(
-                            "[Landscapes] use .dlsilhouette on, off, log or stats");
+                            "[Landscapes] use .dlsilhouette on, off, log, stats or coverage");
                 }
 
                 // Chat cannot be copied, so the same line always reaches the log.
@@ -120,6 +125,35 @@ public partial class VintageHorizonsModSystem
                 Mod.Logger.Notification("{0}", line);
                 return TextCommandResult.Success(line);
             });
+    }
+
+    TextCommandResult SetSilhouetteCoverageMode(string? mode)
+    {
+        if (renderer == null)
+            return TextCommandResult.Error(
+                "[Landscapes] Farseer coverage is unavailable: the distant-terrain renderer did not start.");
+        switch (mode)
+        {
+            case null: break;
+            case "cached": renderer.CoverageMode = LodTerrainRenderer.SilhouetteCoverageMode.Cached; break;
+            case "fresh": renderer.CoverageMode = LodTerrainRenderer.SilhouetteCoverageMode.Fresh; break;
+            case "check": renderer.CoverageMode = LodTerrainRenderer.SilhouetteCoverageMode.Check; break;
+            default:
+                return TextCommandResult.Error(
+                    "[Landscapes] use .dlsilhouette coverage cached, fresh or check");
+        }
+        string line = renderer.CoverageMode switch
+        {
+            LodTerrainRenderer.SilhouetteCoverageMode.Fresh =>
+                "[Landscapes] Farseer coverage is worked out afresh every frame, as before 0.5.2-dev.30",
+            LodTerrainRenderer.SilhouetteCoverageMode.Check =>
+                "[Landscapes] Farseer coverage is remembered and also checked against a fresh answer "
+                + "every frame; differences go to the log (this costs extra while it is on)",
+            _ => "[Landscapes] Farseer coverage is remembered between frames (the default)",
+        } + $"; {renderer.SilhouetteCoverageMismatchesTotal} differences found this session "
+            + "(session-only).";
+        Mod.Logger.Notification("{0}", line);
+        return TextCommandResult.Success(line);
     }
 
     string DescribeSeamFog() => !renderer.SilhouetteFogEnabled

@@ -3215,6 +3215,21 @@ public partial class VintageHorizonsModSystem : ModSystem
                     renderer.SilhouetteTilesDrawn / (double)frames,
                     renderer.SilhouetteCoveredTilesSkipped / (double)frames);
             }
+            long coverageAsked = renderer.SilhouetteCoverageReused + renderer.SilhouetteCoverageWorkedOut;
+            if (coverageAsked > 0 || renderer.CoverageMode == LodTerrainRenderer.SilhouetteCoverageMode.Check)
+            {
+                Mod.Logger.Detail(
+                    "  Farseer coverage ({0}): {1} tiles answered from memory, {2} worked out again, "
+                    + "{3} of those re-reading their terrain{4}",
+                    renderer.CoverageMode.ToString().ToLowerInvariant(),
+                    renderer.SilhouetteCoverageReused, renderer.SilhouetteCoverageWorkedOut,
+                    renderer.SilhouetteCoverageTerrainReads,
+                    renderer.CoverageMode == LodTerrainRenderer.SilhouetteCoverageMode.Check
+                        ? $"; check: {renderer.SilhouetteCoverageChecked} compared with a fresh answer, "
+                            + $"{renderer.SilhouetteCoverageMismatches} differed "
+                            + $"({renderer.SilhouetteCoverageMismatchesTotal} this session)"
+                        : "");
+            }
 
             // The one line that can see the reported micro-hitches at all. Everything
             // above it measures our own phases; this measures the frame the player

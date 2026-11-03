@@ -3329,6 +3329,7 @@ public partial class LodTerrainRenderer : IRenderer
         if (stats.OpaqueIndices == 0 && stats.WaterIndices == 0) return;
 
         liveMeshStats[key] = stats;
+        NoteSilhouetteResidencyChanged(key);
         // Both passes in one span: the traversal box precedes the split into opaque and
         // water draws, so it has to hold whichever of them the walk goes on to select.
         subtreeHeights.SetMesh(key, stats.Heights.Either);
@@ -3347,6 +3348,7 @@ public partial class LodTerrainRenderer : IRenderer
     {
         subtreeHeights.RemoveMesh(key);
         if (!liveMeshStats.Remove(key, out LodLiveMeshStats stats)) return;
+        NoteSilhouetteResidencyChanged(key);
         LiveOpaqueVertices -= stats.OpaqueVertices;
         LiveOpaqueIndices -= stats.OpaqueIndices;
         LiveWaterVertices -= stats.WaterVertices;
@@ -8992,6 +8994,7 @@ public partial class LodTerrainRenderer : IRenderer
         sectionMeshes.Clear();
         waterMeshes.Clear();
         liveMeshStats.Clear();
+        ClearSilhouetteCoverageCache();
         liveTexturedMeshes = 0;
         MaybeReleaseBlockTextureTable();
         subtreeHeights.Clear();

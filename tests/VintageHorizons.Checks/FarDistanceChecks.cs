@@ -290,7 +290,9 @@ public static class FarDistanceChecks
 
         string src = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src", "Render");
         string renderer = File.ReadAllText(Path.Combine(src, "LodTerrainRenderer.cs"));
-        string pass = File.ReadAllText(Path.Combine(src, "LodTerrainRenderer.Silhouette.cs"));
+        // Coverage is worked out in its own file since dev.30, which remembers the answers.
+        string pass = File.ReadAllText(Path.Combine(src, "LodTerrainRenderer.Silhouette.cs"))
+            + File.ReadAllText(Path.Combine(src, "LodTerrainRenderer.SilhouetteCoverage.cs"));
         string depth = File.ReadAllText(Path.Combine(src, "LodTerrainRenderer.WaterDepth.cs"));
         c.True(renderer.Contains("if (LodFarDistance.SectionPastCull(originX, originZ, footprint,",
                     StringComparison.Ordinal)

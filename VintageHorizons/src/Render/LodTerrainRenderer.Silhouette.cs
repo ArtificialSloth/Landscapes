@@ -123,6 +123,7 @@ public partial class LodTerrainRenderer
         SilhouetteDrawCost.Reset();
         SilhouetteTilesDrawn = 0;
         SilhouetteCoveredTilesSkipped = 0;
+        ResetSilhouetteCoverageCounts();
     }
 
     /// <summary>Cached terrain changes its fade target only when a silhouette can actually draw.</summary>
@@ -194,6 +195,7 @@ public partial class LodTerrainRenderer
     void PrepareSilhouetteFrame()
     {
         silhouetteFrameDraws.Clear();
+        AgeSilhouetteCoverageCache();
         LodSilhouetteClient? silhouettes = Silhouettes;
         if (silhouettes == null || !silhouettes.Enabled)
         {
@@ -602,107 +604,17 @@ public partial class LodTerrainRenderer
     /// </summary>
     LodSilhouetteCoverage SilhouetteStableReplacementCoverage(int tileX, int tileZ)
     {
-        Span<LodSilhouetteCoverage> residentByLevel =
-            stackalloc LodSilhouetteCoverage[LodWorld.MaxLevel + 1];
-        Span<LodSilhouetteCoverage> coveredByLevel =
-            stackalloc LodSilhouetteCoverage[LodWorld.MaxLevel + 1];
-        residentByLevel.Clear();
-        coveredByLevel.Clear();
-        int tileBlockX = tileX * LodSilhouetteTile.TileBlocks;
-        int tileBlockZ = tileZ * LodSilhouetteTile.TileBlocks;
         float terrainEnd = LodFarDistance.TerrainEnd(TerrainFadeDistance);
         double snappedCameraX = LodFarDistance.SnapCamera(camPos.X);
         double snappedCameraZ = LodFarDistance.SnapCamera(camPos.Z);
         // A tile wholly past the terrain's end can hold no cached cell, so only vanilla's
-        // readiness can cover it. At a short Cache distance that is most of Farseer's tiles, and
-        // the lookups below cost a few microseconds per tile every frame.
-        if (LodFarDistance.AreaOutsideTerrain(tileBlockX, tileBlockZ, LodSilhouetteTile.TileBlocks,
+        // readiness can cover it. At a short Cache distance that is most of Farseer's tiles.
+        if (LodFarDistance.AreaOutsideTerrain(tileX * LodSilhouetteTile.TileBlocks,
+                tileZ * LodSilhouetteTile.TileBlocks, LodSilhouetteTile.TileBlocks,
                 snappedCameraX, snappedCameraZ, terrainEnd))
             return WithReadyVanillaColumns(LodSilhouetteCoverage.Empty, tileX, tileZ);
-
-        int tileMaxBlockX = tileBlockX + LodSilhouetteTile.TileBlocks;
-        int tileMaxBlockZ = tileBlockZ + LodSilhouetteTile.TileBlocks;
-        for (int level = 0; level <= LodWorld.MaxLevel; level++)
-        {
-            int footprint = LodSection.SectionBlocks << level;
-            int firstSectionX = (int)Math.Floor(tileBlockX / (double)footprint);
-            int firstSectionZ = (int)Math.Floor(tileBlockZ / (double)footprint);
-            int lastSectionX = (int)Math.Floor((tileMaxBlockX - 1) / (double)footprint);
-            int lastSectionZ = (int)Math.Floor((tileMaxBlockZ - 1) / (double)footprint);
-            for (int sectionZ = firstSectionZ; sectionZ <= lastSectionZ; sectionZ++)
-            {
-                for (int sectionX = firstSectionX; sectionX <= lastSectionX; sectionX++)
-                {
-                    long key = LodWorld.SectionKey(level, sectionX, sectionZ);
-                    if (!liveMeshStats.TryGetValue(key, out LodLiveMeshStats resident)
-                        || resident.OpaqueIndices == 0) continue;
-
-                    int sectionBlockX = sectionX * footprint;
-                    int sectionBlockZ = sectionZ * footprint;
-                    int firstCellX = Math.Max(0,
-                        (sectionBlockX - tileBlockX) / LodMeshGroundCoverage.CellBlocks);
-                    int firstCellZ = Math.Max(0,
-                        (sectionBlockZ - tileBlockZ) / LodMeshGroundCoverage.CellBlocks);
-                    int lastCellX = Math.Min(LodSilhouetteField.CoverageCellsPerEdge,
-                        (sectionBlockX + footprint - tileBlockX)
-                            / LodMeshGroundCoverage.CellBlocks);
-                    int lastCellZ = Math.Min(LodSilhouetteField.CoverageCellsPerEdge,
-                        (sectionBlockZ + footprint - tileBlockZ)
-                            / LodMeshGroundCoverage.CellBlocks);
-                    for (int cellZ = firstCellZ; cellZ < lastCellZ; cellZ++)
-                    {
-                        for (int cellX = firstCellX; cellX < lastCellX; cellX++)
-                        {
-                            residentByLevel[level] =
-                                residentByLevel[level].WithCovered(cellX, cellZ);
-                            int blockX = tileBlockX
-                                + cellX * LodMeshGroundCoverage.CellBlocks;
-                            int blockZ = tileBlockZ
-                                + cellZ * LodMeshGroundCoverage.CellBlocks;
-                            int localCellX = (blockX - sectionBlockX)
-                                / LodMeshGroundCoverage.CellBlocks;
-                            int localCellZ = (blockZ - sectionBlockZ)
-                                / LodMeshGroundCoverage.CellBlocks;
-                            if (resident.OpaqueGroundCoverage.Covered(localCellX, localCellZ))
-                                coveredByLevel[level] =
-                                    coveredByLevel[level].WithCovered(cellX, cellZ);
-                        }
-                    }
-                }
-            }
-        }
-
-        float cullDistanceSquared = LodFarDistance.CullDistanceSquared(FarViewDistanceCap);
-        LodSilhouetteCoverage result = LodSilhouetteCoverage.Empty;
-        for (int cellZ = 0; cellZ < LodSilhouetteField.CoverageCellsPerEdge; cellZ++)
-        {
-            for (int cellX = 0; cellX < LodSilhouetteField.CoverageCellsPerEdge; cellX++)
-            {
-                double cellMinX = tileBlockX + cellX * LodMeshGroundCoverage.CellBlocks;
-                double cellMinZ = tileBlockZ + cellZ * LodMeshGroundCoverage.CellBlocks;
-                double dx = Math.Max(0, Math.Max(cellMinX - camPos.X,
-                    camPos.X - (cellMinX + LodMeshGroundCoverage.CellBlocks)));
-                double dz = Math.Max(0, Math.Max(cellMinZ - camPos.Z,
-                    camPos.Z - (cellMinZ + LodMeshGroundCoverage.CellBlocks)));
-                int wanted = Math.Clamp(LodWorld.WantedLevelForSq(dx * dx + dz * dz),
-                    0, LodWorld.MaxLevel);
-
-                int selected = SelectStableSilhouetteLevel(
-                    residentByLevel, wanted, cellX, cellZ);
-                if (selected < 0 || !coveredByLevel[selected].Covered(cellX, cellZ)) continue;
-
-                int footprint = LodSection.SectionBlocks << selected;
-                double originX = Math.Floor(cellMinX / footprint) * footprint;
-                double originZ = Math.Floor(cellMinZ / footprint) * footprint;
-                if (LodFarDistance.SectionPastCull(originX, originZ, footprint,
-                        camPos.X, camPos.Z, cullDistanceSquared)
-                    || !LodFarDistance.CellInsideTerrain(cellMinX, cellMinZ,
-                        LodMeshGroundCoverage.CellBlocks, snappedCameraX, snappedCameraZ, terrainEnd))
-                    continue;
-                result = result.WithCovered(cellX, cellZ);
-            }
-        }
-        return WithReadyVanillaColumns(result, tileX, tileZ);
+        return WithReadyVanillaColumns(SilhouetteCachedTerrainCoverage(tileX, tileZ,
+            snappedCameraX, snappedCameraZ, terrainEnd), tileX, tileZ);
     }
 
     /// <summary>Adds the tile's columns vanilla has committed as render-ready.</summary>

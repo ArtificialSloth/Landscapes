@@ -30,6 +30,7 @@ public static class SilhouetteChecks
         MeshSeaAndCoverage(c);
         MeshResolutionsAndUnderlay(c);
         StableReplacementLevelSelection(c);
+        RememberedCoverageHoldsInsideItsMargins(c);
         SeamFogMaskAndVolume(c);
         SeamFogMedium(c);
         SeamFogNoise(c);
@@ -63,6 +64,71 @@ public static class SilhouetteChecks
             "a finer descendant owns the cell only after the target and parent chain are absent");
         c.Eq(-1, LodTerrainRenderer.SelectStableSilhouetteLevel(resident, 2, 8, 8),
             "a cell with no resident level remains Farseer-owned");
+    }
+
+    /// <summary>
+    /// dev.30 remembers each tile's coverage while the camera stays inside the margins the answer
+    /// came with. Moving less than the camera margin, or the terrain's end less than its margin,
+    /// must give exactly the same cells, or the remembered answer would open a hole or double an
+    /// edge. Random ground over many tiles, cameras, ends and caps; the snapped camera is held,
+    /// as the cache compares it outright.
+    /// </summary>
+    static void RememberedCoverageHoldsInsideItsMargins(Check c)
+    {
+        var random = new Random(30);
+        var resident = new LodSilhouetteCoverage[LodWorld.MaxLevel + 1];
+        var covered = new LodSilhouetteCoverage[LodWorld.MaxLevel + 1];
+        int decisions = 0, owning = 0, finite = 0, moves = 0, differed = 0;
+        float[] ends = { 1500f, 3000f, 6000f, 9000f };
+        int[] caps = { 0, 2048, 4096 };
+        for (int trial = 0; trial < 600; trial++)
+        {
+            for (int level = 0; level <= LodWorld.MaxLevel; level++)
+            {
+                LodSilhouetteCoverage r = LodSilhouetteCoverage.Empty, g = LodSilhouetteCoverage.Empty;
+                for (int z = 0; z < LodSilhouetteField.CoverageCellsPerEdge; z++)
+                    for (int x = 0; x < LodSilhouetteField.CoverageCellsPerEdge; x++)
+                    {
+                        if (random.NextDouble() >= 0.6) continue;
+                        r = r.WithCovered(x, z);
+                        if (random.NextDouble() < 0.8) g = g.WithCovered(x, z);
+                    }
+                resident[level] = r;
+                covered[level] = g;
+            }
+            double cameraX = 20000 + random.NextDouble() * 512;
+            double cameraZ = 20000 + random.NextDouble() * 512;
+            double snappedX = LodFarDistance.SnapCamera(cameraX);
+            double snappedZ = LodFarDistance.SnapCamera(cameraZ);
+            int tileX = (int)(cameraX / 512) + random.Next(-14, 15);
+            int tileZ = (int)(cameraZ / 512) + random.Next(-14, 15);
+            float end = ends[random.Next(ends.Length)];
+            float cull = LodFarDistance.CullDistanceSquared(caps[random.Next(caps.Length)]);
+
+            var held = LodTerrainRenderer.DecideSilhouetteCoverage(resident, covered, tileX, tileZ,
+                cameraX, cameraZ, snappedX, snappedZ, end, cull);
+            decisions++;
+            if (!held.Covered.IsEmpty) owning++;
+            if (!double.IsPositiveInfinity(held.CameraMargin)) finite++;
+            for (int move = 0; move < 8; move++)
+            {
+                double cameraStep = double.IsPositiveInfinity(held.CameraMargin)
+                    ? 200 : held.CameraMargin * random.NextDouble() * 0.999;
+                double angle = random.NextDouble() * Math.PI * 2;
+                double endStep = double.IsPositiveInfinity(held.EndMargin)
+                    ? 200 : held.EndMargin * (random.NextDouble() * 2 - 1) * 0.999;
+                var moved = LodTerrainRenderer.DecideSilhouetteCoverage(resident, covered,
+                    tileX, tileZ, cameraX + Math.Cos(angle) * cameraStep,
+                    cameraZ + Math.Sin(angle) * cameraStep, snappedX, snappedZ,
+                    end + (float)endStep, cull);
+                moves++;
+                if (moved.Covered != held.Covered) differed++;
+            }
+        }
+        c.Eq(0, differed, "a remembered Farseer coverage holds while the camera and the terrain's "
+            + $"end stay inside its margins ({moves} moves over {decisions} answers)");
+        c.True(owning > decisions / 10 && finite > decisions / 2,
+            $"the margin check saw owned cells ({owning}) and finite margins ({finite}) in {decisions} answers");
     }
 
     static void SeamFogMaskAndVolume(Check c)
@@ -1966,7 +2032,8 @@ public static class SilhouetteChecks
     {
         string client = Source("src", "Silhouette", "LodSilhouetteClient.cs");
         string field = Source("src", "Silhouette", "LodSilhouetteField.cs");
-        string pass = Source("src", "Render", "LodTerrainRenderer.Silhouette.cs");
+        string pass = Source("src", "Render", "LodTerrainRenderer.Silhouette.cs")
+            + Source("src", "Render", "LodTerrainRenderer.SilhouetteCoverage.cs");
         string renderer = Source("src", "Render", "LodTerrainRenderer.cs");
         string waterDepth = Source("src", "Render", "LodTerrainRenderer.WaterDepth.cs");
         string fogPass = Source("src", "Render", "LodTerrainRenderer.SilhouetteFog.cs");
