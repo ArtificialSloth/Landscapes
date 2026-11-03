@@ -756,8 +756,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         else ComposeGeneral(composer);
         composer.AddInteractiveElement(new FrameHook(capi, OnFrame), "frame-hook");
 
-        // The version, small and dim above Save on every tab (owner, 2026-11-03), as the game loaded it.
-        string version = "Doden's Landscapes " + (capi.ModLoader.GetMod("dodenslandscapes")?.Info?.Version ?? "");
+        // The version number alone, small and dim above Save on every tab (owner, 2026-11-03), as the game loaded it.
+        string version = capi.ModLoader.GetMod("dodenslandscapes")?.Info?.Version ?? "";
         composer.AddStaticText(version,
             CairoFont.WhiteDetailText().WithColor(new[] { 1.0, 1.0, 1.0, 0.4 }).WithOrientation(EnumTextOrientation.Right),
             ElementBounds.Fixed(Width - Margin - 300, Y(VintageHorizonsConfigLayout.VersionY), 300, 18));
