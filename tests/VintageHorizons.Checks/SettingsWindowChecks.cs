@@ -83,15 +83,17 @@ public static class SettingsWindowChecks
     static void FarseerRowOnGeneral(Check c)
     {
         string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
-        c.True(dialog.Contains("\"Farseer horizon terrain\", FarseerCost, FarseerTip, OnSilhouetteEnabledChanged", StringComparison.Ordinal)
+        c.True(dialog.Contains("const string FarseerTitle = \"Farseer horizon terrain\";", StringComparison.Ordinal)
+                && dialog.Contains("\"silhouette-enabled\", FarseerTitle, FarseerCost,", StringComparison.Ordinal)
                 && dialog.Contains("\"silhouette-enabled\"", StringComparison.Ordinal)
                 && dialog.Contains("\"silhouette-fog\"", StringComparison.Ordinal),
             "Farseer and the seam fog have their switches on General");
-        c.True(dialog.Contains("if (silhouettes.NoSampler())", StringComparison.Ordinal)
-                && dialog.Contains("AddTip(composer, NoSamplerWarning", StringComparison.Ordinal),
-            "with no sampler mod the row shows a short red note whose hover is the full warning");
-        c.True(VintageHorizonsConfigDialog.NoSamplerNote.Length <= 40,
-            "the note is short enough for the space between the two switches");
+        c.True(dialog.Contains("bool noSampler = silhouettes.NoSampler();", StringComparison.Ordinal)
+                && dialog.Contains("noSampler ? FarseerTip + \"\\n\\n\" + NoSamplerWarning : FarseerTip", StringComparison.Ordinal)
+                && dialog.Contains("ElementBounds.Fixed(noteX, Y(VisualLine(0) + 5), noteWidth, 22)", StringComparison.Ordinal),
+            "with no sampler mod Farseer's row shows a short red note beside its title, and its hover explains (owner, 2026-11-03)");
+        c.True(VintageHorizonsConfigDialog.NoSamplerNote == "NO SAMPLER",
+            "the note fits between Farseer's title and its cost word");
         c.True(dialog.Contains("pendingSilhouettes = LodPreset.Quality.ApplyTo(pendingSilhouettes);", StringComparison.Ordinal),
             "Defaults is the Quality preset, Farseer's switches and reach included");
         string mod = Source("VintageHorizonsModSystem.cs");
@@ -167,13 +169,10 @@ public static class SettingsWindowChecks
                 && !dialog.Contains("threshold-help", StringComparison.Ordinal)
                 && dialog.Contains("AddTip(composer, ScaleHelp,", StringComparison.Ordinal),
             "the draw-distance readout and help line are gone; the help is the title's hover");
-        c.True(VintageHorizonsConfigLayout.VisualRowsY
-                    + VintageHorizonsConfigLayout.VisualLineCount * VintageHorizonsConfigLayout.VisualRowHeight
-                    <= VintageHorizonsConfigLayout.VersionY
-                && VintageHorizonsConfigLayout.ShowTaaY + 32 <= VintageHorizonsConfigLayout.VersionY
+        c.True(VintageHorizonsConfigLayout.ShowTaaY + 32 <= VintageHorizonsConfigLayout.VersionY
                 && VintageHorizonsConfigLayout.VersionY + 18 <= VintageHorizonsConfigLayout.ButtonY
                 && dialog.Contains("GetMod(\"dodenslandscapes\")?.Info?.Version", StringComparison.Ordinal),
-            "the version sits above Save, clear of the rows and buttons, as the game loaded it (owner, 2026-11-03)");
+            "off General the version sits above Save, clear of the rows and buttons, as the game loaded it (owner, 2026-11-03)");
 
         // Owner, 2026-11-03: cost words from Session 124's measurements.
         var costs = VintageHorizonsConfigDialog.Rows.Concat(VintageHorizonsConfigDialog.PlantRows)
@@ -248,11 +247,10 @@ public static class SettingsWindowChecks
             "the visual features heading finishes before the first feature row");
         c.True(VintageHorizonsConfigLayout.RowSwitchSize <= VintageHorizonsConfigLayout.VisualRowHeight - 2,
             "a row's switch fits its pitch");
-        c.True(VintageHorizonsConfigLayout.NoteY + 22 <= VintageHorizonsConfigLayout.ButtonY - 4,
-            "the features and the no-sampler note end above the action row");
-        c.True(VintageHorizonsConfigLayout.Margin + VintageHorizonsConfigLayout.ColumnWidth
-                <= VintageHorizonsConfigLayout.Width - VintageHorizonsConfigLayout.Margin - 300,
-            "the note keeps to the left column, clear of the version on the same line");
+        c.True(VintageHorizonsConfigLayout.VisualRowsY
+                    + VintageHorizonsConfigLayout.VisualLineCount * VintageHorizonsConfigLayout.VisualRowHeight
+                    <= VintageHorizonsConfigLayout.ButtonY - 10,
+            "the features end above the action row, with room to breathe");
         c.True(VintageHorizonsConfigLayout.VersionTopX
                     >= VintageHorizonsConfigLayout.PresetButtonX(LodPreset.All.Length)
                         + VintageHorizonsConfigLayout.PresetButtonWidth + 8

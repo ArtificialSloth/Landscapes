@@ -2395,7 +2395,8 @@ public static class SilhouetteChecks
 
         // Farseer's tab went in 0.4.166 (owner, 2026-10-19): its two switches are on General and
         // every dial is in the Developer tab's Farseer look and Seam fog groups.
-        c.True(dialog.Contains("\"Farseer horizon terrain\", FarseerCost, FarseerTip, OnSilhouetteEnabledChanged", StringComparison.Ordinal)
+        c.True(dialog.Contains("const string FarseerTitle = \"Farseer horizon terrain\";", StringComparison.Ordinal)
+                && dialog.Contains("\"silhouette-enabled\", FarseerTitle, FarseerCost,", StringComparison.Ordinal)
                 && dialog.Contains("\"silhouette-enabled\"", StringComparison.Ordinal)
                 && dialog.Contains("ComposeSilhouetteDials", StringComparison.Ordinal)
                 && dialog.Contains("SilhouetteRows", StringComparison.Ordinal)

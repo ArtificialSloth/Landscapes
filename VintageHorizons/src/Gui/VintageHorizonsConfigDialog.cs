@@ -121,8 +121,8 @@ internal static class VintageHorizonsConfigLayout
     /// columns, Farseer beside its seam fog first and all-cores collection under the fog, at a
     /// roomier 30-unit pitch now that the page has the space.
     /// </summary>
-    internal const double VisualHeadingY = 360;
-    internal const double VisualRowsY = 398;
+    internal const double VisualHeadingY = 364;
+    internal const double VisualRowsY = 412;
 
     /// <summary>
     /// Both section titles, LOD Thresholds and Visual features, at one size between the row labels
@@ -132,11 +132,6 @@ internal static class VintageHorizonsConfigLayout
     internal const int VisualLineCount = 6;
     internal const double VisualRowHeight = 28;
 
-    /// <summary>
-    /// The no-sampler note, a line under the features. It shares that line with the version, which
-    /// is right-aligned beyond the left column the note keeps to.
-    /// </summary>
-    internal const double NoteY = VisualRowsY + VisualLineCount * VisualRowHeight;
 
     /// <summary>
     /// Paused loading and Developer options sit in the action row between Defaults and Cancel
@@ -963,8 +958,23 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         // Farseer and its seam fog lead the list. The fog is its own switch, not Farseer's: it is
         // also drawn with Farseer off, over the cached terrain's edge.
-        AddToggle(composer, 0, VisualLine(0), "silhouette-enabled",
-            "Farseer horizon terrain", FarseerCost, FarseerTip, OnSilhouetteEnabledChanged);
+        // Without a sampler mod Farseer builds slowly. A short red note beside its title says so and
+        // the row's hover carries the whole warning (owner, 2026-11-03; a line under the features
+        // until then).
+        bool noSampler = silhouettes.NoSampler();
+        AddToggle(composer, 0, VisualLine(0), "silhouette-enabled", FarseerTitle, FarseerCost,
+            noSampler ? FarseerTip + "\n\n" + NoSamplerWarning : FarseerTip, OnSilhouetteEnabledChanged);
+        if (noSampler)
+        {
+            double titleEnd = VintageHorizonsConfigLayout.ColumnX(0)
+                + CairoFont.WhiteSmallishText().GetTextExtents(FarseerTitle).Width / GuiElement.scaled(1);
+            double noteX = titleEnd + 10;
+            // Up to the cost word, which is right-aligned at the end of its box.
+            double noteWidth = VintageHorizonsConfigLayout.ColumnCostX(0) + VintageHorizonsConfigLayout.CostWidth
+                - 32 - noteX;
+            composer.AddStaticText(NoSamplerNote, FittedFont(NoSamplerNote, noteWidth, NoSamplerFont()),
+                ElementBounds.Fixed(noteX, Y(VisualLine(0) + 5), noteWidth, 22));
+        }
         AddToggle(composer, 1, VisualLine(0), "silhouette-fog",
             "Seam fog", SeamFogCost, SeamFogTip, OnSilhouetteFogChanged);
         // It applies only from the next start, which the hover says along with what this session
@@ -987,17 +997,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         // in Session 124's presets, most of it leaf shapes.
         AddToggle(composer, 1, VisualLine(VintageHorizonsConfigLayout.VisualLineCount - 1), "plant-detail",
             "Plant Detail", "Low", PlantDetailTip, OnPlantDetailChanged);
-
-        if (silhouettes.NoSampler())
-        {
-            // A short red note under the features, its hover carrying the whole warning.
-            const double noteY = VintageHorizonsConfigLayout.NoteY;
-            double noteWidth = VintageHorizonsConfigLayout.ColumnWidth;
-            composer.AddStaticText(NoSamplerNote, NoSamplerFont(),
-                ElementBounds.Fixed(Margin, Y(noteY), noteWidth, 22));
-            AddTip(composer, NoSamplerWarning, CairoFont.WhiteSmallText(), 420,
-                ElementBounds.Fixed(Margin, Y(noteY), noteWidth, 22), "tip-no-sampler");
-        }
     }
 
     /// <summary>
@@ -1320,13 +1319,20 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     }
 
     internal const string NoSamplerWarning =
-        "Neither Algernon's Terrain Sampler nor Watersheds was found, so Farseer builds slowly from game "
-        + "previews. Install either one (on the server, in multiplayer) for a faster, finer horizon. Neither is required.";
+        "NO SAMPLER: neither Algernon's Terrain Sampler nor Watersheds was found. Farseer needs the height "
+        + "of land nobody has explored yet. A sampler mod works those heights out straight from the world "
+        + "generator, quickly and in fine detail. Without one, Farseer asks the game for terrain previews at "
+        + "a limited pace, and they share the server's time with world generation, so the horizon fills in "
+        + "slowly and coarser. Install either mod where Doden's Landscapes runs on the server; in "
+        + "singleplayer that is your own game. Algernon's Terrain Sampler is needed on clients too. "
+        + "Neither is required.";
 
-    /// <summary>What fits beside Developer options; hovering it shows <see cref="NoSamplerWarning"/>.</summary>
-    internal const string NoSamplerNote = "No terrain sampler mod: builds slowly";
+    /// <summary>What fits beside Farseer's title; the row's hover adds <see cref="NoSamplerWarning"/>.</summary>
+    internal const string NoSamplerNote = "NO SAMPLER";
 
-    static CairoFont NoSamplerFont() => CairoFont.WhiteSmallText().WithColor(GuiStyle.ErrorTextColor);
+    const string FarseerTitle = "Farseer horizon terrain";
+
+    static CairoFont NoSamplerFont() => CairoFont.WhiteDetailText().WithColor(GuiStyle.ErrorTextColor);
 
     /// <summary>
     /// Every tuning dial, one group at a time from the sub-tabs at the top of the page:
