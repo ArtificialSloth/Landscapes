@@ -1,0 +1,72 @@
+# The proposed presets, each measured whole at its own distances (owner, 2026-11-03).
+#
+# The 2026-11-02 preset proposal added up costs measured one setting at a time at one set of
+# distances (setting-sweep.txt at Ultra's, setting-climb.txt at Performance's). Leaf shapes, plant
+# planes and seam blending live on level 0 only, so they cost more where level 0 reaches further;
+# far biome colour pays per L3+ section. This route runs each proposed preset as a whole and, inside
+# the proposed Balanced, Quality and Max, switches those features off one at a time against that
+# preset's own baseline.
+#
+# Proposed presets (window rows set on top of today's preset):
+#   prop-performance  Performance + every free switch: Farseer reach 8,192, tree colours, slabs,
+#                     water effects, plants with textures and flowers, Distant Lights; leaves stay cubes
+#   prop-balanced     Balanced + Cache 8,192, seam blending at a third of the band, far biome, flowers
+#   prop-quality-auto Quality + far biome, flowers (L1 at 1.5 px, today's Quality distances)
+#   prop-quality      the same with the owner's hand-tried distances 960/1536/2496/4096/8192/16384
+#                     (L1 at ~1 px), from -LodThresholds through ".dldetail manual"
+#   max               today's Ultra
+# Today's Performance, Balanced and Quality are measured first at the valley as references.
+#
+# Spot 1 is the owner's save spot (valley, facing north, closed in by mountains). Spot 2 is high
+# above it with a shallow look, so far terrain is not hidden behind the ridge. Same conditions as
+# setting-climb.txt: frozen copy of `vintage cave tales-2`, view distance 32, his eight other mods
+# and graphics settings, sweep off, clock stopped at noon.
+#
+#   pwsh -File scripts/bench-windows.ps1 -Label preset-proposal -Route bench/routes/preset-proposal.txt `
+#     (the same inputs and switches as setting-climb.txt) -LodThresholds 960,1536,2496,4096,8192,16384
+#
+# name                   x          y       z           yaw    pitch
+
+warm1                    513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset quality; /time set 12:00; /time stop
+warm2                    513012.05  224.92  514130.02   181.2  -12.8
+warm3                    513012.05  224.92  514130.02   181.2  -12.8
+warm4                    513012.05  224.92  514130.02   181.2  -12.8
+warm5                    513012.05  224.92  514130.02   181.2  -12.8
+warm6                    513012.05  224.92  514130.02   181.2  -12.8
+v-cur-performance        513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset performance
+v-cur-balanced           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset balanced
+v-cur-quality            513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset quality
+v-prop-performance       513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset performance; .dlset silhouette-reach 8192; .dlset leaf-season on; .dlset half-blocks on; .dlset water-effects on; .dlset plant-detail on; .dlset plant-textures on; .dlset leaf-shape cubes; .dlset flower-sheets on; .dlset distant-lights on
+v-prop-balanced          513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset balanced; .dlset draw-distance 8192; .dlset seam-blending on; .dlset band-reach 33; .dlset climate-range on; .dlset flower-sheets on
+v-bal-leaf-cubes         513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape cubes
+v-bal-blending-off       513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape clusterswithtops; .dlset seam-blending off
+v-bal-far-off            513012.05  224.92  514130.02   181.2  -12.8  ! .dlset seam-blending on; .dlset climate-range off
+v-prop-balanced-2        513012.05  224.92  514130.02   181.2  -12.8  ! .dlset climate-range on
+v-prop-quality-auto      513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset quality; .dlset climate-range on; .dlset flower-sheets on
+v-prop-quality           513012.05  224.92  514130.02   181.2  -12.8  ! .dldetail manual
+v-q-leaf-cubes           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape cubes
+v-q-plants-off           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape clusterswithtops; .dlset plant-detail off
+v-q-blending-off         513012.05  224.92  514130.02   181.2  -12.8  ! .dlset plant-detail on; .dlset seam-blending off
+v-q-far-off              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset seam-blending on; .dlset climate-range off
+v-prop-quality-2         513012.05  224.92  514130.02   181.2  -12.8  ! .dlset climate-range on
+v-max                    513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset ultra
+v-max-leaf-cubes         513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape cubes
+v-max-plants-off         513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape clusterswithtops; .dlset plant-detail off
+v-max-blending-off       513012.05  224.92  514130.02   181.2  -12.8  ! .dlset plant-detail on; .dlset seam-blending off
+v-max-far-off            513012.05  224.92  514130.02   181.2  -12.8  ! .dlset seam-blending on; .dlset climate-range off
+v-max-2                  513012.05  224.92  514130.02   181.2  -12.8  ! .dlset climate-range on
+o-warm1                  513012.05  330.00  514130.02   181.2   -6.0  ! .dlset preset quality
+o-warm2                  513012.05  330.00  514130.02   181.2   -6.0
+o-warm3                  513012.05  330.00  514130.02   181.2   -6.0
+o-warm4                  513012.05  330.00  514130.02   181.2   -6.0
+o-prop-performance       513012.05  330.00  514130.02   181.2   -6.0  ! .dlset preset performance; .dlset silhouette-reach 8192; .dlset leaf-season on; .dlset half-blocks on; .dlset water-effects on; .dlset plant-detail on; .dlset plant-textures on; .dlset leaf-shape cubes; .dlset flower-sheets on; .dlset distant-lights on
+o-prop-balanced          513012.05  330.00  514130.02   181.2   -6.0  ! .dlset preset balanced; .dlset draw-distance 8192; .dlset seam-blending on; .dlset band-reach 33; .dlset climate-range on; .dlset flower-sheets on
+o-prop-quality-auto      513012.05  330.00  514130.02   181.2   -6.0  ! .dlset preset quality; .dlset climate-range on; .dlset flower-sheets on
+o-prop-quality           513012.05  330.00  514130.02   181.2   -6.0  ! .dldetail manual
+o-q-leaf-cubes           513012.05  330.00  514130.02   181.2   -6.0  ! .dlset leaf-shape cubes
+o-q-far-off              513012.05  330.00  514130.02   181.2   -6.0  ! .dlset leaf-shape clusterswithtops; .dlset climate-range off
+o-prop-quality-2         513012.05  330.00  514130.02   181.2   -6.0  ! .dlset climate-range on
+o-max                    513012.05  330.00  514130.02   181.2   -6.0  ! .dlset preset ultra
+o-max-leaf-cubes         513012.05  330.00  514130.02   181.2   -6.0  ! .dlset leaf-shape cubes
+o-max-far-off            513012.05  330.00  514130.02   181.2   -6.0  ! .dlset leaf-shape clusterswithtops; .dlset climate-range off
+o-max-2                  513012.05  330.00  514130.02   181.2   -6.0  ! .dlset climate-range on

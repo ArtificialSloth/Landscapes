@@ -98,7 +98,10 @@ param(
     [switch]$PlayerSettings,
     # Overrides the game's view distance in blocks, applied after -PlayerSettings.
     [ValidateRange(32, 1536)]
-    [int]$ViewDistance
+    [int]$ViewDistance,
+    # The mod's own fixed LOD distances, L1 to L6, written into the sandbox's mod config. They
+    # are in force only after a route stop runs ".dldetail manual"; presets turn Automatic on.
+    [int[]]$LodThresholds
 )
 
 $ErrorActionPreference = 'Stop'
@@ -1126,6 +1129,10 @@ $modConfig = if (Test-Path -LiteralPath $modConfigPath) {
 } else { @{} }
 $modConfig.PresetPromptShown = $true
 $modConfig.HideLodModNotice = $true
+if ($LodThresholds) {
+    $modConfig.LodThresholds = $LodThresholds
+    $modConfig.DetailDistance = $LodThresholds[0]
+}
 New-Item -ItemType Directory -Path (Split-Path -Parent $modConfigPath) -Force | Out-Null
 $modConfig | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $modConfigPath -Encoding utf8
 

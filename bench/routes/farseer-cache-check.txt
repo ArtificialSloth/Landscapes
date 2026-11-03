@@ -1,0 +1,49 @@
+# Farseer against the Cache distance, then the coverage cache's checker (0.5.2-dev.31, 2026-11-02).
+#
+# The stops through d2-c2048-off-again are farseer-cache.txt unchanged, for before/after timing
+# against dev.28 and dev.29 with the coverage cache on (the default). The check block after them
+# turns on ".dlsilhouette coverage check": every remembered tile answer is compared with a fresh
+# one and any difference is logged. It goes through the long-reach set-ups, then moves the camera
+# off the spot so terrain loads and unloads and the snapped camera crosses chunk lines. Its frame
+# times include the checker's own cost and are not timing evidence. A last stop turns it back off.
+#
+#   pwsh -File scripts/bench-windows.ps1 -Label farseer-cache-dev31 -Route bench/routes/farseer-cache-check.txt `
+#     (the same inputs and switches as setting-climb.txt)
+#
+# name                   x          y       z           yaw    pitch
+
+warm1                    513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset performance; .dlset silhouette-enabled off; /time set 12:00; /time stop
+warm2                    513012.05  224.92  514130.02   181.2  -12.8
+warm3                    513012.05  224.92  514130.02   181.2  -12.8
+warm4                    513012.05  224.92  514130.02   181.2  -12.8
+warm5                    513012.05  224.92  514130.02   181.2  -12.8
+d3-c2048-off             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset detail-target 3; .dlset draw-distance 2048; .dlset silhouette-enabled off
+d3-c2048-r2048           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 2048; .dlset silhouette-enabled on
+d3-c2048-r8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 8192
+d3-c2048-r8192-geo25     513012.05  224.92  514130.02   181.2  -12.8  ! .dlset sil-detail 25
+d3-c2048-r8192-geo10     513012.05  224.92  514130.02   181.2  -12.8  ! .dlset sil-detail 10
+d3-c2048-r8192-geo50     513012.05  224.92  514130.02   181.2  -12.8  ! .dlset sil-detail 50
+d3-c4096-off             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 4096; .dlset silhouette-enabled off
+d3-c4096-r4096           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 4096; .dlset silhouette-enabled on
+d3-c4096-r8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 8192
+d3-c8192-off             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 8192; .dlset silhouette-enabled off
+d3-c8192-r8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-enabled on
+d3-c2048-off-again       513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 2048; .dlset silhouette-enabled off
+d2-c2048-off             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset detail-target 2; .dlset draw-distance 2048; .dlset silhouette-enabled off
+d2-c2048-r2048           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 2048; .dlset silhouette-enabled on
+d2-c2048-r8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 8192
+d2-c4096-off             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 4096; .dlset silhouette-enabled off
+d2-c4096-r4096           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 4096; .dlset silhouette-enabled on
+d2-c4096-r8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 8192
+d2-c8192-off             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 8192; .dlset silhouette-enabled off
+d2-c8192-r8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-enabled on
+d2-c2048-off-again       513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 2048; .dlset silhouette-enabled off
+check-d3-c8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlsilhouette coverage check; .dlset detail-target 3; .dlset draw-distance 8192; .dlset silhouette-reach 8192; .dlset silhouette-enabled on
+check-d3-c4096           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 4096
+check-d3-c2048           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 2048
+check-d2-c8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset detail-target 2; .dlset draw-distance 8192
+check-move-40            513052.05  240.00  514130.02   181.2  -12.8
+check-move-120           513132.05  260.00  514090.02   181.2  -12.8
+check-move-turn          513132.05  260.00  514090.02    90.0  -12.8
+check-move-back          513012.05  240.00  514130.02   181.2  -12.8  ! .dlset detail-target 3
+check-off                513012.05  224.92  514130.02   181.2  -12.8  ! .dlsilhouette coverage cached
