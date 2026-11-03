@@ -167,6 +167,13 @@ public static class SettingsWindowChecks
                 && !dialog.Contains("threshold-help", StringComparison.Ordinal)
                 && dialog.Contains("AddTip(composer, ScaleHelp,", StringComparison.Ordinal),
             "the draw-distance readout and help line are gone; the help is the title's hover");
+        c.True(VintageHorizonsConfigLayout.VisualRowsY
+                    + VintageHorizonsConfigLayout.VisualLineCount * VintageHorizonsConfigLayout.VisualRowHeight
+                    <= VintageHorizonsConfigLayout.VersionY
+                && VintageHorizonsConfigLayout.ShowTaaY + 32 <= VintageHorizonsConfigLayout.VersionY
+                && VintageHorizonsConfigLayout.VersionY + 18 <= VintageHorizonsConfigLayout.ButtonY
+                && dialog.Contains("GetMod(\"dodenslandscapes\")?.Info?.Version", StringComparison.Ordinal),
+            "the version sits above Save, clear of the rows and buttons, as the game loaded it (owner, 2026-11-03)");
 
         // Owner, 2026-11-03: cost words from Session 124's measurements.
         var costs = VintageHorizonsConfigDialog.Rows.Concat(VintageHorizonsConfigDialog.PlantRows)

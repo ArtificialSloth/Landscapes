@@ -59,6 +59,9 @@ internal static class VintageHorizonsConfigLayout
     internal const double Margin = 32;
     internal const double SwitchX = 824;
     internal const double ButtonY = Height - 48;
+
+    /// <summary>The mod's version, dim and right-aligned just above Save (owner, 2026-11-03).</summary>
+    internal const double VersionY = ButtonY - 22;
     internal const double TabsWidth = 760;
     internal const int PlannedTabCount = 3;
 
@@ -752,6 +755,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         else if (shownTab == DeveloperTab) ComposeDeveloper(composer);
         else ComposeGeneral(composer);
         composer.AddInteractiveElement(new FrameHook(capi, OnFrame), "frame-hook");
+
+        // The version, small and dim above Save on every tab (owner, 2026-11-03), as the game loaded it.
+        string version = "Doden's Landscapes " + (capi.ModLoader.GetMod("dodenslandscapes")?.Info?.Version ?? "");
+        composer.AddStaticText(version,
+            CairoFont.WhiteDetailText().WithColor(new[] { 1.0, 1.0, 1.0, 0.4 }).WithOrientation(EnumTextOrientation.Right),
+            ElementBounds.Fixed(Width - Margin - 300, Y(VintageHorizonsConfigLayout.VersionY), 300, 18));
 
         // Generate works through its own buttons. Save, Cancel and Defaults there invited the
         // question whether a generation had been saved.
