@@ -497,10 +497,11 @@ public static class PackedQuadChecks
         c.True(mod.Contains("if (!IsUsableFaceTexture(candidateId)) continue;", StringComparison.Ordinal)
                 && mod.Contains("if (IsUsableFaceTexture(overlayId))", StringComparison.Ordinal),
             "and so do the named top face and the grass overlay");
-        c.True(mod.Contains("subId = block.TextureSubIdForBlockColor;\n            if (!IsUsableAtlasTexture(subId)) return default;",
-                    StringComparison.Ordinal)
-                || System.Text.RegularExpressions.Regex.IsMatch(mod,
-                    @"subId = block\.TextureSubIdForBlockColor;\s*if \(!IsUsableAtlasTexture\(subId\)\) return default;"),
+        // The fallback lives in ColorFace since 0.5.2-dev.38, shared with the dense leaf pictures.
+        c.True(System.Text.RegularExpressions.Regex.IsMatch(mod,
+                    @"int fallback = block\.TextureSubIdForBlockColor;\s*if \(!IsUsableAtlasTexture\(fallback\)\) return null;")
+                && System.Text.RegularExpressions.Regex.IsMatch(mod,
+                    @"CompositeTexture\? face = ColorFace\(block, out int subId\);\s*if \(subId < 0\) return default;"),
             "while a block the game itself draws as the \"?\" box keeps that look at distance");
     }
 

@@ -70,6 +70,51 @@ internal static class LodBushTile
     }
 
     /// <summary>
+    /// A leaf sheet layered with two copies of itself, one shifted half a tile and one mirrored, so
+    /// a plane of it is about three quarters leaf rather than half (owner, 2026-11-03: cached
+    /// canopies read as porous beside the game's). Every layer at full brightness, since darker
+    /// layers would bring back the speckle this is for. The sheet itself is laid last, so where it
+    /// has a leaf that leaf shows; the copies only fill its holes. Leaf sheets tile, so the shift
+    /// wraps. Clear pixels store the mean, as a bush's do.
+    /// </summary>
+    public static (int[] Pixels, int Mean)? ComposeDenseLeaves(int size, int[] argb)
+    {
+        if (size <= 0 || argb.Length != size * size) return null;
+        var layered = new int[size * size];
+        for (int layer = 0; layer < 3; layer++)
+        {
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    int sourceX = layer == 0 ? (x + size / 2) % size : layer == 1 ? size - 1 - x : x;
+                    int sourceY = layer == 0 ? (y + size / 2) % size : y;
+                    int pixel = argb[sourceY * size + sourceX];
+                    if (((pixel >> 24) & 0xFF) <= OpaqueAlpha) continue;
+                    layered[y * size + x] = unchecked((int)0xFF000000) | (pixel & 0xFFFFFF);
+                }
+            }
+        }
+
+        long leafRed = 0, leafGreen = 0, leafBlue = 0, leaves = 0;
+        foreach (int pixel in layered)
+        {
+            if (pixel == 0) continue;
+            leafRed += (pixel >> 16) & 0xFF;
+            leafGreen += (pixel >> 8) & 0xFF;
+            leafBlue += pixel & 0xFF;
+            leaves++;
+        }
+        if (leaves == 0) return null;
+
+        int leafMean = (int)(leafRed / leaves) << 16 | (int)(leafGreen / leaves) << 8
+            | (int)(leafBlue / leaves);
+        for (int i = 0; i < layered.Length; i++)
+            if (layered[i] == 0) layered[i] = leafMean;
+        return (layered, unchecked((int)0xFF000000) | leafMean);
+    }
+
+    /// <summary>
     /// A mean as the texture table stores colours, red in the low byte. A tile's pixels and mean
     /// are 0xAARRGGBB like the art they came from, and grey bushes never showed the difference.
     /// </summary>

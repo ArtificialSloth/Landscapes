@@ -102,7 +102,8 @@ public sealed class LodBlockTextureRegistry
     public readonly record struct BlockTexture(
         TextureAtlasPosition? Position, TextureAtlasPosition? Overlay,
         int MeanColor, int OverlayMeanColor,
-        FaceTexture? WallX = null, FaceTexture? WallZ = null, bool ClearPixelsHoldMean = false);
+        FaceTexture? WallX = null, FaceTexture? WallZ = null, bool ClearPixelsHoldMean = false,
+        TextureAtlasPosition? DenseLeaves = null, int DenseLeavesMean = 0);
 
     /// <summary>
     /// Row 9's alpha: above one, a crossed plane tiles this sheet once per block. Nothing reads
@@ -122,6 +123,8 @@ public sealed class LodBlockTextureRegistry
     readonly Dictionary<(int BlockId, string Variant), int> slotByVariant = new();
     readonly Dictionary<int, float[]?> bushSlotRectangles = new();
     bool bushTexturesVisible = true;
+    readonly Dictionary<int, (float[] Game, float[] Dense)> denseLeafRows = new();
+    bool denseLeavesShown = true;
     readonly float[] table = new float[MaxSlots * FloatsPerSlot];
 
     int nextSlot = 1;
@@ -189,8 +192,11 @@ public sealed class LodBlockTextureRegistry
             return NoSlot;
         }
 
-        int slot = Allocate(block, Resolve(block), stableColor);
+        BlockTexture resolved = Resolve(block);
+        int slot = Allocate(block, resolved, stableColor);
         slotByBlockId[block.BlockId] = slot;
+        if (slot != NoSlot && resolved.DenseLeaves is { } dense && dense.atlasNumber == atlasNumber)
+            KeepDenseLeaves(slot, dense, resolved.DenseLeavesMean);
         if (slot != NoSlot && LodBlockPolicy.IsBerryBush(block))
         {
             bushSlotRectangles[slot] = null;
@@ -229,6 +235,51 @@ public sealed class LodBlockTextureRegistry
             }
             Version++;
         }
+    }
+
+    /// <summary>
+    /// Whether leaves wear their dense picture (LodBushTile.ComposeDenseLeaves) or the game's own
+    /// sheet. Each leaf slot keeps both sets of rows and the table holds the chosen one, so a change
+    /// is a table upload: nothing is remeshed.
+    /// </summary>
+    public bool DenseLeavesShown
+    {
+        get => denseLeavesShown;
+        set
+        {
+            if (denseLeavesShown == value) return;
+            denseLeavesShown = value;
+            foreach ((int slot, (float[] game, float[] dense)) in denseLeafRows)
+                Array.Copy(value ? dense : game, 0, table, slot * FloatsPerSlot, FloatsPerSlot);
+            Version++;
+        }
+    }
+
+    /// <summary>
+    /// A leaf slot's rows both ways. The dense picture takes the top's rectangle and mean, and each
+    /// wall's where the wall was the top's copy, which for leaves is every wall.
+    /// </summary>
+    void KeepDenseLeaves(int slot, TextureAtlasPosition dense, int denseMean)
+    {
+        int at = slot * FloatsPerSlot;
+        var game = new float[FloatsPerSlot];
+        Array.Copy(table, at, game, 0, FloatsPerSlot);
+        var thick = (float[])game.Clone();
+        (float red, float green, float blue) = Channels(denseMean);
+        foreach ((int rectangle, int mean) in new[] { (0, 8), (16, 20), (24, 28) })
+        {
+            if (rectangle != 0 && !game.AsSpan(rectangle, 4).SequenceEqual(game.AsSpan(0, 4))) continue;
+            thick[rectangle + 0] = dense.x1;
+            thick[rectangle + 1] = dense.y1;
+            thick[rectangle + 2] = dense.x2;
+            thick[rectangle + 3] = dense.y2;
+            thick[mean + 0] = Math.Max(red, 0.02f);
+            thick[mean + 1] = Math.Max(green, 0.02f);
+            thick[mean + 2] = Math.Max(blue, 0.02f);
+        }
+        denseLeafRows[slot] = (game, thick);
+        if (denseLeavesShown) Array.Copy(thick, 0, table, at, FloatsPerSlot);
+        Version++;
     }
 
     // Rows 0, 4 and 6: the top's rectangle and each wall axis's.
@@ -454,6 +505,8 @@ public sealed class LodBlockTextureRegistry
         + $"{RefusedNoTexture} no-texture/{RefusedOtherAtlasPage} other-page/"
         + $"{RefusedPerPositionColour} per-position/{RefusedTableFull} table-full, "
         + $"{WallsAccepted} wall textures ({WallsOtherPage} on another page), "
+        + $"{denseLeafRows.Count} leaf sheets with a dense picture "
+        + $"({(denseLeavesShown ? "shown" : "hidden")}), "
         + $"{RefusedMissingImageBlocks} blocks with a missing-texture face passed over";
 
     /// <summary>
@@ -467,6 +520,7 @@ public sealed class LodBlockTextureRegistry
         wallColorsByBlockId.Clear();
         slotByVariant.Clear();
         bushSlotRectangles.Clear();
+        denseLeafRows.Clear();
         Array.Clear(table);
         nextSlot = 1;
         atlasTextureId = 0;

@@ -534,6 +534,14 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             "Minimal",
             v => v.BushTextures,
             (v, on) => v with { BushTextures = on }),
+
+        new("dense-leaves", "Dense Leaves",
+            "Layers each leaf picture with copies of itself so leaf planes are about three quarters "
+            + "leaf instead of half, closer to how solid the game's own trees look. The same cost per "
+            + "pixel. Off wears the game's own picture. Needs Plant Textures.",
+            "Minimal",
+            v => v.DenseLeaves,
+            (v, on) => v with { DenseLeaves = on }),
     };
 
     /// <summary>The leaf shapes, in the order the drop-down shows them.</summary>
@@ -2218,6 +2226,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 FlowerSheets = plants.FlowerSheets,
                 CropShapes = plants.CropShapes,
                 BushTextures = plants.BushTextures,
+                DenseLeaves = plants.DenseLeaves,
                 FruitTreeColors = plants.FruitTreeColors,
                 LeafShape = plants.LeafShape,
             };

@@ -76,6 +76,7 @@ public class VintageHorizonsConfig
     public bool FlowerSheets;
     public bool CropShapes = true;
     public bool BushTextures = true;
+    public bool DenseLeaves = true;
     public bool FruitTreeColors = true;
     public bool DistantLights = true;
 
@@ -1921,6 +1922,21 @@ public partial class VintageHorizonsModSystem : ModSystem
                 continue;
             }
 
+            if (block.BlockMaterial == EnumBlockMaterial.Leaves && !LodBlockPolicy.IsBerryBush(block))
+            {
+                CompositeTexture? sheet = ColorFace(block, out int sheetId);
+                if (sheetId < 0 || DenseLeafKey(sheet) is not { } leafKey || tiles.ContainsKey(leafKey)) continue;
+                TexturePixels? pixels = ReadTexturePixels((sheet!.Baked?.BakedName ?? sheet.Base).Clone()
+                    .WithPathPrefixOnce("textures/").WithPathAppendixOnce(".png"));
+                if (pixels == null || pixels.Width != pixels.Height)
+                {
+                    tiles[leafKey] = null;
+                    continue;
+                }
+                Insert(leafKey, pixels.Width, LodBushTile.ComposeDenseLeaves(pixels.Width, pixels.Argb));
+                continue;
+            }
+
             if (!LodBlockPolicy.IsBerryBush(block)) continue;
             string? folder = BushLeafFolder(block);
             if (folder == null || tiles.ContainsKey(folder)) continue;
@@ -1946,6 +1962,41 @@ public partial class VintageHorizonsModSystem : ModSystem
         return tiles;
     }
 
+    /// <summary>
+    /// The texture a block's top wears here, and its atlas sub-id, or -1 with none usable.
+    ///
+    /// The UP face, explicitly. `TextureSubIdForBlockColor` is the engine's generic "what
+    /// colour is this block" texture and for grass-covered soil that is the SIDE - which is
+    /// grass across its top half and bare dirt across its bottom half. Tiled onto a top
+    /// face that draws every block split diagonally between grass and dirt, which is
+    /// exactly what the owner reported. Asking by face name is right; falling back to the
+    /// generic texture is what keeps coverage high for blocks that name their faces
+    /// differently. Leaves name none, so they wear the first they list: the large-leaf sheet.
+    /// </summary>
+    CompositeTexture? ColorFace(Block block, out int subId)
+    {
+        subId = -1;
+        if (block.Textures != null)
+        {
+            foreach (string name in UpFaceTextureNames)
+            {
+                if (!block.Textures.TryGetValue(name, out CompositeTexture? candidate)) continue;
+                int candidateId = candidate?.Baked?.TextureSubId ?? -1;
+                if (!IsUsableFaceTexture(candidateId)) continue;
+                subId = candidateId;
+                return candidate;
+            }
+        }
+        int fallback = block.TextureSubIdForBlockColor;
+        if (!IsUsableAtlasTexture(fallback)) return null;
+        subId = fallback;
+        return TextureFor(block, subId);
+    }
+
+    /// <summary>The layered-tile key of a leaf block's dense picture, by the sheet it is made from.</summary>
+    static string? DenseLeafKey(CompositeTexture? sheet) =>
+        (sheet?.Baked?.BakedName ?? sheet?.Base) is { } name ? "leaf:" + name : null;
+
     LodBlockTextureRegistry.BlockTexture ResolveBlockTextureFor(Block block)
     {
         if (block is Vintagestory.GameContent.BlockVines) return ResolveVineSheet(block);
@@ -1954,33 +2005,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         if (LodBlockPolicy.IsCrossedPlant(block)) return ResolveReedSheets(block);
         if (LodBlockPolicy.IsBerryBush(block)) return ResolveBushTile(block);
 
-        // The UP face, explicitly. `TextureSubIdForBlockColor` is the engine's generic "what
-        // colour is this block" texture and for grass-covered soil that is the SIDE - which is
-        // grass across its top half and bare dirt across its bottom half. Tiled onto a top
-        // face that draws every block split diagonally between grass and dirt, which is
-        // exactly what the owner reported. Asking by face name is right; falling back to the
-        // generic texture is what keeps coverage high for blocks that name their faces
-        // differently.
-        CompositeTexture? face = null;
-        int subId = -1;
-        if (block.Textures != null)
-        {
-            foreach (string name in UpFaceTextureNames)
-            {
-                if (!block.Textures.TryGetValue(name, out CompositeTexture? candidate)) continue;
-                int candidateId = candidate?.Baked?.TextureSubId ?? -1;
-                if (!IsUsableFaceTexture(candidateId)) continue;
-                face = candidate;
-                subId = candidateId;
-                break;
-            }
-        }
-        if (subId < 0)
-        {
-            subId = block.TextureSubIdForBlockColor;
-            if (!IsUsableAtlasTexture(subId)) return default;
-            face = TextureFor(block, subId);
-        }
+        CompositeTexture? face = ColorFace(block, out int subId);
+        if (subId < 0) return default;
 
         TextureAtlasPosition position = capi.BlockTextureAtlas.Positions[subId];
         TextureMean mean = MeanOf(face, subId);
@@ -2043,8 +2069,19 @@ public partial class VintageHorizonsModSystem : ModSystem
             wallZ = WallTexture(block.Textures, ZWallTextureNames, subId);
         }
 
+        // Leaves also carry their dense picture, and the Dense Leaves switch picks between the two.
+        TextureAtlasPosition? denseLeaves = null;
+        int denseLeavesMean = 0;
+        if (block.BlockMaterial == EnumBlockMaterial.Leaves && DenseLeafKey(face) is { } leafKey)
+        {
+            layeredTiles ??= BuildLayeredTiles();
+            if (layeredTiles.TryGetValue(leafKey, out var tile) && tile is { } found)
+                (denseLeaves, denseLeavesMean) = (found.Position, found.Mean);
+        }
+
         return new LodBlockTextureRegistry.BlockTexture(
-            position, overlayPosition, PackMean(mean), PackMean(composite), wallX, wallZ);
+            position, overlayPosition, PackMean(mean), PackMean(composite), wallX, wallZ,
+            DenseLeaves: denseLeaves, DenseLeavesMean: denseLeavesMean);
     }
 
     /// <summary>
@@ -5922,7 +5959,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             FlowerSheets: config.FlowerSheets,
             DistantLights: renderer.DistantLightsEnabled,
             BandReach: renderer.BandReachShare,
-            Level0Pixels: renderer.Level0Pixels);
+            Level0Pixels: renderer.Level0Pixels,
+            DenseLeaves: config.DenseLeaves);
 
     /// <summary>What the config file says, for startup and for when no renderer exists.</summary>
     LodVisualSettings ConfiguredVisualSettings() => new(
@@ -5949,7 +5987,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         BandReach: Math.Clamp(config.BandReach, 0f, 1f),
         Level0Pixels: Math.Clamp(float.IsFinite(config.Level0Pixels) ? config.Level0Pixels
             : LodVisualSettings.Level0FollowsTarget,
-            LodAutoThresholds.MinTargetPixels, LodAutoThresholds.MaxTargetPixels));
+            LodAutoThresholds.MinTargetPixels, LodAutoThresholds.MaxTargetPixels),
+        DenseLeaves: config.DenseLeaves);
 
     /// <summary>What the config file says for the anti-aliasing dials, for when no renderer exists.</summary>
     LodTaaDials ConfiguredTaaDials() => new(config.TaaReachPixels, config.TaaNudge,
@@ -5980,6 +6019,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.DistantLights = v.DistantLights;
         config.CropShapes = v.CropShapes;
         config.BushTextures = v.BushTextures;
+        config.DenseLeaves = v.DenseLeaves;
         config.FruitTreeColors = v.FruitTreeColors;
         config.LeafShape = v.LeafShape;
         config.ClimateTint = v.ClimateTint;
@@ -6028,6 +6068,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         renderer.CropShapesEnabled = v.CropShapesOn;
         renderer.LeafShape = v.LeafShapeOn;
         blockTextures.BushTexturesVisible = v.BushTexturesOn;
+        blockTextures.DenseLeavesShown = v.DenseLeavesOn;
         ApplyBlendPipeline(v.BlendPipeline);
         renderer.BandEnabled = v.SeamBand;
         renderer.BandReachShare = v.BandReach;

@@ -37,7 +37,8 @@ internal readonly record struct LodVisualSettings(
     bool FlowerSheets = false,
     bool DistantLights = true,
     float BandReach = LodVisualSettings.QualityBandReach,
-    float Level0Pixels = LodVisualSettings.Level0FollowsTarget)
+    float Level0Pixels = LodVisualSettings.Level0FollowsTarget,
+    bool DenseLeaves = true)
 {
     /// <summary>
     /// How far the seam band reaches, as a share of level 0 beyond vanilla's edge: Balanced a
@@ -72,6 +73,9 @@ internal readonly record struct LodVisualSettings(
 
     /// <summary>A bush's sheet is cut out by its picture, so with no pictures it is a block.</summary>
     public bool BushSheetsOn => PlantTexturesOn && BushTextures;
+
+    /// <summary>Leaves wear their layered picture only where they wear a picture at all.</summary>
+    public bool DenseLeavesOn => PlantTexturesOn && DenseLeaves;
     public bool FruitTreeColorsOn => PlantDetail && FruitTreeColors;
 
     /// <summary>A leaf plane is cut out by its sheet, so with no sheets leaves stay cubes.</summary>

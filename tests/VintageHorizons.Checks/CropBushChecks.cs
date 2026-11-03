@@ -14,7 +14,42 @@ public static class CropBushChecks
     {
         CropsAreCrossed(c);
         BushTile(c);
+        DenseLeaves(c);
         Wiring(c);
+    }
+
+    static void DenseLeaves(Check c)
+    {
+        const int size = 16;
+        const int white = 0x00FFFFFF;
+        var sheet = new int[size * size];
+        Array.Fill(sheet, white);
+        // The left half leaf, in two greens: the mirrored copy fills the right half.
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size / 2; x++)
+                sheet[y * size + x] = unchecked((int)(y % 2 == 0 ? 0xFF206020 : 0xFF408040));
+
+        c.True(LodBushTile.ComposeDenseLeaves(size, new int[size * size]) == null,
+            "a sheet with no leaf makes no dense picture");
+        c.True(LodBushTile.ComposeDenseLeaves(size, new int[8]) == null, "nor does a sheet of the wrong size");
+
+        (int[] Pixels, int Mean)? dense = LodBushTile.ComposeDenseLeaves(size, sheet);
+        c.True(dense != null, "a leaf sheet makes a dense picture");
+        int[] picture = dense!.Value.Pixels;
+        int leafy = picture.Count(pixel => ((pixel >> 24) & 0xFF) != 0);
+        c.True(leafy > sheet.Count(pixel => ((pixel >> 24) & 0xFF) != 0),
+            "it holds more leaf than the game's sheet");
+        bool kept = true;
+        for (int i = 0; i < sheet.Length; i++)
+            if (((sheet[i] >> 24) & 0xFF) != 0 && picture[i] != sheet[i]) kept = false;
+        c.True(kept, "and every leaf of the game's own is still where it was, unchanged");
+        c.True(picture.Where(pixel => ((pixel >> 24) & 0xFF) != 0).All(pixel => ((pixel >> 24) & 0xFF) == 0xFF),
+            "its leaves are solid: the cut-out test sees a leaf or a hole");
+        c.True(picture.Where(pixel => ((pixel >> 24) & 0xFF) == 0)
+                .All(pixel => (pixel & 0xFFFFFF) == (dense.Value.Mean & 0xFFFFFF)),
+            "its clear pixels store its mean, as a bush's do");
+        c.Eq(0x30, (dense.Value.Mean >> 16) & 0xFF,
+            "and the copies are not darkened: the mean is the sheet's own two greens'");
     }
 
     static void CropsAreCrossed(Check c)
@@ -83,6 +118,9 @@ public static class CropBushChecks
             "a crop's art is full colour, so it takes no plant tint");
         c.True(mod.Contains("RegenMipMaps(page)", StringComparison.Ordinal),
             "a tile inserted at runtime has its mips rebuilt: the band samples below the top level");
+        c.True(mod.Contains("blockTextures.DenseLeavesShown = v.DenseLeavesOn;", StringComparison.Ordinal)
+                && registry.Contains("KeepDenseLeaves(slot, dense, resolved.DenseLeavesMean)", StringComparison.Ordinal),
+            "Dense Leaves swaps a leaf slot's rows in the table, so it needs no remesh");
         c.True(cull.Contains("PaletteCrossedShapes = self.PaletteCrossedShapes", StringComparison.Ordinal),
             "the cave cull's rebuilt snapshot keeps how crops stand");
         c.True(body.Contains("texelFetch(blockTable, ivec2(vhBlockSlot, 1), 0).a > 1.5", StringComparison.Ordinal)
