@@ -271,6 +271,17 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     LodSilhouetteSettings pendingSilhouettes;
     bool pendingShowTaa;
 
+    // The page's hover tips and drop-downs, by key, for the frame hook: an open drop-down list
+    // lies over rows whose tips would otherwise show through it.
+    readonly List<string> tipKeys = new();
+    readonly List<string> dropDownKeys = new();
+    bool tipsHidden;
+
+    /// <summary>When a locked L1-L6 handle was last grabbed, or -1: the Automatic label flashes red.</summary>
+    long automaticFlashStartMs = -1;
+    bool automaticLabelRed;
+    bool automaticLabelComposed;
+
     /// <summary>The Developer group on show; for this window only.</summary>
     int developerGroup = AntiAliasingGroup;
     LodWorldGenPreferences pendingWorldGen;
@@ -374,10 +385,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// One switchable feature: the name on the row, the tip that explains it on hover, a
     /// coarse word for what it costs, and how it reads and writes the settings value.
     ///
-    /// The cost words are deliberately coarse - Low, Moderate, High - because what a feature
-    /// costs depends on what is on screen, so a number here would be more precise than it is
-    /// true. Water used to say "Varies", which told a player nothing (owner, 2026-10-19); it is
-    /// Low, with when it costs more in its tip.
+    /// The cost words are deliberately coarse, because what a feature costs depends on what is on
+    /// screen, so a number here would be more precise than it is true. Each word is a measured
+    /// range of frame time (owner, 2026-11-03, from Session 124's benchmarks on an RX 9070 XT):
+    /// Minimal under 0.05 ms, too small for the bench to see; Low 0.05-0.15; Moderate 0.15-0.5;
+    /// High over 0.5. Not "Free": one strong card measured them. Water used to say "Varies",
+    /// which told a player nothing (owner, 2026-10-19); its tip says when it costs more.
     /// </summary>
     internal readonly record struct VisualRow(
         string Key, string Title, string Tip, string Cost,
@@ -389,7 +402,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("seam-blending", "Vanilla and LOD Seam Blending",
             "Blends the vanilla terrain with LOD terrain using vanilla textures and speckle "
             + "effects.",
-            "Moderate",
+            "Low",
             v => v.BlendPipeline,
             (v, on) => v with { BlendPipeline = on, SeamBand = on, BlockTextures = on }),
 
@@ -401,7 +414,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("climate-tint", "Close Biome Colors",
             "Applies seasonal colors to LOD L0-L2 terrain based on the location of those "
             + "chunks - Off makes the season colors based off the chunk you are standing in.",
-            "High",
+            "Low",
             v => v.ClimateTint,
             (v, on) => v with
             {
@@ -414,7 +427,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("climate-range", "Far Biome Colors",
             "Applies seasonal colors to LOD L3-L6 terrain based on the location of those "
             + "chunks - Off makes the season colors based off the chunk you are standing in.",
-            "High",
+            "Minimal",
             v => v.FarBiomeColours,
             (v, on) => v with
             {
@@ -426,13 +439,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         new("leaf-season", "Varied Tree Colors",
             "Applies seasonal colors to trees individually.",
-            "Low",
+            "Minimal",
             v => v.LeafSeasonColours,
             (v, on) => v with { LeafSeasonColours = on }),
 
         new("half-blocks", "Slab Terrain",
             "Implements LOD rendering of slabs - turn on with Terrain Slabs.",
-            "Low",
+            "Minimal",
             v => v.HalfBlockTerrain,
             (v, on) => v with { HalfBlockTerrain = on }),
 
@@ -441,7 +454,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("water-effects", "Water Effects",
             "Adds glint and foam to distant water. Costs only where water is on screen, so most "
             + "with a large lake or coastline in view.",
-            "Low",
+            "Minimal",
             v => v.WaterEffects,
             (v, on) => v with { WaterEffects = on }),
 
@@ -455,7 +468,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             "Lamps, torches and lava light the ground around them on cached terrain, seen most at "
             + "night. Land already cached gains its lights when you next load it. Off, cached terrain "
             + "is lit by the sky alone.",
-            "Low",
+            "Minimal",
             v => v.DistantLights,
             (v, on) => v with { DistantLights = on }),
     };
@@ -467,26 +480,26 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             "Draws each fruit tree in its own species' colors: in leaf, in blossom, in fruit or bare. "
             + "A tree shows what it was doing when it was last loaded, so one you left in blossom "
             + "stays in blossom until you see it again. Off draws every fruit tree in plain leaf color.",
-            "Low",
+            "Minimal",
             v => v.FruitTreeColors,
             (v, on) => v with { FruitTreeColors = on }),
 
         new("crop-shapes", "Crop Shapes",
             "Stands nearby crops up on crossed planes. Off draws a flat patch of their color.",
-            "Low",
+            "Minimal",
             v => v.CropShapes,
             (v, on) => v with { CropShapes = on }),
 
         new("reed-shapes", "Reed and Fern Shapes",
             "Stands nearby reeds and ferns up on crossed planes. Off draws a flat patch of their color.",
-            "Low",
+            "Minimal",
             v => v.ReedShapes,
             (v, on) => v with { ReedShapes = on }),
 
         new("vine-shapes", "Vine Sheets",
             "Hangs vines as flat sheets against what holds them, as the game does. Off draws a flat "
             + "patch of their color. Needs Plant Textures.",
-            "Low",
+            "Minimal",
             v => v.VineShapes,
             (v, on) => v with { VineShapes = on }),
 
@@ -495,14 +508,14 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             + "you, kept big enough to see. Off draws mushrooms, flint and ore as a flat patch of "
             + "their color, and resin logs as plain logs. Land already explored shows new finds as "
             + "its chunks load again; resin shows at once.",
-            "Low",
+            "Minimal",
             v => v.ForageMarkers,
             (v, on) => v with { ForageMarkers = on }),
 
         new("flower-sheets", "Flower Sheets",
             "Purely for the look: stands each nearby flower up as its own picture. On in every preset. Off "
             + "draws a flat patch of its color. Needs Plant Textures.",
-            "Low",
+            "Minimal",
             v => v.FlowerSheets,
             (v, on) => v with { FlowerSheets = on }),
 
@@ -516,7 +529,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         new("bush-textures", "Berry Bush Sheets",
             "Stands berry bushes up as see-through sheets of leaves, as the game builds them. Off "
             + "draws a plain block of their color. Needs Plant Textures.",
-            "Low",
+            "Minimal",
             v => v.BushTextures,
             (v, on) => v with { BushTextures = on }),
     };
@@ -729,10 +742,17 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         contentTop = top;
         scale = null;
+        tipKeys.Clear();
+        dropDownKeys.Clear();
+        tipsHidden = false;
+        automaticLabelComposed = false;
+        automaticLabelRed = false;
+        automaticFlashStartMs = -1;
         if (shownTab == GenerateTab) ComposeGenerate(composer);
         else if (shownTab == DeveloperTab) ComposeDeveloper(composer);
         else if (shownTab == PlantsTab) ComposePlants(composer);
         else ComposeGeneral(composer);
+        composer.AddInteractiveElement(new FrameHook(capi, OnFrame), "frame-hook");
 
         // Generate works through its own buttons. Save, Cancel and Defaults there invited the
         // question whether a generation had been saved.
@@ -817,21 +837,22 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         const double titleY = VintageHorizonsConfigLayout.LodTitleY;
         composer.AddStaticText("LOD Thresholds (Drag to adjust)",
             CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, Y(titleY), 560, 30));
-        composer.AddHoverText(ScaleHelp, CairoFont.WhiteSmallText(), 420,
+        AddTip(composer, ScaleHelp, CairoFont.WhiteSmallText(), 420,
             ElementBounds.Fixed(Margin, Y(titleY - 2), 560, 34), "tip-scale-help");
         composer.AddStaticText(AutoNote,
             FittedFont(AutoNote, Width - 2 * Margin, CairoFont.WhiteSmallText()),
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.AutoNoteY), Width - 2 * Margin, 22));
         // One line, shrinking if it must: at 180 wide it wrapped onto the line under the title
         // (owner screenshot, 0.4.174).
-        const string automaticLabel = "Automatic (Recommended)";
-        composer.AddStaticText(automaticLabel, FittedFont(automaticLabel, 240, CairoFont.WhiteSmallText()),
-            EnumTextOrientation.Right, ElementBounds.Fixed(SwitchX - 250, Y(titleY + 6), 240, 22));
+        // Dynamic, so it can flash red when a locked handle is grabbed (owner, 2026-11-03).
+        composer.AddDynamicText(AutomaticLabel, AutomaticLabelFont(false),
+            ElementBounds.Fixed(SwitchX - 250, Y(titleY + 6), 240, 22), "auto-label");
+        automaticLabelComposed = true;
         composer.AddSwitch(OnAutomaticChanged,
             ElementBounds.Fixed(SwitchX, Y(titleY), 32, 32), "auto-thresholds");
         // Over the label and the switch alike. GuiElementHoverText handles no mouse-down, so it
         // cannot swallow the click on the switch underneath it.
-        composer.AddHoverText(AutomaticTip, CairoFont.WhiteSmallText(), 380,
+        AddTip(composer, AutomaticTip, CairoFont.WhiteSmallText(), 380,
             ElementBounds.Fixed(SwitchX - 250, Y(titleY - 2), 282, 36), "tip-auto-thresholds");
 
         scale = new LodThresholdScaleElement(capi, DisplayedThresholds(),
@@ -842,6 +863,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 Width - 2 * Margin, VintageHorizonsConfigLayout.ScaleHeight))
         {
             ReadOnly = pendingAutomatic,
+            OnLockedMarkerGrabbed = FlashAutomatic,
         };
         composer.AddInteractiveElement(scale, "lod-threshold-scale");
 
@@ -856,6 +878,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddDropDown(PresetCodes, PresetNames, PresetIndex(), OnPresetSelected,
             ElementBounds.Fixed(presetX + 60, Y(VintageHorizonsConfigLayout.VisualHeadingY - 2), 190, 32),
             "preset");
+        dropDownKeys.Add("preset");
 
         // The cost words are a column in each half, so each gets a column heading. It sits over
         // the same box the words themselves use and shares their right edge, because a
@@ -897,7 +920,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             double noteWidth = VintageHorizonsConfigLayout.ColumnWidth;
             composer.AddStaticText(NoSamplerNote, NoSamplerFont(),
                 ElementBounds.Fixed(Margin, Y(noteY + 4), noteWidth, 22));
-            composer.AddHoverText(NoSamplerWarning, CairoFont.WhiteSmallText(), 420,
+            AddTip(composer, NoSamplerWarning, CairoFont.WhiteSmallText(), 420,
                 ElementBounds.Fixed(Margin, Y(noteY), noteWidth, RowHeight - 2), "tip-no-sampler");
         }
     }
@@ -924,7 +947,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             Array.IndexOf(LeafShapes, pendingVisuals.LeafShape), OnLeafShapeSelected,
             ElementBounds.Fixed(dropDownX, Y(VintageHorizonsConfigLayout.LeafShapeY), 300, 32),
             "leaf-shape");
-        composer.AddHoverText(LeafShapeTip, CairoFont.WhiteSmallText(), 420,
+        dropDownKeys.Add("leaf-shape");
+        AddTip(composer, LeafShapeTip, CairoFont.WhiteSmallText(), 420,
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.LeafShapeY), 124, 32), "tip-leaf-shape");
         composer.AddDynamicText(LeafShapeNote(pendingVisuals.LeafShape), CairoFont.WhiteSmallText(),
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.LeafShapeNoteY), Width - 2 * Margin, 44),
@@ -1000,7 +1024,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             c.AddStaticText(title, FittedFont(title, labelWidth, CairoFont.WhiteSmallText()),
                 ElementBounds.Fixed(x, Y(top + 4), labelWidth, 22));
             c.AddSwitch(onToggle, ElementBounds.Fixed(x + width - size, Y(top), size, size), key, size);
-            c.AddHoverText(tip, CairoFont.WhiteSmallText(), 380,
+            AddTip(c, tip, CairoFont.WhiteSmallText(), 380,
                 ElementBounds.Fixed(x, Y(top - 2), width, size + 4), $"tip-{key}");
         }
     }
@@ -1015,14 +1039,17 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     static double VisualLine(int line) => VintageHorizonsConfigLayout.VisualRowsY + line * RowHeight;
 
     /// <summary>
-    /// Farseer: a few thousand coarse quads since 0.4.93's geometry cut, and the owner's 0.4.155
-    /// readings showed no visible drop with it on. An estimate, not a clean A/B.
+    /// Farseer: nothing measurable on the bench since 0.5.2-dev.31 remembers its coverage, but it
+    /// still draws about 126,000 triangles of distant ground at reach 8,192, and there is no GPU
+    /// timing, so a weaker card may feel it. Low, not Minimal (owner, 2026-11-03).
     /// </summary>
     const string FarseerCost = "Low";
 
     /// <summary>
     /// The seam fog: measured by the owner at 0.52-0.68 ms a frame at 1440p (490 to 390 FPS in
-    /// 0.4.155, 550 to 400 in 0.4.123), the largest single switch here.
+    /// 0.4.155, 550 to 400 in 0.4.123), the largest single switch here. The 2026-11-02 bench read
+    /// 0.05-0.11 with the seam 8 km out and small; the cost follows how much fog is on screen, so
+    /// High stands for the view where the fog is seen (owner, 2026-11-03).
     /// </summary>
     const string SeamFogCost = "High";
 
@@ -1049,7 +1076,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 ElementBounds.Fixed(costX, Y(y + 5), VintageHorizonsConfigLayout.CostWidth, 22));
         }
         composer.AddSwitch(onToggle, ElementBounds.Fixed(switchX, Y(y + 1), size, size), key, size);
-        composer.AddHoverText(tip, CairoFont.WhiteSmallText(), 380,
+        AddTip(composer, tip, CairoFont.WhiteSmallText(), 380,
             ElementBounds.Fixed(x, Y(y), switchX + size - x, RowHeight - 2), $"tip-{key}");
     }
 
@@ -1117,6 +1144,73 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (needed > available && needed > 0)
             font.UnscaledFontsize *= available / needed;
         return font;
+    }
+
+    /// <summary>A hover tip, remembered by key so the frame hook can hold it back.</summary>
+    GuiComposer AddTip(GuiComposer composer, string text, CairoFont font, int width,
+        ElementBounds bounds, string key)
+    {
+        tipKeys.Add(key);
+        return composer.AddHoverText(text, font, width, bounds, key);
+    }
+
+    /// <summary>
+    /// Every frame the page is drawn. An open drop-down list is drawn over the rows below it, and
+    /// their tips still answered the mouse through it (owner, 2026-11-03), so while any list is open
+    /// no tip on the page shows. Also runs the Automatic label's flash.
+    /// </summary>
+    void OnFrame()
+    {
+        if (activeComposer?.Composed != true) return;
+        bool listOpen = dropDownKeys.Exists(key => activeComposer.GetDropDown(key)?.listMenu?.IsOpened == true);
+        if (listOpen != tipsHidden)
+        {
+            tipsHidden = listOpen;
+            foreach (string key in tipKeys)
+                activeComposer.GetHoverText(key)?.SetAutoDisplay(!listOpen);
+        }
+        UpdateAutomaticFlash();
+    }
+
+    const string AutomaticLabel = "Automatic (Recommended)";
+
+    // One line, shrinking if it must: at 180 wide it wrapped onto the line under the title
+    // (owner screenshot, 0.4.174).
+    static CairoFont AutomaticLabelFont(bool red)
+    {
+        CairoFont font = FittedFont(AutomaticLabel, 240, CairoFont.WhiteSmallText())
+            .WithOrientation(EnumTextOrientation.Right);
+        return red ? font.WithColor(GuiStyle.ErrorTextColor) : font;
+    }
+
+    /// <summary>A locked L1-L6 handle was grabbed while Automatic is on: say why it will not move.</summary>
+    void FlashAutomatic() => automaticFlashStartMs = capi.ElapsedMilliseconds;
+
+    /// <summary>Two red pulses over 0.9 s, then the label's own colour again.</summary>
+    void UpdateAutomaticFlash()
+    {
+        if (automaticFlashStartMs < 0 || !automaticLabelComposed) return;
+        long elapsed = capi.ElapsedMilliseconds - automaticFlashStartMs;
+        bool red = elapsed < AutomaticFlashMs && elapsed % (AutomaticFlashMs / 2) < AutomaticFlashMs * 2 / 6;
+        if (elapsed >= AutomaticFlashMs) automaticFlashStartMs = -1;
+        if (red == automaticLabelRed) return;
+        automaticLabelRed = red;
+        GuiElementDynamicText label = activeComposer!.GetDynamicText("auto-label");
+        label.Font = AutomaticLabelFont(red);
+        label.RecomposeText();
+    }
+
+    const long AutomaticFlashMs = 900;
+
+    /// <summary>Calls back once a frame from inside the composer, in the settings page and the window alike.</summary>
+    sealed class FrameHook : GuiElement
+    {
+        readonly Action onFrame;
+
+        public FrameHook(ICoreClientAPI api, Action onFrame) : base(api, ElementBounds.Fixed(0, 0, 0, 0)) =>
+            this.onFrame = onFrame;
+
+        public override void RenderInteractiveElements(float deltaTime) => onFrame();
     }
 
     const string FarseerTip =
@@ -1201,7 +1295,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         double y = VintageHorizonsConfigLayout.DialRowsY;
         composer.AddStaticText("Band reach", CairoFont.WhiteSmallishText(),
             ElementBounds.Fixed(Margin, Y(y + 3), DialSliderX - Margin - 12, 26));
-        composer.AddHoverText(BandReachTip, CairoFont.WhiteSmallText(), 380,
+        AddTip(composer, BandReachTip, CairoFont.WhiteSmallText(), 380,
             ElementBounds.Fixed(Margin, Y(y - 2), DialSliderX - Margin - 12, 34), "tip-band-reach");
         composer.AddSlider(OnBandReachChanged,
             ElementBounds.Fixed(DialSliderX, Y(y), DialSliderWidth, 30), "band-reach");
@@ -1213,7 +1307,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         y += DialRowHeight;
         composer.AddStaticText("Level 0 detail target", CairoFont.WhiteSmallishText(),
             ElementBounds.Fixed(Margin, Y(y + 3), DialSliderX - Margin - 12, 26));
-        composer.AddHoverText(Level0TargetTip, CairoFont.WhiteSmallText(), 380,
+        AddTip(composer, Level0TargetTip, CairoFont.WhiteSmallText(), 380,
             ElementBounds.Fixed(Margin, Y(y - 2), DialSliderX - Margin - 12, 34), "tip-level0-target");
         composer.AddSlider(OnLevel0TargetChanged,
             ElementBounds.Fixed(DialSliderX, Y(y), DialSliderWidth, 30), "level0-target");
@@ -1268,7 +1362,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 ElementBounds.Fixed(Margin, Y(y + 3), DialSliderX - Margin - 12, 26));
             // Over the title only. A slider is dragged by mouse moves, and a tip region lying over
             // it could be the element that gets them.
-            composer.AddHoverText(row.Tip, CairoFont.WhiteSmallText(), 380,
+            AddTip(composer, row.Tip, CairoFont.WhiteSmallText(), 380,
                 ElementBounds.Fixed(Margin, Y(y - 2), DialSliderX - Margin - 12, 34),
                 $"tip-{row.Key}");
             composer.AddSlider(value => OnDialChanged(row, value),
@@ -1283,7 +1377,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         // set it, and it waits for Save like the rest of General's distances.
         composer.AddStaticText("LOD detail target", CairoFont.WhiteSmallishText(),
             ElementBounds.Fixed(Margin, Y(y + 3), DialSliderX - Margin - 12, 26));
-        composer.AddHoverText(DetailTargetTip, CairoFont.WhiteSmallText(), 380,
+        AddTip(composer, DetailTargetTip, CairoFont.WhiteSmallText(), 380,
             ElementBounds.Fixed(Margin, Y(y - 2), DialSliderX - Margin - 12, 34), "tip-detail-target");
         composer.AddSlider(OnDetailTargetChanged,
             ElementBounds.Fixed(DialSliderX, Y(y), DialSliderWidth, 30), "detail-target");
@@ -1296,7 +1390,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddSwitch(OnShowChanged,
             ElementBounds.Fixed(SwitchX, Y(VintageHorizonsConfigLayout.ShowTaaY), 32, 32),
             "taa-show");
-        composer.AddHoverText(ShowTip, CairoFont.WhiteSmallText(), 380,
+        AddTip(composer, ShowTip, CairoFont.WhiteSmallText(), 380,
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ShowTaaY),
                 SwitchX + 32 - Margin, 26), "tip-taa-show");
     }
@@ -1314,7 +1408,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 ElementBounds.Fixed(Margin, Y(118), 100, 26));
             // The report `.dlsilhouette stats` prints is several lines long, so it is a hover over
             // the Reach title rather than printed, where it ran into the dials.
-            composer.AddHoverText(SilhouetteStatusTip(), CairoFont.WhiteSmallText(), 500,
+            AddTip(composer, SilhouetteStatusTip(), CairoFont.WhiteSmallText(), 500,
                 ElementBounds.Fixed(Margin, Y(114), 100, 34), "silhouette-status");
             composer.AddSlider(OnSilhouetteReachSlider,
                 ElementBounds.Fixed(135, Y(114), 545, 28), "silhouette-reach");
@@ -1338,7 +1432,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             double y = top + i / 3 * rowHeight;
             composer.AddStaticText(row.Title, CairoFont.WhiteSmallishText(),
                 ElementBounds.Fixed(x, Y(y), columnWidth, 26));
-            composer.AddHoverText(row.Tip, CairoFont.WhiteSmallText(), 330,
+            AddTip(composer, row.Tip, CairoFont.WhiteSmallText(), 330,
                 ElementBounds.Fixed(x, Y(y - 2), columnWidth, 28), $"tip-{row.Key}");
             composer.AddSlider(value => OnSilhouetteDialChanged(row, value),
                 ElementBounds.Fixed(x, Y(y + 25), sliderWidth, 26), row.Key);
@@ -1520,6 +1614,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddDropDown(WorldGenCentreCodes, WorldGenCentreNames,
             (int)pendingWorldGen.CentreMode, OnWorldGenCentreChanged,
             ElementBounds.Fixed(135, Y(118), 220, 32), "wg-centre");
+        dropDownKeys.Add("wg-centre");
         composer.AddStaticText("X", CairoFont.WhiteSmallText(),
             ElementBounds.Fixed(382, Y(124), 22, 26));
         composer.AddNumberInput(ElementBounds.Fixed(406, Y(118), 155, 32),
@@ -1545,6 +1640,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddDropDown(WorldGenShapeCodes, WorldGenShapeNames,
             pendingWorldGen.Shape == EnumWorldGenShape.Circle ? 0 : 1,
             OnWorldGenShapeChanged, ElementBounds.Fixed(135, Y(214), 220, 32), "wg-shape");
+        dropDownKeys.Add("wg-shape");
         // No preset line: it named the engine's default in a place that looked like a choice,
         // and there is nothing to choose.
 
@@ -1882,8 +1978,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     }
 
     const string SeamFogTip = "Fog over the seam between Farseer and real terrain, or with Farseer "
-        + "off, over the edge of the cached terrain. The most expensive switch here: about half a "
-        + "millisecond a frame at 1440p. Off draws no fog and builds nothing for it. .dlfog toggles "
+        + "off, over the edge of the cached terrain. The most expensive switch here: up to about half "
+        + "a millisecond a frame at 1440p when the fog fills much of the view, little when the seam is "
+        + "far away. Off draws no fog and builds nothing for it. .dlfog toggles "
         + "it without saving.";
 
     void OnSilhouetteFogChanged(bool on)

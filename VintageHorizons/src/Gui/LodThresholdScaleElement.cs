@@ -141,6 +141,9 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
     /// </summary>
     public bool ReadOnly { get; set; }
 
+    /// <summary>Called when one of the six is grabbed while read-only, so the window can say why.</summary>
+    public Action? OnLockedMarkerGrabbed { get; set; }
+
     public LodThresholdScaleElement(ICoreClientAPI api, IReadOnlyList<int> initialValues,
         int vanillaViewDistance, int drawDistance, int silhouetteReach, bool silhouettesEnabled,
         Action<int, int> onChanged, Action<int> onVanillaChanged,
@@ -371,6 +374,7 @@ internal sealed class LodThresholdScaleElement : GuiElementControl
         if (ReadOnly && dragging >= 0 && dragging < LodWorld.MaxLevel)
         {
             dragging = NoMarker;
+            OnLockedMarkerGrabbed?.Invoke();
             return;
         }
         vanillaAtDragStart = vanillaViewDistance;

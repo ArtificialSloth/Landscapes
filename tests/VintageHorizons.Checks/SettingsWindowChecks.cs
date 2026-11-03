@@ -83,7 +83,7 @@ public static class SettingsWindowChecks
                 && dialog.Contains("\"silhouette-fog\"", StringComparison.Ordinal),
             "Farseer and the seam fog have their switches on General");
         c.True(dialog.Contains("if (silhouettes.NoSampler())", StringComparison.Ordinal)
-                && dialog.Contains("composer.AddHoverText(NoSamplerWarning", StringComparison.Ordinal),
+                && dialog.Contains("AddTip(composer, NoSamplerWarning", StringComparison.Ordinal),
             "with no sampler mod the row shows a short red note whose hover is the full warning");
         c.True(VintageHorizonsConfigDialog.NoSamplerNote.Length <= 40,
             "the note is short enough for the space between the two switches");
@@ -160,8 +160,39 @@ public static class SettingsWindowChecks
         c.True(dialog.Contains("\"LOD Thresholds (Drag to adjust)\"", StringComparison.Ordinal)
                 && !dialog.Contains("draw-distance-label", StringComparison.Ordinal)
                 && !dialog.Contains("threshold-help", StringComparison.Ordinal)
-                && dialog.Contains("composer.AddHoverText(ScaleHelp,", StringComparison.Ordinal),
+                && dialog.Contains("AddTip(composer, ScaleHelp,", StringComparison.Ordinal),
             "the draw-distance readout and help line are gone; the help is the title's hover");
+
+        // Owner, 2026-11-03: cost words from Session 124's measurements.
+        var costs = VintageHorizonsConfigDialog.Rows.Concat(VintageHorizonsConfigDialog.PlantRows)
+            .ToDictionary(row => row.Key, row => row.Cost);
+        c.True(costs["seam-blending"] == "Low" && costs["climate-tint"] == "Low" && costs["distant-aa"] == "Low"
+                && costs["plant-textures"] == "Low",
+            "seam blending, close biome colours, anti-aliasing and Plant Textures (it carries leaf shapes) are Low");
+        c.True(new[] { "climate-range", "leaf-season", "half-blocks", "water-effects", "distant-lights",
+                    "fruit-tree-colors", "crop-shapes", "reed-shapes", "vine-shapes", "forage-markers",
+                    "flower-sheets", "bush-textures" }.All(key => costs[key] == "Minimal"),
+            "everything the bench could not measure says Minimal");
+        c.True(costs.Values.All(word => word is "Minimal" or "Low" or "Moderate" or "High"),
+            "every cost word is on the four-word scale");
+        c.True(dialog.Contains("const string FarseerCost = \"Low\";", StringComparison.Ordinal)
+                && dialog.Contains("const string SeamFogCost = \"High\";", StringComparison.Ordinal),
+            "Farseer stays Low and the seam fog High");
+
+        // An open drop-down list lies over rows whose tips showed through it (owner, 2026-11-03).
+        c.True(!dialog.Contains(".AddHoverText(", StringComparison.Ordinal)
+                    || dialog.Split(".AddHoverText(").Length == 2,
+            "every tip goes through AddTip, so the frame hook knows it");
+        c.True(dialog.Contains("dropDownKeys.Add(\"preset\");", StringComparison.Ordinal)
+                && dialog.Contains("listMenu?.IsOpened == true", StringComparison.Ordinal)
+                && dialog.Contains("SetAutoDisplay(!listOpen)", StringComparison.Ordinal)
+                && dialog.Contains("new FrameHook(capi, OnFrame)", StringComparison.Ordinal),
+            "while a drop-down list is open no tip on the page shows");
+        string scaleElement = Source("Gui", "LodThresholdScaleElement.cs");
+        c.True(scaleElement.Contains("OnLockedMarkerGrabbed?.Invoke();", StringComparison.Ordinal)
+                && dialog.Contains("OnLockedMarkerGrabbed = FlashAutomatic,", StringComparison.Ordinal)
+                && dialog.Contains("\"auto-label\"", StringComparison.Ordinal),
+            "grabbing a locked L1-L6 handle flashes the Automatic label red");
         c.True(dialog.Contains("ComposeFooterToggles(composer);", StringComparison.Ordinal)
                 && VintageHorizonsConfigLayout.FooterLeft >= VintageHorizonsConfigLayout.Margin + 140
                 && VintageHorizonsConfigLayout.FooterRight

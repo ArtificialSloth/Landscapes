@@ -2777,7 +2777,7 @@ public static class StaticAssetChecks
                 && dialog.Contains("WorldGenStatusChanged += OnWorldGenStatus", StringComparison.Ordinal)
                 && dialog.Contains("WorldGenStatusChanged -= OnWorldGenStatus", StringComparison.Ordinal),
             "network-thread generation status reaches the live page and the session unsubscribes");
-        c.True(dialog.Contains("composer.AddHoverText(row.Tip", StringComparison.Ordinal),
+        c.True(dialog.Contains("AddTip(composer, row.Tip", StringComparison.Ordinal),
             "and each feature explains itself on hover");
         c.True(dialog.Contains("AddDropDown(PresetCodes, PresetNames", StringComparison.Ordinal),
             "the presets are a drop-down carrying the current combination as its selection");
