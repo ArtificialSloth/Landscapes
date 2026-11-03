@@ -23,7 +23,7 @@ internal sealed record VanillaDistanceTuning(int Initial, Func<int, int[]> Apply
 /// Automatic LOD distances' target: the on-screen size every level hands over at, and what the
 /// distances would be at another target, so a preset or the Developer slider can show them.
 /// </summary>
-internal sealed record DetailTuning(float InitialTarget, Func<float, int[]> Preview);
+internal sealed record DetailTuning(float InitialTarget, Func<float, float, int[]> Preview);
 
 /// <summary>
 /// General's all-cores garbage collection switch (<see cref="GameCollectorSetting"/>):
@@ -500,7 +500,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             (v, on) => v with { ForageMarkers = on }),
 
         new("flower-sheets", "Flower Sheets",
-            "Purely for the look: stands each nearby flower up as its own picture. On in Ultra. Off "
+            "Purely for the look: stands each nearby flower up as its own picture. On in every preset. Off "
             + "draws a flat patch of its color. Needs Plant Textures.",
             "Low",
             v => v.FlowerSheets,
@@ -1189,7 +1189,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         "How far the seam band reaches past vanilla's edge, as a share of level 0: the strip where "
         + "distant ground wears the game's textures and speckle and blends into vanilla terrain. "
         + "Further hides the change of look further out and costs more. The presets set it: "
-        + "Balanced 33%, Quality 66%, Ultra 100%, which is as far as the band's textures go. Has no "
+        + "Balanced 33%, Quality 66%, Max 100%, which is as far as the band's textures go. Has no "
         + "effect while the band is off. Save keeps it. (.dlband reach)";
 
     /// <summary>
@@ -1208,6 +1208,18 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         composer.AddDynamicText(BandReachLabel(), CairoFont.WhiteSmallText(),
             ElementBounds.Fixed(DialSliderX + DialSliderWidth + 15, Y(y + 4), 110, 22),
             "band-reach-label");
+
+        // Level 0's own handover size sits with the band: both say how far level 0 goes.
+        y += DialRowHeight;
+        composer.AddStaticText("Level 0 detail target", CairoFont.WhiteSmallishText(),
+            ElementBounds.Fixed(Margin, Y(y + 3), DialSliderX - Margin - 12, 26));
+        composer.AddHoverText(Level0TargetTip, CairoFont.WhiteSmallText(), 380,
+            ElementBounds.Fixed(Margin, Y(y - 2), DialSliderX - Margin - 12, 34), "tip-level0-target");
+        composer.AddSlider(OnLevel0TargetChanged,
+            ElementBounds.Fixed(DialSliderX, Y(y), DialSliderWidth, 30), "level0-target");
+        composer.AddDynamicText(Level0TargetLabel(), CairoFont.WhiteSmallText(),
+            ElementBounds.Fixed(DialSliderX + DialSliderWidth + 15, Y(y + 4), 110, 22),
+            "level0-target-label");
     }
 
     /// <summary>The band reach in the slider's whole percent; the presets' shares land on its steps.</summary>
@@ -1221,6 +1233,26 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (ShowingGroup(SeamBandGroup))
             activeComposer!.GetDynamicText("band-reach-label")
                 .SetNewText(BandReachLabel(), false, true, false);
+        return true;
+    }
+
+    const string Level0TargetTip =
+        "How wide a level-0 column is on screen where L1 begins, when that is finer than the LOD "
+        + "detail target; every later level keeps the target. Lower carries full detail further out "
+        + "and draws more geometry. Quality sets 1 px; the other presets leave level 0 on the "
+        + "target. Used while Automatic is on; Save keeps it.";
+
+    string Level0TargetLabel() => pendingVisuals.Level0Pixels >= pendingTargetPixels
+        ? "as the target"
+        : string.Create(CultureInfo.InvariantCulture, $"{pendingVisuals.Level0Pixels:0.00} px");
+
+    bool OnLevel0TargetChanged(int value)
+    {
+        pendingVisuals = pendingVisuals with { Level0Pixels = value / 100f };
+        RefreshAutomaticValues();
+        if (ShowingGroup(SeamBandGroup))
+            activeComposer!.GetDynamicText("level0-target-label")
+                .SetNewText(Level0TargetLabel(), false, true, false);
         return true;
     }
 
@@ -1343,6 +1375,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             reach.SetValues(BandReachPercent(), 0, 100, 1);
             reach.ShowTextWhenResting = false;
             reach.OnSliderTooltip = value => $"{value}% of L0";
+            GuiElementSlider level0 = activeComposer.GetSlider("level0-target");
+            level0.SetValues((int)MathF.Round(pendingVisuals.Level0Pixels * 100),
+                (int)(LodAutoThresholds.MinTargetPixels * 100), (int)(LodAutoThresholds.MaxTargetPixels * 100), 5);
+            level0.ShowTextWhenResting = false;
+            level0.OnSliderTooltip = value => value / 100f >= pendingTargetPixels
+                ? "as the target"
+                : $"{value / 100f:0.00} px";
             return;
         }
 
@@ -1394,7 +1433,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     const string DetailTargetTip =
         "How wide a level-0 column is on screen, in pixels, where L1 begins; every later level hands "
         + "over at the same width. Lower keeps finer detail further out and draws more geometry. The "
-        + "presets set it: Quality 1.5, Balanced 2, Performance 3. Used while Automatic is on; Save "
+        + "presets set it: Max 1, Quality 1.5, Balanced 2, Performance 3. Used while Automatic is on; Save "
         + "keeps it. (.dldetail target)";
 
     string DetailTargetLabel() => string.Create(CultureInfo.InvariantCulture, $"{pendingTargetPixels:0.00} px");
@@ -1416,7 +1455,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     void RefreshAutomaticValues()
     {
         int[] values = LodWorld.NormalizeLevelThresholds(
-            detail.Preview(pendingTargetPixels), LodWorld.DefaultLevelThresholds[0]);
+            detail.Preview(pendingTargetPixels, pendingVisuals.Level0Pixels), LodWorld.DefaultLevelThresholds[0]);
         Array.Copy(values, automaticThresholds, automaticThresholds.Length);
         if (pendingAutomatic) scale?.SetValues(automaticThresholds);
     }
@@ -1890,9 +1929,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         pendingAutomatic = true;
         pendingTargetPixels = preset.TargetPixels;
+        // Before the distances: the visuals carry level 0's own on-screen size.
+        pendingVisuals = preset.Visuals;
         RefreshAutomaticValues();
         RefreshThresholds();
-        pendingVisuals = preset.Visuals;
         pendingSilhouettes = preset.ApplyTo(pendingSilhouettes);
         silhouettes.Preview(pendingSilhouettes);
         pendingFarCap = preset.DrawDistance;
@@ -2015,7 +2055,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             }
             else if (developerGroup == SeamBandGroup)
             {
-                pendingVisuals = pendingVisuals with { BandReach = LodPreset.Quality.Visuals.BandReach };
+                pendingVisuals = pendingVisuals with
+                {
+                    BandReach = LodPreset.Quality.Visuals.BandReach,
+                    Level0Pixels = LodPreset.Quality.Visuals.Level0Pixels,
+                };
+                RefreshAutomaticValues();
             }
             else
             {
@@ -2077,13 +2122,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             pendingThresholds.Length);
         pendingAutomatic = true;
         pendingTargetPixels = LodPreset.Quality.TargetPixels;
+        pendingVisuals = LodPreset.Quality.Visuals;
         RefreshAutomaticValues();
         pendingFarCap = LodPreset.Quality.DrawDistance;
         pendingLoadWhilePaused = true;
         // Not the all-cores collector: it is how this machine runs the game, applies only after a
         // restart, and is not part of what is drawn (owner, 2026-10-19). Developer options is left
         // alone for the same kind of reason.
-        pendingVisuals = LodPreset.Quality.Visuals;
         pendingSilhouettes = LodPreset.Quality.ApplyTo(pendingSilhouettes);
         silhouettes.Preview(pendingSilhouettes);
 

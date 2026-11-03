@@ -141,7 +141,7 @@ public partial class VintageHorizonsModSystem
         var rows = new List<SettingRow>();
 
         // General: the preset, the distances and Farseer.
-        rows.Add(WindowRow("preset", "Preset", "performance, balanced, quality or ultra",
+        rows.Add(WindowRow("preset", "Preset", "performance, balanced, quality or max",
             s => LodPreset.Matching(s.Visuals, s.FarCap, s.Silhouettes, s.Automatic, s.TargetPixels)?.Code ?? "custom",
             (s, v) => Array.Find(LodPreset.All, p => p.Code == v.ToLowerInvariant()) is { } preset
                 // As the window's drop-down does: Automatic on, so the target sets the distances.
@@ -208,6 +208,12 @@ public partial class VintageHorizonsModSystem
             s => ((int)MathF.Round(s.Visuals.BandReach * 100)).ToString(CultureInfo.InvariantCulture),
             (s, v) => ParseWhole(v, 0, 100) is int percent
                 ? s with { Visuals = s.Visuals with { BandReach = percent / 100f } }
+                : null));
+        rows.Add(WindowRow("level0-target", "Level 0 detail target",
+            $"pixels, {Number(LodAutoThresholds.MinTargetPixels, "0.##")} to {Number(LodAutoThresholds.MaxTargetPixels, "0.##")}; at or above the detail target it follows it",
+            s => Number(s.Visuals.Level0Pixels, "0.00"),
+            (s, v) => TryParseSetting(v, out float px) && float.IsFinite(px)
+                ? s with { Visuals = s.Visuals with { Level0Pixels = Math.Clamp(px, LodAutoThresholds.MinTargetPixels, LodAutoThresholds.MaxTargetPixels) } }
                 : null));
         foreach (LodTaaSliders.Row row in LodTaaSliders.All)
         {

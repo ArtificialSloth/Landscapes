@@ -176,9 +176,8 @@ public static class SettingsWindowChecks
                 && VintageHorizonsConfigLayout.VisualRowCount - VintageHorizonsConfigLayout.VisualRowsPerColumn + 2
                     <= VintageHorizonsConfigLayout.VisualLineCount,
             "Farseer and five features fill the left column; the fog, all-cores and three features the right");
-        c.True(LodVisualSettings.Quality.PlantTextures && LodVisualSettings.Balanced.PlantTextures
-                && !LodVisualSettings.Performance.PlantTextures,
-            "Plant Textures is on in Quality and Balanced and off in Performance");
+        c.True(LodPreset.All.All(preset => preset.Visuals.PlantTextures),
+            "Plant Textures is on in every preset");
         c.True(VintageHorizonsConfigLayout.ColumnX(1) + VintageHorizonsConfigLayout.ColumnWidth
                 == VintageHorizonsConfigLayout.SwitchX + 32
                 && VintageHorizonsConfigLayout.ColumnCostX(0) - VintageHorizonsConfigLayout.ColumnX(0) >= 250,

@@ -2417,12 +2417,13 @@ public static class SilhouetteChecks
                 && dialog.Contains("silhouettes.Preview(pendingSilhouettes);", StringComparison.Ordinal),
             "both Reach controls apply an independent Farseer distance immediately");
         // Owner, 2026-10-19: Farseer is on in every preset, even at the cached distance, because
-        // it fills unexplored ground; Performance gives up only the seam fog and half the reach.
+        // it fills unexplored ground; Performance gives up only the seam fog (owner, 2026-11-03:
+        // reach 8,192 measured essentially free there since the coverage cache).
         c.True(LodPreset.All.All(preset => preset.Farseer)
-                && LodPreset.Performance.FarseerReach == 4096 && !LodPreset.Performance.SeamFog
+                && LodPreset.Performance.FarseerReach == 8192 && !LodPreset.Performance.SeamFog
                 && LodPreset.Balanced.FarseerReach == 8192 && LodPreset.Balanced.SeamFog
                 && LodPreset.Quality.FarseerReach == 8192 && LodPreset.Quality.SeamFog,
-            "every preset has Farseer; Performance at 4,096 without fog, Balanced and Quality at 8,192 with it");
+            "every preset has Farseer at 8,192; Performance without fog, Balanced and Quality with it");
         foreach (string name in new[]
         {
             "HorizonSilhouettes", "SilhouetteReachBlocks", "SilhouetteSkyTint",

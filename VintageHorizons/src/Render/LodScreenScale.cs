@@ -264,29 +264,40 @@ internal static class LodAutoThresholds
     /// band - holds L1 alone: every later level still hands over at its own on-screen size, and
     /// moves only where L1 would otherwise reach past it. Until 0.4.169 the floor started the
     /// doubling, so a far vanilla edge pushed L2-L6 out with it (owner, 2026-10-19).
+    /// level0Pixels hands L1 alone over at a finer size than the rest (Quality: level 0 out to
+    /// 1 px, every later level at 1.5 px, owner 2026-11-03); at or above the target it changes nothing.
     /// </summary>
-    public static int[] Compute(float blockScale, float targetPixels, int floorBlocks)
+    public static int[] Compute(float blockScale, float targetPixels, int floorBlocks,
+        float level0Pixels = MaxTargetPixels)
     {
         float target = Math.Clamp(
             float.IsFinite(targetPixels) ? targetPixels : DefaultTargetPixels,
             MinTargetPixels, MaxTargetPixels);
-        double first = blockScale > 0f && float.IsFinite(blockScale)
-            ? blockScale / target
-            : LodWorld.DefaultLevelThresholds[0];
-        first = Math.Min(first, LodWorld.MaxLevelThreshold);
+        float level0 = Math.Clamp(float.IsFinite(level0Pixels) ? level0Pixels : target,
+            MinTargetPixels, target);
 
-        int rounded = (int)(Math.Round(first / RoundingBlocks, MidpointRounding.AwayFromZero)
-            * RoundingBlocks);
+        int rounded = RoundedDepth(blockScale, target);
         int floor = (int)(Math.Ceiling(Math.Clamp(floorBlocks, 0, LodWorld.MaxLevelThreshold)
             / (double)RoundingBlocks) * RoundingBlocks);
-        rounded = Math.Clamp(rounded, LodWorld.MinDetailDistance, LodWorld.MaxLevelThreshold);
 
         int[] values = new int[LodWorld.MaxLevel];
         for (int i = 0; i < values.Length; i++)
             values[i] = (int)Math.Min((long)rounded << i, int.MaxValue);
-        values[0] = Math.Clamp(Math.Max(values[0], floor),
+        values[0] = Math.Clamp(Math.Max(RoundedDepth(blockScale, level0), floor),
             LodWorld.MinDetailDistance, LodWorld.MaxLevelThreshold);
         // Normalising keeps each later level past the one before it.
         return LodWorld.NormalizeLevelThresholds(values, LodWorld.DefaultLevelThresholds[0]);
+    }
+
+    /// <summary>The view depth at which a block spans that many pixels, rounded and kept in range.</summary>
+    static int RoundedDepth(float blockScale, float pixels)
+    {
+        double depth = blockScale > 0f && float.IsFinite(blockScale)
+            ? blockScale / pixels
+            : LodWorld.DefaultLevelThresholds[0];
+        depth = Math.Min(depth, LodWorld.MaxLevelThreshold);
+        int rounded = (int)(Math.Round(depth / RoundingBlocks, MidpointRounding.AwayFromZero)
+            * RoundingBlocks);
+        return Math.Clamp(rounded, LodWorld.MinDetailDistance, LodWorld.MaxLevelThreshold);
     }
 }

@@ -2720,14 +2720,15 @@ public static class StaticAssetChecks
                 && dialog.Contains("on => OnVisualChanged(row, on));", StringComparison.Ordinal),
             "each visual row is a switch bound to its own row rather than a hand-written pair");
         c.True(dialog.Contains("LodPreset.All.Select(preset => preset.Name).Append(\"Custom\")", StringComparison.Ordinal)
-            && LodPreset.All.Select(preset => preset.Name).SequenceEqual(new[] { "Performance", "Balanced", "Quality", "Ultra" }),
+            && LodPreset.All.Select(preset => preset.Name).SequenceEqual(new[] { "Performance", "Balanced", "Quality", "Max" }),
             "and the four presets are offered");
-        c.True(LodPreset.Performance.DrawDistance == 2048 && LodPreset.Balanced.DrawDistance == 4096
+        c.True(LodPreset.Performance.DrawDistance == 2048 && LodPreset.Balanced.DrawDistance == 8192
                 && LodPreset.Quality.DrawDistance == 8192,
-            "each preset carries its cached draw distance (owner, 2026-10-19)");
+            "each preset carries its cached draw distance (owner, 2026-10-19; Balanced 8,192 from 2026-11-03)");
         c.True(LodVisualSettings.Balanced.LeafSeasonColours && LodVisualSettings.Balanced.ClimateTint
-                && !LodVisualSettings.Balanced.BlendPipeline,
-            "Balanced keeps close biome and varied tree colours and gives up seam blending");
+                && LodVisualSettings.Balanced.BlendPipeline
+                && LodVisualSettings.Balanced.BandReach == LodVisualSettings.BalancedBandReach,
+            "Balanced keeps biome and tree colours and blends the seam over a third of level 0 (owner, 2026-11-03)");
         LodSilhouetteSettings farseer = LodSilhouetteSettings.Default;
         c.True(LodPreset.All.All(preset => LodPreset.Matching(preset.Visuals, preset.DrawDistance,
                     preset.ApplyTo(farseer), true, preset.TargetPixels) == preset)

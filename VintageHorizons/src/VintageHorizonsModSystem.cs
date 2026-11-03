@@ -96,6 +96,13 @@ public class VintageHorizonsConfig
     /// </summary>
     public float BandReach = LodVisualSettings.QualityBandReach;
 
+    /// <summary>
+    /// How wide a level-0 column is on screen where L1 begins, when finer than the detail target
+    /// (Quality: 1 px). Missing from older files, which load it as following the target, so
+    /// nobody's distances move until they pick a preset. See <see cref="LodVisualSettings.Level0Pixels"/>.
+    /// </summary>
+    public float Level0Pixels = LodVisualSettings.Level0FollowsTarget;
+
     public bool LeafSeasonColours = true;
     public bool HalfBlockTerrain = true;
     public bool WaterEffects = true;
@@ -4450,7 +4457,7 @@ public partial class VintageHorizonsModSystem : ModSystem
                             return TextCommandResult.Success(
                                 $"[Landscapes] reach {renderer.BandReachShare:0.00} of level 0 beyond the seam, "
                                 + $"{renderer.BandWidthBlocks:0} blocks now. 0 to 1: Balanced 0.33, Quality 0.66, "
-                                + "Ultra 1, which is as far as the band's block textures go. Saved.");
+                                + "Max 1, which is as far as the band's block textures go. Saved.");
                         renderer.BandReachShare = Math.Clamp(reach, 0f, 1f);
                         renderer.UnpinBandWidth();
                         config.BandReach = renderer.BandReachShare;
@@ -5912,7 +5919,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             ForageMarkers: config.ForageMarkers,
             FlowerSheets: config.FlowerSheets,
             DistantLights: renderer.DistantLightsEnabled,
-            BandReach: renderer.BandReachShare);
+            BandReach: renderer.BandReachShare,
+            Level0Pixels: renderer.Level0Pixels);
 
     /// <summary>What the config file says, for startup and for when no renderer exists.</summary>
     LodVisualSettings ConfiguredVisualSettings() => new(
@@ -5936,7 +5944,10 @@ public partial class VintageHorizonsModSystem : ModSystem
         ForageMarkers: config.ForageMarkers,
         FlowerSheets: config.FlowerSheets,
         DistantLights: config.DistantLights,
-        BandReach: Math.Clamp(config.BandReach, 0f, 1f));
+        BandReach: Math.Clamp(config.BandReach, 0f, 1f),
+        Level0Pixels: Math.Clamp(float.IsFinite(config.Level0Pixels) ? config.Level0Pixels
+            : LodVisualSettings.Level0FollowsTarget,
+            LodAutoThresholds.MinTargetPixels, LodAutoThresholds.MaxTargetPixels));
 
     /// <summary>What the config file says for the anti-aliasing dials, for when no renderer exists.</summary>
     LodTaaDials ConfiguredTaaDials() => new(config.TaaReachPixels, config.TaaNudge,
@@ -5972,6 +5983,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.ClimateTint = v.ClimateTint;
         config.ClimateTintRange = v.ClimateTintRange;
         config.BandReach = v.BandReach;
+        config.Level0Pixels = v.Level0Pixels;
         config.LeafSeasonColours = v.LeafSeasonColours;
         config.HalfBlockTerrain = v.HalfBlockTerrain;
         config.WaterEffects = v.WaterEffects;
@@ -6017,6 +6029,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         ApplyBlendPipeline(v.BlendPipeline);
         renderer.BandEnabled = v.SeamBand;
         renderer.BandReachShare = v.BandReach;
+        renderer.Level0Pixels = v.Level0Pixels;
         renderer.BlockTexturesEnabled = v.BlockTextures;
         renderer.ClimateFieldTint = v.ClimateTint;
         renderer.ClimateFadeBlocks = Math.Max(0f, v.ClimateTintRange);

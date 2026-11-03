@@ -180,6 +180,28 @@ public partial class LodTerrainRenderer
     }
     float lodTargetPixels = LodAutoThresholds.DefaultTargetPixels;
 
+    /// <summary>
+    /// Saved. The on-screen column width L1 alone hands over at, when finer than
+    /// <see cref="LodTargetPixels"/>; at or above it level 0 follows the target.
+    /// </summary>
+    public float Level0Pixels
+    {
+        get => level0Pixels;
+        set
+        {
+            float clamped = Math.Clamp(
+                float.IsFinite(value) ? value : LodVisualSettings.Level0FollowsTarget,
+                LodAutoThresholds.MinTargetPixels, LodAutoThresholds.MaxTargetPixels);
+            if (clamped == level0Pixels) return;
+            level0Pixels = clamped;
+            autoInputsKey = default;
+        }
+    }
+    float level0Pixels = LodVisualSettings.Level0FollowsTarget;
+
+    /// <summary>What L1 hands over at: the finer of the two.</summary>
+    float Level0PixelsInForce => Math.Min(level0Pixels, lodTargetPixels);
+
     /// <summary>GPU time of the resolve and composite passes together.</summary>
     public LodPhaseCost GpuTaaCost => gpuTelemetry.TaaGpuCost;
 
@@ -264,7 +286,7 @@ public partial class LodTerrainRenderer
     int screenRenderHeight;
     float screenYScale;
 
-    (int Height, float YScale, int Floor, float Target) autoInputsKey;
+    (int Height, float YScale, int Floor, float Target, float Level0) autoInputsKey;
     int[]? autoAppliedThresholds;
     long autoLastApplyMs;
     const long AutoThresholdMinIntervalMs = 1000;
@@ -812,7 +834,8 @@ public partial class LodTerrainRenderer
         }
         if (screenRenderHeight <= 0) return;
 
-        var key = (screenRenderHeight, screenYScale, AutoThresholdFloorBlocks(), lodTargetPixels);
+        var key = (screenRenderHeight, screenYScale, AutoThresholdFloorBlocks(), lodTargetPixels,
+            Level0PixelsInForce);
         if (autoAppliedThresholds != null && key == autoInputsKey) return;
 
         long now = capi.ElapsedMilliseconds;
@@ -823,7 +846,7 @@ public partial class LodTerrainRenderer
 
         int[] wanted = LodAutoThresholds.Compute(
             LodScreenScale.BlockScale(key.screenRenderHeight, key.screenYScale),
-            lodTargetPixels, key.Item3);
+            lodTargetPixels, key.Item3, key.Item5);
         if (autoAppliedThresholds != null && wanted.AsSpan().SequenceEqual(autoAppliedThresholds))
             return;
 
@@ -834,7 +857,7 @@ public partial class LodTerrainRenderer
             AutoThresholdSummary);
     }
 
-    (int, float, float, float, float, bool, double) bandWidthKey;
+    (int, float, float, float, float, float, bool, double) bandWidthKey;
 
     /// <summary>
     /// The band's width as its reach share of level 0 beyond vanilla's edge. Level 0 is taken
@@ -845,13 +868,13 @@ public partial class LodTerrainRenderer
     void UpdateBandWidth()
     {
         float view = ApprovedViewDistance();
-        var key = (screenRenderHeight, screenYScale, view, lodTargetPixels, bandReachShare,
+        var key = (screenRenderHeight, screenYScale, view, lodTargetPixels, Level0PixelsInForce, bandReachShare,
             autoLodThresholds, autoLodThresholds ? 0 : LodWorld.DetailDistance);
         if (key == bandWidthKey) return;
         bandWidthKey = key;
         double levelZero = autoLodThresholds && screenRenderHeight > 0
             ? LodAutoThresholds.Compute(LodScreenScale.BlockScale(screenRenderHeight, screenYScale),
-                lodTargetPixels, (int)Math.Ceiling(view + LodSection.SectionBlocks))[0]
+                lodTargetPixels, (int)Math.Ceiling(view + LodSection.SectionBlocks), level0Pixels)[0]
             : LodWorld.DetailDistance;
         bandWidthDerivedBlocks = BandWidthFor(bandReachShare, levelZero, view, BandInnerBlocks);
     }
@@ -880,12 +903,12 @@ public partial class LodTerrainRenderer
     }
 
     /// <summary>What automatic thresholds would be right now, for the settings window.</summary>
-    public int[] PreviewAutoThresholds() => PreviewAutoThresholds(lodTargetPixels);
+    public int[] PreviewAutoThresholds() => PreviewAutoThresholds(lodTargetPixels, level0Pixels);
 
-    /// <summary>What automatic thresholds would be at another target, for a preset or the slider.</summary>
-    public int[] PreviewAutoThresholds(float targetPixels) => LodAutoThresholds.Compute(
+    /// <summary>What automatic thresholds would be at another target and level-0 size, for a preset or a slider.</summary>
+    public int[] PreviewAutoThresholds(float targetPixels, float level0Pixels) => LodAutoThresholds.Compute(
         LodScreenScale.BlockScale(screenRenderHeight, screenYScale), targetPixels,
-        AutoThresholdFloorBlocks());
+        AutoThresholdFloorBlocks(), level0Pixels);
 
     public string DescribeAutoThresholds() => DescribeAutoValues(PreviewAutoThresholds());
 
@@ -893,8 +916,12 @@ public partial class LodTerrainRenderer
     {
         float scale = LodScreenScale.BlockScale(screenRenderHeight, screenYScale);
         double fov = screenYScale > 0f ? 2.0 * Math.Atan(1.0 / screenYScale) * 180.0 / Math.PI : 0.0;
-        return string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"{string.Join("/", values)} blocks - every level hands over at {lodTargetPixels:0.00} px "
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        string handover = Level0PixelsInForce < lodTargetPixels
+            ? string.Create(invariant, $"level 0 hands over at {Level0PixelsInForce:0.00} px, every later level at {lodTargetPixels:0.00} px ")
+            : string.Create(invariant, $"every level hands over at {lodTargetPixels:0.00} px ");
+        return string.Create(invariant,
+            $"{string.Join("/", values)} blocks - {handover}"
             + $"on screen ({screenRenderHeight} rendered rows, {fov:0.#} deg FOV: one block is one "
             + $"pixel at {scale:0} blocks); level 0 is held out to at least "
             + $"{AutoThresholdFloorBlocks()} blocks for the vanilla edge and blend band");

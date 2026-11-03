@@ -26,7 +26,7 @@ public static class PlantDetailChecks
         ForageMarkers(c);
         FlowerSheets(c);
         BushSheets(c);
-        UltraPreset(c);
+        MaxPreset(c);
         FruitWoodInTheCanopy(c);
         SwitchedOffPlants(c);
         VariantsInThePalette(c);
@@ -53,9 +53,9 @@ public static class PlantDetailChecks
         c.Eq(LodLeafShape.Cubes, (on with { PlantTextures = false }).LeafShapeOn,
             "a leaf plane has nothing to cut it out with Plant Textures off");
 
-        c.False(LodVisualSettings.Performance.PlantDetail, "Performance gives plants up");
-        c.True(LodVisualSettings.Quality.PlantDetail && LodVisualSettings.Balanced.PlantDetail,
-            "Quality and Balanced keep them");
+        // Owner, 2026-11-03: plants measured essentially free, so every preset keeps them.
+        c.True(LodPreset.All.All(preset => preset.Visuals.PlantDetail && preset.Visuals.FlowerSheetsOn),
+            "every preset keeps plants, flowers included");
         c.Eq(LodLeafShape.ClustersWithTops, LodVisualSettings.Default.LeafShape,
             "a new player gets the shape the owner chose");
         c.Eq(LodLeafShape.ClustersWithTops, new VintageHorizonsConfig().LeafShape,
@@ -420,22 +420,48 @@ public static class PlantDetailChecks
         c.False((on with { BushTextures = false }).BushSheetsOn, "and has its own switch");
     }
 
-    static void UltraPreset(Check c)
+    static void MaxPreset(Check c)
     {
-        LodVisualSettings ultra = LodVisualSettings.Ultra;
-        c.True(ultra.PlantTexturesOn && ultra.ReedShapesOn && ultra.CropShapesOn && ultra.BushTexturesOn
-                && ultra.VineShapesOn && ultra.ForageMarkersOn && ultra.FruitTreeColorsOn && ultra.FlowerSheetsOn,
-            "Ultra has every plant feature");
-        c.True(ultra.FarBiomeColours, "and the far biome colors Quality holds back");
-        c.Eq(LodLeafShape.ClustersWithTops, ultra.LeafShapeOn, "and the chosen leaf shape");
-        c.False(LodVisualSettings.Quality.FlowerSheetsOn, "flowers are Ultra's, being purely for the look");
-        c.Eq("Ultra", ultra.PresetName, "it names itself");
-        c.Eq(LodAutoThresholds.MinTargetPixels, LodPreset.Ultra.TargetPixels, "at the finest detail target");
-        c.Eq(LodPreset.Ultra, LodPreset.All[^1], "above Quality in the list");
-        c.False(LodPreset.FirstRun.Contains(LodPreset.Ultra), "and not on the first-run prompt, which has three places");
+        LodVisualSettings max = LodVisualSettings.Max;
+        c.True(max.PlantTexturesOn && max.ReedShapesOn && max.CropShapesOn && max.BushTexturesOn
+                && max.VineShapesOn && max.ForageMarkersOn && max.FruitTreeColorsOn && max.FlowerSheetsOn,
+            "Max has every plant feature");
+        c.True(max.FarBiomeColours, "and the far biome colors");
+        c.Eq(LodLeafShape.ClustersWithTops, max.LeafShapeOn, "and the chosen leaf shape");
+        c.Eq("Max", max.PresetName, "it names itself (owner, 2026-11-03: Ultra renamed Max)");
+        c.Eq("max", LodPreset.Max.Code, "and .dlset preset max chooses it");
+        c.Eq(LodAutoThresholds.MinTargetPixels, LodPreset.Max.TargetPixels, "at the finest detail target");
+        c.Eq(LodPreset.Max, LodPreset.All[^1], "above Quality in the list");
+        c.False(LodPreset.FirstRun.Contains(LodPreset.Max), "and not on the first-run prompt, which has three places");
 
-        // Seam band reach (owner, 2026-11-02): all of level 0 on Ultra, 66% on Quality, 33% on Balanced.
-        c.Eq(1f, LodVisualSettings.Ultra.BandReach, "Ultra's band reaches the end of level 0");
+        // Owner, 2026-11-03: the presets after the per-preset benchmark. Far biome colour, flowers
+        // and Cache 8,192 measured essentially free, so Balanced and up have them; Performance keeps
+        // every free switch and gives up only what costs.
+        LodVisualSettings performance = LodVisualSettings.Performance;
+        c.True(performance.LeafSeasonColours && performance.HalfBlockTerrain && performance.WaterEffects
+                && performance.PlantTexturesOn && performance.DistantLights,
+            "Performance keeps the free switches");
+        c.True(!performance.BlendPipeline && !performance.ClimateTint && !performance.DistantAntiAliasing
+                && performance.LeafShapeOn == LodLeafShape.Cubes,
+            "and gives up seam blending, biome colour, anti-aliasing and leaf shapes");
+        c.Eq(8192, LodPreset.Performance.FarseerReach, "Farseer reaches 8,192 on Performance too");
+        c.True(LodVisualSettings.Balanced.BlendPipeline && LodVisualSettings.Balanced.FarBiomeColours
+                && LodPreset.Balanced.DrawDistance == 8192,
+            "Balanced has seam blending, far biome colour and Cache 8,192");
+        c.True(LodVisualSettings.Quality.FarBiomeColours && LodVisualSettings.Quality.FlowerSheetsOn,
+            "Quality has far biome colour and flowers");
+
+        // Quality alone carries level 0 out to 1 px; the rest follow their detail target.
+        c.Eq(LodVisualSettings.QualityLevel0Pixels, LodVisualSettings.Quality.Level0Pixels, "Quality's level 0 is 1 px");
+        c.True(LodVisualSettings.Performance.Level0Pixels == LodVisualSettings.Level0FollowsTarget
+                && LodVisualSettings.Balanced.Level0Pixels == LodVisualSettings.Level0FollowsTarget
+                && LodVisualSettings.Max.Level0Pixels == LodVisualSettings.Level0FollowsTarget,
+            "the other presets leave level 0 on the target");
+        c.Eq(LodVisualSettings.Level0FollowsTarget, new VintageHorizonsConfig().Level0Pixels,
+            "a config file without the key keeps level 0 on the target, so nobody's distances move");
+
+        // Seam band reach (owner, 2026-11-02): all of level 0 on Max, 66% on Quality, 33% on Balanced.
+        c.Eq(1f, LodVisualSettings.Max.BandReach, "Max's band reaches the end of level 0");
         c.Eq(0.66f, LodVisualSettings.Quality.BandReach, "Quality's two thirds of it");
         c.Eq(0.33f, LodVisualSettings.Balanced.BandReach, "Balanced's a third");
         c.Eq(LodVisualSettings.QualityBandReach, new VintageHorizonsConfig().BandReach,
@@ -451,7 +477,7 @@ public static class PlantDetailChecks
             "and no reach outruns the seam field, where the ramp would be cut to a hard line");
         string taa = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot,
             "VintageHorizons/src/Render/LodTerrainRenderer.Taa.cs"));
-        c.True(taa.Contains("lodTargetPixels, (int)Math.Ceiling(view + LodSection.SectionBlocks))[0]"),
+        c.True(taa.Contains("lodTargetPixels, (int)Math.Ceiling(view + LodSection.SectionBlocks), level0Pixels)[0]"),
             "level 0 is measured before the band stretches it, so the two cannot feed each other");
         string renderer = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot,
             "VintageHorizons/src/Render/LodTerrainRenderer.cs"));

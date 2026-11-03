@@ -196,6 +196,17 @@ public static class DistantAntiAliasingChecks
             "the same inputs always give the same thresholds");
         c.SeqEq(LodAutoThresholds.Compute(scale, LodAutoThresholds.MaxTargetPixels, 320),
             LodAutoThresholds.Compute(scale, 99f, 320), "the target is clamped to its range");
+
+        // Quality (owner, 2026-11-03): level 0 out to 1 px, every later level still at 1.5 px.
+        c.SeqEq(new[] { 928, 1248, 2496, 4992, 9984, 19968 },
+            LodAutoThresholds.Compute(scale, 1.5f, 320, LodVisualSettings.QualityLevel0Pixels),
+            "a finer level-0 size moves L1 alone, to where a block is 1 px");
+        c.SeqEq(owner, LodAutoThresholds.Compute(scale, 1.5f, 320, 2f),
+            "a level-0 size coarser than the target changes nothing");
+        c.SeqEq(owner, LodAutoThresholds.Compute(scale, 1.5f, 320, LodVisualSettings.Level0FollowsTarget),
+            "and following the target is the old sequence exactly");
+        c.True(LodAutoThresholds.Compute(scale, 1.5f, 1000, 1f)[0] >= 1000,
+            "the vanilla edge and band still hold level 0 out past a finer size");
     }
 
     static void Defaults(Check c)
@@ -224,8 +235,8 @@ public static class DistantAntiAliasingChecks
             "so do Quality and Balanced");
         c.True(LodVisualSettings.Quality == LodVisualSettings.Default,
             "Quality is the fresh-install visual set");
-        c.False(LodVisualSettings.Quality.FarBiomeColours,
-            "Quality keeps the deliberately expensive Far Biome Colors option off");
+        c.True(LodVisualSettings.Quality.FarBiomeColours,
+            "Quality has Far Biome Colors, measured at 0.05 ms or less (owner, 2026-11-03)");
         c.False(LodVisualSettings.Performance.DistantAntiAliasing,
             "and Performance gives it up with everything else optional");
     }
