@@ -8,6 +8,33 @@ first.
 
 ## [Unreleased]
 
+## [0.5.2-dev.32] - 2026-11-03
+
+**A test build: new presets from measuring every setting, and a much cheaper Farseer.** The fast checks pass with 0
+failures on game 1.22.0 and 1.22.7 (27,014 assertions). This entry covers dev.28 to dev.32.
+
+**Farseer costs far less with long cached distances.** Each frame it worked out again, tile by tile, which cached terrain
+covered each Farseer tile, about 1.3 ms at a Cache distance of 8,192. It now remembers each tile's answer until the camera
+or the terrain's edge has moved far enough to change it. On the test machine Farseer at reach 8,192 went from costing
+1.3 ms to nothing measurable. `.dlsilhouette coverage check` compares every remembered answer with a fresh one.
+
+**New presets.** Every setting was timed on its own and every preset as a whole:
+- **Performance** now keeps everything that measured as costing nothing: varied tree colours, slab terrain, water effects,
+  plants with their pictures and flowers, Distant Lights, and Farseer out to 8,192 blocks. Leaves stay cubes.
+- **Balanced** caches terrain to 8,192 blocks and adds seam blending over a third of the most detailed level, far biome
+  colours and flowers.
+- **Quality** adds far biome colours and flowers, and carries full detail further out: the most detailed level now ends
+  where a block is one pixel wide (about 930 blocks at 1080p), while later levels stay as they were.
+- **Ultra is renamed Max.**
+
+Picking a preset again applies the new values; until then the settings window shows your settings as Custom.
+
+**New: Level 0 detail target**, in Developer options under Seam band. It sets where the most detailed level hands over, on
+screen, when that is finer than the LOD detail target. Quality sets it to 1 pixel.
+
+**`.dlset`** sets any row of the settings window from chat, for example `.dlset preset quality` or `.dlset leaf-shape cubes`.
+Band reach also has a slider in Developer options under Seam band.
+
 ## [0.5.2-dev.27] - 2026-11-02
 
 **A test build: foam on distant shores, far fewer water blips, and a wider seam band.** The fast checks pass with 0

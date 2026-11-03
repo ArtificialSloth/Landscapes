@@ -2,6 +2,19 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-11-02..03 - What each setting costs, and the presets re-designated (0.5.2-dev.28-dev.32)
+
+- **The per-setting benchmark** Session 123 designed ran in the sandbox (Session 124): `.dlset` for every window row
+  (dev.28), the bench on Release with his mods and settings at view distance 32, one setting at a time from Ultra down and
+  from Performance up, then Farseer against the Cache distance.
+- **Distant Lights' cost**, the shore foam, the depth pass and the wider band, open since Sessions 122-123, read under
+  0.05 ms in the sweep (the band 33% to 100% +0.07 in the climb).
+- **Farseer's cost** was its per-frame coverage question; dev.29-dev.31 cut Farseer at reach 8,192 from about 1.3 ms to
+  nothing measurable, owner-played with 0 checker differences.
+- **The preset review** (Sessions 121-123) done: each proposed preset measured whole at two spots, then built in dev.32
+  with Ultra renamed Max and Quality's level 0 out to 1 px (decision 79). Far Biome Colors, off by default since 0.3.195 as
+  "the most expensive", measured 0.05 ms or less and is on from Balanced up; its own switch stays. The presets' geometry
+  savings, once arithmetic, are replaced by measured frame times.
 ## 2026-10-20 - The 0.5.0 release and its ModDB page
 
 - **Version:** the owner called the promotion; 0.4.175, his newest played build, became 0.5.0 with only

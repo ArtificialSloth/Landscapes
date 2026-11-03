@@ -529,6 +529,8 @@ live until the exact replacement persistence revision is acknowledged.
     and one section, because band textures exist only on level-0 quads; that floor holds L1 alone,
     and a later level moves only where L1 would otherwise pass it (0.4.169, G294: until then the
     floor started the doubling and moved every level). The presets set the target (decision 63).
+    `Level0Pixels` can hand L1 alone over at a finer size than the target, with every later level on
+    the target; at or above the target it changes nothing (0.5.2-dev.32, decision 79).
     The player's own thresholds stay in the file for when automatic is off.
 36. **A block is recorded as what it shows.** A block whose look lives in its block entity has no
     type-level colour, so capture reads the entity where the job is created and records a chisel as
@@ -752,7 +754,8 @@ live until the exact replacement persistence revision is acknowledged.
     General's Defaults restores (all-cores collection and Developer options excepted), so players see
     what the mod can do; a first-run prompt asks every player once. Rejected: presets storing block
     distances (they would mean something different at every field of view and resolution); Quality's
-    reach at 16,384; Balanced as the default.
+    reach at 16,384; Balanced as the default. The values above were revised from measurements in
+    decision 79 (2026-11-03); the principles stand.
 64. **The settings window keeps every dial, out of the way** (owner, 2026-10-19; 0.4.166-0.4.175).
     Tabs are General and Generate, plus Developer while General's remembered Developer options switch
     is on; Developer holds every tuning dial in Anti-aliasing, Farseer look and Seam fog sub-tabs.
@@ -826,9 +829,26 @@ live until the exact replacement persistence revision is acknowledged.
     sky fade and Farseer use the engine's murk formulas over the full-resolution image and the vanilla-only snapshot. The
     engine's own sky and clouds keep the quarter image. Stays inside the water stage: no ownership or mask change.
 77. **The seam band's width is a share of level 0 beyond vanilla's edge, set by the preset** (owner, 2026-11-02; 0.5.2-dev.27).
-    Ultra 1, Quality 0.66, Balanced 0.33; level 0 is where the band's textures live, so 1 is as far as it goes. Level 0 is
+    Max (Ultra until 0.5.2-dev.32) 1, Quality 0.66, Balanced 0.33; level 0 is where the band's textures live, so 1 is as far as it goes. Level 0 is
     measured before the band stretches it (G333), and the width is capped where the seam field would cut the ramp. Replaced a
     fixed 128 blocks.
+78. **Farseer's tile coverage is remembered between frames, inside margins** (2026-11-02; 0.5.2-dev.29-dev.31). Which cached
+    levels cover a Farseer tile was asked again every frame, about 8 us per in-view tile inside the terrain (G335). Each tile now
+    keeps per-level masks of resident and covered sections, updated when a section's mesh is installed or removed, and reuses
+    its decision while the camera has moved less than the distance to the nearest level handover or cull edge and while the
+    snapped camera's jump plus the terrain end's change stays under the end margin (G336). The detail policy and cull distance
+    are its context. Readiness is still applied fresh every frame, and tiles wholly past the terrain's end or wholly covered
+    are skipped. `.dlsilhouette coverage check` compares every answer with a fresh one; it stays, off by default, to guard
+    later changes to what coverage depends on. Rejected: recomputing on a timer (stale answers show as holes or doubled edges).
+79. **The presets follow the per-preset measurements** (owner, 2026-11-03; 0.5.2-dev.32). Anything measured as essentially
+    free is in every preset. Performance: 2,048, Farseer to 8,192, no fog, 3 px, every free switch on (tree colours, slabs,
+    water effects, plants with sheets and flowers, Distant Lights), with seam blending, biome colour, distant anti-aliasing and
+    leaf shapes off. Balanced: 8,192, fog, 2 px, every switch on, seam blending over a third of level 0. Quality: 8,192, fog,
+    1.5 px, every switch on, band two thirds, and level 0 out to 1 px (`Level0Pixels`, +0.5 ms measured, G340). Max, renamed
+    from Ultra: 1 px everywhere, band over all of level 0. `Level0Pixels` travels with the visual switches, so presets set it,
+    preset matching compares it and Save keeps it; a file without it follows the target (G339). Far Biome Colors stays its own
+    switch (owner). Leaf shapes are not split by distance (owner). Rejected: Quality's L1 as a block distance (decision 63),
+    and the old Balanced without seam blending.
 
 ## Concurrency invariants
 

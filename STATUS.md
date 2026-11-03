@@ -3,17 +3,37 @@
 > Tier 2: current state and verification evidence. Historical measurements and development
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
-**Status date:** `2026-11-02`
-**Mod version:** `0.5.2-dev.27` - a test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; commit `61885d3`, not pushed; fast tier 26,998 assertions, 0 failures on game 1.22.0 and 1.22.7. **The latest release is 0.5.1**, the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
+**Status date:** `2026-11-03`
+**Mod version:** `0.5.2-dev.32` - a test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; commit `a99b88e`, not pushed; fast tier 27,014 assertions, 0 failures on game 1.22.0 and 1.22.7. **The latest release is 0.5.1**, the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
-**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083`, 0.5.0 `2826b2e`, 0.5.1-dev.2 `621ac7c`, 0.5.1-dev.3 `6b46739`, 0.5.1-dev.4 `102d1e1`, 0.5.1-dev.5 `939af75`, 0.5.1-dev.6 `4421cc3`, 0.5.1-dev.7 `9fa0026`, 0.5.1 `7959339`, 0.5.2-dev.1 `0fc55ef`, 0.5.2-dev.2 `ccd72be`, 0.5.2-dev.3 `07f1aed`, 0.5.2-dev.4 `8216b6f`, 0.5.2-dev.5 `21730b3`, 0.5.2-dev.6 `e2fb684`, 0.5.2-dev.7 `5b595dd`, 0.5.2-dev.18 `39d14bd`, 0.5.2-dev.19 `a331c86`, 0.5.2-dev.20 `6205660`, 0.5.2-dev.21 `c59e268`, 0.5.2-dev.22 `37cf29d`, 0.5.2-dev.23 `e482117`, 0.5.2-dev.24 `239b0f5`, 0.5.2-dev.25 `6551457`, 0.5.2-dev.26 `ece970d`, 0.5.2-dev.27 `61885d3`; everything through 0.5.1 pushed to `main` on `DodenGruva/Landscapes` (now public) on 2026-10-22; the history was rewritten to his GitHub no-reply address on 2026-10-13
+**Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083`, 0.5.0 `2826b2e`, 0.5.1-dev.2 `621ac7c`, 0.5.1-dev.3 `6b46739`, 0.5.1-dev.4 `102d1e1`, 0.5.1-dev.5 `939af75`, 0.5.1-dev.6 `4421cc3`, 0.5.1-dev.7 `9fa0026`, 0.5.1 `7959339`, 0.5.2-dev.1 `0fc55ef`, 0.5.2-dev.2 `ccd72be`, 0.5.2-dev.3 `07f1aed`, 0.5.2-dev.4 `8216b6f`, 0.5.2-dev.5 `21730b3`, 0.5.2-dev.6 `e2fb684`, 0.5.2-dev.7 `5b595dd`, 0.5.2-dev.18 `39d14bd`, 0.5.2-dev.19 `a331c86`, 0.5.2-dev.20 `6205660`, 0.5.2-dev.21 `c59e268`, 0.5.2-dev.22 `37cf29d`, 0.5.2-dev.23 `e482117`, 0.5.2-dev.24 `239b0f5`, 0.5.2-dev.25 `6551457`, 0.5.2-dev.26 `ece970d`, 0.5.2-dev.27 `61885d3`, 0.5.2-dev.28 `fa66720`, 0.5.2-dev.29 `7d845ac`, 0.5.2-dev.30 `c20b06f`, 0.5.2-dev.31 `38c0bd1`, 0.5.2-dev.32 `a99b88e`; everything through 0.5.1 pushed to `main` on `DodenGruva/Landscapes` (now public) on 2026-10-22; the history was rewritten to his GitHub no-reply address on 2026-10-13
 **Target:** intended for Vintage Story 1.22.5+; declares 1.22.0, where it was briefly tested; compiled on 1.22.7; .NET 10
-**Source files:** `164` C# files under `VintageHorizons/src`
+**Source files:** `166` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
+
+**0.5.2-dev.32, what each setting costs and new presets (2026-11-03).** Session 124, dev.28 to dev.32. Copy-installed to
+both Mods folders, not pushed. 27,014 assertions, 0 failures on 1.22.0 and 1.22.7. Compatibility numbers stay 1/4/6; the
+client config gains `Level0Pixels`. The owner played dev.31; dev.32 is not seen.
+
+- **Benchmarks (sandbox, frozen `vintage cave tales-2`, view distance 32, his mods, RX 9070 XT, no GPU split):** the detail
+  target dominates (1.5/2/3 save 0.57/0.80/1.03 ms against 1 px); Cache 2,048 saves 0.29 and 4,096 to 8,192 costs about 0;
+  seam fog and seam blending about 0.1 each; biome colours 0.05-0.09 together; every other switch under about 0.05.
+- **Farseer (decision 78, G335-G336):** its cost was re-asking each tile's coverage every frame, about 8 us a tile. Each
+  tile's answer is now remembered inside margins: Cache 8,192 with reach 8,192 went from 2.99 to 1.73 ms against 1.75 with
+  Farseer off. 0 differences in about 30 million checked answers and in his play with the checker on; owner: "Everything
+  looked good".
+- **Presets (decision 79):** Performance 2,048 / Farseer 8,192 / no fog / 3 px with every free switch; Balanced 8,192 / fog /
+  2 px, every switch, seam blending over a third of level 0; Quality 8,192 / fog / 1.5 px, every switch, level 0 out to
+  1 px (`Level0Pixels`); Max (Ultra renamed) 1 px everywhere. Measured whole at a valley and an open spot, before the
+  build: Performance 1.69 / 1.50 ms, Balanced 2.96 / 2.64, Quality with his hand-set level 0 at 960 3.92 / 3.79 (+0.5 ms
+  for the level-0 reach, G340), Max 4.57 / 4.45. Unplayed; he is on manual thresholds.
+- **Far Biome Colors (G337):** not broken; it changes almost nothing because the client knows climate only 1-3 km out.
+  0.05 ms or less; on from Balanced up, its own switch kept (owner).
+- **Open:** the window's cost tags are to be relabelled from these numbers (owner, TODO).
 
 **0.5.2-dev.27, shore foam, water blips and the band's reach (2026-11-02).** Session 123, dev.23 to dev.27. Copy-installed
 to both Mods folders, not pushed. 26,998 assertions, 0 failures on 1.22.0 and 1.22.7. Compatibility numbers stay 1/4/6;
@@ -24,7 +44,7 @@ the client config gains `BandReach`. The owner played dev.23-dev.25 on his AMD c
 - **Water blips (decision 76, G332):** cached water drawn into the quarter-size liquid depth from each texel's centre.
   Resolved at full resolution by majority in dev.25, owner: "huge difference"; dev.26 gives cached ground, its sky fade
   and Farseer the exact images; normal play "didn't seem to be an issue". NVIDIA, where they were worst, not yet tested.
-- **Band reach (decision 77, G333):** the seam band covers a share of level 0 beyond vanilla's edge, Ultra 1, Quality 0.66,
+- **Band reach (decision 77, G333):** the seam band covers a share of level 0 beyond vanilla's edge, Ultra (now Max) 1, Quality 0.66,
   Balanced 0.33, replacing a fixed 128 blocks. Speckle 0.1 (was 0.15). Unplayed.
 - **Benchmark:** a per-setting sweep on a copy of `vintage cave tales-2` is designed and deferred to a new session.
 
@@ -61,7 +81,7 @@ append-only tail in format 4 for fruit tree variants.
   tint. Harness-tested only.
 - **Forage Markers (decision 71):** mushrooms, flint, ore and amber resin. Seen in play, with mushroom colour fixed since;
   no report on resin, flint or ore in the open.
-- **Ultra:** not run. Everything on, far biome colors, 1-pixel detail. The owner re-designates all presets at the end.
+- **Ultra:** not run here; measured and renamed Max in Session 124.
 - **Anti-aliasing** runs at full strength from vanilla's edge; shimmer and smearing still need his eye.
 
 **0.5.2-dev.7, plants and a shorter cached distance (2026-10-31).** Session 120. Copy-installed to both Mods folders,
@@ -171,7 +191,8 @@ Session 117, built from the owner's screenshots; every build owner-played.
   Defaults leaves all-cores and Developer options alone.
 - **Presets (settled decision 63):** a preset sets the seven switches, draw distance, Farseer and its
   reach, the seam fog and the automatic target, and turns Automatic on: Performance 2,048 / Farseer 4,096
-  / no fog / 3 px; Balanced 4,096 / 8,192 / fog / 2 px; Quality 8,192 / 8,192 / fog / 1.5 px. Quality is
+  / no fog / 3 px; Balanced 4,096 / 8,192 / fog / 2 px; Quality 8,192 / 8,192 / fog / 1.5 px (values revised in
+  0.5.2-dev.32, decision 79). Quality is
   the new-install default and Defaults; a first-run prompt asks once. The owner found the feature
   switches barely move his frame rate; distances and the target are the real levers. Geometry savings
   (about 56% and 25% of Quality) are arithmetic.
@@ -877,7 +898,8 @@ read "Horizons" until then).
     open.
 - **Presets (decision 63).** A preset sets the seven switches, the draw distance, Farseer and its
   reach, the seam fog and the automatic target, and turns Automatic on (see Current result). Quality is
-  the default and leaves costly Far Biome Colors off, as every preset does. Changing any of them reads
+  the default. Since 0.5.2-dev.32 (decision 79) presets also set level 0's own size (`Level0Pixels`, Quality 1 px)
+  and Far Biome Colors is on from Balanced up. Changing any of them reads
   as Custom. A first-run prompt (`PresetPromptShown`) asks every player once, before the LOD-mod
   notice.
 
@@ -1241,12 +1263,12 @@ It covers:
 
 ## Next work
 
-Begin with [Session 123](dev/sessions/SESSION_123.md) and the top of [TODO](dev/TODO.md). Next is the per-setting
-benchmark in a new session (owner), designed in Session 123 section 1, then the owner's preset review, an NVIDIA test of
-dev.23-dev.27, and a 0.5.2 release when he promotes a played build.
+Begin with [Session 124](dev/sessions/SESSION_124.md) and the top of [TODO](dev/TODO.md). Next: the owner plays dev.32's
+presets, the window's cost tags are relabelled from the measurements, an NVIDIA test of dev.23 onward, and a 0.5.2 release
+when he promotes a played build.
 
 1. **Publishing, on the owner's calls:** 0.5.1 is the latest release, pushed and live on ModDB
-   (`mods.vintagestory.at/show/mod/75034`), with `DodenGruva/Landscapes` public. 0.5.2-dev.1 to dev.27 are not pushed;
+   (`mods.vintagestory.at/show/mod/75034`), with `DodenGruva/Landscapes` public. 0.5.2-dev.1 to dev.32 are not pushed;
    at release the changelog's dev sections fold into one entry. Still not run: the game-launching check tiers (ask
    before launching). The old `DodenGruva/Horizons` fork is his to delete.
 2. **Ask the owner what comes next.** The stutter is solved for him; what it left:

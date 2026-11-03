@@ -4,10 +4,10 @@
 
 ## Start here
 
-Read [Session 123](sessions/SESSION_123.md), then [Session 122](sessions/SESSION_122.md). **0.5.2-dev.27**
-(`61885d3`, not pushed) is the current test build: shore foam, the water blip fix and the band's reach per preset on top of
-Session 122's Distant Lights and Session 121's plants, sections "What Session 123 left open", "What Session 122 left open"
-and "What Session 121 left open" below. The next session is the per-setting benchmark (owner). It declares game
+Read [Session 124](sessions/SESSION_124.md), then [Session 123](sessions/SESSION_123.md). **0.5.2-dev.32**
+(`a99b88e`, not pushed) is the current test build: the presets re-designated from the per-setting and per-preset benchmarks,
+Quality's level 0 out to 1 px, Ultra renamed Max, and Farseer's coverage remembered between frames, on top of Session 123's
+water work and Session 122's Distant Lights; sections "What Session 124 left open" onward below. It declares game
 1.22.0, compiles on 1.22.7 and is intended for 1.22.5+ (owner, no more testing below that). Player reports, with their
 evidence, are in the git-ignored `dev/PLAYER_REPORTS.md`.
 **0.5.1 is the latest release**: the owner-played 0.5.1-dev.7, promoted on 2026-10-22 with only the two
@@ -24,34 +24,40 @@ every dial on a Developer tab shown by Developer options, settled decision 64), 
 distance, Farseer, the seam fog and the automatic LOD target with Quality as the default and a first-run
 prompt (decision 63), let the vanilla floor hold only L1 (decision 35), held the seam fog for 5 s at
 login, and made Generate's Settings button unpause the game; it carries Session 116's review fixes. The
-fast tier passes (26,938 assertions at 0.5.2-dev.22). Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
+fast tier passes (27,014 assertions at 0.5.2-dev.32). Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
 is solved for him by the all-cores garbage collector, an opt-in switch on General (0.4.134, settled
 decision 54), and the game's chunk thread rests when it has nothing to do (0.4.132, settled decision 53).
 
+### What Session 124 left open
+
+- **Relabel the settings window's cost tags (owner, 2026-11-03).** They disagree with the measurements (Session 124, sections
+  2 and 5): Close and Far Biome Colors say "High" but cost 0.05-0.09 ms together; Vanilla and LOD Seam Blending says
+  "Moderate" at 0.05-0.18 ms; Farseer and Water Effects are labelled Low from estimates, and both now measure about 0 (Farseer
+  since dev.31). Re-tag each row from the sweep, climb and preset numbers, and talk the words through with him before
+  building.
+- **dev.32 unplayed:** the new presets, Quality's level 0 at 1 px (928/1248/2496/... at 1080 rows; its +0.5 ms was measured
+  on his hand-set 960/1536/2496/4096/8192/16384, not the built rule) and the Level 0 detail target slider. He is still on
+  manual thresholds; picking a preset turns Automatic back on. Existing settings show as Custom until a preset is picked.
+- **Performance's 1% lows** at the valley went from 2.7 to 3.4 ms with the free switches on, on 20-second measures; watch it
+  in play before acting.
+- **No GPU/CPU split:** `-GpuStats` wrote nothing, so costs bound by the graphics card may read free on his RX 9070 XT. One
+  machine, one world, view distance 32.
+- **Far Biome Colors' look** was never compared at a biome edge 1-3 km away inside known climate (G337).
+
 ### What Session 123 left open
 
-- **The per-setting benchmark, in a new session (owner).** Session 123 section 1 has the design: a copy of
-  `vintage cave tales-2` (cache `71c0c6af`) with his eight enabled mods and graphics settings (2560x1440 at 0.75 scale,
-  view 256), one setting at a time removed from everything-on and re-measured against a fresh baseline, in milliseconds,
-  five scenes, and each preset whole. Needed first: one `.dl` command that sets any window row by key (the Plants tab,
-  leaf shape and Distant Lights have none), the bench on a Release build (it deploys Debug), the sweep off in the copy,
-  then a 20-minute pilot. Ask before every launch; his game must be closed and the PC left alone.
 - **NVIDIA:** dev.23-dev.27 have not run there. The blips were worst there; shore foam's depth read and the new exact
   readers are untested on it. The owner plans to test it.
-- **Costs unmeasured:** shore foam (`.dlwater shore 0`/`1`), the full-resolution water depth pass
-  (`.dlwater majority off`/`on`), and the wider band, whose seam field grows from 128 to 256 cells at Quality and Ultra.
-- **dev.27 unplayed:** the band's reach per preset and speckle 0.1. Performance holds Balanced's share with the band off.
+- **dev.27 unplayed:** speckle 0.1 not reported on; the band's reach per preset is now part of dev.32's presets.
 - **Water, not looked for:** far shore foam shimmer while moving; vanilla's weak-foam flag (bit 28 halves its brightness)
   was not found set; one scene read cached shallows 20% brighter than vanilla at unmatched depths.
 - **With terrain off** a faint rim around water stays on the sky; it is the engine's sky and clouds reading the quarter
   image, as they do for vanilla's own water.
-- **Preset review** (owner) still follows the benchmark; the band reach is now part of each preset.
+
 
 ### What Session 122 left open
 
-- **Distant Lights' cost:** no on/off pair yet. Toggle it at one fixed spot, at night, in a lit area.
-- **Distant Lights in the presets:** on in Balanced, Quality and Ultra, off in Performance, by the agent's call. Part of the
-  preset review below.
+
 - **Distant Lights on NVIDIA:** the new shader code has only compiled on the owner's AMD card.
 - **Limits accepted for now:** top surfaces only, so roofs and treetops stay dark and ground under trees records nothing;
   a wall takes the light of the ground at its foot; cached water is unlit; land gains light only as chunks load again, and a
@@ -66,10 +72,6 @@ decision 54), and the game's chunk thread rests when it has nothing to do (0.4.1
 
 ### What Session 121 left open
 
-- **Preset review, at the end of this work (owner):** he will go through every preset and re-designate what each holds.
-  Flowers may go on in Quality ("may want that turned on"). Ultra's Far Biome Colors and 1-pixel target were the agent's
-  choices. Ultra has not been run, so take a frame-rate reading at the pine spot, where Quality with these plants held
-  255/140 on dev.13.
 - **Not reported on:** resin at distance, flint and ore in the open, Vine Sheets and Forage Markers off, cattails after the
   fern fix (same code, may have shifted colour), fruit tree species past plain green.
 - **Anti-aliasing from vanilla's edge:** whether leaf shimmer is gone and whether it smears while moving needs his eye. No
@@ -163,11 +165,6 @@ decision 54), and the game's chunk thread rests when it has nothing to do (0.4.1
   Terrain Sampler nor Watersheds); the seam fog's 5 s login hold and fade (log in several times, one on
   a slow load); Open Live Controls + Unpause from the game's Settings, Generate tab; the first-run
   prompt and General at GUI scale 1.5 on 1080p.
-- **Cost words that are estimates:** Farseer Low and Water Effects Low. A timed on/off pair for each
-  in one scene, Water with a large lake in view, would settle them (bench run, about 15-20 min; ask
-  before launching). Seam fog High is the owner's measurement.
-- **Presets' geometry savings** (Balanced about 56%, Performance about 25% of Quality's triangles) are
-  arithmetic; measure each preset's frame time in one scene before quoting them.
 - **The login hold is a fixed 5 s.** If it proves short on slow machines, a real load signal (the
   ready cached terrain around the player) would beat a longer timer.
 
@@ -633,13 +630,6 @@ before touching this.
   at one seam viewpoint that runs about 2.9x lighter than his. The proportion should carry and
   the mechanism does not depend on the scene, but the number in his world is inference. **The
   tell: the same spot that read 285 fps on 0.3.194.**
-- **Far Biome Colors defaults off, and the colour step that implies is unexamined.** With Close
-  on and Far off, ground past the L2 boundary - about 2,048 blocks on default thresholds -
-  wears the biome colour from where the player stands rather than its own. Whether that reads
-  as a ring depends on how different the two biomes are. **The tell: stand where a biome edge
-  crosses the horizon and compare Far on against Far off.** If it shows, the answer is a wider
-  Close range, not a wider fade: `LodVisualSettings.CloseClimateTintRange`. That constant was
-  briefly 1 (L0 alone) in 0.3.197-0.4.0 and is 4 again from 0.4.1; see G151 for why.
 - **The pause-time loading mechanism needs a direct runtime witness.** The source and harness
   establish that it runs the same bounded owner-thread work at 50 ms cadence without unpausing
   simulation. Hold the single-player pause menu open and observe cache/mesh progress, then turn

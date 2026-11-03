@@ -6129,3 +6129,84 @@ has to stay under the combined limit, 48 at least on OpenGL 3.3, and the terrain
 adding many.
 
 **Found:** 2026-11-02, Session 123 (units 16 and 17).
+
+### G335 - Farseer asked every tile's coverage again every frame
+
+**Trigger:** a Farseer cost that follows its reach rather than its drawing, or a slow "prepare" in the "Farseer per frame"
+line.
+
+**Trap:** each in-view tile inside the cached terrain looped over the cached sections under it every frame to learn which
+levels covered it: about 8 us a tile, 1.75-1.8 ms at a Cache distance of 8,192, while drawing 240 tiles took about 85 us.
+`.dlsilhouette stats` prints no prepare time while the seam fog is off, so the split stayed hidden until the periodic line
+was added.
+
+**Safer action:** the answer is remembered per tile (decision 78). Anything new the coverage answer depends on must also
+invalidate the remembered answer; run `.dlsilhouette coverage check` after such a change, which logs every difference.
+
+**Found:** 2026-11-02, Session 124 (0.5.2-dev.29 measured it, dev.30 fixed it).
+
+### G336 - A remembered answer keyed to the snapped camera is forgotten at every chunk line
+
+**Trigger:** putting a value that changes often into a cache's context.
+
+**Trap:** dev.30 put the camera snapped to its 32-block chunk into each Farseer tile's context, so crossing any chunk line
+recomputed all 512-block tiles. The owner caught it from the description.
+
+**Safer action:** spend such a value's change from a margin instead. dev.31 adds the snapped camera's jump to the change in
+the terrain's end and compares it with the end margin, so only tiles near the end recompute. The offline check steps past
+each margin to prove it can fail.
+
+**Found:** 2026-11-02, Session 124 (0.5.2-dev.30, fixed in dev.31).
+
+### G337 - Far Biome Colors measures free because it changes almost nothing
+
+**Trigger:** a colour or climate feature for distant terrain that costs nothing and seems to show nothing.
+
+**Trap:** the client holds real climate only for map regions the server sent it, about 1,000 blocks on arrival growing toward
+3,000 as the player explores; `LodClimateField` fills the rest from the nearest known cell. Far Biome Colors starts at L3,
+1,216 blocks or more, so far ground mostly gets the same climate with it on or off, and far mountains are mostly untinted
+rock and snow. Its old "most expensive" label was Session 77's 80 us for all biome colour, the largest of five small costs.
+
+**Safer action:** before calling such a feature broken, check that the data it reads exists that far out. Judge it at a
+biome edge 1-3 km away inside known climate.
+
+**Found:** 2026-11-02, Session 124 (source-traced, screenshot pairs).
+
+### G338 - Bench sandbox traps
+
+**Trigger:** a bench route that sets settings, runs for long, or starts from a frozen seed of the owner's world.
+
+**Trap:** the mod's first-run preset prompt replaced the route's first preset (the bench now marks it seen); the game clock
+ran into sunset (routes run `/time set 12:00; /time stop`); `VINTAGEHORIZONS_CHUNK_MASK` is pinned to 0 unless `-ChunkMask`
+is passed; once the owner plays the source world, the frozen-seed check refuses to run ("Frozen seed target differs from its
+source"); the periodic stats report fires once, at 30 s; `-GpuStats` wrote no GPU split.
+
+**Safer action:** pass the frozen seed copies under `.testdata/profiles/<profile>/seed` as their own `-Seed*` sources to keep
+earlier runs comparable; pass `-ChunkMask` to match the owner; log anything needed per stop as a bench command result.
+
+**Found:** 2026-11-02..03, Session 124.
+
+### G339 - A new config key must load as no change
+
+**Trigger:** adding a setting that presets set and the config file saves.
+
+**Trap:** a key missing from an older file loads as the class default. `Level0Pixels` defaulting to Quality's 1 px would
+have moved every Performance player's L1 to where a block is one pixel, the most expensive distance there is.
+
+**Safer action:** the field default is the value that changes nothing (`Level0FollowsTarget`, the largest target, so level 0
+follows the detail target); the preset carries the new value, and a player gets it by picking the preset.
+
+**Found:** 2026-11-03, Session 124 (0.5.2-dev.32, designed in).
+
+### G340 - Costs measured one setting at a time do not price a preset
+
+**Trigger:** adding up single-setting costs to estimate a preset.
+
+**Trap:** each setting was timed at one set of distances, and a level-0 feature's cost might grow with level 0. Measured whole,
+features stayed flat (leaf cubes 0.02-0.11, plants 0.10-0.11, seam blending up to 0.18 ms), but carrying level 0 from 624 to
+960 blocks cost +0.5 ms by itself: the full-detail terrain is the distance cost.
+
+**Safer action:** measure each preset whole at its own distances, at a closed and an open view, and switch features off
+inside it (`bench/routes/preset-proposal.txt`).
+
+**Found:** 2026-11-03, Session 124.
