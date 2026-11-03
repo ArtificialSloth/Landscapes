@@ -545,6 +545,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         LodLeafShape.PlanesWithTops => "Crossed Planes with Tops",
         LodLeafShape.Clusters => "Leaf Clusters",
         LodLeafShape.ClustersWithTops => "Leaf Clusters with Tops",
+        LodLeafShape.VanillaStyle => "Vanilla Style",
         _ => "Cubes",
     };
 
@@ -558,6 +559,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             "Two planes across each two-block patch of leaves. Far fewer faces, chunkier up close.",
         LodLeafShape.ClustersWithTops =>
             "The same, with a flat plane through each patch's top.",
+        LodLeafShape.VanillaStyle =>
+            "Each leaf block its own pair of planes at varied angles, as the game draws far leaves. The most faces.",
         _ => "Solid blocks, as the game has always drawn them here. The cheapest to shade.",
     };
 

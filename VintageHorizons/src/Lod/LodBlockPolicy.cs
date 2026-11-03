@@ -31,6 +31,12 @@ public enum LodLeafShape : byte
 
     /// <summary>The same, with a flat plane through the top of each stack of cells.</summary>
     ClustersWithTops,
+
+    /// <summary>
+    /// What the game draws for a distant leaf: each visible leaf block its own two planes, about two
+    /// blocks across and two tall, at an angle picked by where it is. Last, so stored values keep.
+    /// </summary>
+    VanillaStyle,
 }
 
 public static class LodBlockPolicy

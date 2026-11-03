@@ -167,7 +167,7 @@ void main()
             vertexColorIn.rgb *= 1.0 - 0.03 * float((vhColor >> 20u) & 15u);
             if (vhY1 > vhY0)
             {
-                vhPlaneUv.y *= (vhY1 - vhY0) / max(vhX1 - vhX0, 1.0);
+                vhPlaneUv.y *= (vhY1 - vhY0) / max(max(vhX1 - vhX0, vhZ1 - vhZ0), 1.0);
                 if (vhLogicalCorner < 2u)
                     vertexColorIn.rgb *= 1.0 - mix(0.16, 0.36, clamp((vhY1 - vhY0) / 12.0, 0.0, 1.0));
             }

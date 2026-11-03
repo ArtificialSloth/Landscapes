@@ -1273,6 +1273,11 @@ public static class LodMesher
                     || !CellFilled(north.snap, north.col, y) || !CellFilled(south.snap, south.col, y));
             if (visible)
             {
+                if (job.LeafShape == LodLeafShape.VanillaStyle)
+                {
+                    AddVanillaLeafPlanes(job, opaque, self, pid, cx, cz, y);
+                    continue;
+                }
                 if (spanTop < 0) spanTop = y + 1;
                 if (clusters)
                 {
@@ -1503,6 +1508,54 @@ public static class LodMesher
         AddQuad(buf, LodPackedFace.DiagonalFalling, 1, color, alpha,
             x, y0, z1, x1, y0, z, x1, y1, z, x, y1, z1, textureSlot, shade);
         return shade;
+    }
+
+    /// <summary>
+    /// One leaf block as the game draws it from afar (<see cref="LodLeafShape.VanillaStyle"/>): two
+    /// planes square to each other, two blocks tall from half a block below it, each about two blocks
+    /// across, so neighbours overlap in a jumble rather than a lattice. A plane runs corner to corner of
+    /// a box on whole-block corners (<see cref="LodPackedQuadFormat"/>), so where the game's is two
+    /// blocks wide at seven angles, this one runs the diagonal of a two-by-one box: 2.24 blocks at 27
+    /// or 63 degrees, its long side reaching one block either way. Which, from the block's position,
+    /// so a remesh draws the same tree.
+    /// </summary>
+    static void AddVanillaLeafPlanes(MeshJob job, Buffers buf, SectionSnapshot self, int pid,
+        int cx, int cz, int y)
+    {
+        int color = self.WallColor(pid, true);
+        byte alpha = AlphaFor(self.PaletteFlags[pid], self.PaletteTintSlots[pid]);
+        int textureSlot = self.PaletteTextureSlots[pid];
+        int shade = LeafBuried(job, self, cx, cz, 1, y, y + 1);
+
+        uint hash = (uint)job.Key ^ (uint)(job.Key >> 32)
+            ^ (uint)cx * 73856093u ^ (uint)y * 19349663u ^ (uint)cz * 83492791u;
+        hash ^= hash >> 13;
+        hash *= 0x5bd1e995u;
+        hash ^= hash >> 15;
+
+        int gs = LodSection.GridSize;
+        int x0 = Math.Clamp(cx - (int)(hash & 1u), 0, gs - 2);
+        int z0 = Math.Clamp(cz - (int)((hash >> 1) & 1u), 0, gs - 2);
+        float y0 = Math.Max(0f, y - 0.5f), y1 = y + 1.5f;
+        // A rising plane long in X meets a falling one long in Z square on, and the other way round.
+        bool turned = (hash & 4u) != 0;
+        AddDiagonalPlane(buf, turned, color, alpha, x0, x0 + 2, cz, cz + 1, y0, y1, textureSlot, shade);
+        AddDiagonalPlane(buf, !turned, color, alpha, cx, cx + 1, z0, z0 + 2, y0, y1, textureSlot, shade);
+    }
+
+    static void AddDiagonalPlane(Buffers buf, bool falling, int color, byte alpha,
+        int x0, int x1, int z0, int z1, float y0, float y1, int textureSlot, int leafShade)
+    {
+        if (falling)
+        {
+            AddQuad(buf, LodPackedFace.DiagonalFalling, 1, color, alpha,
+                x0, y0, z1, x1, y0, z0, x1, y1, z0, x0, y1, z1, textureSlot, leafShade);
+        }
+        else
+        {
+            AddQuad(buf, LodPackedFace.DiagonalRising, 1, color, alpha,
+                x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0, textureSlot, leafShade);
+        }
     }
 
     /// <summary>
