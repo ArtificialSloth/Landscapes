@@ -2784,7 +2784,7 @@ public static class StaticAssetChecks
         c.True(dialog.Contains("composer.AddStaticText(\"Cost\", CairoFont.WhiteDetailText()",
                 StringComparison.Ordinal)
             && dialog.Contains("ElementBounds.Fixed(VintageHorizonsConfigLayout.ColumnCostX(column),", StringComparison.Ordinal)
-            && dialog.Contains("VintageHorizonsConfigLayout.VisualHeadingY + 6",
+            && dialog.Contains("VintageHorizonsConfigLayout.VisualHeadingY + 7",
                 StringComparison.Ordinal),
             "the per-row cost words carry a column heading over the same box they use");
 

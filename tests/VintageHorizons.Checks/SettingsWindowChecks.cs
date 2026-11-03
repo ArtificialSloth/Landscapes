@@ -158,7 +158,7 @@ public static class SettingsWindowChecks
 
     static void LayoutStaysClear(Check c)
     {
-        c.True(VintageHorizonsConfigLayout.LodTitleY + 30 <= VintageHorizonsConfigLayout.AutoNoteY
+        c.True(VintageHorizonsConfigLayout.LodTitleY + 28 <= VintageHorizonsConfigLayout.AutoNoteY
                 && VintageHorizonsConfigLayout.AutoNoteY + 22 <= VintageHorizonsConfigLayout.ScaleY,
             "one title heads the page, with the line on Automatic between it and the bar (owner, 2026-10-19)");
         string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
@@ -210,9 +210,11 @@ public static class SettingsWindowChecks
                 && dialog.Contains("\"auto-label\"", StringComparison.Ordinal),
             "grabbing a locked L1-L6 handle flashes the Automatic label red");
         c.True(dialog.Contains("ComposeFooterToggles(composer);", StringComparison.Ordinal)
-                && VintageHorizonsConfigLayout.FooterLeft >= VintageHorizonsConfigLayout.Margin + 140
+                && VintageHorizonsConfigLayout.FooterLeft
+                    >= VintageHorizonsConfigLayout.Margin + VintageHorizonsConfigLayout.FooterButtonWidth
                 && VintageHorizonsConfigLayout.FooterRight
-                    <= VintageHorizonsConfigLayout.Width - VintageHorizonsConfigLayout.Margin - 275,
+                    <= VintageHorizonsConfigLayout.Width - VintageHorizonsConfigLayout.Margin
+                        - 2 * VintageHorizonsConfigLayout.FooterButtonWidth - VintageHorizonsConfigLayout.FooterButtonGap,
             "paused loading and Developer options sit in the action row between Defaults and Cancel");
         c.True(VintageHorizonsConfigLayout.ScaleY + VintageHorizonsConfigLayout.ScaleHeight
                     <= VintageHorizonsConfigLayout.RuleY
@@ -246,9 +248,18 @@ public static class SettingsWindowChecks
             "the visual features heading finishes before the first feature row");
         c.True(VintageHorizonsConfigLayout.RowSwitchSize <= VintageHorizonsConfigLayout.VisualRowHeight - 2,
             "a row's switch fits its pitch");
-        c.True(VintageHorizonsConfigLayout.NoteY + VintageHorizonsConfigLayout.VisualRowHeight
-                <= VintageHorizonsConfigLayout.ButtonY - 6,
+        c.True(VintageHorizonsConfigLayout.NoteY + VintageHorizonsConfigLayout.VisualRowHeight - 2
+                <= VintageHorizonsConfigLayout.ButtonY - 4,
             "the features and the no-sampler note end above the action row");
+        c.True(VintageHorizonsConfigLayout.Margin + VintageHorizonsConfigLayout.ColumnWidth
+                <= VintageHorizonsConfigLayout.Width - VintageHorizonsConfigLayout.Margin - 300,
+            "the note keeps to the left column, clear of the version on the same line");
+        // Lora Bold runs about 6.2 units a point for \"Performance\", the longest name (2026-11-03 review).
+        c.True(VintageHorizonsConfigLayout.PresetButtonWidth >= 6.2 * VintageHorizonsConfigLayout.PresetFontSize + 16,
+            "every preset name fits its button: at 24 points \"Performance\" was cut to \"Performan\"");
+        c.True(VintageHorizonsConfigLayout.SwitchX + 32
+                == VintageHorizonsConfigLayout.Width - VintageHorizonsConfigLayout.Margin,
+            "the switches end on the same right edge as the bar, the rules and Save");
     }
 
     static string Source(params string[] parts) => File.ReadAllText(

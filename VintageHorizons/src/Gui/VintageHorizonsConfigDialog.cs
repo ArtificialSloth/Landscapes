@@ -57,11 +57,11 @@ internal static class VintageHorizonsConfigLayout
     /// </summary>
     internal const double Height = 640;
     internal const double Margin = 32;
-    internal const double SwitchX = 824;
+    internal const double SwitchX = 836;
     internal const double ButtonY = Height - 48;
 
     /// <summary>The mod's version, dim and right-aligned just above Save (owner, 2026-11-03).</summary>
-    internal const double VersionY = ButtonY - 22;
+    internal const double VersionY = ButtonY - 26;
     internal const double TabsWidth = 760;
     internal const int PlannedTabCount = 3;
 
@@ -70,12 +70,15 @@ internal static class VintageHorizonsConfigLayout
     /// rule under them like the one under the bar (owner, 2026-11-03; a drop-down over the visual
     /// features until then). The LOD title below them shrank to the row labels' size to make room.
     /// </summary>
-    internal const double PresetRowY = 36;
-    internal const double PresetButtonsX = Margin + 90;
-    internal const double PresetButtonWidth = 136;
-    internal const double PresetButtonGap = 10;
+    internal const double PresetRowY = 38;
+    internal const double PresetButtonsX = Margin + 80;
+    internal const double PresetButtonWidth = 128;
+    internal const double PresetButtonGap = 8;
     internal const double PresetButtonHeight = 28;
-    internal const double PresetRuleY = 68;
+
+    /// <summary>The preset buttons' text: the game's button face at 18, so "Performance" fits.</summary>
+    internal const float PresetFontSize = 18;
+    internal const double PresetRuleY = 74;
     internal static double PresetButtonX(int i) => PresetButtonsX + i * (PresetButtonWidth + PresetButtonGap);
 
     /// <summary>
@@ -84,13 +87,13 @@ internal static class VintageHorizonsConfigLayout
     /// title and a help line stood here; the bar's Cache box already shows the draw distance, and
     /// the help line is the title's hover.
     /// </summary>
-    internal const double LodTitleY = 76;
+    internal const double LodTitleY = 86;
 
     /// <summary>
     /// A small line under the title saying why Automatic is recommended (owner, 2026-10-19).
     /// </summary>
-    internal const double AutoNoteY = 106;
-    internal const double ScaleY = 128;
+    internal const double AutoNoteY = 114;
+    internal const double ScaleY = 138;
 
     /// <summary>
     /// 214 so each lane of marker boxes has a gap to the next: at 200 the Farseer box sat on the
@@ -103,7 +106,7 @@ internal static class VintageHorizonsConfigLayout
     /// A horizontal rule under the bar parts the distances from the switches (owner, 2026-10-19),
     /// where the draw distance heading used to be.
     /// </summary>
-    internal const double RuleY = 344;
+    internal const double RuleY = 354;
     internal const double RuleHeight = 4;
 
     /// <summary>
@@ -111,20 +114,31 @@ internal static class VintageHorizonsConfigLayout
     /// columns, Farseer beside its seam fog first and all-cores collection under the fog, at a
     /// roomier 30-unit pitch now that the page has the space.
     /// </summary>
-    internal const double VisualHeadingY = 352;
-    internal const double VisualRowsY = 382;
+    internal const double VisualHeadingY = 362;
+    internal const double VisualRowsY = 392;
+
+    /// <summary>
+    /// Both section titles, LOD Thresholds and Visual features, at one size between the row labels
+    /// and the old large heading (2026-11-03 window review), in a 28-unit box.
+    /// </summary>
+    internal const float HeadingFontSize = 22;
     internal const int VisualLineCount = 6;
     internal const double VisualRowHeight = 28;
 
-    /// <summary>The no-sampler note, a line under the features.</summary>
-    internal const double NoteY = VisualRowsY + VisualLineCount * VisualRowHeight + 6;
+    /// <summary>
+    /// The no-sampler note, a line under the features. It shares that line with the version, which
+    /// is right-aligned beyond the left column the note keeps to.
+    /// </summary>
+    internal const double NoteY = VisualRowsY + VisualLineCount * VisualRowHeight;
 
     /// <summary>
     /// Paused loading and Developer options sit in the action row between Defaults and Cancel
     /// (owner, 2026-10-19): they change how the mod works rather than what it draws.
     /// </summary>
-    internal const double FooterLeft = Margin + 140 + 20;
-    internal const double FooterRight = Width - Margin - 275 - 16;
+    internal const double FooterButtonWidth = 124;
+    internal const double FooterButtonGap = 10;
+    internal const double FooterLeft = Margin + FooterButtonWidth + 16;
+    internal const double FooterRight = Width - Margin - 2 * FooterButtonWidth - FooterButtonGap - 16;
 
     /// <summary>The rows' switches, sized to their 28-unit pitch.</summary>
     internal const double RowSwitchSize = 26;
@@ -148,10 +162,10 @@ internal static class VintageHorizonsConfigLayout
 
     internal const double ColumnGap = 32;
     internal const double ColumnWidth = (SwitchX + 32 - Margin - ColumnGap) / 2;
-    internal const double CostWidth = 72;
+    internal const double CostWidth = 70;
     internal static double ColumnX(int column) => Margin + column * (ColumnWidth + ColumnGap);
     internal static double ColumnSwitchX(int column) => ColumnX(column) + ColumnWidth - RowSwitchSize - 3;
-    internal static double ColumnCostX(int column) => ColumnSwitchX(column) - 8 - CostWidth;
+    internal static double ColumnCostX(int column) => ColumnSwitchX(column) - 6 - CostWidth;
 
     // The Developer tab's anti-aliasing rows: where each slider starts, how wide it is, and the
     // row pitch, under the group drop-down, the explainer and the reach help.
@@ -222,6 +236,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     const double Margin = VintageHorizonsConfigLayout.Margin;
     const double SwitchX = VintageHorizonsConfigLayout.SwitchX;
     const double RowHeight = VintageHorizonsConfigLayout.VisualRowHeight;
+    const double FooterButtonWidth = VintageHorizonsConfigLayout.FooterButtonWidth;
+    const double FooterButtonGap = VintageHorizonsConfigLayout.FooterButtonGap;
+
+    /// <summary>A section title: LOD Thresholds, Visual features, Generate real terrain.</summary>
+    static CairoFont HeadingFont() =>
+        CairoFont.WhiteSmallishText().WithFontSize(VintageHorizonsConfigLayout.HeadingFontSize);
 
     const int GeneralTab = 0;
     const int GenerateTab = 1;
@@ -791,14 +811,16 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (shownTab == GenerateTab) return;
 
         composer.AddButton("Defaults", OnDefaults,
-            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY), 140, 38),
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY), FooterButtonWidth, 38),
             EnumButtonStyle.Normal, "defaults");
         ComposeFooterToggles(composer);
         composer.AddButton("Cancel", OnCancel,
-            ElementBounds.Fixed(Width - Margin - 275, Y(VintageHorizonsConfigLayout.ButtonY), 130, 38),
+            ElementBounds.Fixed(Width - Margin - 2 * FooterButtonWidth - FooterButtonGap,
+                Y(VintageHorizonsConfigLayout.ButtonY), FooterButtonWidth, 38),
             EnumButtonStyle.Normal, "cancel");
         composer.AddButton("Save", OnSave,
-            ElementBounds.Fixed(Width - Margin - 140, Y(VintageHorizonsConfigLayout.ButtonY), 140, 38),
+            ElementBounds.Fixed(Width - Margin - FooterButtonWidth, Y(VintageHorizonsConfigLayout.ButtonY),
+                FooterButtonWidth, 38),
             EnumButtonStyle.Normal, "save");
     }
 
@@ -880,7 +902,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         const double titleY = VintageHorizonsConfigLayout.LodTitleY;
         composer.AddStaticText("LOD Thresholds (Drag to adjust)",
-            CairoFont.WhiteSmallishText(), ElementBounds.Fixed(Margin, Y(titleY), 560, 26));
+            HeadingFont(), ElementBounds.Fixed(Margin, Y(titleY), 560, 28));
         AddTip(composer, ScaleHelp, CairoFont.WhiteSmallText(), 420,
             ElementBounds.Fixed(Margin, Y(titleY - 2), 560, 34), "tip-scale-help");
         composer.AddStaticText(AutoNote,
@@ -890,7 +912,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         // (owner screenshot, 0.4.174).
         // Dynamic, so it can flash red when a locked handle is grabbed (owner, 2026-11-03).
         composer.AddDynamicText(AutomaticLabel, AutomaticLabelFont(false),
-            ElementBounds.Fixed(SwitchX - 250, Y(titleY + 1), 240, 22), "auto-label");
+            ElementBounds.Fixed(SwitchX - 250, Y(titleY + 4), 240, 22), "auto-label");
         automaticLabelComposed = true;
         composer.AddSwitch(OnAutomaticChanged,
             ElementBounds.Fixed(SwitchX, Y(titleY - 4), 32, 32), "auto-thresholds");
@@ -913,17 +935,17 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         AddRule(composer, VintageHorizonsConfigLayout.RuleY);
 
-        composer.AddStaticText("Visual features", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.VisualHeadingY), 230, 30));
+        composer.AddStaticText("Visual features", HeadingFont(),
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.VisualHeadingY), 230, 28));
         // The cost words are a column in each half, so each gets a column heading. It sits over
         // the same box the words themselves use and shares their right edge, because a
         // right-aligned word under a left-aligned heading does not read as one column.
         for (int column = 0; column < 2; column++)
         {
-            composer.AddStaticText("Cost", CairoFont.WhiteDetailText(),
+            composer.AddStaticText("Cost", CairoFont.WhiteDetailText().WithColor(new[] { 1.0, 1.0, 1.0, 0.6 }),
                 EnumTextOrientation.Right,
                 ElementBounds.Fixed(VintageHorizonsConfigLayout.ColumnCostX(column),
-                    Y(VintageHorizonsConfigLayout.VisualHeadingY + 6),
+                    Y(VintageHorizonsConfigLayout.VisualHeadingY + 7),
                     VintageHorizonsConfigLayout.CostWidth, 22));
         }
 
@@ -1040,7 +1062,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         const double size = VintageHorizonsConfigLayout.RowSwitchSize;
         const double left = VintageHorizonsConfigLayout.FooterLeft;
         const double right = VintageHorizonsConfigLayout.FooterRight;
-        const double gap = 16;
+        const double gap = 24;
         const string paused = "Load terrain while paused";
         const string developer = "Developer options";
         double y = VintageHorizonsConfigLayout.ButtonY + 6;
@@ -1425,8 +1447,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             ElementBounds.Fixed(DialSliderX + DialSliderWidth + 15, Y(y + 4), 110, 22),
             "detail-target-label");
 
-        composer.AddStaticText("Show Anti-Aliased Area", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ShowTaaY + 2), 650, 30));
+        composer.AddStaticText("Show Anti-Aliased Area", CairoFont.WhiteSmallishText(),
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ShowTaaY + 4), 650, 26));
         composer.AddSwitch(OnShowChanged,
             ElementBounds.Fixed(SwitchX, Y(VintageHorizonsConfigLayout.ShowTaaY), 32, 32),
             "taa-show");
@@ -1649,8 +1671,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void ComposeGenerate(GuiComposer composer)
     {
-        composer.AddStaticText("Generate real terrain", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, Y(42), 500, 30));
+        composer.AddStaticText("Generate real terrain", HeadingFont(),
+            ElementBounds.Fixed(Margin, Y(42), 500, 28));
         composer.AddDynamicText(WorldGenAvailability(), CairoFont.WhiteSmallText(),
             ElementBounds.Fixed(Margin, Y(74), Width - 2 * Margin, 42), "wg-availability");
 
@@ -1732,15 +1754,15 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             return;
         }
         composer.AddButton("Prepare", OnWorldGenPrepare,
-            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY), 170, 38), EnumButtonStyle.Normal, "wg-prepare");
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.ButtonY), 178, 38), EnumButtonStyle.Normal, "wg-prepare");
         composer.AddButton("Confirm", OnWorldGenConfirm,
-            ElementBounds.Fixed(Margin + 180, Y(VintageHorizonsConfigLayout.ButtonY), 170, 38), EnumButtonStyle.Normal, "wg-confirm");
+            ElementBounds.Fixed(Margin + 188, Y(VintageHorizonsConfigLayout.ButtonY), 178, 38), EnumButtonStyle.Normal, "wg-confirm");
         composer.AddButton("Pause", OnWorldGenPause,
-            ElementBounds.Fixed(Margin + 360, Y(VintageHorizonsConfigLayout.ButtonY), 135, 38), EnumButtonStyle.Normal, "wg-pause");
+            ElementBounds.Fixed(Margin + 376, Y(VintageHorizonsConfigLayout.ButtonY), 146, 38), EnumButtonStyle.Normal, "wg-pause");
         composer.AddButton("Resume", OnWorldGenResume,
-            ElementBounds.Fixed(Margin + 505, Y(VintageHorizonsConfigLayout.ButtonY), 135, 38), EnumButtonStyle.Normal, "wg-resume");
+            ElementBounds.Fixed(Margin + 532, Y(VintageHorizonsConfigLayout.ButtonY), 146, 38), EnumButtonStyle.Normal, "wg-resume");
         composer.AddButton("Stop", OnWorldGenStop,
-            ElementBounds.Fixed(Margin + 650, Y(VintageHorizonsConfigLayout.ButtonY), 135, 38), EnumButtonStyle.Normal, "wg-stop");
+            ElementBounds.Fixed(Margin + 688, Y(VintageHorizonsConfigLayout.ButtonY), 148, 38), EnumButtonStyle.Normal, "wg-stop");
 
         worldGen.Client?.SetWorldGenPageOpen(true);
     }
@@ -2069,9 +2091,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             bool custom = i == LodPreset.All.Length;
             ElementBounds bounds = ElementBounds.Fixed(VintageHorizonsConfigLayout.PresetButtonX(i), Y(rowY),
                 VintageHorizonsConfigLayout.PresetButtonWidth, VintageHorizonsConfigLayout.PresetButtonHeight);
-            CairoFont font = custom
-                ? CairoFont.ButtonText().WithColor(new[] { 1.0, 1.0, 1.0, 0.55 })
-                : CairoFont.ButtonText();
+            CairoFont font = CairoFont.ButtonText().WithFontSize(VintageHorizonsConfigLayout.PresetFontSize);
+            if (custom) font = font.WithColor(new[] { 1.0, 1.0, 1.0, 0.55 });
             composer.AddToggleButton(PresetNames[i], font, on => OnPresetButton(index), bounds,
                 "preset-" + PresetCodes[i]);
             AddTip(composer, custom ? CustomPresetTip : LodPreset.All[i].Summary, CairoFont.WhiteSmallText(), 360,
