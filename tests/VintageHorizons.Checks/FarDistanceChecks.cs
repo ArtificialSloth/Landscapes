@@ -184,6 +184,38 @@ public static class FarDistanceChecks
         c.False(LodFarDistance.CellInsideTerrain(0, 0, 32, 16, 16, 16f),
             "nothing is inside an end shorter than the slack");
 
+        // Farseer skips a tile's coverage when the whole tile is outside: that must never skip
+        // a tile holding a cell the rule above would grant, from anywhere in the player's chunk.
+        bool skipSafe = true;
+        int skipped = 0, kept = 0;
+        for (double camX = 0; camX < 32; camX += 7.3)
+        {
+            double snapX = LodFarDistance.SnapCamera(camX);
+            double snapZ = LodFarDistance.SnapCamera(31 - camX);
+            for (int tileZ = -6; tileZ < 6; tileZ++)
+            {
+                for (int tileX = -6; tileX < 6; tileX++)
+                {
+                    if (!LodFarDistance.AreaOutsideTerrain(tileX * 512, tileZ * 512, 512,
+                            snapX, snapZ, 1800f))
+                    {
+                        kept++;
+                        continue;
+                    }
+                    skipped++;
+                    for (int cz = 0; cz < 16; cz++)
+                        for (int cx = 0; cx < 16; cx++)
+                            if (LodFarDistance.CellInsideTerrain(tileX * 512 + cx * 32,
+                                    tileZ * 512 + cz * 32, 32, snapX, snapZ, 1800f))
+                                skipSafe = false;
+                }
+            }
+        }
+        c.True(skipSafe, "no tile skipped as outside the terrain holds a cell inside it");
+        c.True(skipped > 0 && kept > 0, $"the skip test saw both kinds of tile ({skipped} skipped, {kept} kept)");
+        c.True(LodFarDistance.AreaOutsideTerrain(0, 0, 512, 16, 16, 16f),
+            "with an end shorter than the slack every tile is outside");
+
         // The rule's whole promise, from every position in a chunk: no cell granted past the
         // shader's discard, for a true camera the snap has moved by as much as it can.
         const float end = 1024f;

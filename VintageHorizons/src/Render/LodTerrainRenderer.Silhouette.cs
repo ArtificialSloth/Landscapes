@@ -104,6 +104,26 @@ public partial class LodTerrainRenderer
     internal long SilhouetteTrianglesLastFrame { get; private set; }
     internal int SilhouetteMeshCount => silhouetteMeshes.Count;
     int silhouetteUploadFailures;
+    readonly Vec3f silhouetteTileOrigin = new();
+    readonly Vec4f silhouetteCoverageWords = new();
+
+    /// <summary>
+    /// Farseer's main-thread time per frame since the last stats report: preparing (tile coverage
+    /// and the fog outline) and issuing its draws. With the tiles drawn and the tiles skipped as
+    /// wholly covered, this is what the periodic stats line reports; the graphics card's own time
+    /// is not counted.
+    /// </summary>
+    public LodPhaseCost SilhouettePrepareCost, SilhouetteDrawCost;
+    internal long SilhouetteTilesDrawn { get; private set; }
+    internal long SilhouetteCoveredTilesSkipped { get; private set; }
+
+    void ResetSilhouetteCosts()
+    {
+        SilhouettePrepareCost.Reset();
+        SilhouetteDrawCost.Reset();
+        SilhouetteTilesDrawn = 0;
+        SilhouetteCoveredTilesSkipped = 0;
+    }
 
     /// <summary>Cached terrain changes its fade target only when a silhouette can actually draw.</summary>
     bool SilhouetteFadeTargetActive => Silhouettes is { Enabled: true }
@@ -261,11 +281,19 @@ public partial class LodTerrainRenderer
                 LodSilhouetteCoverage replacements = SilhouetteStableReplacementCoverage(mesh);
                 mesh.FogReplacements = replacements;
                 mesh.FogCoverageFrame = silhouetteFogFrame;
-                int resolution = LodSilhouetteField.ResolutionFor(
-                    ScreenBlockScale, Math.Max(1.0, Math.Sqrt(nearestDistanceSq)),
-                    SilhouetteOutlineDetail);
-                silhouetteFrameDraws.Add(new SilhouetteFrameDraw(
-                    mesh, (float)relX, (float)relZ, replacements, resolution));
+                // Wholly covered, the shader discards every fragment, so the draw is skipped.
+                if (replacements.IsFull)
+                {
+                    SilhouetteCoveredTilesSkipped++;
+                }
+                else
+                {
+                    int resolution = LodSilhouetteField.ResolutionFor(
+                        ScreenBlockScale, Math.Max(1.0, Math.Sqrt(nearestDistanceSq)),
+                        SilhouetteOutlineDetail);
+                    silhouetteFrameDraws.Add(new SilhouetteFrameDraw(
+                        mesh, (float)relX, (float)relZ, replacements, resolution));
+                }
             }
             else if (SilhouetteFogEnabled && offscreenRefreshes > 0
                 && (mesh.FogCoverageFrame < 0
@@ -331,6 +359,7 @@ public partial class LodTerrainRenderer
 
         var rapi = capi.Render;
         if (rapi.FrameWidth == 0) return;
+        LodPhaseStart drawStart = LodPhaseCost.Start(TrackPhaseAllocations);
 
         // A no-op unless the needed distance changed; a change applies from the next frame.
         ApplyZFar();
@@ -367,7 +396,10 @@ public partial class LodTerrainRenderer
         foreach (SilhouetteFrameDraw draw in silhouetteFrameDraws)
         {
             SilhouetteGpuMesh mesh = draw.Mesh;
-            p.Uniform("tileOrigin", new Vec3f(draw.RelX, (float)-cam.Y, draw.RelZ));
+            // One set of vectors reused for every tile: the values are sent as each call is made,
+            // and a fresh object per tile per frame was a few MB/s of garbage at long reach.
+            silhouetteTileOrigin.Set(draw.RelX, (float)-cam.Y, draw.RelZ);
+            p.Uniform("tileOrigin", silhouetteTileOrigin);
             p.Uniform("replacementCells0", CoverageWords(draw.Replacements, 0));
             p.Uniform("replacementCells1", CoverageWords(draw.Replacements, 4));
             p.Uniform("replacementCells2", CoverageWords(draw.Replacements, 8));
@@ -387,6 +419,8 @@ public partial class LodTerrainRenderer
             SilhouetteDrawsLastFrame++;
         }
         p.Stop();
+        SilhouetteTilesDrawn += SilhouetteDrawsLastFrame;
+        SilhouetteDrawCost.Add(drawStart);
     }
 
     static ulong SilhouetteSeamTileSignature(
@@ -517,7 +551,8 @@ public partial class LodTerrainRenderer
 
     // GLSL integer-vector uniforms are unsafe through this engine API (G16). Four exact 16-bit
     // values fit losslessly in one float vector, cutting 16 scalar uploads down to four calls.
-    static Vec4f CoverageWords(LodSilhouetteCoverage coverage, int first) => new(
+    // Filled into one reused vector: each Uniform call sends its values before the next fill.
+    Vec4f CoverageWords(LodSilhouetteCoverage coverage, int first) => silhouetteCoverageWords.Set(
         coverage.ShortWord(first), coverage.ShortWord(first + 1),
         coverage.ShortWord(first + 2), coverage.ShortWord(first + 3));
 
@@ -575,6 +610,16 @@ public partial class LodTerrainRenderer
         coveredByLevel.Clear();
         int tileBlockX = tileX * LodSilhouetteTile.TileBlocks;
         int tileBlockZ = tileZ * LodSilhouetteTile.TileBlocks;
+        float terrainEnd = LodFarDistance.TerrainEnd(TerrainFadeDistance);
+        double snappedCameraX = LodFarDistance.SnapCamera(camPos.X);
+        double snappedCameraZ = LodFarDistance.SnapCamera(camPos.Z);
+        // A tile wholly past the terrain's end can hold no cached cell, so only vanilla's
+        // readiness can cover it. At a short Cache distance that is most of Farseer's tiles, and
+        // the lookups below cost a few microseconds per tile every frame.
+        if (LodFarDistance.AreaOutsideTerrain(tileBlockX, tileBlockZ, LodSilhouetteTile.TileBlocks,
+                snappedCameraX, snappedCameraZ, terrainEnd))
+            return WithReadyVanillaColumns(LodSilhouetteCoverage.Empty, tileX, tileZ);
+
         int tileMaxBlockX = tileBlockX + LodSilhouetteTile.TileBlocks;
         int tileMaxBlockZ = tileBlockZ + LodSilhouetteTile.TileBlocks;
         for (int level = 0; level <= LodWorld.MaxLevel; level++)
@@ -628,9 +673,6 @@ public partial class LodTerrainRenderer
         }
 
         float cullDistanceSquared = LodFarDistance.CullDistanceSquared(FarViewDistanceCap);
-        float terrainEnd = LodFarDistance.TerrainEnd(TerrainFadeDistance);
-        double snappedCameraX = LodFarDistance.SnapCamera(camPos.X);
-        double snappedCameraZ = LodFarDistance.SnapCamera(camPos.Z);
         LodSilhouetteCoverage result = LodSilhouetteCoverage.Empty;
         for (int cellZ = 0; cellZ < LodSilhouetteField.CoverageCellsPerEdge; cellZ++)
         {
@@ -660,6 +702,12 @@ public partial class LodTerrainRenderer
                 result = result.WithCovered(cellX, cellZ);
             }
         }
+        return WithReadyVanillaColumns(result, tileX, tileZ);
+    }
+
+    /// <summary>Adds the tile's columns vanilla has committed as render-ready.</summary>
+    LodSilhouetteCoverage WithReadyVanillaColumns(LodSilhouetteCoverage result, int tileX, int tileZ)
+    {
         if (!readinessMaskActive || readiness == null || readinessMask == null) return result;
 
         int tileChunkX = tileX * LodSilhouetteField.CoverageCellsPerEdge;

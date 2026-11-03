@@ -3200,6 +3200,22 @@ public partial class VintageHorizonsModSystem : ModSystem
                 renderer.DrawCost.P95Us, renderer.DrawCost.P99Us, renderer.DrawCost.MaxUs,
                 renderer.ReadinessCost.P95Us, renderer.ReadinessCost.P99Us, renderer.ReadinessCost.MaxUs);
 
+            // Farseer's own share, which the setting benchmarks could only infer: its cost grew
+            // with its reach at about 5 us per tile in view (2026-11-02).
+            if (renderer.SilhouettePrepareCost.Calls > 0)
+            {
+                int frames = renderer.SilhouettePrepareCost.Calls;
+                Mod.Logger.Detail(
+                    "  Farseer per frame over {0} frames: preparing {1:0.0}us avg / {2:0.0}us max "
+                    + "(tile coverage and the fog outline) | drawing {3:0.0}/{4:0.0} | "
+                    + "{5:0.0} tiles drawn, {6:0.0} skipped as wholly covered",
+                    frames,
+                    renderer.SilhouettePrepareCost.AvgUs, renderer.SilhouettePrepareCost.MaxUs,
+                    renderer.SilhouetteDrawCost.AvgUs, renderer.SilhouetteDrawCost.MaxUs,
+                    renderer.SilhouetteTilesDrawn / (double)frames,
+                    renderer.SilhouetteCoveredTilesSkipped / (double)frames);
+            }
+
             // The one line that can see the reported micro-hitches at all. Everything
             // above it measures our own phases; this measures the frame the player
             // actually experiences, and how much of it was us.

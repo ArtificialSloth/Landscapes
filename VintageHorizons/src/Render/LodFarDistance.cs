@@ -186,6 +186,21 @@ internal static class LodFarDistance
             Math.Abs(cellMinZ + cellBlocks - snappedCameraZ));
         return dx * dx + dz * dz <= reach * reach;
     }
+
+    /// <summary>
+    /// Whether no cell of an area can pass <see cref="CellInsideTerrain"/>: its nearest point
+    /// already lies past the terrain's end, and a cell is judged by its farthest corner, which is
+    /// never nearer. Lets Farseer skip working out coverage for tiles nothing cached can reach.
+    /// </summary>
+    public static bool AreaOutsideTerrain(double minX, double minZ, int blocks,
+        double snappedCameraX, double snappedCameraZ, float terrainEnd)
+    {
+        double reach = terrainEnd - OwnedEdgeSlackBlocks;
+        if (reach <= 0) return true;
+        double dx = Math.Max(0, Math.Max(minX - snappedCameraX, snappedCameraX - (minX + blocks)));
+        double dz = Math.Max(0, Math.Max(minZ - snappedCameraZ, snappedCameraZ - (minZ + blocks)));
+        return dx * dx + dz * dz > reach * reach;
+    }
 }
 
 /// <summary>

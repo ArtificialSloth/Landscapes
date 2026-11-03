@@ -1390,6 +1390,7 @@ public partial class LodTerrainRenderer : IRenderer
         WalkCost.Reset();
         frameTimeline.Reset();
         DrawCost.Reset();
+        ResetSilhouetteCosts();
         ProjectionResetCount = 0;
         MeshUploadBytes = 0;
         MeshSnapshotBytes = 0;
