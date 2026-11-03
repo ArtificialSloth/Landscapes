@@ -2779,12 +2779,12 @@ public static class StaticAssetChecks
             "network-thread generation status reaches the live page and the session unsubscribes");
         c.True(dialog.Contains("AddTip(composer, row.Tip", StringComparison.Ordinal),
             "and each feature explains itself on hover");
-        c.True(dialog.Contains("AddDropDown(PresetCodes, PresetNames", StringComparison.Ordinal),
-            "the presets are a drop-down carrying the current combination as its selection");
+        c.True(dialog.Contains("composer.AddToggleButton(PresetNames[i], font, on => OnPresetButton(index), bounds,", StringComparison.Ordinal),
+            "the presets are a row of buttons, the current combination lit (owner, 2026-11-03)");
         c.True(dialog.Contains("composer.AddStaticText(\"Cost\", CairoFont.WhiteDetailText()",
                 StringComparison.Ordinal)
             && dialog.Contains("ElementBounds.Fixed(VintageHorizonsConfigLayout.ColumnCostX(column),", StringComparison.Ordinal)
-            && dialog.Contains("VintageHorizonsConfigLayout.VisualHeadingY + 10",
+            && dialog.Contains("VintageHorizonsConfigLayout.VisualHeadingY + 6",
                 StringComparison.Ordinal),
             "the per-row cost words carry a column heading over the same box they use");
 

@@ -66,18 +66,31 @@ internal static class VintageHorizonsConfigLayout
     internal const int PlannedTabCount = 3;
 
     /// <summary>
+    /// The presets head the page as a row of buttons, with Custom lit when nothing matches, and a
+    /// rule under them like the one under the bar (owner, 2026-11-03; a drop-down over the visual
+    /// features until then). The LOD title below them shrank to the row labels' size to make room.
+    /// </summary>
+    internal const double PresetRowY = 36;
+    internal const double PresetButtonsX = Margin + 90;
+    internal const double PresetButtonWidth = 136;
+    internal const double PresetButtonGap = 10;
+    internal const double PresetButtonHeight = 28;
+    internal const double PresetRuleY = 68;
+    internal static double PresetButtonX(int i) => PresetButtonsX + i * (PresetButtonWidth + PresetButtonGap);
+
+    /// <summary>
     /// One title over the bar, "LOD Thresholds (Drag to adjust)", beside the Automatic switch
     /// (owner, 2026-10-19). Until 0.4.173 a draw-distance heading with its readout, a distances
     /// title and a help line stood here; the bar's Cache box already shows the draw distance, and
     /// the help line is the title's hover.
     /// </summary>
-    internal const double LodTitleY = 36;
+    internal const double LodTitleY = 76;
 
     /// <summary>
     /// A small line under the title saying why Automatic is recommended (owner, 2026-10-19).
     /// </summary>
-    internal const double AutoNoteY = 72;
-    internal const double ScaleY = 104;
+    internal const double AutoNoteY = 106;
+    internal const double ScaleY = 128;
 
     /// <summary>
     /// 214 so each lane of marker boxes has a gap to the next: at 200 the Farseer box sat on the
@@ -90,7 +103,7 @@ internal static class VintageHorizonsConfigLayout
     /// A horizontal rule under the bar parts the distances from the switches (owner, 2026-10-19),
     /// where the draw distance heading used to be.
     /// </summary>
-    internal const double RuleY = 324;
+    internal const double RuleY = 344;
     internal const double RuleHeight = 4;
 
     /// <summary>
@@ -98,8 +111,8 @@ internal static class VintageHorizonsConfigLayout
     /// columns, Farseer beside its seam fog first and all-cores collection under the fog, at a
     /// roomier 30-unit pitch now that the page has the space.
     /// </summary>
-    internal const double VisualHeadingY = 340;
-    internal const double VisualRowsY = 378;
+    internal const double VisualHeadingY = 352;
+    internal const double VisualRowsY = 382;
     internal const int VisualLineCount = 6;
     internal const double VisualRowHeight = 28;
 
@@ -862,9 +875,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void ComposeGeneral(GuiComposer composer)
     {
+        ComposePresetButtons(composer);
+        AddRule(composer, VintageHorizonsConfigLayout.PresetRuleY);
+
         const double titleY = VintageHorizonsConfigLayout.LodTitleY;
         composer.AddStaticText("LOD Thresholds (Drag to adjust)",
-            CairoFont.WhiteMediumText(), ElementBounds.Fixed(Margin, Y(titleY), 560, 30));
+            CairoFont.WhiteSmallishText(), ElementBounds.Fixed(Margin, Y(titleY), 560, 26));
         AddTip(composer, ScaleHelp, CairoFont.WhiteSmallText(), 420,
             ElementBounds.Fixed(Margin, Y(titleY - 2), 560, 34), "tip-scale-help");
         composer.AddStaticText(AutoNote,
@@ -874,10 +890,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         // (owner screenshot, 0.4.174).
         // Dynamic, so it can flash red when a locked handle is grabbed (owner, 2026-11-03).
         composer.AddDynamicText(AutomaticLabel, AutomaticLabelFont(false),
-            ElementBounds.Fixed(SwitchX - 250, Y(titleY + 6), 240, 22), "auto-label");
+            ElementBounds.Fixed(SwitchX - 250, Y(titleY + 1), 240, 22), "auto-label");
         automaticLabelComposed = true;
         composer.AddSwitch(OnAutomaticChanged,
-            ElementBounds.Fixed(SwitchX, Y(titleY), 32, 32), "auto-thresholds");
+            ElementBounds.Fixed(SwitchX, Y(titleY - 4), 32, 32), "auto-thresholds");
         // Over the label and the switch alike. GuiElementHoverText handles no mouse-down, so it
         // cannot swallow the click on the switch underneath it.
         AddTip(composer, AutomaticTip, CairoFont.WhiteSmallText(), 380,
@@ -899,15 +915,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         composer.AddStaticText("Visual features", CairoFont.WhiteMediumText(),
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.VisualHeadingY), 230, 30));
-        // The preset sits over the right column, clear of the left column's Cost heading.
-        double presetX = VintageHorizonsConfigLayout.ColumnX(1);
-        composer.AddStaticText("Preset", CairoFont.WhiteDetailText(),
-            ElementBounds.Fixed(presetX, Y(VintageHorizonsConfigLayout.VisualHeadingY + 8), 56, 22));
-        composer.AddDropDown(PresetCodes, PresetNames, PresetIndex(), OnPresetSelected,
-            ElementBounds.Fixed(presetX + 60, Y(VintageHorizonsConfigLayout.VisualHeadingY - 2), 190, 32),
-            "preset");
-        dropDownKeys.Add("preset");
-
         // The cost words are a column in each half, so each gets a column heading. It sits over
         // the same box the words themselves use and shares their right edge, because a
         // right-aligned word under a left-aligned heading does not read as one column.
@@ -916,7 +923,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             composer.AddStaticText("Cost", CairoFont.WhiteDetailText(),
                 EnumTextOrientation.Right,
                 ElementBounds.Fixed(VintageHorizonsConfigLayout.ColumnCostX(column),
-                    Y(VintageHorizonsConfigLayout.VisualHeadingY + 10),
+                    Y(VintageHorizonsConfigLayout.VisualHeadingY + 6),
                     VintageHorizonsConfigLayout.CostWidth, 22));
         }
 
@@ -2047,11 +2054,50 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         ? Array.IndexOf(LodPreset.All, preset)
         : LodPreset.All.Length;
 
-    void OnPresetSelected(string code, bool selected)
+    /// <summary>
+    /// The presets as a row of buttons across the top, then Custom, dimmer, which lights when the
+    /// settings match none of them (owner, 2026-11-03). Each button's hover is its summary.
+    /// </summary>
+    void ComposePresetButtons(GuiComposer composer)
     {
-        // "Custom" is a readout, not a choice.
-        if (!selected || Array.Find(LodPreset.All, preset => preset.Code == code) is not { } chosen) return;
-        ApplyPreset(chosen);
+        const double rowY = VintageHorizonsConfigLayout.PresetRowY;
+        composer.AddStaticText("Preset", CairoFont.WhiteSmallishText(),
+            ElementBounds.Fixed(Margin, Y(rowY + 2), 86, 26));
+        for (int i = 0; i < PresetCodes.Length; i++)
+        {
+            int index = i;
+            bool custom = i == LodPreset.All.Length;
+            ElementBounds bounds = ElementBounds.Fixed(VintageHorizonsConfigLayout.PresetButtonX(i), Y(rowY),
+                VintageHorizonsConfigLayout.PresetButtonWidth, VintageHorizonsConfigLayout.PresetButtonHeight);
+            CairoFont font = custom
+                ? CairoFont.ButtonText().WithColor(new[] { 1.0, 1.0, 1.0, 0.55 })
+                : CairoFont.ButtonText();
+            composer.AddToggleButton(PresetNames[i], font, on => OnPresetButton(index), bounds,
+                "preset-" + PresetCodes[i]);
+            AddTip(composer, custom ? CustomPresetTip : LodPreset.All[i].Summary, CairoFont.WhiteSmallText(), 360,
+                bounds.FlatCopy(), "tip-preset-" + PresetCodes[i]);
+        }
+        SetPresetButtons(composer);
+    }
+
+    const string CustomPresetTip =
+        "Lit when your settings match none of the presets. Pick a preset to start from it.";
+
+    /// <summary>
+    /// A button press toggles that button, so every press redraws the whole row from what the
+    /// settings now are: Custom is a readout, and pressing the lit preset leaves it lit.
+    /// </summary>
+    void OnPresetButton(int index)
+    {
+        if (index < LodPreset.All.Length) ApplyPreset(LodPreset.All[index]);
+        if (activeComposer != null) SetPresetButtons(activeComposer);
+    }
+
+    void SetPresetButtons(GuiComposer composer)
+    {
+        int shown = PresetIndex();
+        for (int i = 0; i < PresetCodes.Length; i++)
+            composer.GetToggleButton("preset-" + PresetCodes[i])?.SetValue(i == shown);
     }
 
     /// <summary>
@@ -2102,7 +2148,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         if (farseer.On != pendingSilhouettes.Enabled) farseer.On = pendingSilhouettes.Enabled;
         GuiElementSwitch fog = activeComposer.GetSwitch("silhouette-fog");
         if (fog.On != pendingSilhouettes.FogEnabled) fog.On = pendingSilhouettes.FogEnabled;
-        activeComposer.GetDropDown("preset").SetSelectedIndex(PresetIndex());
+        SetPresetButtons(activeComposer);
         scale?.SetSilhouette(pendingSilhouettes.ReachBlocks, pendingSilhouettes.Enabled);
     }
 
@@ -2110,7 +2156,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     void RefreshPresetReadout()
     {
         if (activeComposer?.Composed != true || shownTab != GeneralTab) return;
-        activeComposer.GetDropDown("preset").SetSelectedIndex(PresetIndex());
+        SetPresetButtons(activeComposer);
     }
 
     /// <summary>What the scale shows: automatic's live values, or the player's own.</summary>

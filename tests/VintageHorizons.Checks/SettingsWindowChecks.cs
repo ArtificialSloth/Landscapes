@@ -199,7 +199,7 @@ public static class SettingsWindowChecks
         c.True(!dialog.Contains(".AddHoverText(", StringComparison.Ordinal)
                     || dialog.Split(".AddHoverText(").Length == 2,
             "every tip goes through AddTip, so the frame hook knows it");
-        c.True(dialog.Contains("dropDownKeys.Add(\"preset\");", StringComparison.Ordinal)
+        c.True(dialog.Contains("dropDownKeys.Add(\"leaf-shape\");", StringComparison.Ordinal)
                 && dialog.Contains("listMenu?.IsOpened == true", StringComparison.Ordinal)
                 && dialog.Contains("SetAutoDisplay(!listOpen)", StringComparison.Ordinal)
                 && dialog.Contains("new FrameHook(capi, OnFrame)", StringComparison.Ordinal),
@@ -229,12 +229,21 @@ public static class SettingsWindowChecks
                 == VintageHorizonsConfigLayout.SwitchX + 32
                 && VintageHorizonsConfigLayout.ColumnCostX(0) - VintageHorizonsConfigLayout.ColumnX(0) >= 250,
             "the right column ends under the Automatic switch, and a title has 250 units before its cost");
-        c.True(VintageHorizonsConfigLayout.ColumnX(1) + 60 + 190
-                <= VintageHorizonsConfigLayout.ColumnCostX(1),
-            "the preset drop-down finishes before the right column's Cost heading");
-        // The preset drop-down hangs from the heading, 2 above it and 32 tall.
+        // Owner, 2026-11-03: the presets head the page as buttons, a rule under them.
+        c.True(VintageHorizonsConfigLayout.PresetButtonX(LodPreset.All.Length)
+                    + VintageHorizonsConfigLayout.PresetButtonWidth
+                    <= VintageHorizonsConfigLayout.Width - VintageHorizonsConfigLayout.Margin
+                && VintageHorizonsConfigLayout.PresetRowY + VintageHorizonsConfigLayout.PresetButtonHeight
+                    <= VintageHorizonsConfigLayout.PresetRuleY
+                && VintageHorizonsConfigLayout.PresetRuleY + VintageHorizonsConfigLayout.RuleHeight
+                    <= VintageHorizonsConfigLayout.LodTitleY - 4,
+            "every preset and Custom fit across the top, with a rule between them and the LOD title");
+        c.True(dialog.Contains("ComposePresetButtons(composer);\n        AddRule(composer, VintageHorizonsConfigLayout.PresetRuleY);", StringComparison.Ordinal)
+                && dialog.Contains("composer.GetToggleButton(\"preset-\" + PresetCodes[i])?.SetValue(i == shown);", StringComparison.Ordinal)
+                && !dialog.Contains("AddDropDown(PresetCodes", StringComparison.Ordinal),
+            "the drop-down is gone, and every press redraws the row from the settings, so Custom stays a readout");
         c.True(VintageHorizonsConfigLayout.VisualHeadingY + 30 <= VintageHorizonsConfigLayout.VisualRowsY,
-            "the preset drop-down finishes before the first feature row");
+            "the visual features heading finishes before the first feature row");
         c.True(VintageHorizonsConfigLayout.RowSwitchSize <= VintageHorizonsConfigLayout.VisualRowHeight - 2,
             "a row's switch fits its pitch");
         c.True(VintageHorizonsConfigLayout.NoteY + VintageHorizonsConfigLayout.VisualRowHeight
