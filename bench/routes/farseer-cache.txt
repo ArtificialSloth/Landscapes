@@ -1,0 +1,43 @@
+# Farseer against the Cache distance (owner, 2026-11-02, after setting-climb).
+#
+# setting-climb found Farseer nearly free on Ultra (Cache = reach = 8,192) but 0.34 ms at reach
+# 4,096 and 0.94 ms more at 8,192 over a 2,048 Cache, while cached terrain out to 8,192 cost 0.17 ms.
+# The idea under test: Farseer pays for the ring between the Cache distance and its reach, and pays
+# more per area than cached terrain. Same spot and conditions as the setting sweeps.
+#
+# Performance's visuals throughout (seam fog off). For detail targets 3 and 2, each Cache distance
+# is measured with Farseer off, with reach equal to the Cache, and with reach 8,192. At the widest
+# gap (detail 3, Cache 2,048, reach 8,192) Farseer's geometry detail is tried at 25 and 10 (default
+# 50). Each block ends on a repeat of its first stop, to show drift.
+#
+#   pwsh -File scripts/bench-windows.ps1 -Label farseer-cache -Route bench/routes/farseer-cache.txt `
+#     (the same inputs and switches as setting-climb.txt)
+#
+# name                   x          y       z           yaw    pitch
+
+warm1                    513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset performance; .dlset silhouette-enabled off; /time set 12:00; /time stop
+warm2                    513012.05  224.92  514130.02   181.2  -12.8
+warm3                    513012.05  224.92  514130.02   181.2  -12.8
+warm4                    513012.05  224.92  514130.02   181.2  -12.8
+warm5                    513012.05  224.92  514130.02   181.2  -12.8
+d3-c2048-off             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset detail-target 3; .dlset draw-distance 2048; .dlset silhouette-enabled off
+d3-c2048-r2048           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 2048; .dlset silhouette-enabled on
+d3-c2048-r8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 8192
+d3-c2048-r8192-geo25     513012.05  224.92  514130.02   181.2  -12.8  ! .dlset sil-detail 25
+d3-c2048-r8192-geo10     513012.05  224.92  514130.02   181.2  -12.8  ! .dlset sil-detail 10
+d3-c2048-r8192-geo50     513012.05  224.92  514130.02   181.2  -12.8  ! .dlset sil-detail 50
+d3-c4096-off             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 4096; .dlset silhouette-enabled off
+d3-c4096-r4096           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 4096; .dlset silhouette-enabled on
+d3-c4096-r8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 8192
+d3-c8192-off             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 8192; .dlset silhouette-enabled off
+d3-c8192-r8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-enabled on
+d3-c2048-off-again       513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 2048; .dlset silhouette-enabled off
+d2-c2048-off             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset detail-target 2; .dlset draw-distance 2048; .dlset silhouette-enabled off
+d2-c2048-r2048           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 2048; .dlset silhouette-enabled on
+d2-c2048-r8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 8192
+d2-c4096-off             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 4096; .dlset silhouette-enabled off
+d2-c4096-r4096           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 4096; .dlset silhouette-enabled on
+d2-c4096-r8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 8192
+d2-c8192-off             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 8192; .dlset silhouette-enabled off
+d2-c8192-r8192           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-enabled on
+d2-c2048-off-again       513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 2048; .dlset silhouette-enabled off

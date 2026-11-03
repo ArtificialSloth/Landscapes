@@ -1,0 +1,23 @@
+# Farseer's own main-thread timing (owner, 2026-11-02, after farseer-cache).
+#
+# farseer-cache found Farseer's cost grows with its reach (about 7 us per tile in view), not with
+# the gap past the Cache, and not with geometry detail. This asks the mod's existing counters:
+# `.dlsilhouette stats` prints the tiles drawn last frame and the main thread's average time
+# preparing Farseer (the coverage work). A stop's commands run as it starts, so each stats call
+# reports the settled state of the stop before it. Same spot and conditions as the setting sweeps;
+# Performance's visuals with seam fog off.
+#
+#   pwsh -File scripts/bench-windows.ps1 -Label farseer-timing -Route bench/routes/farseer-timing.txt `
+#     (the same inputs and switches as setting-climb.txt)
+#
+# name               x          y       z           yaw    pitch
+
+warm1                513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset performance; .dlset silhouette-reach 8192; /time set 12:00; /time stop
+warm2                513012.05  224.92  514130.02   181.2  -12.8
+warm3                513012.05  224.92  514130.02   181.2  -12.8
+c2048-r8192          513012.05  224.92  514130.02   181.2  -12.8
+c2048-r4096          513012.05  224.92  514130.02   181.2  -12.8  ! .dlsilhouette stats; .dlset silhouette-reach 4096
+c8192-r8192          513012.05  224.92  514130.02   181.2  -12.8  ! .dlsilhouette stats; .dlset draw-distance 8192; .dlset silhouette-reach 8192
+c8192-r4096          513012.05  224.92  514130.02   181.2  -12.8  ! .dlsilhouette stats; .dlset silhouette-reach 4096
+farseer-off          513012.05  224.92  514130.02   181.2  -12.8  ! .dlsilhouette stats; .dlset silhouette-enabled off
+end                  513012.05  224.92  514130.02   181.2  -12.8  ! .dlsilhouette stats

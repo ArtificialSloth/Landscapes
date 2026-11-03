@@ -1,0 +1,51 @@
+# Pilot for the per-setting benchmark (Session 123 design, owner 2026-11-02).
+#
+# One viewpoint, the owner's own: his saved spot in a frozen copy of `vintage cave tales-2`,
+# facing north over the valley, at view distance 32 (owner: the most load on this mod). His
+# eight other mods, his graphics settings, the savegame sweep off (bench/configs/cave-tales-bench.json).
+#
+# What the pilot is for: how far apart identical runs land (the base-N rows, all the same
+# state), whether .dlset drives every kind of setting (a shader switch, a re-mesh, a
+# session-only dial, Farseer, whole presets), and how long each kind takes to settle.
+# Its numbers are not the sweep's results.
+#
+# warm1-warm6 are the owner's 3-5 minutes for the frame rate to settle after loading: each
+# holds at least the 30 s settle floor plus its 10 s measure. Yaw and pitch are the angles his
+# save held when he quit (he faced north over the valley); the per-waypoint screenshots check it.
+#
+# The bench sets noon once at login, but the clock kept running: sweep-pilot-2 reached sunset by
+# base-6 (a red sky) and its baselines drifted with the light, so warm1 sets noon again and stops time.
+#
+# Everything-on is Ultra. Each test row switches one setting off; the next base row puts it
+# back, so every setting is measured against a baseline taken just before and after it.
+#
+#   pwsh -File scripts/bench-windows.ps1 -Label sweep-pilot -Route bench/routes/setting-sweep-pilot.txt `
+#     -Configuration Release -IntegratedSingleplayer -WorldName cavetales2 -SandboxProfile cavetales2 `
+#     -SeedSave <save> -SeedClientCache <cache .db> -SeedServerCache <cache -server.db> `
+#     -SeedExtraCache <silhouette.db>,<silhouette-server.db> -ServerConfig bench/configs/cave-tales-bench.json `
+#     -ExtraMods <his eight zips> -PlayerSettings -ViewDistance 32 -ChunkMask -GpuStats `
+#     -Settle 30 -SettleMax 180 -Measure 20 -Laps 1 -WarmupLaps 0
+#
+# name           x          y       z           yaw  pitch
+
+warm1            513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset ultra; /time set 12:00; /time stop
+warm2            513012.05  224.92  514130.02   181.2  -12.8
+warm3            513012.05  224.92  514130.02   181.2  -12.8
+warm4            513012.05  224.92  514130.02   181.2  -12.8
+warm5            513012.05  224.92  514130.02   181.2  -12.8
+warm6            513012.05  224.92  514130.02   181.2  -12.8
+base-1           513012.05  224.92  514130.02   181.2  -12.8
+base-2           513012.05  224.92  514130.02   181.2  -12.8
+aa-off           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset distant-aa off
+base-3           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset distant-aa on
+leaf-cubes       513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape cubes
+base-4           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape clusterswithtops
+shore-off        513012.05  224.92  514130.02   181.2  -12.8  ! .dlset shore-foam 0
+base-5           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset shore-foam 1
+farseer-off      513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-enabled off
+base-6           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-enabled on
+quality          513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset quality
+balanced         513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset balanced
+performance      513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset performance
+base-7           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset ultra
+base-8           513012.05  224.92  514130.02   181.2  -12.8

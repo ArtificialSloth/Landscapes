@@ -49,6 +49,9 @@ param(
     [string]$SeedSave,
     [string]$SeedClientCache,
     [string]$SeedServerCache,
+    # Further files from the client's cache folder, such as Farseer's silhouette stores, so
+    # a seeded world does not rebuild them while it is being measured.
+    [string[]]$SeedExtraCache,
     [switch]$SeedOnly,
     [ValidateSet('Any', 'Warm', 'Cold')]
     [string]$ClientCache = 'Any',
@@ -875,7 +878,7 @@ if ($IntegratedSingleplayer -and $ReuseServer) {
 if (($SeedSave -or $SeedClientCache -or $SeedServerCache) -and -not $SandboxProfile) {
     throw 'Seed files require -SandboxProfile so the default benchmark world is never replaced.'
 }
-if (($SeedClientCache -or $SeedServerCache) -and -not $SeedSave) {
+if (($SeedClientCache -or $SeedServerCache -or $SeedExtraCache) -and -not $SeedSave) {
     throw 'Seeded caches require -SeedSave so their world identity cannot be applied alone.'
 }
 if ($SeedOnly -and -not $SeedSave) {
@@ -933,6 +936,7 @@ $seedRecords = [ordered]@{
     save = $null
     clientCache = $null
     serverCache = $null
+    extraCache = @()
 }
 $profileHasSeed = Test-Path -LiteralPath $seedManifest -PathType Leaf
 $seedClientProcess = if ($seedSavePath -or $profileHasSeed) {
@@ -955,6 +959,11 @@ if ($seedClientCachePath) {
 if ($seedServerCachePath) {
     $seedRecords.serverCache = Initialize-SeedFile `
         $seedServerCachePath (Join-Path $seedDir ([IO.Path]::GetFileName($seedServerCachePath)))
+}
+foreach ($extra in @($SeedExtraCache | Where-Object { $_ })) {
+    $extraSource = [IO.Path]::GetFullPath($extra)
+    $seedRecords.extraCache += Initialize-SeedFile `
+        $extraSource (Join-Path $seedDir ([IO.Path]::GetFileName($extraSource)))
 }
 if ($SeedOnly) {
     New-Item -ItemType Directory -Path $benchOut -Force | Out-Null
@@ -986,6 +995,9 @@ if ($null -ne $seedRecords.clientCache) {
 if ($null -ne $seedRecords.serverCache) {
     Restore-FrozenSeedFile $seedRecords.serverCache `
         (Join-Path $serverCacheDir ([string]$seedRecords.serverCache.name))
+}
+foreach ($record in @($seedRecords.extraCache | Where-Object { $_ })) {
+    Restore-FrozenSeedFile $record (Join-Path $clientCacheDir ([string]$record.name))
 }
 Assert-FreshAssembly `
     (Join-Path $repoRoot "VintageHorizons/bin/$Configuration/net10.0/Mods/dodenslandscapes/DodensLandscapes.dll") `
@@ -1103,6 +1115,19 @@ if ($ViewDistance) { $settings.intSettings.viewDistance = $ViewDistance }
 $settings.intSettings.vsyncMode = if ($Watch) { 1 } else { 0 }
 $settings.intSettings.maxFps = if ($Watch) { 60 } else { 0 }
 $settings | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $settingsPath -Encoding utf8
+
+# The mod's first-run preset prompt and login notice are its own windows, which the bench mod
+# leaves open, so a fresh sandbox showed them over the view, and the prompt's answer replaced
+# the route's first preset (the 2026-11-02 pilot ran on Quality instead of Ultra). Mark both seen.
+$modConfigPath = Join-Path $sandbox 'ModConfig\dodenslandscapes.json'
+Assert-UnderSandbox $modConfigPath
+$modConfig = if (Test-Path -LiteralPath $modConfigPath) {
+    Get-Content -LiteralPath $modConfigPath -Raw | ConvertFrom-Json -AsHashtable
+} else { @{} }
+$modConfig.PresetPromptShown = $true
+$modConfig.HideLodModNotice = $true
+New-Item -ItemType Directory -Path (Split-Path -Parent $modConfigPath) -Force | Out-Null
+$modConfig | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $modConfigPath -Encoding utf8
 
 $done = Join-Path $benchOut "$Label.done"
 $csv = Join-Path $benchOut "$Label.csv"

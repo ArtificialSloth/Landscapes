@@ -1,0 +1,98 @@
+# The per-setting benchmark (Session 123 design, owner 2026-11-02): what each setting costs on its own.
+#
+# One viewpoint, the owner's own (his save: valley, facing north), in a frozen copy of
+# `vintage cave tales-2`, view distance 32, his eight other mods and graphics settings, sweep off,
+# clock stopped at noon. Everything-on is Ultra. Each test stop changes ONE setting; the base stop
+# after it puts it back, so every setting sits between two baselines taken a minute apart.
+# Dials the presets set (band reach, detail target, Cache distance, Farseer reach) are tried at
+# Turning Close Biome Colors back on keeps Far off (the window row does the same), so its base stop
+# restores both with climate-range on.
+# each preset's value. Distant Lights is measured last, at midnight, against its own baselines.
+# The pilot (setting-sweep-pilot.txt, sweep-pilot-3) found identical baselines agree to ~0.1 ms.
+#
+#   pwsh -File scripts/bench-windows.ps1 -Label setting-sweep -Route bench/routes/setting-sweep.txt `
+#     -Configuration Release -IntegratedSingleplayer -WorldName cavetales2 -SandboxProfile cavetales2 `
+#     -SeedSave <save> -SeedClientCache <cache .db> -SeedServerCache <cache -server.db> `
+#     -SeedExtraCache <silhouette.db>,<silhouette-server.db> -ServerConfig bench/configs/cave-tales-bench.json `
+#     -ExtraMods <his eight zips> -PlayerSettings -ViewDistance 32 -ChunkMask -GpuStats `
+#     -Settle 30 -SettleMax 180 -Measure 20 -Laps 1 -WarmupLaps 0
+#
+# name               x          y       z           yaw    pitch
+
+warm1                513012.05  224.92  514130.02   181.2  -12.8  ! .dlset preset ultra; /time set 12:00; /time stop
+warm2                513012.05  224.92  514130.02   181.2  -12.8
+warm3                513012.05  224.92  514130.02   181.2  -12.8
+warm4                513012.05  224.92  514130.02   181.2  -12.8
+warm5                513012.05  224.92  514130.02   181.2  -12.8
+warm6                513012.05  224.92  514130.02   181.2  -12.8
+base-0               513012.05  224.92  514130.02   181.2  -12.8
+seam-blending-off    513012.05  224.92  514130.02   181.2  -12.8  ! .dlset seam-blending off
+base-1               513012.05  224.92  514130.02   181.2  -12.8  ! .dlset seam-blending on
+close-biome-off      513012.05  224.92  514130.02   181.2  -12.8  ! .dlset climate-tint off
+base-2               513012.05  224.92  514130.02   181.2  -12.8  ! .dlset climate-range on
+far-biome-off        513012.05  224.92  514130.02   181.2  -12.8  ! .dlset climate-range off
+base-3               513012.05  224.92  514130.02   181.2  -12.8  ! .dlset climate-range on
+tree-colors-off      513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-season off
+base-4               513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-season on
+slabs-off            513012.05  224.92  514130.02   181.2  -12.8  ! .dlset half-blocks off
+base-5               513012.05  224.92  514130.02   181.2  -12.8  ! .dlset half-blocks on
+water-effects-off    513012.05  224.92  514130.02   181.2  -12.8  ! .dlset water-effects off
+base-6               513012.05  224.92  514130.02   181.2  -12.8  ! .dlset water-effects on
+distant-aa-off       513012.05  224.92  514130.02   181.2  -12.8  ! .dlset distant-aa off
+base-7               513012.05  224.92  514130.02   181.2  -12.8  ! .dlset distant-aa on
+farseer-off          513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-enabled off
+base-8               513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-enabled on
+seam-fog-off         513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-fog off
+base-9               513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-fog on
+plant-detail-off     513012.05  224.92  514130.02   181.2  -12.8  ! .dlset plant-detail off
+base-10              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset plant-detail on
+plant-textures-off   513012.05  224.92  514130.02   181.2  -12.8  ! .dlset plant-textures off
+base-11              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset plant-textures on
+fruit-colors-off     513012.05  224.92  514130.02   181.2  -12.8  ! .dlset fruit-tree-colors off
+base-12              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset fruit-tree-colors on
+crops-off            513012.05  224.92  514130.02   181.2  -12.8  ! .dlset crop-shapes off
+base-13              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset crop-shapes on
+reeds-off            513012.05  224.92  514130.02   181.2  -12.8  ! .dlset reed-shapes off
+base-14              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset reed-shapes on
+vines-off            513012.05  224.92  514130.02   181.2  -12.8  ! .dlset vine-shapes off
+base-15              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset vine-shapes on
+forage-off           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset forage-markers off
+base-16              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset forage-markers on
+flowers-off          513012.05  224.92  514130.02   181.2  -12.8  ! .dlset flower-sheets off
+base-17              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset flower-sheets on
+bushes-off           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset bush-textures off
+base-18              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset bush-textures on
+leaf-cubes           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape cubes
+base-19              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape clusterswithtops
+leaf-planes          513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape planes
+base-20              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape clusterswithtops
+leaf-planes-tops     513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape planeswithtops
+base-21              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape clusterswithtops
+leaf-clusters        513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape clusters
+base-22              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset leaf-shape clusterswithtops
+shore-foam-off       513012.05  224.92  514130.02   181.2  -12.8  ! .dlset shore-foam 0
+base-23              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset shore-foam 1
+depth-pass-off       513012.05  224.92  514130.02   181.2  -12.8  ! .dlset water-majority off
+base-24              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset water-majority on
+band-66              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset band-reach 66
+base-25              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset band-reach 100
+band-33              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset band-reach 33
+base-26              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset band-reach 100
+band-0               513012.05  224.92  514130.02   181.2  -12.8  ! .dlset band-reach 0
+base-27              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset band-reach 100
+detail-1.5           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset detail-target 1.5
+base-28              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset detail-target 1
+detail-2             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset detail-target 2
+base-29              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset detail-target 1
+detail-3             513012.05  224.92  514130.02   181.2  -12.8  ! .dlset detail-target 3
+base-30              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset detail-target 1
+cache-4096           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 4096
+base-31              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 8192
+cache-2048           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 2048
+base-32              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset draw-distance 8192
+farseer-4096         513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 4096
+base-33              513012.05  224.92  514130.02   181.2  -12.8  ! .dlset silhouette-reach 8192
+night-warm           513012.05  224.92  514130.02   181.2  -12.8  ! /time set 00:00; /time stop
+night-base-1         513012.05  224.92  514130.02   181.2  -12.8
+lights-off           513012.05  224.92  514130.02   181.2  -12.8  ! .dlset distant-lights off
+night-base-2         513012.05  224.92  514130.02   181.2  -12.8  ! .dlset distant-lights on
