@@ -13,11 +13,13 @@ namespace VintageHorizons;
 ///    This depends on the resident meshes alone, so it is exact bookkeeping: a section installed
 ///    or removed marks the tiles under it to read their terrain again.
 /// 2. The answer itself. It also depends on the camera, through each cell's wanted level and the
-///    draw's cap, and on the snapped camera and the terrain's end. Alongside it goes how far the
-///    camera, and separately the terrain's end, may move before any cell could cross one of those
-///    lines. Distances never change faster than the camera moves, so inside that margin the answer
-///    is exactly what working it out again would give. The snapped camera, the thresholds and the
-///    cap are compared outright.
+///    draw's cap, and on the terrain's end as seen from the snapped camera. Alongside it goes how
+///    far the camera may move before any cell could cross a level line or the cap, and how far
+///    the terrain's end may: the snapped camera's jump at a chunk line and a change in the end
+///    distance both spend that one allowance. Distances never change faster than what they are
+///    measured from moves, so inside those margins the answer is exactly what working it out
+///    again would give, and a chunk line only redoes the tiles the end runs near. The thresholds
+///    and the cap are compared outright.
 ///
 /// Vanilla's readiness is not remembered: it changes as chunks finish and only touches the tiles
 /// near the player, so it is added afresh on every call.
@@ -33,7 +35,10 @@ public partial class LodTerrainRenderer
 
     internal SilhouetteCoverageMode CoverageMode { get; set; } = SilhouetteCoverageMode.Cached;
 
-    /// <summary>One tile's answer and how far the camera and the terrain's end may move under it.</summary>
+    /// <summary>
+    /// One tile's answer; how far the camera may move under it; and how far the terrain's end may,
+    /// the snapped camera's jump and the change in the end distance added together.
+    /// </summary>
     internal readonly record struct SilhouetteCoverageDecision(
         LodSilhouetteCoverage Covered, double CameraMargin, double EndMargin);
 
@@ -45,6 +50,7 @@ public partial class LodTerrainRenderer
         public bool DecisionValid;
         public int Context;
         public double CameraX, CameraZ;
+        public double SnappedX, SnappedZ;
         public float TerrainEnd;
         public SilhouetteCoverageDecision Decision;
         public long LastUsedFrame;
@@ -57,7 +63,6 @@ public partial class LodTerrainRenderer
     readonly Dictionary<long, SilhouetteCoverageEntry> silhouetteCoverageCache = new();
     long silhouetteCoverageFrame;
     int silhouetteCoverageContext;
-    double contextSnappedX = double.NaN, contextSnappedZ = double.NaN;
     int contextDetailRevision = int.MinValue;
     float contextCullDistanceSquared = float.NaN;
     int coverageMismatchesLogged;
@@ -125,12 +130,9 @@ public partial class LodTerrainRenderer
             return FreshSilhouetteCoverage(tileX, tileZ, snappedCameraX, snappedCameraZ,
                 terrainEnd, cullDistanceSquared).Covered;
 
-        if (snappedCameraX != contextSnappedX || snappedCameraZ != contextSnappedZ
-            || LodWorld.DetailPolicyRevision != contextDetailRevision
+        if (LodWorld.DetailPolicyRevision != contextDetailRevision
             || cullDistanceSquared != contextCullDistanceSquared)
         {
-            contextSnappedX = snappedCameraX;
-            contextSnappedZ = snappedCameraZ;
             contextDetailRevision = LodWorld.DetailPolicyRevision;
             contextCullDistanceSquared = cullDistanceSquared;
             silhouetteCoverageContext++;
@@ -154,10 +156,13 @@ public partial class LodTerrainRenderer
 
         double movedX = camPos.X - entry.CameraX;
         double movedZ = camPos.Z - entry.CameraZ;
+        double snapX = snappedCameraX - entry.SnappedX;
+        double snapZ = snappedCameraZ - entry.SnappedZ;
         SilhouetteCoverageDecision held = entry.Decision;
         if (entry.DecisionValid && entry.Context == silhouetteCoverageContext
             && movedX * movedX + movedZ * movedZ < held.CameraMargin * held.CameraMargin
-            && Math.Abs(terrainEnd - entry.TerrainEnd) < held.EndMargin)
+            && Math.Sqrt(snapX * snapX + snapZ * snapZ) + Math.Abs(terrainEnd - entry.TerrainEnd)
+                < held.EndMargin)
         {
             SilhouetteCoverageReused++;
         }
@@ -169,6 +174,8 @@ public partial class LodTerrainRenderer
             entry.Context = silhouetteCoverageContext;
             entry.CameraX = camPos.X;
             entry.CameraZ = camPos.Z;
+            entry.SnappedX = snappedCameraX;
+            entry.SnappedZ = snappedCameraZ;
             entry.TerrainEnd = terrainEnd;
             SilhouetteCoverageWorkedOut++;
         }

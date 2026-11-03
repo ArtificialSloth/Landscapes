@@ -70,8 +70,8 @@ public static class SilhouetteChecks
     /// dev.30 remembers each tile's coverage while the camera stays inside the margins the answer
     /// came with. Moving less than the camera margin, or the terrain's end less than its margin,
     /// must give exactly the same cells, or the remembered answer would open a hole or double an
-    /// edge. Random ground over many tiles, cameras, ends and caps; the snapped camera is held,
-    /// as the cache compares it outright.
+    /// edge. Since dev.31 the snapped camera's jump at a chunk line spends the end margin with the
+    /// end's own change, so moves jump it too. Random ground over many tiles, cameras, ends and caps.
     /// </summary>
     static void RememberedCoverageHoldsInsideItsMargins(Check c)
     {
@@ -115,11 +115,16 @@ public static class SilhouetteChecks
                 double cameraStep = double.IsPositiveInfinity(held.CameraMargin)
                     ? 200 : held.CameraMargin * random.NextDouble() * 0.999;
                 double angle = random.NextDouble() * Math.PI * 2;
-                double endStep = double.IsPositiveInfinity(held.EndMargin)
-                    ? 200 : held.EndMargin * (random.NextDouble() * 2 - 1) * 0.999;
+                double endBudget = double.IsPositiveInfinity(held.EndMargin)
+                    ? 200 : held.EndMargin * random.NextDouble() * 0.999;
+                double snapShare = random.NextDouble();
+                double snapAngle = random.NextDouble() * Math.PI * 2;
+                double snapStep = endBudget * snapShare;
+                double endStep = endBudget * (1 - snapShare) * (random.Next(2) == 0 ? -1 : 1);
                 var moved = LodTerrainRenderer.DecideSilhouetteCoverage(resident, covered,
                     tileX, tileZ, cameraX + Math.Cos(angle) * cameraStep,
-                    cameraZ + Math.Sin(angle) * cameraStep, snappedX, snappedZ,
+                    cameraZ + Math.Sin(angle) * cameraStep,
+                    snappedX + Math.Cos(snapAngle) * snapStep, snappedZ + Math.Sin(snapAngle) * snapStep,
                     end + (float)endStep, cull);
                 moves++;
                 if (moved.Covered != held.Covered) differed++;
