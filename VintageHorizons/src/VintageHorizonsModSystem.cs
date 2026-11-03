@@ -66,7 +66,7 @@ public class VintageHorizonsConfig
     public bool PlantTextures = true;
 
     /// <summary>
-    /// The Plants tab: one switch over everything on it, and one for each thing it holds. Off
+    /// Plant Detail on General, over one switch for each plant feature under Developer > Plants. Off
     /// draws the cheaper form. See <see cref="LodVisualSettings"/>.
     /// </summary>
     public bool PlantDetail = true;
@@ -3937,7 +3937,7 @@ public partial class VintageHorizonsModSystem : ModSystem
 
         capi.ChatCommands.Create("dlconfig")
             .WithDescription("Open the Doden's Landscapes settings window, optionally on one tab: "
-                + "general, generate or developer (with Developer options on)")
+                + "general, generate, developer or plants (the last two with Developer options on)")
             .WithArgs(capi.ChatCommands.Parsers.OptionalWord("tab"))
             .HandleWith(args =>
             {
@@ -3949,10 +3949,12 @@ public partial class VintageHorizonsModSystem : ModSystem
                     string name = (string)args[0];
                     if (VintageHorizonsConfigDialog.TabNamed(name) is not int tab)
                         return TextCommandResult.Error("[Landscapes] no tab called '" + name
-                            + "': use general, generate or developer.");
+                            + "': use general, generate, developer or plants.");
                     if (!configDialog!.ShowTab(tab))
                         return TextCommandResult.Error(
                             "[Landscapes] the Developer tab shows with Developer options on, on General.");
+                    if (VintageHorizonsConfigDialog.DeveloperGroupNamed(name) is int group)
+                        configDialog.ShowDeveloperGroup(group);
                 }
                 return TextCommandResult.Success(alreadyOpen
                     ? "[Landscapes] configuration window focused."

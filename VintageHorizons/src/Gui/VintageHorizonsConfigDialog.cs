@@ -60,7 +60,7 @@ internal static class VintageHorizonsConfigLayout
     internal const double SwitchX = 824;
     internal const double ButtonY = Height - 48;
     internal const double TabsWidth = 760;
-    internal const int PlannedTabCount = 4;
+    internal const int PlannedTabCount = 3;
 
     /// <summary>
     /// One title over the bar, "LOD Thresholds (Drag to adjust)", beside the Automatic switch
@@ -124,12 +124,11 @@ internal static class VintageHorizonsConfigLayout
     /// The two columns span the window from the margin to the right edge of the Automatic
     /// switch, so the right column's switches line up under it.
     /// </summary>
-    // The Plants tab: its switch over everything, a rule, the leaf shape, then a row of features.
-    internal const double PlantDetailY = 76;
-    internal const double PlantRuleY = 112;
-    internal const double LeafShapeY = 130;
-    internal const double LeafShapeNoteY = 170;
-    internal const double PlantRowsY = 232;
+    // Developer > Plants (owner, 2026-11-03; a tab of its own until then, with Plant Detail now on
+    // General): the leaf shape and its note, then the plant switches in two columns.
+    internal const double LeafShapeY = 118;
+    internal const double LeafShapeNoteY = 158;
+    internal const double PlantRowsY = 236;
 
     internal const double ColumnGap = 32;
     internal const double ColumnWidth = (SwitchX + 32 - Margin - ColumnGap) / 2;
@@ -209,9 +208,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     const double RowHeight = VintageHorizonsConfigLayout.VisualRowHeight;
 
     const int GeneralTab = 0;
-    const int PlantsTab = 1;
-    const int GenerateTab = 2;
-    const int DeveloperTab = 3;
+    const int GenerateTab = 1;
+    const int DeveloperTab = 2;
 
     // The Developer tab's groups, one at a time from the sub-tabs at the top of its page. Each
     // group's id is its position in the strip.
@@ -219,7 +217,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     const int FarseerLookGroup = 1;
     const int SeamFogGroup = 2;
     const int SeamBandGroup = 3;
-    static readonly string[] DeveloperGroupNames = { "Anti-aliasing", "Farseer look", "Seam fog", "Seam band" };
+    const int PlantsGroup = 4;
+    static readonly string[] DeveloperGroupNames = { "Anti-aliasing", "Farseer look", "Seam fog", "Seam band", "Plants" };
 
     // The anti-aliasing rows: where each slider starts, how wide it is, and the row pitch.
     const double DialSliderX = VintageHorizonsConfigLayout.DialSliderX;
@@ -473,7 +472,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             (v, on) => v with { DistantLights = on }),
     };
 
-    /// <summary>The Plants tab's switches. Each off draws the cheaper form; see each one's tip.</summary>
+    /// <summary>Developer > Plants' switches. Each off draws the cheaper form; see each one's tip.</summary>
     internal static readonly VisualRow[] PlantRows =
     {
         new("fruit-tree-colors", "Fruit Tree Colors",
@@ -560,9 +559,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     };
 
     const string PlantDetailTip =
-        "Every plant feature on this page at once. Off draws leaves as cubes, crops, reeds and ferns "
-        + "as flat patches of color, bushes in plain color, and every fruit tree in plain leaf color. "
-        + "The switches below keep their positions.";
+        "Every plant feature at once: leaf shapes, crops, reeds, ferns, vines, flowers, bushes, fruit "
+        + "trees and forage markers. Off draws leaves as cubes, crops, reeds and ferns as flat patches "
+        + "of color, bushes in plain color, and every fruit tree in plain leaf color. Each feature has "
+        + "its own switch under Developer > Plants, which keep their positions.";
 
     const string LeafShapeTip =
         "What leaves are drawn as, out to the end of the nearest detail level; past that they are "
@@ -750,7 +750,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         automaticFlashStartMs = -1;
         if (shownTab == GenerateTab) ComposeGenerate(composer);
         else if (shownTab == DeveloperTab) ComposeDeveloper(composer);
-        else if (shownTab == PlantsTab) ComposePlants(composer);
         else ComposeGeneral(composer);
         composer.AddInteractiveElement(new FrameHook(capi, OnFrame), "frame-hook");
 
@@ -772,8 +771,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     /// <summary>The tabs on show, in order. Each tab's id is its position.</summary>
     internal static int[] VisibleTabs(bool showDeveloper) => showDeveloper
-        ? new[] { GeneralTab, PlantsTab, GenerateTab, DeveloperTab }
-        : new[] { GeneralTab, PlantsTab, GenerateTab };
+        ? new[] { GeneralTab, GenerateTab, DeveloperTab }
+        : new[] { GeneralTab, GenerateTab };
 
     /// <summary>
     /// The tab a `.dlconfig` argument names, or null. Farseer, Performance and Anti-Aliasing had
@@ -783,9 +782,17 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     internal static int? TabNamed(string name) => name.Trim().ToLowerInvariant() switch
     {
         "general" or "farseer" or "performance" => GeneralTab,
-        "plants" or "plant" or "leaves" => PlantsTab,
+        "plants" or "plant" or "leaves" => DeveloperTab,
         "generate" => GenerateTab,
         "developer" or "dev" or "antialiasing" or "anti-aliasing" or "aa" => DeveloperTab,
+        _ => null,
+    };
+
+    /// <summary>The Developer group a `.dlconfig` argument names, or null: the plant switches have one.</summary>
+    internal static int? DeveloperGroupNamed(string name) => name.Trim().ToLowerInvariant() switch
+    {
+        "plants" or "plant" or "leaves" => PlantsGroup,
+        "antialiasing" or "anti-aliasing" or "aa" => AntiAliasingGroup,
         _ => null,
     };
 
@@ -797,11 +804,13 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         return true;
     }
 
+    /// <summary>Shows a Developer group, as a click on its sub-tab would.</summary>
+    internal void ShowDeveloperGroup(int group) => OnDeveloperGroupClicked(group);
+
     static string TabName(int tab) => tab switch
     {
         DeveloperTab => "Developer",
         GenerateTab => "Generate",
-        PlantsTab => "Plants",
         _ => "General",
     };
 
@@ -825,7 +834,6 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         if (shownTab == GenerateTab) SetGenerateValues();
         else if (shownTab == DeveloperTab) SetDeveloperValues();
-        else if (shownTab == PlantsTab) SetPlantValues();
         else SetGeneralValues();
         SetFooterValues();
     }
@@ -913,6 +921,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 on => OnVisualChanged(row, on));
         }
 
+        // Plant Detail over every plant feature, last in the right column (owner, 2026-11-03); the
+        // features themselves are under Developer > Plants. Low: all plants off saved 0.10-0.11 ms
+        // in Session 124's presets, most of it leaf shapes.
+        AddToggle(composer, 1, VisualLine(VintageHorizonsConfigLayout.VisualLineCount - 1), "plant-detail",
+            "Plant Detail", "Low", PlantDetailTip, OnPlantDetailChanged);
+
         if (silhouettes.NoSampler())
         {
             // A short red note under the features, its hover carrying the whole warning.
@@ -926,19 +940,12 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     }
 
     /// <summary>
-    /// One switch over every plant feature, the leaf shape, and a switch for each of the rest. A
+    /// The leaf shape and a switch for each plant feature, under Plant Detail on General. A
     /// plant's cheaper form is what it drew before it had the feature, and nothing here keeps a
-    /// cost when it is off (owner, 2026-11-01).
+    /// cost when it is off (owner, 2026-11-01). A tab of its own until 2026-11-03 (owner).
     /// </summary>
-    void ComposePlants(GuiComposer composer)
+    void ComposePlantDials(GuiComposer composer)
     {
-        composer.AddStaticText("Plants", CairoFont.WhiteMediumText(),
-            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.LodTitleY), 560, 30));
-        AddToggle(composer, 0, VintageHorizonsConfigLayout.PlantDetailY, "plant-detail",
-            "Plant Detail", "", PlantDetailTip, OnPlantDetailChanged);
-
-        AddRule(composer, VintageHorizonsConfigLayout.PlantRuleY);
-
         double dropDownX = VintageHorizonsConfigLayout.ColumnX(0) + 130;
         composer.AddStaticText("Leaf Shape", CairoFont.WhiteSmallishText(),
             ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.LeafShapeY + 4), 124, 26));
@@ -972,8 +979,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void SetPlantValues()
     {
-        if (activeComposer?.Composed != true) return;
-        activeComposer.GetSwitch("plant-detail").On = pendingVisuals.PlantDetail;
+        if (!ShowingGroup(PlantsGroup)) return;
         foreach (VisualRow row in PlantRows)
         {
             activeComposer.GetSwitch(row.Key).On = row.Read(pendingVisuals);
@@ -984,7 +990,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             .SetNewText(LeafShapeNote(pendingVisuals.LeafShape), false, true, false);
     }
 
-    void OnPlantDetailChanged(bool on) => pendingVisuals = pendingVisuals with { PlantDetail = on };
+    void OnPlantDetailChanged(bool on)
+    {
+        pendingVisuals = pendingVisuals with { PlantDetail = on };
+        RefreshVisuals();
+    }
 
     void OnLeafShapeSelected(string code, bool selected)
     {
@@ -1049,9 +1059,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     /// The seam fog: measured by the owner at 0.52-0.68 ms a frame at 1440p (490 to 390 FPS in
     /// 0.4.155, 550 to 400 in 0.4.123), the largest single switch here. The 2026-11-02 bench read
     /// 0.05-0.11 with the seam 8 km out and small; the cost follows how much fog is on screen, so
-    /// High stands for the view where the fog is seen (owner, 2026-11-03).
+    /// it says Varies, and its tip says when it costs most (owner, 2026-11-03).
     /// </summary>
-    const string SeamFogCost = "High";
+    const string SeamFogCost = "Varies";
 
     /// <summary>
     /// One switch in a column: its title on the left, an optional cost word right-aligned before
@@ -1104,6 +1114,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         activeComposer.GetSwitch("silhouette-enabled").On = pendingSilhouettes.Enabled;
         activeComposer.GetSwitch("silhouette-fog").On = pendingSilhouettes.FogEnabled;
         activeComposer.GetSwitch("all-cores-gc").On = pendingAllCores;
+        activeComposer.GetSwitch("plant-detail").On = pendingVisuals.PlantDetail;
         foreach (VisualRow row in Rows)
         {
             activeComposer.GetSwitch(row.Key).On = row.Read(pendingVisuals);
@@ -1111,8 +1122,8 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     }
 
     const string DeveloperOptionsTip =
-        "Shows the Developer tab: every tuning dial for distant anti-aliasing, Farseer's look and "
-        + "the seam fog. Hiding it keeps their values.";
+        "Shows the Developer tab: every tuning dial for distant anti-aliasing, Farseer's look, the "
+        + "seam fog and the seam band, and a switch for each plant feature. Hiding it keeps their values.";
 
     void OnDeveloperOptionsChanged(bool on)
     {
@@ -1270,12 +1281,14 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             CairoFont.WhiteSmallishText(),
             CairoFont.WhiteSmallishText().WithColor(GuiStyle.ActiveButtonTextColor),
             "developer-groups");
-        composer.AddStaticText(
-            "Tuning dials. Changes show at once: Save keeps them, Cancel puts them back, Defaults resets this group.",
+        composer.AddStaticText(developerGroup == PlantsGroup
+                ? "Each plant feature on its own, under Plant Detail on General. Save applies them, Defaults resets this group."
+                : "Tuning dials. Changes show at once: Save keeps them, Cancel puts them back, Defaults resets this group.",
             CairoFont.WhiteSmallText(), ElementBounds.Fixed(Margin, Y(78), Width - 2 * Margin, 22));
 
         if (developerGroup == AntiAliasingGroup) ComposeAntiAliasingDials(composer);
         else if (developerGroup == SeamBandGroup) ComposeSeamBandDials(composer);
+        else if (developerGroup == PlantsGroup) ComposePlantDials(composer);
         else ComposeSilhouetteDials(composer, developerGroup == SeamFogGroup);
     }
 
@@ -1445,6 +1458,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         if (activeComposer?.Composed != true) return;
         activeComposer.GetHorizontalTabs("developer-groups").activeElement = developerGroup;
+        if (developerGroup == PlantsGroup)
+        {
+            SetPlantValues();
+            return;
+        }
         if (developerGroup == AntiAliasingGroup)
         {
             foreach (LodTaaSliders.Row row in LodTaaSliders.All)
@@ -2050,8 +2068,10 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
     void RefreshVisuals()
     {
-        if (shownTab == PlantsTab) SetPlantValues();
+        SetPlantValues();
         if (activeComposer?.Composed != true || shownTab != GeneralTab) return;
+        GuiElementSwitch plants = activeComposer.GetSwitch("plant-detail");
+        if (plants.On != pendingVisuals.PlantDetail) plants.On = pendingVisuals.PlantDetail;
         foreach (VisualRow other in Rows)
         {
             GuiElementSwitch element = activeComposer.GetSwitch(other.Key);
@@ -2174,12 +2194,11 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             return true;
         }
 
-        if (shownTab == PlantsTab)
+        if (shownTab == DeveloperTab && developerGroup == PlantsGroup)
         {
             LodVisualSettings plants = LodPreset.Quality.Visuals;
             pendingVisuals = pendingVisuals with
             {
-                PlantDetail = plants.PlantDetail,
                 PlantTextures = plants.PlantTextures,
                 ReedShapes = plants.ReedShapes,
                 VineShapes = plants.VineShapes,

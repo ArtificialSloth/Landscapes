@@ -58,7 +58,7 @@ internal readonly record struct LodVisualSettings(
     public const float Level0FollowsTarget = LodAutoThresholds.MaxTargetPixels;
     public const float QualityLevel0Pixels = 1f;
 
-    // What the Plants tab's switches come to. Plant Detail is one switch over all of them and
+    // What the plant switches come to. Plant Detail (General) is one switch over all of them and
     // keeps their positions, so turning it back on restores the player's own choices.
     public bool PlantTexturesOn => PlantDetail && PlantTextures;
     public bool ReedShapesOn => PlantDetail && ReedShapes;

@@ -24,20 +24,25 @@ public static class SettingsWindowChecks
     {
         int[] hidden = VintageHorizonsConfigDialog.VisibleTabs(false);
         int[] shown = VintageHorizonsConfigDialog.VisibleTabs(true);
-        c.Eq(3, hidden.Length, "without Developer options: General, Plants and Generate");
-        c.Eq(4, shown.Length, "with them, Developer as well");
-        c.Eq(VintageHorizonsConfigLayout.PlannedTabCount, shown.Length, "the strip is sized for all four");
-        c.True(shown.Select((tab, i) => tab == i).All(x => x) && shown.Take(3).SequenceEqual(hidden),
+        // Owner, 2026-11-03: the Plants tab became a Developer group, with Plant Detail on General.
+        c.Eq(2, hidden.Length, "without Developer options: General and Generate");
+        c.Eq(3, shown.Length, "with them, Developer as well");
+        c.Eq(VintageHorizonsConfigLayout.PlannedTabCount, shown.Length, "the strip is sized for all three");
+        c.True(shown.Select((tab, i) => tab == i).All(x => x) && shown.Take(2).SequenceEqual(hidden),
             "a tab's id is its position, and hiding Developer moves no other tab");
         int? general = VintageHorizonsConfigDialog.TabNamed("general");
         c.True(general == shown[0]
                 && VintageHorizonsConfigDialog.TabNamed("Farseer") == general
                 && VintageHorizonsConfigDialog.TabNamed("performance") == general
-                && VintageHorizonsConfigDialog.TabNamed("Developer") == shown[3]
-                && VintageHorizonsConfigDialog.TabNamed("plants") == shown[1]
-                && VintageHorizonsConfigDialog.TabNamed("aa") == shown[3]
+                && VintageHorizonsConfigDialog.TabNamed("Developer") == shown[2]
+                && VintageHorizonsConfigDialog.TabNamed("plants") == shown[2]
+                && VintageHorizonsConfigDialog.TabNamed("aa") == shown[2]
                 && VintageHorizonsConfigDialog.TabNamed("nonsense") == null,
-            ".dlconfig opens a tab named in any case; Farseer and Performance open General, AA Developer");
+            ".dlconfig opens a tab named in any case; Farseer and Performance open General, AA and plants Developer");
+        c.True(VintageHorizonsConfigDialog.DeveloperGroupNamed("Plants") == 4
+                && VintageHorizonsConfigDialog.DeveloperGroupNamed("aa") == 0
+                && VintageHorizonsConfigDialog.DeveloperGroupNamed("general") == null,
+            ".dlconfig plants opens Developer on its Plants group");
 
         c.False(new VintageHorizonsConfig().ShowDeveloperOptions, "a fresh install hides Developer");
         string dialog = Source("Gui", "VintageHorizonsConfigDialog.cs");
@@ -176,8 +181,12 @@ public static class SettingsWindowChecks
         c.True(costs.Values.All(word => word is "Minimal" or "Low" or "Moderate" or "High"),
             "every cost word is on the four-word scale");
         c.True(dialog.Contains("const string FarseerCost = \"Low\";", StringComparison.Ordinal)
-                && dialog.Contains("const string SeamFogCost = \"High\";", StringComparison.Ordinal),
-            "Farseer stays Low and the seam fog High");
+                && dialog.Contains("const string SeamFogCost = \"Varies\";", StringComparison.Ordinal),
+            "Farseer stays Low and the seam fog says Varies, its cost following how much fog is on screen (owner)");
+        c.True(dialog.Contains("\"Plant Detail\", \"Low\", PlantDetailTip, OnPlantDetailChanged", StringComparison.Ordinal)
+                && dialog.Contains("else if (developerGroup == PlantsGroup) ComposePlantDials(composer);", StringComparison.Ordinal)
+                && dialog.Contains("\"Seam band\", \"Plants\" }", StringComparison.Ordinal),
+            "Plant Detail is on General and each plant feature under Developer > Plants (owner, 2026-11-03)");
 
         // An open drop-down list lies over rows whose tips showed through it (owner, 2026-11-03).
         c.True(!dialog.Contains(".AddHoverText(", StringComparison.Ordinal)

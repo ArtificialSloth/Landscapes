@@ -184,7 +184,7 @@ public partial class VintageHorizonsModSystem
             s => OnOff(s.LoadWhilePaused),
             (s, v) => ParseSwitch(v) is bool on ? s with { LoadWhilePaused = on } : null));
 
-        // General's feature switches, then the Plants tab's, each read and written as its row is.
+        // General's feature switches, then Developer > Plants', each read and written as its row is.
         foreach (VintageHorizonsConfigDialog.VisualRow row in
                  VintageHorizonsConfigDialog.Rows.Concat(VintageHorizonsConfigDialog.PlantRows))
         {
