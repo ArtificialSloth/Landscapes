@@ -248,12 +248,21 @@ public static class SettingsWindowChecks
             "the visual features heading finishes before the first feature row");
         c.True(VintageHorizonsConfigLayout.RowSwitchSize <= VintageHorizonsConfigLayout.VisualRowHeight - 2,
             "a row's switch fits its pitch");
-        c.True(VintageHorizonsConfigLayout.NoteY + VintageHorizonsConfigLayout.VisualRowHeight - 2
-                <= VintageHorizonsConfigLayout.ButtonY - 4,
+        c.True(VintageHorizonsConfigLayout.NoteY + 22 <= VintageHorizonsConfigLayout.ButtonY - 4,
             "the features and the no-sampler note end above the action row");
         c.True(VintageHorizonsConfigLayout.Margin + VintageHorizonsConfigLayout.ColumnWidth
                 <= VintageHorizonsConfigLayout.Width - VintageHorizonsConfigLayout.Margin - 300,
             "the note keeps to the left column, clear of the version on the same line");
+        c.True(VintageHorizonsConfigLayout.VersionTopX
+                    >= VintageHorizonsConfigLayout.PresetButtonX(LodPreset.All.Length)
+                        + VintageHorizonsConfigLayout.PresetButtonWidth + 8
+                && VintageHorizonsConfigLayout.VersionTopX + 80
+                    <= VintageHorizonsConfigLayout.Width - VintageHorizonsConfigLayout.Margin
+                && dialog.Contains("Y(VintageHorizonsConfigLayout.VersionTopY)", StringComparison.Ordinal),
+            "on General the version sits after Custom at the end of the preset row (owner, 2026-11-03)");
+        c.True(VintageHorizonsConfigLayout.VisualHeadingY + 22 <= VintageHorizonsConfigLayout.VisualRowsY - 16
+                && dialog.Contains("HeadingFont().WithOrientation(EnumTextOrientation.Center)", StringComparison.Ordinal),
+            "Visual features is centred, and the Cost captions sit just over their rows, clear of it");
         // Lora Bold runs about 6.2 units a point for \"Performance\", the longest name (2026-11-03 review).
         c.True(VintageHorizonsConfigLayout.PresetButtonWidth >= 6.2 * VintageHorizonsConfigLayout.PresetFontSize + 16,
             "every preset name fits its button: at 24 points \"Performance\" was cut to \"Performan\"");

@@ -71,7 +71,7 @@ internal static class VintageHorizonsConfigLayout
     /// features until then). The LOD title below them shrank to the row labels' size to make room.
     /// </summary>
     internal const double PresetRowY = 38;
-    internal const double PresetButtonsX = Margin + 80;
+    internal const double PresetButtonsX = Margin + 70;
     internal const double PresetButtonWidth = 128;
     internal const double PresetButtonGap = 8;
     internal const double PresetButtonHeight = 28;
@@ -79,6 +79,13 @@ internal static class VintageHorizonsConfigLayout
     /// <summary>The preset buttons' text: the game's button face at 18, so "Performance" fits.</summary>
     internal const float PresetFontSize = 18;
     internal const double PresetRuleY = 74;
+
+    /// <summary>
+    /// On General the version sits at the right end of the preset row (owner, 2026-11-03), in the
+    /// room after Custom. The other tabs keep it above Save, where their own headers leave space.
+    /// </summary>
+    internal const double VersionTopX = PresetButtonsX + 5 * PresetButtonWidth + 4 * PresetButtonGap + 10;
+    internal const double VersionTopY = PresetRowY + 6;
     internal static double PresetButtonX(int i) => PresetButtonsX + i * (PresetButtonWidth + PresetButtonGap);
 
     /// <summary>
@@ -114,8 +121,8 @@ internal static class VintageHorizonsConfigLayout
     /// columns, Farseer beside its seam fog first and all-cores collection under the fog, at a
     /// roomier 30-unit pitch now that the page has the space.
     /// </summary>
-    internal const double VisualHeadingY = 362;
-    internal const double VisualRowsY = 392;
+    internal const double VisualHeadingY = 360;
+    internal const double VisualRowsY = 398;
 
     /// <summary>
     /// Both section titles, LOD Thresholds and Visual features, at one size between the row labels
@@ -800,11 +807,15 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         else ComposeGeneral(composer);
         composer.AddInteractiveElement(new FrameHook(capi, OnFrame), "frame-hook");
 
-        // The version number alone, small and dim above Save on every tab (owner, 2026-11-03), as the game loaded it.
+        // The version number alone, small and dim (owner, 2026-11-03), as the game loaded it: after
+        // the preset buttons on General, above Save elsewhere.
         string version = capi.ModLoader.GetMod("dodenslandscapes")?.Info?.Version ?? "";
-        composer.AddStaticText(version,
-            CairoFont.WhiteDetailText().WithColor(new[] { 1.0, 1.0, 1.0, 0.4 }).WithOrientation(EnumTextOrientation.Right),
-            ElementBounds.Fixed(Width - Margin - 300, Y(VintageHorizonsConfigLayout.VersionY), 300, 18));
+        CairoFont versionFont = CairoFont.WhiteDetailText().WithColor(new[] { 1.0, 1.0, 1.0, 0.4 })
+            .WithOrientation(EnumTextOrientation.Right);
+        composer.AddStaticText(version, versionFont, shownTab == GeneralTab
+            ? ElementBounds.Fixed(VintageHorizonsConfigLayout.VersionTopX, Y(VintageHorizonsConfigLayout.VersionTopY),
+                Width - Margin - VintageHorizonsConfigLayout.VersionTopX, 18)
+            : ElementBounds.Fixed(Width - Margin - 300, Y(VintageHorizonsConfigLayout.VersionY), 300, 18));
 
         // Generate works through its own buttons. Save, Cancel and Defaults there invited the
         // question whether a generation had been saved.
@@ -935,8 +946,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
 
         AddRule(composer, VintageHorizonsConfigLayout.RuleY);
 
-        composer.AddStaticText("Visual features", HeadingFont(),
-            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.VisualHeadingY), 230, 28));
+        // Centred over both columns (owner, 2026-11-03).
+        composer.AddStaticText("Visual features", HeadingFont().WithOrientation(EnumTextOrientation.Center),
+            ElementBounds.Fixed(Margin, Y(VintageHorizonsConfigLayout.VisualHeadingY), Width - 2 * Margin, 28));
         // The cost words are a column in each half, so each gets a column heading. It sits over
         // the same box the words themselves use and shares their right edge, because a
         // right-aligned word under a left-aligned heading does not read as one column.
@@ -945,7 +957,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             composer.AddStaticText("Cost", CairoFont.WhiteDetailText().WithColor(new[] { 1.0, 1.0, 1.0, 0.6 }),
                 EnumTextOrientation.Right,
                 ElementBounds.Fixed(VintageHorizonsConfigLayout.ColumnCostX(column),
-                    Y(VintageHorizonsConfigLayout.VisualHeadingY + 7),
+                    Y(VintageHorizonsConfigLayout.VisualRowsY - 16),
                     VintageHorizonsConfigLayout.CostWidth, 22));
         }
 
@@ -982,9 +994,9 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             const double noteY = VintageHorizonsConfigLayout.NoteY;
             double noteWidth = VintageHorizonsConfigLayout.ColumnWidth;
             composer.AddStaticText(NoSamplerNote, NoSamplerFont(),
-                ElementBounds.Fixed(Margin, Y(noteY + 4), noteWidth, 22));
+                ElementBounds.Fixed(Margin, Y(noteY), noteWidth, 22));
             AddTip(composer, NoSamplerWarning, CairoFont.WhiteSmallText(), 420,
-                ElementBounds.Fixed(Margin, Y(noteY), noteWidth, RowHeight - 2), "tip-no-sampler");
+                ElementBounds.Fixed(Margin, Y(noteY), noteWidth, 22), "tip-no-sampler");
         }
     }
 
@@ -2084,7 +2096,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
     {
         const double rowY = VintageHorizonsConfigLayout.PresetRowY;
         composer.AddStaticText("Preset", CairoFont.WhiteSmallishText(),
-            ElementBounds.Fixed(Margin, Y(rowY + 2), 86, 26));
+            ElementBounds.Fixed(Margin, Y(rowY + 2), 66, 26));
         for (int i = 0; i < PresetCodes.Length; i++)
         {
             int index = i;
