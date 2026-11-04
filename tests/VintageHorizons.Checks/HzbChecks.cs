@@ -54,6 +54,13 @@ public static class HzbChecks
                 && renderer.Contains("if (!DepthPyramidEnabled || !DepthPyramidClassifying) return;", StringComparison.Ordinal)
                 && renderer.Contains("hzbCollecting = DepthPyramidEnabled && DepthPyramidClassifying;", StringComparison.Ordinal),
             "the pyramid classifies only when asked, so the start-up culling setup never reads verdicts back");
+        // dev.48 run: with classification gone the same read-back stall moved to the cull pass's
+        // live counters, taken every 30 frames and read only by the .dlhzb report.
+        string cull = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src",
+            "Render", "Gpu", "LodGpuCullPass.cs")).Replace("\r\n", "\n");
+        c.True(cull.Contains("if (!CountersWanted) return -1;", StringComparison.Ordinal)
+                && renderer.Contains("cullPass.CountersWanted = DepthPyramidClassifying;", StringComparison.Ordinal),
+            "the cull pass reads its live counters back only while the measurement is on");
         c.True(mod.Contains("renderer.DepthPyramidClassifying = word == \"on\";", StringComparison.Ordinal)
                 && !mod.Contains("renderer.DepthPyramidClassifying = true;", StringComparison.Ordinal),
             "only .dlhzb on asks for the measurement");

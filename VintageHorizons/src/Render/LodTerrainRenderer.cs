@@ -7153,6 +7153,7 @@ public partial class LodTerrainRenderer : IRenderer
         // existed and was never asked again, leaving no evidence either way for the whole run.
         // Attempting it here means one rendered frame settles the question for good.
         if (!cullPass.Available && !cullPass.TryCreate()) return default;
+        cullPass.CountersWanted = DepthPyramidClassifying;
 
         if (depthPyramid == null || !depthPyramid.Allocated) return default;
         if (!LastHzbBuild.Built) return default;

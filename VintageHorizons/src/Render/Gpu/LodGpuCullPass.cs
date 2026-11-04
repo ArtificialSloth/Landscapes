@@ -232,8 +232,16 @@ internal sealed class LodGpuCullPass : ILodGpuCullDispatch, IDisposable
         }
     }
 
+    /// <summary>
+    /// Whether the live command counters are sampled. Only the `.dlhzb` report reads them, and
+    /// reading a sample back held the frame about 14 ms every 30 frames on an NVIDIA RTX 3060 Ti
+    /// (owner, 2026-11-03), so they are taken only while that measurement is on.
+    /// </summary>
+    public bool CountersWanted { get; set; }
+
     int BeginTelemetrySample(LodGpuCullBucket bucket)
     {
+        if (!CountersWanted) return -1;
         int bucketIndex = (int)bucket;
         if ((uint)bucketIndex >= (uint)framesSinceTelemetry.Length) return -1;
         if (framesSinceTelemetry[bucketIndex] < int.MaxValue)
