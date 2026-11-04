@@ -25,6 +25,24 @@ public static class HzbChecks
         ResultPacking(c);
         ShaderMirrorsItsTwin(c);
         CullShaderCanOnlyStopADraw(c);
+        BoxListGetsFreshStorage(c);
+    }
+
+    /// <summary>
+    /// The section boxes are rewritten every dispatch. Written over the storage the previous
+    /// dispatch may still be reading, NVIDIA's driver held the frame 6-10 ms two or three times
+    /// a second (owner's RTX 3060 Ti, 2026-11-03); AMD never showed it.
+    /// </summary>
+    static void BoxListGetsFreshStorage(Check c)
+    {
+        string source = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src",
+            "Render", "Gpu", "LodHzbClassifier.cs")).Replace("\r\n", "\n");
+        int upload = source.IndexOf("void UploadBoxes(", StringComparison.Ordinal);
+        string body = upload < 0 ? "" : source.Substring(upload);
+        int orphan = body.IndexOf("boxCapacity * BytesPerBox, IntPtr.Zero,", StringComparison.Ordinal);
+        int write = body.IndexOf("GL.BufferSubData(", StringComparison.Ordinal);
+        c.True(orphan >= 0 && write > orphan,
+            "the box list is handed fresh storage before it is written, so the driver never waits on the card");
     }
 
     /// <summary>

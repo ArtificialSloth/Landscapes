@@ -930,7 +930,13 @@ void main()
             boxData[o + 7] = 0f;
         }
 
+        // Fresh storage for every list. Rewriting the one the previous dispatch may still be
+        // reading made NVIDIA's driver hold the frame until the card was done with it: 6-10 ms
+        // stalls two or three times a second on an RTX 3060 Ti, none on AMD (owner, 2026-11-03).
         GL.BindBuffer(BufferTarget.ShaderStorageBuffer, boxBuffer);
+        GL.BufferData(
+            BufferTarget.ShaderStorageBuffer, boxCapacity * BytesPerBox, IntPtr.Zero,
+            BufferUsageHint.StreamDraw);
         GL.BufferSubData(
             BufferTarget.ShaderStorageBuffer, IntPtr.Zero, count * BytesPerBox, boxData);
     }
