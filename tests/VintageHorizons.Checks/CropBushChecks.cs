@@ -83,6 +83,12 @@ public static class CropBushChecks
                 && mod.Contains("public override void AssetsLoaded(ICoreAPI api) => denseLeafAssets?.MakePictures();", StringComparison.Ordinal)
                 && mod.Contains("block.Textures.TryGetValue(LodDenseLeafAssets.TextureKey, out CompositeTexture? packedDense)", StringComparison.Ordinal),
             "pictures are made at asset load, named on leaf blocks before collection, and read back from their packed place");
+        c.True(assets.Contains("active?.ReserveFirst(__instance);", StringComparison.Ordinal)
+                && assets.Contains("atlas.GetOrAddTextureLocation(new AssetLocationAndSource(texture));", StringComparison.Ordinal),
+            "the made pictures are registered before any block's, so they open the first atlas page");
+        c.True(assets.Contains("block.Textures[BushTextureKey] = new CompositeTexture(sheet);", StringComparison.Ordinal)
+                && mod.Contains("block.Textures.TryGetValue(LodDenseLeafAssets.BushTextureKey, out CompositeTexture? packed)", StringComparison.Ordinal),
+            "berry bush sheets are packed the same way: late, they went to page two and bushes stayed cubes");
     }
 
     static void CropsAreCrossed(Check c)

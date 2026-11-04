@@ -1904,6 +1904,18 @@ public partial class VintageHorizonsModSystem : ModSystem
     /// </summary>
     LodBlockTextureRegistry.BlockTexture ResolveBushTile(Block block)
     {
+        // Packed by the game with the bush's own pictures, so on a page textured terrain reads
+        // (LodDenseLeafAssets); the late tile below is for a bush that one did not cover.
+        if (block.Textures != null
+            && block.Textures.TryGetValue(LodDenseLeafAssets.BushTextureKey, out CompositeTexture? packed)
+            && packed?.Baked?.TextureSubId is int packedId && IsUsableAtlasTexture(packedId)
+            && denseLeafAssets?.BushMean(packed.Base) is int packedMean)
+        {
+            int stored = LodBushTile.ToStoredColor(packedMean);
+            return new LodBlockTextureRegistry.BlockTexture(capi.BlockTextureAtlas.Positions[packedId], null,
+                stored, stored, ClearPixelsHoldMean: true);
+        }
+
         layeredTiles ??= BuildLayeredTiles();
         string? folder = BushLeafFolder(block);
         return folder != null && layeredTiles.TryGetValue(folder, out var tile) && tile is { } found

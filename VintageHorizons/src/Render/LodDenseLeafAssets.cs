@@ -38,9 +38,25 @@ internal sealed class LodDenseLeafAssets : IDisposable
     readonly ICoreClientAPI capi;
     readonly Harmony harmony = new(HarmonyId);
 
+    /// <summary>
+    /// A berry bush's layered picture (LodBushTile.ComposePlant), under its own key. It had the same
+    /// fault: made after the atlas was built, it went to a second page and the bush stayed a cube
+    /// (owner, 2026-11-03, currants on the two-page RTX 3060 Ti machine).
+    /// </summary>
+    internal const string BushTextureKey = "dodenslandscapes-bushsheet";
+
     // A leaf picture as a block names it (domain:block/plant/leaves/...) to its dense picture's.
     readonly Dictionary<string, AssetLocation> denseBySource = new(StringComparer.Ordinal);
+
+    // A bush's leaf folder (domain:block/.../leaves) to its layered picture, and that picture's
+    // mean as the composition gave it: unshaded, so the lower layers keep their shade.
+    readonly Dictionary<string, AssetLocation> bushByFolder = new(StringComparer.Ordinal);
+    readonly Dictionary<string, int> bushMeans = new(StringComparer.Ordinal);
     MethodBase? patched;
+
+    /// <summary>A packed bush picture's mean, 0xAARRGGBB, or null for a picture this did not make.</summary>
+    internal int? BushMean(AssetLocation? texture) =>
+        texture != null && bushMeans.TryGetValue(texture.ToString(), out int mean) ? mean : null;
 
     internal LodDenseLeafAssets(ICoreClientAPI capi) => this.capi = capi;
 
@@ -105,12 +121,62 @@ internal sealed class LodDenseLeafAssets : IDisposable
         {
             capi.Logger.Warning("[Landscapes] Dense Leaves stopped making pictures: {0}", e.Message);
         }
+
+        MakeBushPictures();
     }
 
-    static void BeforeCollect(IList<Block> blocks)
+    /// <summary>
+    /// Every folder holding a bush's leaf sheets, layered as VintageHorizonsModSystem's late tiles
+    /// were: centre then inside, 1 to 3, so the picture is the same one, now packed in time.
+    /// </summary>
+    void MakeBushPictures()
     {
         try
         {
+            var folders = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (AssetLocation location in capi.Assets.GetLocations("textures/block/", null))
+            {
+                if (!location.Path.EndsWith("/leavescenter1.png", StringComparison.Ordinal)) continue;
+                folders.Add(location.Domain + ":" + location.Path["textures/".Length..location.Path.LastIndexOf('/')]);
+            }
+
+            foreach (string folder in folders)
+            {
+                int colon = folder.IndexOf(':');
+                string domain = folder[..colon], path = folder[(colon + 1)..];
+                var sheets = new List<(int Width, int Height, int[] Argb)>();
+                foreach (string part in new[] { "center", "inside" })
+                {
+                    for (int n = 1; n <= 3; n++)
+                    {
+                        IAsset? sheet = capi.Assets.TryGet(new AssetLocation(domain, $"textures/{path}/leaves{part}{n}.png"));
+                        if (sheet?.Data == null) continue;
+                        using BitmapExternal bitmap = capi.Render.BitmapCreateFromPng(sheet.Data);
+                        if (bitmap.Pixels == null || bitmap.Pixels.Length != bitmap.Width * bitmap.Height) continue;
+                        sheets.Add((bitmap.Width, bitmap.Height, (int[])bitmap.Pixels.Clone()));
+                    }
+                }
+                if (sheets.Count == 0 || LodBushTile.ComposePlant(sheets) is not { } tile) continue;
+
+                int size = sheets[0].Width;
+                var texture = new AssetLocation("dodenslandscapes", "block/bushsheets/" + domain + "/" + path);
+                var file = new AssetLocation("dodenslandscapes", "textures/" + texture.Path + ".png");
+                capi.Assets.Add(file, new Asset(EncodePng(size, size, tile.Pixels), file, null));
+                bushByFolder[folder] = texture;
+                bushMeans[texture.ToString()] = tile.Mean;
+            }
+        }
+        catch (Exception e)
+        {
+            capi.Logger.Warning("[Landscapes] Bush sheets stopped making pictures: {0}", e.Message);
+        }
+    }
+
+    static void BeforeCollect(BlockTextureAtlasManager __instance, IList<Block> blocks)
+    {
+        try
+        {
+            active?.ReserveFirst(__instance);
             active?.GiveBlocks(blocks);
         }
         catch (Exception e)
@@ -120,24 +186,56 @@ internal sealed class LodDenseLeafAssets : IDisposable
     }
 
     /// <summary>
+    /// Registers every picture this made before any block's: the game packs in the order it first
+    /// hears of a texture, so they open the first page, the one textured terrain reads, whichever
+    /// page the blocks' own pictures end up on. Blocks naming them later reuse these entries.
+    /// </summary>
+    void ReserveFirst(BlockTextureAtlasManager atlas)
+    {
+        foreach (AssetLocation texture in denseBySource.Values.Concat(bushByFolder.Values))
+            atlas.GetOrAddTextureLocation(new AssetLocationAndSource(texture));
+    }
+
+    /// <summary>
     /// Names each leaf block's dense picture among its textures. Runs on the game's loading thread
     /// and only touches the blocks it is handed; the assets themselves were added earlier.
     /// </summary>
     void GiveBlocks(IList<Block> blocks)
     {
-        if (denseBySource.Count == 0) return;
-        int given = 0;
+        if (denseBySource.Count == 0 && bushByFolder.Count == 0) return;
+        int given = 0, bushes = 0;
         foreach (Block block in blocks)
         {
-            if (block?.Code == null || block.BlockMaterial != EnumBlockMaterial.Leaves) continue;
-            if (block.Textures == null || block.Textures.ContainsKey(TextureKey)) continue;
-            if (LodBlockPolicy.IsBerryBush(block)) continue;
+            if (block?.Code == null || block.Textures == null) continue;
+            if (LodBlockPolicy.IsBerryBush(block))
+            {
+                if (block.Textures.ContainsKey(BushTextureKey)) continue;
+                if (BushFolderOf(block) is not { } folder
+                    || !bushByFolder.TryGetValue(folder, out AssetLocation? sheet)) continue;
+                block.Textures[BushTextureKey] = new CompositeTexture(sheet);
+                bushes++;
+                continue;
+            }
+            if (block.BlockMaterial != EnumBlockMaterial.Leaves || block.Textures.ContainsKey(TextureKey)) continue;
             if (DenseFor(SheetOf(block)) is not { } dense) continue;
             block.Textures[TextureKey] = new CompositeTexture(dense);
             given++;
         }
-        capi.Logger.Notification("[Landscapes] Dense Leaves: {0} pictures made, {1} leaf blocks given one.",
-            denseBySource.Count, given);
+        capi.Logger.Notification("[Landscapes] Dense Leaves: {0} pictures made, {1} leaf blocks given one; "
+            + "bush sheets: {2} pictures made, {3} bush blocks given one.",
+            denseBySource.Count, given, bushByFolder.Count, bushes);
+    }
+
+    /// <summary>
+    /// The folder a bush's leaf sheets live in, read off its particle texture, as the late tiles
+    /// were keyed (VintageHorizonsModSystem.BushLeafFolder), with its domain.
+    /// </summary>
+    static string? BushFolderOf(Block block)
+    {
+        if (!block.Textures.TryGetValue("particle", out CompositeTexture? particle)) return null;
+        AssetLocation? source = particle?.Base;
+        int end = source?.Path.LastIndexOf('/') ?? -1;
+        return end > 0 ? source!.Domain + ":" + source.Path[..end] : null;
     }
 
     /// <summary>
