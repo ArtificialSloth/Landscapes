@@ -80,26 +80,30 @@ in advance.
 ## Settings and presets
 
 Open the settings from the game's Settings, on the **Landscapes** page, or type `.dlconfig` in chat.
-The first time you join a world, a window asks you to pick a preset; Quality is the default.
+The first time you join a world, a window asks you to pick a preset; Quality is recommended and is the default. Players
+who answered the earlier three-preset prompt are asked once more in 0.5.2, because the presets changed.
 
-- **Presets.** Performance, Balanced, Quality and Ultra each set how far cached terrain is drawn (2,048,
-  4,096, 8,192, 8,192 blocks), Farseer and its reach (4,096, 8,192, 8,192, 8,192), the seam fog (off, on, on, on), the
-  visual features, and how much detail the distance levels keep, and switch Automatic on. Changing any
-  of them shows "Custom". Your own LOD distances are kept for when Automatic is off.
+- **Presets** are the buttons across the top of General. Performance, Balanced, Quality and Max each set how far cached
+  terrain is drawn (2,048, 8,192, 8,192, 8,192 blocks), Farseer and its reach (8,192 for all), the seam fog (off, on, on,
+  on), the visual features, and how much detail the distance levels keep, and switch Automatic on. Performance keeps every
+  feature that measured as free and draws leaves as cubes; Quality carries the most detailed level out to where a block is
+  one pixel wide; Max is the finest. Changing any setting lights "Custom". Your own LOD distances are kept for when
+  Automatic is off.
 - **General** shows the LOD distances as a bar you can drag (hover the title for what each handle
   does), the **Automatic (Recommended)** switch, and the visual features in two columns, each with a
-  rough cost (Low, Moderate, High). Most of what distant terrain costs is how much is drawn, so the
-  draw distance and the preset matter more than any single feature. **Distant Lights** lets lamps, torches and lava light
-  the ground on cached terrain at night; land you have already explored gains it as its chunks load again.
-  **Load terrain while paused** and **Developer options** sit beside Defaults. Defaults restores Quality.
-- **Plants** holds Plant Detail, one switch over every plant feature, and a switch for each, off being its
-  cheaper form: Leaf Shape (Leaf Clusters with Tops by default), Fruit Tree Colors, Crop Shapes, Reed and Fern
-  Shapes, Vine Sheets, Forage Markers (mushrooms, flint, ore and resin), Flower Sheets, Plant Textures and Berry Bush
-  Sheets. These reach about 620 blocks at default settings. Performance turns Plant Detail off, and Flower Sheets is on
-  only in Ultra.
+  measured cost (Minimal, Low, Moderate, High; the seam fog's varies with how much fog is on screen). Most of what distant
+  terrain costs is how much is drawn, so the draw distance and the preset matter more than any single feature.
+  **Distant Lights** lets lamps, torches and lava light the ground on cached terrain at night; land you have already
+  explored gains it as its chunks load again. **Plant Detail** is one switch over every plant feature. A red **NO SAMPLER**
+  beside Farseer means neither sampler mod was found (hover it). **Load terrain while paused** and **Developer options**
+  sit beside Defaults. Defaults restores Quality.
 - **Generate** builds real terrain into the savegame (see below).
 - **Developer** appears while Developer options is on and holds every tuning dial: distant
-  anti-aliasing and the LOD detail target, Farseer's look and reach, and the seam fog.
+  anti-aliasing and the LOD detail target, Farseer's look and reach, the seam fog, the seam band, and **Plants**: Leaf Shape
+  (Leaf Clusters with Tops by default; Vanilla Style costs more and is in no preset) and a switch for each plant feature,
+  off being its cheaper form: Fruit Tree Colors, Crop Shapes, Reed and Fern Shapes, Vine Sheets, Forage Markers (mushrooms,
+  flint, ore and resin), Flower Sheets, Plant Textures, Berry Bush Sheets, **Dense Leaves** (on: fuller, more solid distant
+  trees) and **Finds Stay Visible** (off: finds shrink with distance; on: they keep a minimum size at any distance).
 
 ## In-game commands
 
@@ -125,7 +129,7 @@ The first time you join a world, a window asks you to pick a preset; Quality is 
 | `.dlcoarse` | Standing where far terrain looks blockier than it should, run this. It reports which nearby detail is missing and what it is waiting for. |
 | `.dlbackface [on\|off]` | Reject back-facing cached solid terrain before shading it. On by default and not saved; water and thin surfaces remain two-sided. |
 | `.dlgpu [off\|on\|verify]` | Turn the GPU terrain renderer off or on. It is on by default and remembered. `off` releases regional buffers and hides cached terrain (there is no other renderer to fall back to); `on` also re-runs the graphics check; `verify` rebuilds the selected regional representation with upload readback checks. Run it without an argument for the effective path and arena numbers. |
-| `.dlhzb [on\|off]` | Build the depth pyramid used to find terrain hidden behind hills. Measurement only - it hides nothing and the picture does not change. Off by default and not saved. Run it with no argument to see its state; the `hzb:` line in the log carries what it costs. |
+| `.dlhzb [on\|off]` | Measure what the depth pyramid could hide behind hills: `on` classifies every drawn section against it and samples the cull counters. Both read results back from the graphics card, which can stutter on NVIDIA, so the measurement is off by default and not saved; the picture does not change. Run it with no argument to see its state; the `hzb:` line in the log carries what it costs. |
 | `.dlfront [on\|off]` | Submit cached solid terrain nearest first so nearer ground can hide farther ground sooner. On by default and not saved; water keeps its original order. |
 | `.dlocclusion [on\|off]` | Draw cached terrain just after vanilla so the ordinary depth test rejects pixels behind current hills. On by default and not saved; `.dlocclusion off` immediately restores the pre-vanilla order. |
 | `.dltemporal [on\|off]` | Stop submitting cached solid meshes that a completed GPU test found fully hidden. On by default with the aggressive profile and not saved; requires `.dlocclusion on`. |

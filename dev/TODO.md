@@ -4,10 +4,11 @@
 
 ## Start here
 
-Read [Session 124](sessions/SESSION_124.md), then [Session 123](sessions/SESSION_123.md). **0.5.2-dev.32**
-(`a99b88e`, not pushed) is the current test build: the presets re-designated from the per-setting and per-preset benchmarks,
-Quality's level 0 out to 1 px, Ultra renamed Max, and Farseer's coverage remembered between frames, on top of Session 123's
-water work and Session 122's Distant Lights; sections "What Session 124 left open" onward below. It declares game
+Read [Session 125](sessions/SESSION_125.md), then [Session 124](sessions/SESSION_124.md). **0.5.2-dev.52**
+(`6395851`, not pushed) is the current test build, played and accepted on the owner's AMD card and on an NVIDIA RTX 3060 Ti:
+the settings window pass, Dense Leaves with rounded tiles, the NVIDIA read-back stalls removed (decision 81), pictures
+packed with the game's atlas (decision 80) and Finds Stay Visible, on top of Session 124's presets and Farseer coverage;
+sections "What Session 125 left open" onward below. The owner calls the 0.5.2 promotion. It declares game
 1.22.0, compiles on 1.22.7 and is intended for 1.22.5+ (owner, no more testing below that). Player reports, with their
 evidence, are in the git-ignored `dev/PLAYER_REPORTS.md`.
 **0.5.1 is the latest release**: the owner-played 0.5.1-dev.7, promoted on 2026-10-22 with only the two
@@ -24,20 +25,27 @@ every dial on a Developer tab shown by Developer options, settled decision 64), 
 distance, Farseer, the seam fog and the automatic LOD target with Quality as the default and a first-run
 prompt (decision 63), let the vanilla floor hold only L1 (decision 35), held the seam fog for 5 s at
 login, and made Generate's Settings button unpause the game; it carries Session 116's review fixes. The
-fast tier passes (27,014 assertions at 0.5.2-dev.32). Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
+fast tier passes (27,056 assertions at 0.5.2-dev.52). Session 118 built the ModDB page (private tooling in `notes/moddb/`, G297). The stutter while exploring
 is solved for him by the all-cores garbage collector, an opt-in switch on General (0.4.134, settled
 decision 54), and the game's chunk thread rests when it has nothing to do (0.4.132, settled decision 53).
 
+### What Session 125 left open
+
+- **Crops drawn from several layers** use a late-inserted picture (G343) and may show as flat patches on two-page atlases;
+  not seen. Their layers are only known once the server sends the block list, after `AssetsLoaded`, so decision 80's route
+  does not reach them as it stands.
+- **`.dlgpu off` then `on`** left cached terrain undrawn on the RTX 3060 Ti until the next session; it works on AMD. A
+  diagnostic command, not investigated.
+- **The depth pyramid** is still built every frame for culling, and its classification found 0% hidden in every log. Whether
+  it should stay on by default is open.
+- **Leaf pictures outside `block/plant/leaves`** and bushes without a `leavescenter1` sheet fall back to the late insert.
+- **Before release:** the ModDB page still says Ultra in places (README fixed in Session 125); the website link in
+  `modinfo.json` points at the slug address, which 404s (the live page is `/show/mod/75034`), the owner's call.
+
 ### What Session 124 left open
 
-- **Relabel the settings window's cost tags (owner, 2026-11-03).** They disagree with the measurements (Session 124, sections
-  2 and 5): Close and Far Biome Colors say "High" but cost 0.05-0.09 ms together; Vanilla and LOD Seam Blending says
-  "Moderate" at 0.05-0.18 ms; Farseer and Water Effects are labelled Low from estimates, and both now measure about 0 (Farseer
-  since dev.31). Re-tag each row from the sweep, climb and preset numbers, and talk the words through with him before
-  building.
-- **dev.32 unplayed:** the new presets, Quality's level 0 at 1 px (928/1248/2496/... at 1080 rows; its +0.5 ms was measured
-  on his hand-set 960/1536/2496/4096/8192/16384, not the built rule) and the Level 0 detail target slider. He is still on
-  manual thresholds; picking a preset turns Automatic back on. Existing settings show as Custom until a preset is picked.
+- **Quality's level 0 at 1 px** (928/1248/2496/... at 1080 rows): its +0.5 ms was measured on his hand-set
+  960/1536/2496/4096/8192/16384, not the built rule. The presets were played through dev.33-dev.52.
 - **Performance's 1% lows** at the valley went from 2.7 to 3.4 ms with the free switches on, on 20-second measures; watch it
   in play before acting.
 - **No GPU/CPU split:** `-GpuStats` wrote nothing, so costs bound by the graphics card may read free on his RX 9070 XT. One
@@ -46,9 +54,6 @@ decision 54), and the game's chunk thread rests when it has nothing to do (0.4.1
 
 ### What Session 123 left open
 
-- **NVIDIA:** dev.23-dev.27 have not run there. The blips were worst there; shore foam's depth read and the new exact
-  readers are untested on it. The owner plans to test it.
-- **dev.27 unplayed:** speckle 0.1 not reported on; the band's reach per preset is now part of dev.32's presets.
 - **Water, not looked for:** far shore foam shimmer while moving; vanilla's weak-foam flag (bit 28 halves its brightness)
   was not found set; one scene read cached shallows 20% brighter than vanilla at unmatched depths.
 - **With terrain off** a faint rim around water stays on the sky; it is the engine's sky and clouds reading the quarter
@@ -58,7 +63,7 @@ decision 54), and the game's chunk thread rests when it has nothing to do (0.4.1
 ### What Session 122 left open
 
 
-- **Distant Lights on NVIDIA:** the new shader code has only compiled on the owner's AMD card.
+- **Distant Lights on NVIDIA:** compiled and ran on the RTX 3060 Ti in Session 125; the night glow was not looked at there.
 - **Limits accepted for now:** top surfaces only, so roofs and treetops stay dark and ground under trees records nothing;
   a wall takes the light of the ground at its foot; cached water is unlit; land gains light only as chunks load again, and a
   `FingerprintRule` bump would force one re-sweep per world. Past 1,024 lit sections the rest stay unlit, counted and not

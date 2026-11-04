@@ -755,7 +755,8 @@ live until the exact replacement persistence revision is acknowledged.
     what the mod can do; a first-run prompt asks every player once. Rejected: presets storing block
     distances (they would mean something different at every field of view and resolution); Quality's
     reach at 16,384; Balanced as the default. The values above were revised from measurements in
-    decision 79 (2026-11-03); the principles stand.
+    decision 79 (2026-11-03); the principles stand. The prompt offers all four presets, "Quality (Recommended)",
+    and asks again once per preset round (`PresetPromptRound`; round 2 is 0.5.2) (owner, 2026-11-03; dev.45).
 64. **The settings window keeps every dial, out of the way** (owner, 2026-10-19; 0.4.166-0.4.175).
     Tabs are General and Generate, plus Developer while General's remembered Developer options switch
     is on; Developer holds every tuning dial in Anti-aliasing, Farseer look and Seam fog sub-tabs.
@@ -764,7 +765,11 @@ live until the exact replacement persistence revision is acknowledged.
     sit in the action row. The window stays 640 tall; labels shrink to fit on one line (G292).
     Rejected: deleting the dials (asked for, then reversed), the Advanced switch, a taller or
     scrolling window. Sampler mods stay optional (silhouette plan D13); the window warns in red when
-    the server found neither.
+    the server found neither. Revised 2026-11-03 (owner; 0.5.2-dev.33-dev.43): the presets are a row of
+    buttons across the top of General with Custom as a readout, a rule beneath and the version at the row's end; cost
+    words are Minimal, Low, Moderate and High from measurements, and the seam fog says Varies; one 22-point heading size;
+    Plant Detail on General and the plant switches in a Developer > Plants group; NO SAMPLER in red beside Farseer's title
+    with the explanation in its hover; no tip shows while a drop-down list is open.
 65. **The game's map layers run one thread at a time** (2026-10-30; 0.5.2-dev.2). With Algernon's Terrain
     Sampler and no Watersheds, `EngineMapGate` holds one lock around `GenMaps.OnMapRegionGen` and around each
     sampler call, point by point. No game code is replaced and no result changes. If the patch cannot attach,
@@ -789,15 +794,23 @@ live until the exact replacement persistence revision is acknowledged.
     shape at all. Rejected: see-through leaf blocks, +26.84% level-0 quads. G315.
 69. **Every plant feature is a switch with a cheaper form** (owner, 2026-11-01; 0.5.2-dev.12). The Plants tab: Plant Detail
     over a switch per feature, keeping their positions, and Leaf Shape. Off is a flat patch, plain colour or cube, and
-    removes the cost. Plant Textures gates what a sheet cuts out. Performance turns Plant Detail off.
+    removes the cost. Plant Textures gates what a sheet cuts out. Performance turns Plant Detail off. Since dev.34 Plant
+    Detail is on General and the switches are a Developer > Plants group (decision 64).
 70. **Leaves are Leaf Clusters with Tops at level 0** (owner, 2026-11-01; 0.5.2-dev.12-dev.14). Two planes across each
     two-block cell holding a visible leaf, merged up the stack, a flat plane through its top. Any visible leaf fills its
     cell, which rounds gappy trees and costs 74-82% of cubes' quads. A leaf plane is a crossed plant only in the private
     `SectionSnapshot`, level 0 only, and neighbours are told so cover agrees. Quads carry `LeafBuried`; flat tops dissolve
     edge-on. Cubes and three other shapes stay in the drop-down. Rejected: Crossed Planes with Tops. G319.
+    Since 2026-11-03 (owner; dev.37-dev.39): **Dense Leaves**, on by default, gives leaves their sheet layered with a
+    half-tile-shifted and a mirrored copy at full brightness, about 75-81% leaf against 46-60%, one texture fetch, swapped
+    in the table without a remesh (packed by decision 80); standing leaf tiles have their corners rounded in the shader
+    (G345). **Vanilla Style** (each leaf block its own pair of 2x1-diagonal planes) stays in the drop-down, in no preset,
+    "Too High Cost" (+27% quads, ~0.7 ms). Not pursued: per-tree colour mix and per-puff shading.
 71. **A small useful thing is one quad facing the camera** (owner, 2026-11-01; 0.5.2-dev.15-dev.16). A packed record with no
     footprint is a marker: mushrooms and loose flint and ore at no less than two pixels, flowers at true size on their
     own picture, resin as flat amber in front of its log at three. They read as tiny cubes at a sixth of the faces.
+    Revised 2026-11-03 (owner; dev.52): the two- and three-pixel minimums apply only with **Finds Stay Visible**, off by
+    default, because resin on far trees made finding it "almost cheating"; otherwise markers keep their true size.
     Capture looks above the rain map for the ground ones (`ReedTable`). Loose stones are not drawn. Past level 0 they
     are mats, as ferns are. Flower Sheets is cosmetic and separate; Forage Markers covers the useful ones.
 72. **Plants are drawn from what the game draws** (owner, 2026-11-01). Vines are one flat sheet per run on the side that holds
@@ -849,6 +862,17 @@ live until the exact replacement persistence revision is acknowledged.
     preset matching compares it and Save keeps it; a file without it follows the target (G339). Far Biome Colors stays its own
     switch (owner). Leaf shapes are not split by distance (owner). Rejected: Quality's L1 as a block distance (decision 63),
     and the old Balanced without seam blending.
+80. **Pictures the mod builds are packed by the game when it builds its atlas** (2026-11-03; 0.5.2-dev.50-dev.51).
+    Dense leaf pictures and berry bush sheets are made at `AssetsLoaded` as PNG assets of this mod (G344); a Harmony prefix
+    on `BlockTextureAtlasManager.CollectTextures` registers them before any block's texture, so they open the first atlas
+    page, and names each on its blocks under an extra texture key nothing the game draws uses. The late `InsertTexture`
+    tile stays as the fallback for anything not covered, and the hook fails open. Rejected: a second atlas page in the
+    shader (every texture read would change); every-page common textures (they must exist as files before loading).
+    G343.
+81. **Measurement never runs in default play** (2026-11-03; 0.5.2-dev.48-dev.49). The depth pyramid's classification and
+    the cull pass's live counters read results back from the card, and on NVIDIA each read held the frame 14-19 ms even
+    when fenced (G342). They run only while `.dlhzb on` asks for the measurement (`DepthPyramidClassifying`,
+    `CountersWanted`); the pyramid itself stays on for culling. A new GPU-to-CPU read follows the same rule.
 
 ## Concurrency invariants
 

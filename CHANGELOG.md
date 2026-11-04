@@ -8,6 +8,38 @@ first.
 
 ## [Unreleased]
 
+## [0.5.2-dev.52] - 2026-11-03
+
+**A test build: smoother on NVIDIA cards, fuller trees, and a tidier settings window.** The fast checks pass with 0
+failures on game 1.22.0 and 1.22.7 (27,056 assertions). This entry covers dev.33 to dev.52.
+
+**No more stutter on NVIDIA cards.** Two pieces of measuring code read results back from the graphics card during normal
+play. NVIDIA's driver held the frame for each read, so the frame graph spiked several times a second (8-19 ms each on an
+RTX 3060 Ti); AMD cards were not affected. Both only fed the `.dlhzb` report and now run only while that measurement is on.
+
+**Fuller distant trees.** New **Dense Leaves** (Developer > Plants, on by default) gives leaves a denser picture, about three
+quarters leaf instead of half, so cached trees look as solid as the game's own instead of speckled, with rounded corners
+so canopies read as lumps rather than squares. It now also works on installs whose block textures span two texture sheets,
+which includes every fresh install, and berry bushes stand up as leafy sheets there instead of cubes.
+
+**New leaf shape: Vanilla Style.** Each leaf block gets its own pair of planes, as the game draws distant leaves. It costs
+noticeably more for a small difference, so no preset uses it.
+
+**Finds no longer give themselves away.** Resin, mushrooms, loose flint and loose ore used to keep a minimum size at any
+distance, so resin showed as a yellow square on far-off trees. They now shrink with distance like everything else. The old
+behaviour is **Finds Stay Visible** under Developer > Plants, off by default.
+
+**Settings window:**
+- The presets are a row of buttons at the top; the one matching your settings is lit, or Custom when none does.
+- Each feature's cost reads Minimal, Low, Moderate or High, measured; the seam fog says Varies.
+- **Plant Detail** is on the General page; the individual plant switches moved to Developer > Plants.
+- A red **NO SAMPLER** beside Farseer when neither Algernon's Terrain Sampler nor Watersheds is found, explained in its hover.
+- The version number shows beside the presets; hover tips no longer show through an open list; dragging a locked distance
+  handle while Automatic is on flashes the Automatic label.
+
+**The preset prompt** now offers all four presets, with Quality marked as recommended. Players who answered the old prompt
+are asked once more, since the presets changed; closing it keeps your settings.
+
 ## [0.5.2-dev.32] - 2026-11-03
 
 **A test build: new presets from measuring every setting, and a much cheaper Farseer.** The fast checks pass with 0

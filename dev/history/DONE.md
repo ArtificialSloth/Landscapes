@@ -2,6 +2,18 @@
 
 > Tier 3: append-only completion history moved out of `dev/TODO.md`. Released player-visible behavior also belongs in `CHANGELOG.md`.
 
+## 2026-11-03 - The settings window pass, Dense Leaves and the NVIDIA stalls (0.5.2-dev.33-dev.52)
+
+- **The cost tags relabelled** (Session 124's open item): Minimal / Low / Moderate / High from the measurements, the seam fog
+  Varies (dev.33-dev.34).
+- **dev.32's presets played** through dev.33-dev.52 on both of the owner's machines.
+- **NVIDIA tested** (Session 123's open item): on an RTX 3060 Ti everything looked good once the read-back stalls were removed
+  (dev.48-dev.49, decision 81), and the Session 79-82 water blips are solved there; Distant Lights' shaders ran.
+- **Cached trees against vanilla:** Dense Leaves and rounded tile corners (dev.38-dev.39), packed with the game's atlas so
+  they work on two-page installs (dev.50-dev.51, decision 80); berry bush sheets the same.
+- **The preset prompt** offers Max and recommends Quality, asked again for 0.5.2 (dev.45); **Finds Stay Visible** (dev.52).
+- Session 125 has the narrative.
+
 ## 2026-11-02..03 - What each setting costs, and the presets re-designated (0.5.2-dev.28-dev.32)
 
 - **The per-setting benchmark** Session 123 designed ran in the sandbox (Session 124): `.dlset` for every window row

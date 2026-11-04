@@ -4,16 +4,38 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-11-03`
-**Mod version:** `0.5.2-dev.32` - a test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; commit `a99b88e`, not pushed; fast tier 27,014 assertions, 0 failures on game 1.22.0 and 1.22.7. **The latest release is 0.5.1**, the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
+**Mod version:** `0.5.2-dev.52` - a test build of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; commit `6395851`, not pushed; fast tier 27,056 assertions, 0 failures on game 1.22.0 and 1.22.7. **The latest release is 0.5.1**, the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
 **Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083`, 0.5.0 `2826b2e`, 0.5.1-dev.2 `621ac7c`, 0.5.1-dev.3 `6b46739`, 0.5.1-dev.4 `102d1e1`, 0.5.1-dev.5 `939af75`, 0.5.1-dev.6 `4421cc3`, 0.5.1-dev.7 `9fa0026`, 0.5.1 `7959339`, 0.5.2-dev.1 `0fc55ef`, 0.5.2-dev.2 `ccd72be`, 0.5.2-dev.3 `07f1aed`, 0.5.2-dev.4 `8216b6f`, 0.5.2-dev.5 `21730b3`, 0.5.2-dev.6 `e2fb684`, 0.5.2-dev.7 `5b595dd`, 0.5.2-dev.18 `39d14bd`, 0.5.2-dev.19 `a331c86`, 0.5.2-dev.20 `6205660`, 0.5.2-dev.21 `c59e268`, 0.5.2-dev.22 `37cf29d`, 0.5.2-dev.23 `e482117`, 0.5.2-dev.24 `239b0f5`, 0.5.2-dev.25 `6551457`, 0.5.2-dev.26 `ece970d`, 0.5.2-dev.27 `61885d3`, 0.5.2-dev.28 `fa66720`, 0.5.2-dev.29 `7d845ac`, 0.5.2-dev.30 `c20b06f`, 0.5.2-dev.31 `38c0bd1`, 0.5.2-dev.32 `a99b88e`; everything through 0.5.1 pushed to `main` on `DodenGruva/Landscapes` (now public) on 2026-10-22; the history was rewritten to his GitHub no-reply address on 2026-10-13
 **Target:** intended for Vintage Story 1.22.5+; declares 1.22.0, where it was briefly tested; compiled on 1.22.7; .NET 10
-**Source files:** `166` C# files under `VintageHorizons/src`
+**Source files:** `167` C# files under `VintageHorizons/src`
 **Assist protocol:** `1`
 **Blob format:** `4`
 **Database schema:** `6` (column fingerprints carry their own rule version, now `2`)
 
 ## Current result
+
+**0.5.2-dev.52, the settings window, Dense Leaves and the NVIDIA stalls (2026-11-03).** Session 125, dev.33 to dev.52.
+Copy-installed to both Mods folders, not pushed. 27,056 assertions, 0 failures on 1.22.0 and 1.22.7. Compatibility numbers
+stay 1/4/6; the client config gains `DenseLeaves`, `FindsStayVisible` and `PresetPromptRound`. Owner-played on his AMD
+RX 9070 XT and on an NVIDIA RTX 3060 Ti (Ryzen 5 5600G, 1080p, two 4096 x 2048 atlas pages): "Everything looked good" on
+NVIDIA, "everything seems great" on AMD. The 0.5.2 promotion is his call.
+
+- **NVIDIA stalls (decision 81, G341-G342):** the mod's drawing stalled 8-19 ms several times a second on the RTX 3060 Ti,
+  flat with the mod off, on drivers 576.52 and 621.01. Timed parts named the depth pyramid's classification, then the cull
+  pass's live counters: measurement-only GPU-to-CPU read-backs that hold the frame on NVIDIA even once fenced. Both run only
+  under `.dlhzb on` now; the steady slowest 1% went from 23.5 to 10.1 ms. The pyramid itself stays on for culling.
+- **Leaves (decisions 70, 80; G343-G345):** Dense Leaves (on by default) layers each leaf sheet to about 75-81% leaf, with
+  rounded tile corners; owner: "Bravo! That looks good!" Vanilla Style is a fifth shape, in no preset ("Too High Cost",
+  ~0.7 ms). Dense pictures and berry bush sheets are made at asset load and packed by the game, so they work on two-page
+  atlases, where the late insert had built none.
+- **Settings window (decision 64):** preset buttons across the top with Custom as a readout and the version at the row's end;
+  cost words Minimal/Low/Moderate/High, the seam fog Varies; Plant Detail on General, the plant switches under Developer >
+  Plants; NO SAMPLER beside Farseer; no tips through an open list; the Automatic label flashes when a locked handle is
+  dragged. The preset prompt offers Max, recommends Quality and asks again for 0.5.2 (decision 63).
+- **Finds Stay Visible (decision 71):** off by default, so resin, mushrooms, flint and ore shrink with distance.
+- **Open:** layered crops may still use a late-inserted picture on two-page atlases; `.dlgpu off`/`on` leaves terrain
+  undrawn on that NVIDIA machine; the ModDB page and the `modinfo.json` website link before release.
 
 **0.5.2-dev.32, what each setting costs and new presets (2026-11-03).** Session 124, dev.28 to dev.32. Copy-installed to
 both Mods folders, not pushed. 27,014 assertions, 0 failures on 1.22.0 and 1.22.7. Compatibility numbers stay 1/4/6; the
@@ -30,10 +52,10 @@ client config gains `Level0Pixels`. The owner played dev.31; dev.32 is not seen.
   2 px, every switch, seam blending over a third of level 0; Quality 8,192 / fog / 1.5 px, every switch, level 0 out to
   1 px (`Level0Pixels`); Max (Ultra renamed) 1 px everywhere. Measured whole at a valley and an open spot, before the
   build: Performance 1.69 / 1.50 ms, Balanced 2.96 / 2.64, Quality with his hand-set level 0 at 960 3.92 / 3.79 (+0.5 ms
-  for the level-0 reach, G340), Max 4.57 / 4.45. Unplayed; he is on manual thresholds.
+  for the level-0 reach, G340), Max 4.57 / 4.45. Played through dev.33-dev.52.
 - **Far Biome Colors (G337):** not broken; it changes almost nothing because the client knows climate only 1-3 km out.
   0.05 ms or less; on from Balanced up, its own switch kept (owner).
-- **Open:** the window's cost tags are to be relabelled from these numbers (owner, TODO).
+- The window's cost tags were relabelled from these numbers in dev.33-dev.34.
 
 **0.5.2-dev.27, shore foam, water blips and the band's reach (2026-11-02).** Session 123, dev.23 to dev.27. Copy-installed
 to both Mods folders, not pushed. 26,998 assertions, 0 failures on 1.22.0 and 1.22.7. Compatibility numbers stay 1/4/6;

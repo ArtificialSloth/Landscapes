@@ -6210,3 +6210,69 @@ features stayed flat (leaf cubes 0.02-0.11, plants 0.10-0.11, seam blending up t
 inside it (`bench/routes/preset-proposal.txt`).
 
 **Found:** 2026-11-03, Session 124.
+
+### G341 - VSync hides what a stall is
+
+**Trigger:** a hitch report from a machine with VSync on, every slow frame blamed on 'end'.
+
+**Trap:** with VSync a frame that misses a refresh waits for the next, so a 1 ms overrun shows as a whole extra refresh at
+the buffer swap. On the owner's 144 Hz NVIDIA machine every slow frame was 13.9 ms, two refreshes, blamed on 'end'; it looked
+like a GPU-bound card. With VSync off the same stall was the mod's own drawing step.
+
+**Safer action:** ask for VSync off before reading a stall. A median of exactly 1000/refresh ms with slow frames at twice that
+is the sign.
+
+**Found:** 2026-11-03, Session 125.
+
+### G342 - On NVIDIA a fenced read-back still holds the frame
+
+**Trigger:** reading anything back from the card during play: `GetBufferSubData` on a counter or result buffer, even after
+`ClientWaitSync(…, 0)` says its fence has signalled.
+
+**Trap:** on an RTX 3060 Ti (drivers 576.52 and 621.01) each such read held the render thread 14-19 ms; AMD showed nothing.
+The depth pyramid's classification and the cull pass's live counters, both measurement only, did it 1-5 times a second. Take
+one away and the stall moves to the next read in the frame, so the culprit looked like whichever step happened to read first.
+
+**Safer action:** no GPU-to-CPU read-back in default play; a measurement that needs one runs only when asked (`.dlhzb on`,
+decision 81). To find a stall inside 'vh:lod', time its parts with `LodHitchMarks.EnterPart` (dev.47 did) rather than guessing.
+
+**Found:** 2026-11-03, Session 125 (dev.46-dev.49).
+
+### G343 - A picture added after the atlas is built goes to page two on a fresh install
+
+**Trigger:** inserting a picture into the block atlas at run time (`InsertTexture`): dense leaves, bush sheets, layered crops.
+
+**Trap:** the game puts it on the first page with room. A fresh install's 4096 x 2048 atlas is two pages with the first full,
+so it lands on the second, which textured terrain cannot read (one page only), and the feature silently does nothing: 0 dense
+leaf pictures and cube bushes on the NVIDIA machine, fine on the owner's single 4096 x 4096 page. The mod's `StartClientSide`
+runs after the atlas is built, too late to join it.
+
+**Safer action:** make the picture at `AssetsLoaded` as an asset of this mod, name it on its blocks in a prefix on
+`BlockTextureAtlasManager.CollectTextures`, and register it there before any block's texture so it opens the first page
+(`LodDenseLeafAssets`, decision 80). Test with the atlas at 4096 x 2048.
+
+**Found:** 2026-11-03, Session 125 (dev.50-dev.51).
+
+### G344 - The game's asset table is a plain dictionary
+
+**Trigger:** adding an asset (`IAssetManager.Add`) while the game loads.
+
+**Trap:** `AssetManager.Assets` is a `Dictionary`, and block textures are collected on a loading thread while shape and sound
+threads read it. Adding there risks a corrupt table.
+
+**Safer action:** add assets in `AssetsLoaded`, on the main thread before the loading threads start; later hooks only name
+assets that already exist.
+
+**Found:** 2026-11-03, Session 125 (dev.50, designed in).
+
+### G345 - A dense cut-out sheet shows its plane's rectangle
+
+**Trigger:** making a see-through plane's picture more solid.
+
+**Trap:** a sparse sheet's holes broke each plane's outline; at about 80% leaf the straight edges of every two-block cluster
+plane showed, and canopies read as stepped squares (owner, dev.38).
+
+**Safer action:** round the corners of each standing leaf tile in the shader with a ragged cut that fades to nothing along an
+edge, or tile boundaries up a stack open a seam (dev.39). Flat tops stay whole.
+
+**Found:** 2026-11-03, Session 125.
