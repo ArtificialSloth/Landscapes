@@ -8,7 +8,7 @@ Read [Session 125](sessions/SESSION_125.md), then [Session 124](sessions/SESSION
 (`6395851`, not pushed) is the current test build, played and accepted on the owner's AMD card and on an NVIDIA RTX 3060 Ti:
 the settings window pass, Dense Leaves with rounded tiles, the NVIDIA read-back stalls removed (decision 81), pictures
 packed with the game's atlas (decision 80) and Finds Stay Visible, on top of Session 124's presets and Farseer coverage;
-sections "What Session 125 left open" onward below. The owner calls the 0.5.2 promotion. It declares game
+sections "What Session 125 left open" onward below. The owner promoted it to **0.5.2** on 2026-11-03 (version stamps and mod page link only; not pushed, not tagged). It declares game
 1.22.0, compiles on 1.22.7 and is intended for 1.22.5+ (owner, no more testing below that). Player reports, with their
 evidence, are in the git-ignored `dev/PLAYER_REPORTS.md`.
 **0.5.1 is the latest release**: the owner-played 0.5.1-dev.7, promoted on 2026-10-22 with only the two
@@ -39,8 +39,8 @@ decision 54), and the game's chunk thread rests when it has nothing to do (0.4.1
 - **The depth pyramid** is still built every frame for culling, and its classification found 0% hidden in every log. Whether
   it should stay on by default is open.
 - **Leaf pictures outside `block/plant/leaves`** and bushes without a `leavescenter1` sheet fall back to the late insert.
-- **Before release:** the ModDB page still says Ultra in places (README fixed in Session 125); the website link in
-  `modinfo.json` points at the slug address, which 404s (the live page is `/show/mod/75034`), the owner's call.
+- **Mod page link:** fixed in 0.5.2. `modinfo.json` pointed at the slug address, which 404s; it now names
+  `/show/mod/75034`. (An earlier line here said the ModDB page still said Ultra; it never did.)
 
 ### What Session 124 left open
 

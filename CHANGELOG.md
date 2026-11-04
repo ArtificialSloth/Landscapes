@@ -8,6 +8,73 @@ first.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-03
+
+**Trees and plants in the distance, lights at night, measured presets, and a smoother picture on NVIDIA
+cards.** 0.5.2 is the owner-played 0.5.2-dev.52 renumbered, played on an AMD and an NVIDIA card; only the
+version stamps and the mod page link differ. The fast checks pass with 0 failures on game 1.22.0 and
+1.22.7 (27,056 assertions). The development entries below give the detail of each step.
+
+**Game versions.** The mod now declares Vintage Story 1.22.0, so it loads there. It is built against
+1.22.7, was briefly tested on 1.22.0, and is intended for 1.22.5 and later.
+
+**Smoother on NVIDIA cards.** Two pieces of measuring code read results back from the graphics card during
+normal play, and NVIDIA's driver held the frame for each read, so the frame graph spiked several times a
+second. They now run only while their measurement is switched on. The small dark blips that flickered near
+water on NVIDIA cards are gone too.
+
+**Trees and plants in the distance:**
+- **Leaves** come in five shapes, with Leaf Clusters with Tops the default, plus a costly Vanilla Style
+  that no preset uses. **Dense Leaves** (on by default) gives leaves a fuller picture with rounded corners,
+  so far canopies look as solid as the game's own.
+- **Fruit trees** show their species and what they are doing: in leaf, in blossom, in fruit or bare.
+- **Berry bushes** stand as see-through sheets of leaves, **vines** hang as flat sheets, **crops** stand on
+  crossed planes and grow by stage, and **reeds and ferns** wear the game's own far textures.
+- **Flower Sheets** stand flowers up as their own picture (off by default).
+- **Forage:** mushrooms, loose flint, loose ore and resin show on distant terrain and shrink with distance
+  like everything else. **Finds Stay Visible** keeps them a few pixels across instead (off by default).
+- **Colours:** ferns follow their season, mushrooms show their cap colour, and bushes and crops no longer
+  draw black or orange. Loose stones are no longer drawn, and tall grass under trees is a flat patch.
+- **Plant Detail** on General switches all of this together; each feature has its own switch under
+  Developer > Plants, with a cheaper fallback.
+
+**New: Distant Lights.** At night, lamps, torches and lava light the ground around them on distant terrain,
+in their own colour, out to the edge of the cache. Walls stop the light, as they do in the game.
+
+**New: shore foam on distant water.** Shallow distant water foams near the shore like the game's own,
+under the Water Effects switch and the game's own foam setting.
+
+**Presets, measured.** Every setting was timed on its own and every preset as a whole. Performance,
+Balanced, Quality and Max are buttons at the top of the settings window; Quality is the recommended one.
+Each feature shows a measured cost (Minimal, Low, Moderate or High). Players updating are asked once to
+pick a preset again; closing the window keeps their settings.
+
+**Farseer costs far less** with long cached distances: at 8,192 blocks, from about 1.3 ms a frame to
+nothing measurable. It is on in every preset. A red **NO SAMPLER** beside it in the settings window says
+when neither Algernon's Terrain Sampler nor Watersheds is installed.
+
+**Cached distance** can be set as short as 256 blocks, in 64-block steps up to 1,024 and 128-block steps
+above. Below the explored distance, Farseer and the fog now meet the cached terrain, and very short
+distances no longer lose ground after a few minutes.
+
+**The seam:** the blending band reaches further on the higher presets, its speckle is gentler, and
+anti-aliasing runs at full strength from the edge of the game's own terrain.
+
+**Fixes:**
+- No more server crash with Algernon's Terrain Sampler on its own.
+- `/dlgen` and `/dlworldgen` no longer wait forever for "an old distant-terrain save".
+- Ruins are no longer pale, berry bushes no longer stand three blocks tall, and fog no longer settles over
+  open country through holes under fruit trees.
+- Much shorter logs: routine detail moved to the game's debug logs.
+- Distant terrain follows the game's `minbrightness` setting. Idea and first version by ArtificialSloth.
+
+**New commands:** `.dlset` sets any row of the settings window from chat, for example `.dlset preset
+quality`.
+
+**Known:** crops drawn from several layered pictures may show as flat patches on installs whose block
+textures span two sheets (not seen). `.dlgpu off` then `on` can leave distant terrain undrawn on NVIDIA
+cards until the next session.
+
 ## [0.5.2-dev.52] - 2026-11-03
 
 **A test build: smoother on NVIDIA cards, fuller trees, and a tidier settings window.** The fast checks pass with 0
