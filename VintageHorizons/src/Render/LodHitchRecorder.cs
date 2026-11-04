@@ -105,20 +105,35 @@ public static class LodHitchMarks
         readonly FrameProfilerUtil? profiler;
         readonly string? job;
         readonly long startBytes;
+        readonly bool tally;
 
-        internal Scope(FrameProfilerUtil profiler, string job)
+        internal Scope(FrameProfilerUtil profiler, string job, bool tally = true)
         {
             this.profiler = profiler;
             this.job = job;
-            startBytes = GC.GetAllocatedBytesForCurrentThread();
+            this.tally = tally;
+            startBytes = tally ? GC.GetAllocatedBytesForCurrentThread() : 0;
         }
 
         public void Leave()
         {
             if (profiler == null || job == null) return;
             profiler.Leave();
-            LodHitchActivity.AddJob(job, GC.GetAllocatedBytesForCurrentThread() - startBytes);
+            if (tally) LodHitchActivity.AddJob(job, GC.GetAllocatedBytesForCurrentThread() - startBytes);
         }
+    }
+
+    /// <summary>
+    /// A part inside an open range, timed but not tallied: its allocations already count
+    /// toward the range around it.
+    /// </summary>
+    public static Scope EnterPart(string between, string part)
+    {
+        FrameProfilerUtil? recording = profiler;
+        if (recording == null) return default;
+        recording.Mark(between);
+        recording.Enter(part);
+        return new Scope(recording, part, tally: false);
     }
 
     /// <summary>Opens a range, or returns an empty scope when not recording.</summary>

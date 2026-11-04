@@ -5827,7 +5827,9 @@ public partial class LodTerrainRenderer : IRenderer
         try
         {
             RenderFrame(deltaTime, stage);
-            DrawSilhouettes();
+            LodHitchMarks.Scope farseer = LodHitchMarks.EnterPart(HitchLodBetween, HitchLodFarseer);
+            try { DrawSilhouettes(); }
+            finally { farseer.Leave(); }
         }
         finally
         {
@@ -5840,6 +5842,17 @@ public partial class LodTerrainRenderer : IRenderer
 
     const string HitchBeforeLod = "before vh:lod";
     const string HitchLod = "vh:lod";
+
+    // Its parts, so a hitch inside vh:lod says which of them held the frame: on an NVIDIA RTX
+    // 3060 Ti the whole step stalled 6-19 ms two or three times a second and nothing finer said
+    // why (owner, 2026-11-03). 'between' is the drawing step's own work outside these.
+    const string HitchLodBetween = "vh:lod between";
+    const string HitchLodPyramid = "vh:lod pyramid";
+    const string HitchLodOpaque = "vh:lod opaque";
+    const string HitchLodWater = "vh:lod water";
+    const string HitchLodClassify = "vh:lod classify";
+    const string HitchLodTaa = "vh:lod anti-aliasing";
+    const string HitchLodFarseer = "vh:lod farseer";
 
     /// <summary>Per-frame measurement of the client's own frame interval against ours.</summary>
     public LodFrameTimeline FrameTimeline => frameTimeline;
@@ -6028,7 +6041,9 @@ public partial class LodTerrainRenderer : IRenderer
         // by accident - that is Phase 6 and it is a separate decision.
         // The split still needs this first picture for its near bucket. A second build after
         // the near draw adds cached occluders for the far bucket; both are same-frame.
-        BuildDepthPyramid();
+        LodHitchMarks.Scope part = LodHitchMarks.EnterPart(HitchLodBetween, HitchLodPyramid);
+        try { BuildDepthPyramid(); }
+        finally { part.Leave(); }
         hzbBoxes.Clear();
         hzbCollecting = DepthPyramidEnabled;
 
@@ -6060,7 +6075,9 @@ public partial class LodTerrainRenderer : IRenderer
         // selected section and reuses list capacity; sorting is included in DrawCost so
         // its CPU price stays visible beside any GPU-side gain. The GPU timer ends after
         // command submission and is read only after a later frame reports it available.
-        renderPaths.DrawOpaque();
+        part = LodHitchMarks.EnterPart(HitchLodBetween, HitchLodOpaque);
+        try { renderPaths.DrawOpaque(); }
+        finally { part.Leave(); }
 
         // `.dlsky`: count sky still showing below the horizon now that all opaque terrain,
         // vanilla's and ours, is in the depth buffer. Off by default; draws nothing visible.
@@ -6073,7 +6090,9 @@ public partial class LodTerrainRenderer : IRenderer
 
         // Pass 2: water and thin cover remain two-sided. Water must be visible from below,
         // and a plant mat has no opposite face to take over when the camera is underneath.
-        renderPaths.DrawWater();
+        part = LodHitchMarks.EnterPart(HitchLodBetween, HitchLodWater);
+        try { renderPaths.DrawWater(); }
+        finally { part.Leave(); }
         CaptureWaterImage(waterFrame.UseOit ? "05-opaque-stage-end" : "05-after-cached-water",
             EnumFrameBuffer.Primary, depth: false);
 
@@ -6083,7 +6102,9 @@ public partial class LodTerrainRenderer : IRenderer
         // no longer occlude anything and the exclusion is now simply correct by construction.
         // Classification reads the unchanged private pyramid, not the live depth attachment.
         hzbCollecting = false;
-        ClassifyAgainstDepthPyramid();
+        part = LodHitchMarks.EnterPart(HitchLodBetween, HitchLodClassify);
+        try { ClassifyAgainstDepthPyramid(); }
+        finally { part.Leave(); }
 
         // Both passes cull, so this is summed after the second one rather than beside
         // LastCulledCount, which is deliberately opaque-only.
@@ -6102,7 +6123,9 @@ public partial class LodTerrainRenderer : IRenderer
 
         // After thin cover as well as opaque ground: both are drawn by the terrain program, so
         // both were nudged, and both have to be blended back or they would wobble.
-        ResolveTaa();
+        part = LodHitchMarks.EnterPart(HitchLodBetween, HitchLodTaa);
+        try { ResolveTaa(); }
+        finally { part.Leave(); }
     }
 
     /// <summary>
