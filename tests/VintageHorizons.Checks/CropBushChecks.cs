@@ -50,6 +50,39 @@ public static class CropBushChecks
             "its clear pixels store its mean, as a bush's do");
         c.Eq(0x30, (dense.Value.Mean >> 16) & 0xFF,
             "and the copies are not darkened: the mean is the sheet's own two greens'");
+
+        // dev.50: the dense picture is handed to the game as a PNG asset before it builds its atlas,
+        // so it is packed beside its leaf picture on the same page (two-page atlases built none).
+        c.Eq(0xAE426082u, LodDenseLeafAssets.Crc32(System.Text.Encoding.ASCII.GetBytes("IEND"), 0xFFFFFFFFu) ^ 0xFFFFFFFFu,
+            "the PNG checksum is the standard one: an empty IEND chunk's CRC");
+        byte[] png = LodDenseLeafAssets.EncodePng(size, size, picture);
+        c.True(png.AsSpan(0, 8).SequenceEqual(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A })
+                && System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(16)) == size
+                && png[24] == 8 && png[25] == 6,
+            "the picture is written as an 8-bit RGBA PNG of its own size");
+        int idatLength = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(33));
+        using var inflate = new System.IO.Compression.ZLibStream(
+            new MemoryStream(png, 41, idatLength), System.IO.Compression.CompressionMode.Decompress);
+        var raw = new MemoryStream();
+        inflate.CopyTo(raw);
+        byte[] rows = raw.ToArray();
+        bool same = rows.Length == size * (1 + size * 4);
+        for (int y = 0; same && y < size; y++)
+            for (int x = 0; same && x < size; x++)
+            {
+                int p = picture[y * size + x], at = y * (1 + size * 4) + 1 + x * 4;
+                same = rows[at] == (byte)(p >> 16) && rows[at + 1] == (byte)(p >> 8)
+                    && rows[at + 2] == (byte)p && rows[at + 3] == (byte)(p >> 24);
+            }
+        c.True(same, "and every pixel comes back out of it unchanged, alpha included");
+
+        string root = Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src");
+        string assets = File.ReadAllText(Path.Combine(root, "Render", "LodDenseLeafAssets.cs"));
+        string mod = File.ReadAllText(Path.Combine(root, "VintageHorizonsModSystem.cs"));
+        c.True(assets.Contains("AccessTools.Method(typeof(BlockTextureAtlasManager), \"CollectTextures\")", StringComparison.Ordinal)
+                && mod.Contains("public override void AssetsLoaded(ICoreAPI api) => denseLeafAssets?.MakePictures();", StringComparison.Ordinal)
+                && mod.Contains("block.Textures.TryGetValue(LodDenseLeafAssets.TextureKey, out CompositeTexture? packedDense)", StringComparison.Ordinal),
+            "pictures are made at asset load, named on leaf blocks before collection, and read back from their packed place");
     }
 
     static void CropsAreCrossed(Check c)

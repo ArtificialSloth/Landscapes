@@ -341,6 +341,19 @@ public partial class VintageHorizonsModSystem : ModSystem
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Client;
 
+    /// <summary>Dense leaf pictures made before the game builds its atlas; see <see cref="LodDenseLeafAssets"/>.</summary>
+    LodDenseLeafAssets? denseLeafAssets;
+
+    // Both run before the game collects block textures, which is before StartClientSide.
+    public override void StartPre(ICoreAPI api)
+    {
+        if (api is not ICoreClientAPI client) return;
+        denseLeafAssets = new LodDenseLeafAssets(client);
+        denseLeafAssets.Install();
+    }
+
+    public override void AssetsLoaded(ICoreAPI api) => denseLeafAssets?.MakePictures();
+
     /// <summary>Everything the config file holds, so a partial save cannot drop a setting.</summary>
     VintageHorizonsConfig config = new();
     VintageHorizonsConfigDialog? configDialog;
@@ -2082,7 +2095,16 @@ public partial class VintageHorizonsModSystem : ModSystem
         // Leaves also carry their dense picture, and the Dense Leaves switch picks between the two.
         TextureAtlasPosition? denseLeaves = null;
         int denseLeavesMean = 0;
-        if (block.BlockMaterial == EnumBlockMaterial.Leaves && DenseLeafKey(face) is { } leafKey)
+        // Packed by the game beside the leaf picture, so on its atlas page (LodDenseLeafAssets);
+        // the late insert below is for a leaf picture that one did not cover.
+        if (block.BlockMaterial == EnumBlockMaterial.Leaves && block.Textures != null
+            && block.Textures.TryGetValue(LodDenseLeafAssets.TextureKey, out CompositeTexture? packedDense)
+            && packedDense?.Baked?.TextureSubId is int denseId && IsUsableAtlasTexture(denseId))
+        {
+            denseLeaves = capi.BlockTextureAtlas.Positions[denseId];
+            denseLeavesMean = PackMean(MeanOf(packedDense, denseId));
+        }
+        else if (block.BlockMaterial == EnumBlockMaterial.Leaves && DenseLeafKey(face) is { } leafKey)
         {
             layeredTiles ??= BuildLayeredTiles();
             if (layeredTiles.TryGetValue(leafKey, out var tile) && tile is { } found)
@@ -6218,6 +6240,8 @@ public partial class VintageHorizonsModSystem : ModSystem
 
     public override void Dispose()
     {
+        denseLeafAssets?.Dispose();
+        denseLeafAssets = null;
         if (capi == null) return;
 
         // The engine runs this on whichever thread is tearing the game down, and on the
