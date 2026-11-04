@@ -432,7 +432,8 @@ public static class PlantDetailChecks
         c.Eq("max", LodPreset.Max.Code, "and .dlset preset max chooses it");
         c.Eq(LodAutoThresholds.MinTargetPixels, LodPreset.Max.TargetPixels, "at the finest detail target");
         c.Eq(LodPreset.Max, LodPreset.All[^1], "above Quality in the list");
-        c.False(LodPreset.FirstRun.Contains(LodPreset.Max), "and not on the first-run prompt, which has three places");
+        c.True(LodPreset.FirstRun.SequenceEqual(LodPreset.All),
+            "and the preset prompt offers all four, Max included (owner, 2026-11-03)");
 
         // Owner, 2026-11-03: the presets after the per-preset benchmark. Far biome colour, flowers
         // and Cache 8,192 measured essentially free, so Balanced and up have them; Performance keeps

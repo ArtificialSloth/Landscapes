@@ -283,6 +283,13 @@ public class VintageHorizonsConfig
     /// next login (owner, 2026-10-19); existing installs see it once too.
     /// </summary>
     public bool PresetPromptShown = false;
+
+    /// <summary>
+    /// The preset round the prompt last asked about (<see cref="LodPresetPrompt.PromptRound"/>). Below
+    /// the current round it shows once more at login: 0.5.2 asks again because its presets changed
+    /// (owner, 2026-11-03). A config from before this field reads 0.
+    /// </summary>
+    public int PresetPromptRound = 0;
 }
 
 /// <summary>The normal 50 ms game-tick cadence, expressed over a pause-safe monotonic clock.</summary>
@@ -636,25 +643,28 @@ public partial class VintageHorizonsModSystem : ModSystem
         : modId;
 
     /// <summary>
-    /// Once the world is up: the first-run preset prompt if it has never been shown, then the
+    /// Once the world is up: the preset prompt if this round has not been asked, then the
     /// notice about other LOD mods once it closes, so the two never stack.
     /// </summary>
     void ShowLoginDialogs()
     {
         // The world is up and its terrain is only starting to load: keep the fog off the player.
         renderer?.HoldSilhouetteFogForLogin();
-        if (config.PresetPromptShown)
+        if (config.PresetPromptRound >= LodPresetPrompt.PromptRound)
         {
             ShowLodModNotice();
             return;
         }
+        // A player who answered an earlier round is told why it is back.
+        bool updated = config.PresetPromptShown;
         var prompt = new LodPresetPrompt(capi, ApplyChosenPreset, () =>
         {
             config.PresetPromptShown = true;
+            config.PresetPromptRound = LodPresetPrompt.PromptRound;
             SaveConfig();
             // After the prompt has finished with the click that closed it.
             capi.Event.EnqueueMainThreadTask(ShowLodModNotice, "dodenslandscapes-notice-after-preset");
-        });
+        }, updated);
         if (!prompt.TryOpen())
         {
             Mod.Logger.Warning("The first-run preset prompt could not open.");

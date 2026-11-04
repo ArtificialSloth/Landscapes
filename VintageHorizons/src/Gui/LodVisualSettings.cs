@@ -224,10 +224,10 @@ internal sealed record LodPreset(string Code, string Name, LodVisualSettings Vis
     public static readonly LodPreset[] All = { Performance, Balanced, Quality, Max };
 
     /// <summary>
-    /// What a new player is asked to pick from, which is about what their machine can carry. Max
-    /// waits in the settings window for someone who has seen the rest.
+    /// What the preset prompt offers: every preset, Quality marked as recommended (owner,
+    /// 2026-11-03; Max waited in the settings window until then).
     /// </summary>
-    public static readonly LodPreset[] FirstRun = { Performance, Balanced, Quality };
+    public static readonly LodPreset[] FirstRun = All;
 
     /// <summary>The preset these values are, or null for a hand-made combination.</summary>
     public static LodPreset? Matching(LodVisualSettings visuals, int drawDistance,

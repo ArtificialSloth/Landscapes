@@ -99,10 +99,17 @@ public static class SettingsWindowChecks
         string mod = Source("VintageHorizonsModSystem.cs");
         string prompt = Source("Gui", "LodPresetPrompt.cs");
         c.False(new VintageHorizonsConfig().PresetPromptShown, "a fresh install asks for a preset once");
-        c.True(prompt.Contains("for (int i = 0; i < LodPreset.FirstRun.Length; i++)", StringComparison.Ordinal)
+        c.True(prompt.Contains("for (int i = 0; i < columns; i++)", StringComparison.Ordinal)
                 && prompt.Contains("closed();", StringComparison.Ordinal)
-                && mod.Contains("config.PresetPromptShown = true;", StringComparison.Ordinal),
-            "the prompt offers every preset and, however it closes, is not shown again");
+                && mod.Contains("config.PresetPromptRound = LodPresetPrompt.PromptRound;", StringComparison.Ordinal),
+            "the prompt offers every preset and, however it closes, is not shown again this round");
+        c.Eq(0, new VintageHorizonsConfig().PresetPromptRound, "a config from before rounds reads round 0");
+        c.True(LodPresetPrompt.PromptRound == 2
+                && mod.Contains("if (config.PresetPromptRound >= LodPresetPrompt.PromptRound)", StringComparison.Ordinal),
+            "so a player who answered 0.5.0's prompt is asked once more for 0.5.2's presets (owner, 2026-11-03)");
+        c.Eq("Quality (Recommended)", LodPresetPrompt.ButtonLabel(LodPreset.Quality),
+            "the prompt steers players to Quality (owner, 2026-11-03)");
+        c.Eq("Max", LodPresetPrompt.ButtonLabel(LodPreset.Max), "and names the others plainly");
     }
 
     static void GenerateReadsAsAFlow(Check c)
