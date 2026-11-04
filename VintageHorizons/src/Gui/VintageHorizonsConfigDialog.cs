@@ -603,7 +603,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
         LodLeafShape.ClustersWithTops =>
             "The same, with a flat plane through each patch's top.",
         LodLeafShape.VanillaStyle =>
-            "Each leaf block its own pair of planes at varied angles, as the game draws far leaves. The most faces.",
+            "Each leaf block its own pair of planes at varied angles, as the game draws far leaves. Too High Cost: no preset uses it.",
         _ => "Solid blocks, as the game has always drawn them here. The cheapest to shade.",
     };
 
