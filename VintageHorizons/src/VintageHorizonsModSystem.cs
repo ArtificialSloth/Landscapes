@@ -4974,6 +4974,9 @@ public partial class VintageHorizonsModSystem : ModSystem
                     return TextCommandResult.Error("[Landscapes] use: .dlhzb on | off | why");
 
                 renderer.DepthPyramidEnabled = word == "on";
+                // Asking for the pyramid by name is asking for its measurement: the start-up
+                // culling setup builds the pyramid without classifying against it.
+                renderer.DepthPyramidClassifying = word == "on";
                 renderer.ResetDepthPyramidInterval();
 
                 return TextCommandResult.Success(

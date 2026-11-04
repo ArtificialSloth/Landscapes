@@ -6045,7 +6045,7 @@ public partial class LodTerrainRenderer : IRenderer
         try { BuildDepthPyramid(); }
         finally { part.Leave(); }
         hzbBoxes.Clear();
-        hzbCollecting = DepthPyramidEnabled;
+        hzbCollecting = DepthPyramidEnabled && DepthPyramidClassifying;
 
         prog.Use();
         if (OpaqueBackfaceCulling)
@@ -8464,9 +8464,18 @@ public partial class LodTerrainRenderer : IRenderer
         return true;
     }
 
+    /// <summary>
+    /// Whether the pyramid also classifies sections, which only measures what it could hide and
+    /// hides nothing. Off unless `.dlhzb on` asks for the measurement: the culling setup turns the
+    /// pyramid on at every start, and reading the verdicts back held the frame 18-19 ms about once
+    /// a second on an NVIDIA RTX 3060 Ti (owner, 2026-11-03, drivers 576.52 and 621.01).
+    /// </summary>
+    public bool DepthPyramidClassifying { get; set; }
+
     void ClassifyAgainstDepthPyramid()
     {
-        if (!DepthPyramidEnabled || depthPyramid == null || !depthPyramid.Allocated) return;
+        if (!DepthPyramidEnabled || !DepthPyramidClassifying) return;
+        if (depthPyramid == null || !depthPyramid.Allocated) return;
         if (!LastHzbBuild.Built) return;
 
         // Built before the clock starts. Compiling and linking a compute program is a

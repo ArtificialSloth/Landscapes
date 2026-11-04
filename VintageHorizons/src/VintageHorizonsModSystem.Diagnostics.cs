@@ -242,6 +242,7 @@ public partial class VintageHorizonsModSystem
         Entry(lines, "GPU clusters", renderer.ClusterDrawEnabled);
         Entry(lines, "GPU depth cull", renderer.GpuCullEnabled);
         Entry(lines, ".dlhzb", renderer.DepthPyramidEnabled);
+        Entry(lines, ".dlhzb measuring", renderer.DepthPyramidClassifying);
         Entry(lines, "GPU late depth", renderer.LateDepthPyramid);
         Entry(lines, ".dltaa", renderer.DistantAntiAliasing);
         Entry(lines, ".dltaa show", renderer.TaaShowWeight);

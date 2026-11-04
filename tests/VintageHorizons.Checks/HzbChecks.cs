@@ -43,6 +43,20 @@ public static class HzbChecks
         int write = body.IndexOf("GL.BufferSubData(", StringComparison.Ordinal);
         c.True(orphan >= 0 && write > orphan,
             "the box list is handed fresh storage before it is written, so the driver never waits on the card");
+
+        // dev.47 timed it: on the same card the classification itself held the frame 18-19 ms
+        // about once a second, and it only measures. It runs when .dlhzb on asks for it.
+        string renderer = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src",
+            "Render", "LodTerrainRenderer.cs")).Replace("\r\n", "\n");
+        string mod = File.ReadAllText(Path.Combine(GameAssemblies.RepoRoot, "VintageHorizons", "src",
+            "VintageHorizonsModSystem.cs")).Replace("\r\n", "\n");
+        c.True(renderer.Contains("public bool DepthPyramidClassifying { get; set; }", StringComparison.Ordinal)
+                && renderer.Contains("if (!DepthPyramidEnabled || !DepthPyramidClassifying) return;", StringComparison.Ordinal)
+                && renderer.Contains("hzbCollecting = DepthPyramidEnabled && DepthPyramidClassifying;", StringComparison.Ordinal),
+            "the pyramid classifies only when asked, so the start-up culling setup never reads verdicts back");
+        c.True(mod.Contains("renderer.DepthPyramidClassifying = word == \"on\";", StringComparison.Ordinal)
+                && !mod.Contains("renderer.DepthPyramidClassifying = true;", StringComparison.Ordinal),
+            "only .dlhzb on asks for the measurement");
     }
 
     /// <summary>
