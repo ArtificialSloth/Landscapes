@@ -4,7 +4,7 @@
 > narrative live in the sessions; durable design lives in `dev/ARCHITECTURE.md`.
 
 **Status date:** `2026-11-03`
-**Mod version:** `0.5.2` - the latest release of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; the owner-played 0.5.2-dev.52 (`6395851`) renumbered, with the mod page link fixed, promoted on 2026-11-03; not pushed, not tagged; fast tier 27,056 assertions, 0 failures on game 1.22.0 and 1.22.7. **0.5.1** was the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
+**Mod version:** `0.5.2` - the latest release of **Doden's Landscapes** (renamed from Vintage Horizons in 0.4.138; mod id `dodenslandscapes`, `.dl` commands, `[Landscapes]` in chat and log, `DodensLandscapes.dll`), licensed GPL-3.0 only with a Vintage Story exception; the owner-played 0.5.2-dev.52 (`6395851`) renumbered, with the mod page link fixed, promoted on 2026-11-03 (commit `f8043b9`), tagged `v0.5.2` and pushed; fast tier 27,056 assertions, 0 failures on game 1.22.0 and 1.22.7. **0.5.1** was the owner-played 0.5.1-dev.7 renumbered (commit `7959339`, not tagged). 0.5.0 (`2826b2e`, tag `v0.5.0`) was the owner-played 0.4.175. Development builds are numbered `<next release>-dev.N`; promotion to a release number is the owner's call
 **Last accepted baseline:** `0.4.64` at commit `dd0394c`, accepted by the owner on 2026-09-12
 **Active branch:** `main` (renamed from `codex/water-depth-light` on 2026-10-13); recent checkpoints 0.4.128 `6e1d718`, 0.4.129 `5e4d72c`, 0.4.130 `5fe56a8`, 0.4.131 `bceed3e`, 0.4.132 `92e47ac`, 0.4.133 `f2e47e9`, 0.4.134 `ad6b02b`, 0.4.135 `9951c05`, 0.4.136 `49df945`, 0.4.137 `ed1faa3`, 0.4.138 `346265a`, 0.4.139 `d9c99a9`, 0.4.140 `bbed35b`, 0.4.141 `8f66b6a`, 0.4.142 `f7cc8cd`, 0.4.143 `a0c4633`, 0.4.144 `c23e260`, 0.4.145 `33ce676`, 0.4.146 `934ab3f`, 0.4.147 `789790a`, 0.4.148 `2f1b3ca`, 0.4.149 `dde1c9d`, 0.4.150 `6ac97ef`, 0.4.151 `1b91990`, 0.4.152 `bc5016b`, 0.4.153 `857d24d`, 0.4.154 `39ea1a3`, 0.4.155 `49d7ce5`, 0.4.156 `295c22c`, 0.4.157 `a6e0024`, 0.4.158 `be83144`, 0.4.159 `d947570`, 0.4.160 `f3efb97`, 0.4.161 `a82a1f7`, 0.4.162 `bd12ffe`, 0.4.163 `774e9a4`, 0.4.164 `e057a00`, 0.4.165 `5d0e0b4`, 0.4.166 `e62f602`, 0.4.167 `1e7990e`, 0.4.168 `84bdbb7`, 0.4.169 `09a79e7`, 0.4.170 `0cf3032`, 0.4.171 `7d16b6e`, 0.4.172 `2788609`, 0.4.173 `f91c389`, 0.4.174 `b5c99b7`, 0.4.175 `ff9a083`, 0.5.0 `2826b2e`, 0.5.1-dev.2 `621ac7c`, 0.5.1-dev.3 `6b46739`, 0.5.1-dev.4 `102d1e1`, 0.5.1-dev.5 `939af75`, 0.5.1-dev.6 `4421cc3`, 0.5.1-dev.7 `9fa0026`, 0.5.1 `7959339`, 0.5.2-dev.1 `0fc55ef`, 0.5.2-dev.2 `ccd72be`, 0.5.2-dev.3 `07f1aed`, 0.5.2-dev.4 `8216b6f`, 0.5.2-dev.5 `21730b3`, 0.5.2-dev.6 `e2fb684`, 0.5.2-dev.7 `5b595dd`, 0.5.2-dev.18 `39d14bd`, 0.5.2-dev.19 `a331c86`, 0.5.2-dev.20 `6205660`, 0.5.2-dev.21 `c59e268`, 0.5.2-dev.22 `37cf29d`, 0.5.2-dev.23 `e482117`, 0.5.2-dev.24 `239b0f5`, 0.5.2-dev.25 `6551457`, 0.5.2-dev.26 `ece970d`, 0.5.2-dev.27 `61885d3`, 0.5.2-dev.28 `fa66720`, 0.5.2-dev.29 `7d845ac`, 0.5.2-dev.30 `c20b06f`, 0.5.2-dev.31 `38c0bd1`, 0.5.2-dev.32 `a99b88e`; everything through 0.5.1 pushed to `main` on `DodenGruva/Landscapes` (now public) on 2026-10-22; the history was rewritten to his GitHub no-reply address on 2026-10-13
 **Target:** intended for Vintage Story 1.22.5+; declares 1.22.0, where it was briefly tested; compiled on 1.22.7; .NET 10
@@ -1286,13 +1286,12 @@ It covers:
 
 ## Next work
 
-Begin with [Session 124](dev/sessions/SESSION_124.md) and the top of [TODO](dev/TODO.md). Next: the owner plays dev.32's
-presets, the window's cost tags are relabelled from the measurements, an NVIDIA test of dev.23 onward, and a 0.5.2 release
-when he promotes a played build.
+Begin with [Session 125](dev/sessions/SESSION_125.md) and the top of [TODO](dev/TODO.md). 0.5.2 is released and pushed;
+what comes next is the owner's call.
 
-1. **Publishing, on the owner's calls:** 0.5.1 is the latest release, pushed and live on ModDB
-   (`mods.vintagestory.at/show/mod/75034`), with `DodenGruva/Landscapes` public. 0.5.2-dev.1 to dev.32 are not pushed;
-   at release the changelog's dev sections fold into one entry. Still not run: the game-launching check tiers (ask
+1. **Publishing, on the owner's calls:** 0.5.2 is the latest release, tagged `v0.5.2` and pushed to the public
+   `DodenGruva/Landscapes` on 2026-11-03; the owner uploads the zip and the changelog's [0.5.2] entry to ModDB
+   (`mods.vintagestory.at/show/mod/75034`) and pastes the updated cards. Still not run: the game-launching check tiers (ask
    before launching). The old `DodenGruva/Horizons` fork is his to delete.
 2. **Ask the owner what comes next.** The stutter is solved for him; what it left:
    - **The bug report** to the game's developers is drafted; the owner sends it.

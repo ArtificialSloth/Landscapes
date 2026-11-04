@@ -5,13 +5,13 @@
 ## Start here
 
 Read [Session 125](sessions/SESSION_125.md), then [Session 124](sessions/SESSION_124.md). **0.5.2-dev.52**
-(`6395851`, not pushed) is the current test build, played and accepted on the owner's AMD card and on an NVIDIA RTX 3060 Ti:
+(`6395851`) was the last test build, played and accepted on the owner's AMD card and on an NVIDIA RTX 3060 Ti:
 the settings window pass, Dense Leaves with rounded tiles, the NVIDIA read-back stalls removed (decision 81), pictures
 packed with the game's atlas (decision 80) and Finds Stay Visible, on top of Session 124's presets and Farseer coverage;
-sections "What Session 125 left open" onward below. The owner promoted it to **0.5.2** on 2026-11-03 (version stamps and mod page link only; not pushed, not tagged). It declares game
+sections "What Session 125 left open" onward below. The owner promoted it to **0.5.2** on 2026-11-03 (version stamps and mod page link only; commit `f8043b9`, tagged `v0.5.2`, pushed). It declares game
 1.22.0, compiles on 1.22.7 and is intended for 1.22.5+ (owner, no more testing below that). Player reports, with their
 evidence, are in the git-ignored `dev/PLAYER_REPORTS.md`.
-**0.5.1 is the latest release**: the owner-played 0.5.1-dev.7, promoted on 2026-10-22 with only the two
+**0.5.1** was the release before: the owner-played 0.5.1-dev.7, promoted on 2026-10-22 with only the two
 version strings changed (commit `7959339`, not tagged) and pushed. It fixes the packed shader on NVIDIA 617,
 sweeps all explored land nearest a player first, adds the import popup and progress line, and fixes the
 seam on NVIDIA and on fresh installs (a 4096 x 2048 atlas) and part-tinted plants. Development builds are
