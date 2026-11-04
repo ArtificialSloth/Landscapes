@@ -598,6 +598,13 @@ public partial class LodTerrainRenderer : IRenderer
     public bool PlantTexturesEnabled { get; set; } = true;
 
     /// <summary>
+    /// Finds Stay Visible: forage markers and resin keep a minimum width on screen at any distance.
+    /// Off by default, so they shrink and go with distance like the ground around them (owner,
+    /// 2026-11-03: a far tree's resin square made finding it almost cheating). A uniform; nothing remeshes.
+    /// </summary>
+    public bool MarkerMinimumEnabled { get; set; }
+
+    /// <summary>
     /// Whether reeds and ferns stand on crossed planes at level 0. Off they take the flat patch
     /// coarser levels draw. Decides what geometry exists, so a change needs <see cref="RemeshAll"/>.
     /// </summary>
@@ -6352,6 +6359,7 @@ public partial class LodTerrainRenderer : IRenderer
         bool plantTexturesOn = PlantTexturesEnabled && blockTexturesLive && blockTextures != null
             && blockTextures.AtlasTextureId > 0;
         prog.Uniform("plantTextureEnabled", plantTexturesOn ? 1 : 0);
+        prog.Uniform("markerMinimum", MarkerMinimumEnabled ? 1 : 0);
         if (blockTexturesOn || plantTexturesOn || waterSurfaceTextureOn)
         {
             // Both axes: the atlas is 4096 x 2048 on a fresh install, square only on upgraded ones.

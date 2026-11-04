@@ -77,6 +77,7 @@ public class VintageHorizonsConfig
     public bool CropShapes = true;
     public bool BushTextures = true;
     public bool DenseLeaves = true;
+    public bool FindsStayVisible;
     public bool FruitTreeColors = true;
     public bool DistantLights = true;
 
@@ -6007,7 +6008,8 @@ public partial class VintageHorizonsModSystem : ModSystem
             DistantLights: renderer.DistantLightsEnabled,
             BandReach: renderer.BandReachShare,
             Level0Pixels: renderer.Level0Pixels,
-            DenseLeaves: config.DenseLeaves);
+            DenseLeaves: config.DenseLeaves,
+            FindsStayVisible: config.FindsStayVisible);
 
     /// <summary>What the config file says, for startup and for when no renderer exists.</summary>
     LodVisualSettings ConfiguredVisualSettings() => new(
@@ -6035,7 +6037,8 @@ public partial class VintageHorizonsModSystem : ModSystem
         Level0Pixels: Math.Clamp(float.IsFinite(config.Level0Pixels) ? config.Level0Pixels
             : LodVisualSettings.Level0FollowsTarget,
             LodAutoThresholds.MinTargetPixels, LodAutoThresholds.MaxTargetPixels),
-        DenseLeaves: config.DenseLeaves);
+        DenseLeaves: config.DenseLeaves,
+        FindsStayVisible: config.FindsStayVisible);
 
     /// <summary>What the config file says for the anti-aliasing dials, for when no renderer exists.</summary>
     LodTaaDials ConfiguredTaaDials() => new(config.TaaReachPixels, config.TaaNudge,
@@ -6067,6 +6070,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         config.CropShapes = v.CropShapes;
         config.BushTextures = v.BushTextures;
         config.DenseLeaves = v.DenseLeaves;
+        config.FindsStayVisible = v.FindsStayVisible;
         config.FruitTreeColors = v.FruitTreeColors;
         config.LeafShape = v.LeafShape;
         config.ClimateTint = v.ClimateTint;
@@ -6116,6 +6120,7 @@ public partial class VintageHorizonsModSystem : ModSystem
         renderer.LeafShape = v.LeafShapeOn;
         blockTextures.BushTexturesVisible = v.BushTexturesOn;
         blockTextures.DenseLeavesShown = v.DenseLeavesOn;
+        renderer.MarkerMinimumEnabled = v.FindsStayVisibleOn;
         ApplyBlendPipeline(v.BlendPipeline);
         renderer.BandEnabled = v.SeamBand;
         renderer.BandReachShare = v.BandReach;

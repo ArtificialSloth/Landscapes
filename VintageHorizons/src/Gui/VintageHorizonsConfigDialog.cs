@@ -577,6 +577,14 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
             "Minimal",
             v => v.DenseLeaves,
             (v, on) => v with { DenseLeaves = on }),
+
+        new("finds-stay-visible", "Finds Stay Visible",
+            "Keeps resin, mushrooms, loose flint and loose ore at least two or three pixels across at "
+            + "any distance, so they can be spotted from far away. Off, they shrink with distance "
+            + "like everything around them and vanish when too small to see. Needs Forage Markers.",
+            "Minimal",
+            v => v.FindsStayVisible,
+            (v, on) => v with { FindsStayVisible = on }),
     };
 
     /// <summary>The leaf shapes, in the order the drop-down shows them.</summary>
@@ -2312,6 +2320,7 @@ internal sealed class VintageHorizonsConfigDialog : GuiDialog
                 CropShapes = plants.CropShapes,
                 BushTextures = plants.BushTextures,
                 DenseLeaves = plants.DenseLeaves,
+                FindsStayVisible = plants.FindsStayVisible,
                 FruitTreeColors = plants.FruitTreeColors,
                 LeafShape = plants.LeafShape,
             };

@@ -73,7 +73,8 @@ void main()
     else if (vhFace >= 6u && vhX0 == vhX1 && vhZ0 == vhZ1)
     {
         // A marker (LodMesher.AddMarker): a square at the middle of its column, facing the camera,
-        // which from any distance these are seen at is a tiny cube for one quad. Never under two
+        // which from any distance these are seen at is a tiny cube for one quad. At its true size it
+        // shrinks and goes with distance; with Finds Stay Visible (markerMinimum) never under two
         // pixels across, or three for resin (face 7), which also stands out in front of its log.
         // One with a texture is a flower, a picture rather than a mark, and keeps its true size.
         bool vhMarkerSheet = (vhGeometry & 0x80000000u) != 0u;
@@ -83,7 +84,7 @@ void main()
         vhToCamera /= vhMarkerDistance;
         if (vhFace == 7u) vhMarkerCentre += vhToCamera * 0.75;
         float vhMarkerHalf = (vhY1 - vhY0) * 0.5;
-        if (vhTaaBlockScale > 0.0 && !vhMarkerSheet)
+        if (vhTaaBlockScale > 0.0 && !vhMarkerSheet && markerMinimum != 0)
             vhMarkerHalf = max(vhMarkerHalf, (vhFace == 7u ? 1.5 : 1.0) * vhMarkerDistance / vhTaaBlockScale);
         vec3 vhMarkerRight = normalize(cross(vec3(0.0, 1.0, 0.0), vhToCamera) + vec3(0.0001, 0.0, 0.0));
         vec3 vhMarkerUp = cross(vhToCamera, vhMarkerRight);

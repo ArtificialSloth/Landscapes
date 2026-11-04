@@ -98,6 +98,7 @@ public partial class VintageHorizonsModSystem
         Entry(lines, "Crop Shapes", visual.CropShapes);
         Entry(lines, "Berry Bush Sheets", visual.BushTextures);
         Entry(lines, "Dense Leaves", visual.DenseLeaves);
+        Entry(lines, "Finds Stay Visible", visual.FindsStayVisible);
         Entry(lines, "Fruit Tree Colors", visual.FruitTreeColors);
         Entry(lines, "Leaf Shape", visual.LeafShape.ToString());
         Entry(lines, "Distant Lights", visual.DistantLights);

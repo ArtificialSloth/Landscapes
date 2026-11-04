@@ -169,6 +169,13 @@ public static class CropBushChecks
         c.True(body.Contains("texelFetch(blockTable, ivec2(vhBlockSlot, 1), 0).a > 1.5", StringComparison.Ordinal)
                 && body.Contains("clamp(2.0 - vhSheetLod, 0.0, 1.0)", StringComparison.Ordinal),
             "only a sheet marked safe skips the fade reeds need (G313)");
+        string vertex = File.ReadAllText(Path.Combine(root, "assets", "dodenslandscapes", "shaderincludes", "lodterrainbody.vsh"));
+        string inputs = File.ReadAllText(Path.Combine(root, "assets", "dodenslandscapes", "shaderincludes", "lodvertexinputs.vsh"));
+        c.False(LodVisualSettings.Default.FindsStayVisible || new VintageHorizonsConfig().FindsStayVisible,
+            "finds shrink with distance unless Finds Stay Visible is switched on (owner, 2026-11-03)");
+        c.True(vertex.Contains("if (vhTaaBlockScale > 0.0 && !vhMarkerSheet && markerMinimum != 0)", StringComparison.Ordinal)
+                && inputs.Contains("uniform int markerMinimum;", StringComparison.Ordinal),
+            "the markers' minimum on-screen size is applied only while the switch is on");
         c.True(LodBlockPolicy.CropSheetNames.Contains("crop") && LodBlockPolicy.CropSheetNames.Contains("e"),
             "crops look for the sheets the game's own planes use");
     }
