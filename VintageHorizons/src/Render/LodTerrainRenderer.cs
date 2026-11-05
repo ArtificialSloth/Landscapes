@@ -819,23 +819,22 @@ public partial class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
-    /// What the game's `minbrightness` setting multiplies a cached surface's light by.
+    /// A neutral RGB lift that brings a cached surface's mean light up to `minbrightness`.
     ///
-    /// `applyLight` raises `bBlock` to the setting before it mixes the light colours. With no
-    /// block light that mix and its `bMax` renormalisation reduce to scaling the sun light up
-    /// until its mean reaches the floor, so the hue survives: night stays blue. Adding the
-    /// difference to every channel instead would land on the same brightness in a greyer
-    /// colour than the terrain beside it.
+    /// The previous hue-preserving multiplier came from a reduced no-block-light derivation,
+    /// Add the floor deficit equally to red, green and blue instead.
+    /// It preserves the base night lighting when the floor is inactive and reduces its blue
+    /// cast only as the configured floor takes over.
     ///
-    /// The floor sits in the branch of `applyLight` that handles dynamic lights, so with
-    /// `maxDynamicLights` at 0 the game never applies it and neither does this.
+    /// The game's floor sits in the branch of `applyLight` that handles dynamic lights, so
+    /// with `maxDynamicLights` at 0 the game never applies it and neither does this.
     /// </summary>
-    internal static float BrightnessFloorScale(Vec3f ambient, float sunLevel, float minBrightness,
+    internal static float BrightnessFloorLift(Vec3f ambient, float sunLevel, float minBrightness,
         int maxDynamicLights)
     {
-        if (maxDynamicLights <= 0) return 1f;
+        if (maxDynamicLights <= 0) return 0f;
         float sunMean = sunLevel * (ambient.R + ambient.G + ambient.B) / 3f;
-        return sunMean > 0f ? Math.Max(1f, minBrightness / sunMean) : 1f;
+        return Math.Max(0f, minBrightness - sunMean);
     }
 
     /// <summary>
@@ -6291,7 +6290,7 @@ public partial class LodTerrainRenderer : IRenderer
         // no branch of its own on the GPU side.
         float sunLevel = LightSunLevel ? SunLightLevel() : 1f;
         prog.Uniform("sunLightLevel", sunLevel);
-        prog.Uniform("brightnessFloorScale", BrightnessFloorScale(capi.Ambient.BlendedAmbientColor,
+        prog.Uniform("brightnessFloorLift", BrightnessFloorLift(capi.Ambient.BlendedAmbientColor,
             sunLevel, capi.Settings.Float["minbrightness"], capi.Settings.Int["maxDynamicLights"]));
         prog.Uniform("lightSkyDayLight", LightSkyDayLight ? 1 : 0);
         prog.Uniform("skyDayLight", SkyDayLight());

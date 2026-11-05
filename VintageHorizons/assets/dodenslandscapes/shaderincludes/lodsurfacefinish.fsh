@@ -5,9 +5,10 @@
     // already carries the sunset hue, the night blue, and the scene-brightness dimming,
     // so nothing here has to re-derive any of them; sunLightLevel is the sun level, and
     // the comment on it says why treating it as 1 was worth 24% brightness everywhere.
-    // brightnessFloorScale is the game's minbrightness setting as a factor on that term.
+    // The additive floor lift is deliberately neutral: raising a blue night ambient by a
+    // scalar made distant terrain more cyan than adjacent live terrain at high minbrightness.
     vec3 light = lightAmbientColor == 1
-        ? 1.05 * sunLightLevel * rgbaAmbientIn * brightnessFloorScale
+        ? 1.05 * (sunLightLevel * rgbaAmbientIn + vec3(brightnessFloorLift))
         : clamp(sunColor * dayLight, 0.02, 1.0);
     // Vanilla ground receives this factor through applyFogAndShadowWithNormal. Liquid calls
     // getBrightnessFromShadowMap directly and never applies the daylight multiplier, so

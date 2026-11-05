@@ -1827,31 +1827,22 @@ public static class StaticAssetChecks
     }
 
     /// <summary>
-    /// `applyLight` in fogandlight.vsh with the game's minbrightness floor, for the case a LOD
-    /// section is in: sky light, no block light, no glow, no point light. Written out in full
-    /// because <see cref="LodTerrainRenderer.BrightnessFloorScale"/> is a reduction of it, and
-    /// a reduction is what this shader has got wrong before (the sun level, above).
+    /// Neutral floor candidate for sky-lit cached terrain. The floor deficit is added equally
+    /// to RGB so it does not preserve and amplify the blue ambient tint as brightness rises.
     /// </summary>
-    static (float R, float G, float B) GameLightWithFloor(Vec3f ambient, float sunLevel, float floor)
+    static (float R, float G, float B) LightWithNeutralFloor(Vec3f ambient, float sunLevel,
+        float floor, int maxDynamicLights)
     {
-        float sunR = sunLevel * ambient.R, sunG = sunLevel * ambient.G, sunB = sunLevel * ambient.B;
-        float bSun = (sunR + sunG + sunB) / 3f;
-        float bBlock = Math.Max(floor, 0f);
-
-        // The block light colour is zero, so it only dilutes the mix.
-        float mix = 2f * bSun / (2f * bSun + bBlock);
-        float r = sunR * mix, g = sunG * mix, b = sunB * mix;
-
-        float fix = Math.Max(bSun, bBlock) / ((r + g + b) / 3f);
-        return (r * fix * 1.05f, g * fix * 1.05f, b * fix * 1.05f);
+        float sunMean = sunLevel * (ambient.R + ambient.G + ambient.B) / 3f;
+        float lift = maxDynamicLights > 0 ? Math.Max(0f, floor - sunMean) : 0f;
+        return (1.05f * (sunLevel * ambient.R + lift),
+            1.05f * (sunLevel * ambient.G + lift),
+            1.05f * (sunLevel * ambient.B + lift));
     }
 
     /// <summary>
-    /// The floor is the only light term the checks can run rather than read, since there is no
-    /// GLSL compiler here. It lives in C# and the shader only multiplies by it, so the number
-    /// is compared with the game's own arithmetic, and the shader with a text pin. An unset
-    /// uniform reads as zero, which on this factor would be black terrain rather than a
-    /// correction quietly missing.
+    /// The neutral floor amount is computed on the CPU and added by the shader. These checks
+    /// pin its behavior and wiring; visual color matching still needs an in-game comparison.
     /// </summary>
     static void BrightnessFloor(Check c)
     {
@@ -1860,18 +1851,18 @@ public static class StaticAssetChecks
             "src", "Render", "LodTerrainRenderer.cs"));
 
         Vec3f night = new(0.04f, 0.05f, 0.09f);
-        c.Eq(1f, LodTerrainRenderer.BrightnessFloorScale(night, 1f, 0f, 10),
+        c.Eq(0f, LodTerrainRenderer.BrightnessFloorLift(night, 1f, 0f, 10),
             "the default setting leaves every surface exactly as it was");
-        c.Eq(1f, LodTerrainRenderer.BrightnessFloorScale(night, 1f, -0.5f, 10),
-            "a negative setting is no floor, as it is in the game's max()");
-        c.Eq(1f, LodTerrainRenderer.BrightnessFloorScale(night, 1f, 0.2f, 0),
+        c.Eq(0f, LodTerrainRenderer.BrightnessFloorLift(night, 1f, -0.5f, 10),
+            "a negative setting adds no floor light");
+        c.Eq(0f, LodTerrainRenderer.BrightnessFloorLift(night, 1f, 0.2f, 0),
             "with dynamic lights off the game skips the floor, so this does too");
-        c.Eq(1f, LodTerrainRenderer.BrightnessFloorScale(new Vec3f(0.9f, 0.9f, 0.9f), 1f, 0.2f, 10),
+        c.Eq(0f, LodTerrainRenderer.BrightnessFloorLift(new Vec3f(0.9f, 0.9f, 0.9f), 1f, 0.2f, 10),
             "light already above the floor is untouched");
-        c.True(float.IsFinite(LodTerrainRenderer.BrightnessFloorScale(new Vec3f(), 1f, 0.2f, 10)),
-            "a black ambient colour cannot divide by zero");
+        c.Eq(0.2f, LodTerrainRenderer.BrightnessFloorLift(new Vec3f(), 1f, 0.2f, 10),
+            "a black ambient colour receives the full neutral floor without division");
 
-        bool matchesGame = true;
+        bool preservesBaseAndMeetsFloor = true;
         foreach (Vec3f ambient in new[] { night, new Vec3f(0.3f, 0.35f, 0.6f), new Vec3f(0.9f, 0.6f, 0.3f),
                                           new Vec3f(1f, 1f, 1f), new Vec3f(0.01f, 0.01f, 0.02f) })
         {
@@ -1879,28 +1870,36 @@ public static class StaticAssetChecks
             {
                 foreach (float floor in new[] { 0f, 0.02f, 0.1f, 0.2f, 0.5f, 1f })
                 {
-                    float scale = LodTerrainRenderer.BrightnessFloorScale(ambient, sunLevel, floor, 10);
-                    (float r, float g, float b) = GameLightWithFloor(ambient, sunLevel, floor);
-                    matchesGame &= Math.Abs(1.05f * sunLevel * ambient.R * scale - r) <= 1e-5f
-                        && Math.Abs(1.05f * sunLevel * ambient.G * scale - g) <= 1e-5f
-                        && Math.Abs(1.05f * sunLevel * ambient.B * scale - b) <= 1e-5f;
+                    float sunMean = sunLevel * (ambient.R + ambient.G + ambient.B) / 3f;
+                    (float r, float g, float b) = LightWithNeutralFloor(ambient, sunLevel, floor, 10);
+                    float outputMean = (r + g + b) / 3f;
+                    preservesBaseAndMeetsFloor &= Math.Abs(outputMean
+                        - 1.05f * Math.Max(sunMean, floor)) <= 1e-5f;
+                    if (sunMean >= floor)
+                    {
+                        preservesBaseAndMeetsFloor &= Math.Abs(r - 1.05f * sunLevel * ambient.R) <= 1e-5f
+                            && Math.Abs(g - 1.05f * sunLevel * ambient.G) <= 1e-5f
+                            && Math.Abs(b - 1.05f * sunLevel * ambient.B) <= 1e-5f;
+                    }
                 }
             }
         }
-        c.True(matchesGame, "the factor gives the game's light across night, dusk and day colours");
+        c.True(preservesBaseAndMeetsFloor,
+            "the neutral lift preserves light above the floor and reaches it below");
 
-        float nightScale = LodTerrainRenderer.BrightnessFloorScale(night, 1f, 0.2f, 10);
-        c.True(Math.Abs(night.B * nightScale / (night.R * nightScale) - night.B / night.R) < 1e-5f,
-            "a floored night keeps its blue instead of drifting toward grey");
+        (float baseR, _, float baseB) = LightWithNeutralFloor(night, 1f, 0f, 10);
+        (float floorR, _, float floorB) = LightWithNeutralFloor(night, 1f, 0.2f, 10);
+        c.True(floorB / floorR < baseB / baseR,
+            "a rising floor reduces the blue-to-red ratio rather than preserving the blue cast");
 
-        c.True(fragment.Contains("uniform float brightnessFloorScale;", StringComparison.Ordinal),
+        c.True(fragment.Contains("uniform float brightnessFloorLift;", StringComparison.Ordinal),
             "the fragment shader declares the floor");
-        c.True(fragment.Contains("1.05 * sunLightLevel * rgbaAmbientIn * brightnessFloorScale",
+        c.True(fragment.Contains("1.05 * (sunLightLevel * rgbaAmbientIn + vec3(brightnessFloorLift))",
                 StringComparison.Ordinal),
-            "the floor scales the vanilla light term, before the daylight boost");
+            "the floor adds neutral light to the vanilla ambient term, before the daylight boost");
         c.True(fragment.Contains(": clamp(sunColor * dayLight, 0.02, 1.0);", StringComparison.Ordinal),
             "the comparison-only sunColor path stays without it");
-        c.True(renderer.Contains("prog.Uniform(\"brightnessFloorScale\", BrightnessFloorScale(",
+        c.True(renderer.Contains("prog.Uniform(\"brightnessFloorLift\", BrightnessFloorLift(",
                 StringComparison.Ordinal)
             && renderer.Contains("capi.Settings.Float[\"minbrightness\"]", StringComparison.Ordinal)
             && renderer.Contains("capi.Settings.Int[\"maxDynamicLights\"]", StringComparison.Ordinal),
